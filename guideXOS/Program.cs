@@ -565,6 +565,7 @@ unsafe class Program {
             Wallpaper = null;
         }
         BootConsole.WriteLine("[SMAIN] Wallpaper created");
+        BootConsole.WriteLine("[SAFE_MODE] UEFI minimal desktop initialized");
     }
 
     /// <summary>
@@ -1025,6 +1026,7 @@ unsafe class Program {
                 if (debugFrame) { SerialChar('Z'); SerialChar('\n'); } // Z = frame complete
 
                 if (isUefi && frameCounter == 4) {
+                    BootConsole.WriteLine("[SAFE_MODE] READY");
                     SerialChar('R'); SerialChar('E'); SerialChar('A'); SerialChar('D'); SerialChar('Y'); SerialChar('\n');
                 }
 
@@ -1090,7 +1092,7 @@ unsafe class Program {
         DrawUefiFillRect(fb, fbW, fbH, 0, 58, fbW, 2, 0xFF36C2B4u);
         DrawUefiFillRect(fb, fbW, fbH, 0, fbH - 46, fbW, 2, 0xFF36C2B4u);
 
-        DrawUefiTinyText(fb, fbW, fbH, 24, 18, "GUIDEXOS UEFI READY", 3, 0xFFFFFFFFu);
+        DrawUefiTinyText(fb, fbW, fbH, 24, 18, "GUIDEXOS SAFE MODE", 3, 0xFFFFFFFFu);
         DrawUefiTinyText(fb, fbW, fbH, 24, 82, "RAMDISK OK", 2, 0xFFCDEEEAu);
         DrawUefiTinyText(fb, fbW, fbH, 24, 110, "RENDER LOOP ACTIVE", 2, 0xFFCDEEEAu);
         DrawUefiTinyText(fb, fbW, fbH, 24, 138, "INPUT POLL ACTIVE", 2, 0xFFCDEEEAu);
@@ -1102,7 +1104,7 @@ unsafe class Program {
 
         DrawUefiFillRect(fb, fbW, fbH, 18, fbH - 34, 92, 24, 0xFF263241u);
         DrawUefiTinyText(fb, fbW, fbH, 30, fbH - 28, "START", 2, 0xFFFFFFFFu);
-        DrawUefiTinyText(fb, fbW, fbH, fbW - 176, fbH - 28, "UEFI BOOT OK", 2, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, fbW - 212, fbH - 28, "SAFE MODE READY", 2, 0xFFCDEEEAu);
     }
 
     private static uint* GetUefiFramebuffer() {
