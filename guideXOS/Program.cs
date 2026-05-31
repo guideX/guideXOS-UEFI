@@ -395,6 +395,24 @@ unsafe class Program {
     private const bool FIRST_FRAME_SERIAL_ONLY = true;
     private const bool USE_MINIMAL_UEFI_WALLPAPER = true;
 
+    // ---------------------------------------------------------------------------
+    // RENDER-LOOP PROLOGUE DIAGNOSTIC MODES
+    // ---------------------------------------------------------------------------
+    // UEFI_RENDER_LOOP_PROLOGUE_HALT = true
+    //   After printing the earliest safe render-loop breadcrumb, enter an infinite
+    //   busy-wait.  No rendering, no input, no allocations.
+    //   If QEMU stays alive and serial shows the halt marker, the prologue entry is
+    //   stable.  If QEMU exits before the halt marker, the fault is in the first
+    //   statements of RenderLoop() itself.
+    //
+    // UEFI_RENDER_LOOP_PROLOGUE_ONLY = false (default)
+    //   When enabled: execute only frame counter + constant serial markers, skip
+    //   all rendering/input/WM/desktop/framebuffer.  Enable only after the halt
+    //   test passes.
+    // ---------------------------------------------------------------------------
+    private const bool UEFI_RENDER_LOOP_PROLOGUE_HALT = true;
+    private const bool UEFI_RENDER_LOOP_PROLOGUE_ONLY = false;
+
     private static bool SafeModeKeyboardEnabled =>
         ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_PS2_KEYBOARD ||
         ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_PS2_BOTH;
@@ -831,6 +849,10 @@ unsafe class Program {
         }
 
         BootConsole.WriteLine("[SMAIN] Entering main render loop");
+
+        // [DIAG] Patch-active marker: if this does NOT appear in QEMU serial output,
+        // a stale/wrong kernel image is being booted.
+        SerialBreadcrumb("[DIAG] RENDER_LOOP_PROLOGUE_PATCH_ACTIVE");
 
         // Enter the main render loop (in a separate method to keep stack frames small)
         RenderLoop();
@@ -1296,26 +1318,73 @@ unsafe class Program {
     /// Main render loop - extracted from SMain to keep stack frames small
     /// </summary>
     private static void RenderLoop() {
+        // RL_AFTER_ENTER_PRINT: we are now inside RenderLoop(), before any risky reads
+        SerialBreadcrumb("RL_AFTER_ENTER_PRINT");
+
+        // PROLOGUE HALT: if enabled, stay here forever — proves entry is stable
+        if (UEFI_RENDER_LOOP_PROLOGUE_HALT) {
+            SerialBreadcrumb("RL_PROLOGUE_HALT_ENTER");
+            for (; ; ) {
+                // Constant serial heartbeat; Native.Out8 is always safe
+                Native.Out8(0x3F8, (byte)'.');
+                // Busy-wait ~1M iterations as a rough delay
+                for (int _h = 0; _h < 1000000; _h++) { }
+            }
+        }
+
+        // RL_BEFORE_MOUSE_READ: about to read Control.MousePosition (managed static)
+        SerialBreadcrumb("RL_BEFORE_MOUSE_READ");
         int lastMouseX = Control.MousePosition.X;
         int lastMouseY = Control.MousePosition.Y;
+        SerialBreadcrumb("RL_AFTER_MOUSE_READ");
+
         ulong lastMoveTick = Timer.Ticks;
         const ulong ActiveMoveMs = 100;
         int frameCounter = 0;
         bool isUefi = (BootConsole.CurrentMode == guideXOS.BootMode.UEFI);
 
+        SerialBreadcrumb("RL_BEFORE_RESET_DIAG");
         if (isUefi) {
             ResetSafeModeDiagnostics();
             SetSafeModeInputPhase("INIT-OK");
             SetSafeModeInputResult("READY", 0);
         }
+        SerialBreadcrumb("RL_AFTER_RESET_DIAG");
 
+        SerialBreadcrumb("RL_BEFORE_LOOP");
         for (; ; ) {
             try {
+                // RL_LOOP_TOP
+                SerialBreadcrumb("RL_LOOP_TOP");
+
+                // RL_BEFORE_FRAME_COUNTER
+                SerialBreadcrumb("RL_BEFORE_FRAME_COUNTER");
                 frameCounter++;
+                SerialBreadcrumb("RL_AFTER_FRAME_COUNTER");
+
                 SetSafeModeFramePhase("frame-enter");
 
                 if (isUefi) {
                     UpdateSafeModeRenderDiagnostics(frameCounter);
+                }
+
+                // PROLOGUE ONLY: execute frame counter + serial markers, skip all rendering
+                if (UEFI_RENDER_LOOP_PROLOGUE_ONLY && isUefi) {
+                    switch (frameCounter) {
+                        case  1: SerialBreadcrumb("RL_PROLOGUE_ONLY_F1"); break;
+                        case  2: SerialBreadcrumb("RL_PROLOGUE_ONLY_F2"); break;
+                        case  3: SerialBreadcrumb("RL_PROLOGUE_ONLY_F3"); break;
+                        case  4: SerialBreadcrumb("RL_PROLOGUE_ONLY_F4"); break;
+                        case  5: SerialBreadcrumb("RL_PROLOGUE_ONLY_F5"); break;
+                        case  6: SerialBreadcrumb("RL_PROLOGUE_ONLY_F6"); break;
+                        case  7: SerialBreadcrumb("RL_PROLOGUE_ONLY_F7"); break;
+                        case  8: SerialBreadcrumb("RL_PROLOGUE_ONLY_F8"); break;
+                        case  9: SerialBreadcrumb("RL_PROLOGUE_ONLY_F9"); break;
+                        case 10: SerialBreadcrumb("RL_PROLOGUE_ONLY_FA"); break;
+                        default: break;
+                    }
+                    for (int _d = 0; _d < 500000; _d++) { }
+                    continue;
                 }
 
                 // In UEFI mode, optionally use simplified direct framebuffer rendering (debug-only)
@@ -1329,8 +1398,12 @@ unsafe class Program {
                 // Format: [F<n>:<step>] where step is a single letter
                 bool debugFrame = isUefi && (frameCounter <= 3);
 
-
-                if (debugFrame) { SerialChar('['); SerialChar('F'); SerialChar((char)('0' + (frameCounter % 10))); SerialChar(':'); SerialChar('A'); SerialChar(']'); } // A = start
+                // RL_BEFORE_F_MARKER
+                SerialBreadcrumb("RL_BEFORE_F_MARKER");
+                if (debugFrame) { SerialChar('['); SerialChar('F'); SerialChar((char)('0' + (frameCounter % 10))); SerialChar(':'); }
+                SerialBreadcrumb("RL_BEFORE_A_MARKER");
+                if (debugFrame) { SerialChar('A'); SerialChar(']'); } // A = start
+                SerialBreadcrumb("RL_AFTER_A_MARKER");
 
                 bool shouldLog = (frameCounter == 1);
 
@@ -1338,6 +1411,7 @@ unsafe class Program {
                 // In UEFI mode, this is only safe during the first GUI frame; repeated
                 // managed-reference repair can trip over post-ExitBootServices state.
                 SetSafeModeFramePhase("render-enter");
+                SerialBreadcrumb("RL_BEFORE_ENSURE_GRAPHICS");
                 if (!isUefi || frameCounter == 1) {
                     Framebuffer.EnsureGraphics();
 
@@ -1351,9 +1425,12 @@ unsafe class Program {
                         }
                     }
                 }
+                SerialBreadcrumb("RL_AFTER_ENSURE_GRAPHICS");
                 SetSafeModeFramePhase("render-exit");
 
+                SerialBreadcrumb("RL_BEFORE_B_MARKER");
                 if (debugFrame) SerialChar('B'); // B = EnsureGraphics done
+                SerialBreadcrumb("RL_AFTER_B_MARKER");
 
                 // -----------------------------------------------------------------
                 // UEFI steady-state minimal render path (frame 2+)
