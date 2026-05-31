@@ -350,6 +350,7 @@ unsafe class Program {
     private const bool SKIP_CURSOR_DRAW = false;
     private const bool SKIP_PRESENT = false;
     private const bool FIRST_FRAME_SERIAL_ONLY = true;
+    private const bool USE_MINIMAL_UEFI_WALLPAPER = true;
 
     private static bool SafeModeKeyboardEnabled =>
         ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_PS2_KEYBOARD ||
@@ -853,8 +854,36 @@ unsafe class Program {
         // Create teal gradient wallpaper for UEFI desktop
         BootConsole.WriteLine("[SMAIN] Creating UEFI wallpaper");
         try {
+            BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_ENTER");
+            BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_VALIDATE_FB_ENTER");
+            bool fbValid = Framebuffer.Graphics != null && Framebuffer.Graphics.VideoMemory != null && Framebuffer.Width > 0 && Framebuffer.Height > 0;
+            if (!fbValid) {
+                BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_VALIDATE_FB_FAIL");
+                Wallpaper = null;
+            }
+            BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_VALIDATE_FB_EXIT");
+
+            if (fbValid && USE_MINIMAL_UEFI_WALLPAPER) {
+                BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_MINIMAL_ENTER");
+                DrawUefiFillRect(Framebuffer.Graphics.VideoMemory, Framebuffer.Width, Framebuffer.Height, Framebuffer.Width, (ulong)Framebuffer.Width * (ulong)Framebuffer.Height, 0, 0, Framebuffer.Width, Framebuffer.Height, 0xFF0D7D77u);
+                Wallpaper = null;
+                BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_MINIMAL_EXIT");
+                BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_EXIT");
+                BootConsole.WriteLine("[SMAIN] Wallpaper created");
+                BootConsole.WriteLine("[SAFE_MODE] UEFI minimal desktop initialized");
+                return;
+            }
+
+            BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_ALLOC_ENTER");
             Wallpaper = new Image(Framebuffer.Width, Framebuffer.Height);
-            if (Wallpaper != null && Wallpaper.RawData != null) {
+            BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_ALLOC_EXIT");
+            if (Wallpaper == null) {
+                BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_ALLOC_NULL");
+            } else if (Wallpaper.RawData == null) {
+                BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_RAW_NULL");
+                Wallpaper = null;
+            } else {
+                BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_GRADIENT_ENTER");
                 uint topColor = 0xFF5FD4C4;
                 uint bottomColor = 0xFF0D7D77;
                 int topR = (int)((topColor >> 16) & 0xFF);
@@ -863,20 +892,40 @@ unsafe class Program {
                 int bottomR = (int)((bottomColor >> 16) & 0xFF);
                 int bottomG = (int)((bottomColor >> 8) & 0xFF);
                 int bottomB = (int)(bottomColor & 0xFF);
-                for (int y = 0; y < Framebuffer.Height; y++) {
-                    int t256 = (y * 256) / Framebuffer.Height;
-                    int r = topR + ((bottomR - topR) * t256) / 256;
-                    int g = topG + ((bottomG - topG) * t256) / 256;
-                    int b = topB + ((bottomB - topB) * t256) / 256;
-                    int color = unchecked((int)(0xFF000000 | (uint)(r << 16) | (uint)(g << 8) | (uint)b));
-                    int rowBase = y * Framebuffer.Width;
-                    for (int x = 0; x < Framebuffer.Width; x++) {
-                        Wallpaper.RawData[rowBase + x] = color;
+                int fbHeight = Framebuffer.Height;
+                int fbWidth = Framebuffer.Width;
+                int pixelCount = fbWidth * fbHeight;
+                if (fbWidth <= 0 || fbHeight <= 0 || pixelCount <= 0) {
+                    BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_GRADIENT_INVALID_DIMENSIONS");
+                    Wallpaper = null;
+                } else {
+                    BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_PIXEL_LOOP_ENTER");
+                    for (int y = 0; y < fbHeight; y++) {
+                        if (y == 0) BootConsole.WriteLine("[SMAIN] WALLPAPER_ROW_0");
+                        else if (y == 100) BootConsole.WriteLine("[SMAIN] WALLPAPER_ROW_100");
+                        else if (y == 200) BootConsole.WriteLine("[SMAIN] WALLPAPER_ROW_200");
+                        else if (y == 400) BootConsole.WriteLine("[SMAIN] WALLPAPER_ROW_400");
+                        else if (y == fbHeight - 1) BootConsole.WriteLine("[SMAIN] WALLPAPER_ROW_LAST");
+                        int t256 = (y * 256) / fbHeight;
+                        int r = topR + ((bottomR - topR) * t256) / 256;
+                        int g = topG + ((bottomG - topG) * t256) / 256;
+                        int b = topB + ((bottomB - topB) * t256) / 256;
+                        int color = unchecked((int)(0xFF000000 | (uint)(r << 16) | (uint)(g << 8) | (uint)b));
+                        int rowBase = y * fbWidth;
+                        for (int x = 0; x < fbWidth; x++) {
+                            Wallpaper.RawData[rowBase + x] = color;
+                        }
                     }
+                    BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_PIXEL_LOOP_EXIT");
+                    BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_ASSIGN_ENTER");
+                    BootConsole.WriteLine("[SMAIN] Wallpaper gradient created");
+                    BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_ASSIGN_EXIT");
                 }
-                BootConsole.WriteLine("[SMAIN] Wallpaper gradient created");
+                BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_GRADIENT_EXIT");
             }
+            BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_EXIT");
         } catch {
+            BootConsole.WriteLine("[SMAIN] UEFI_WALLPAPER_FAILSOFT");
             BootConsole.WriteLine("[SMAIN] Wallpaper creation failed - using null");
             Wallpaper = null;
         }
@@ -1541,6 +1590,27 @@ unsafe class Program {
         if (emitFirstFrameBreadcrumbs) SerialBreadcrumb("F1_TASKBAR_EXIT");
     }
 
+    private static void DrawUefiFillRect(uint* fb, int fbW, int fbH, int pitchPixels, ulong maxPixels, int x, int y, int w, int h, uint color) {
+        if (fb == null || fbW <= 0 || fbH <= 0 || pitchPixels <= 0 || w <= 0 || h <= 0) return;
+        if (x < 0 || y < 0) return;
+        if (x >= fbW || y >= fbH) return;
+        int x1 = x + w;
+        int y1 = y + h;
+        if (x1 > fbW) x1 = fbW;
+        if (y1 > fbH) y1 = fbH;
+        if (x1 <= x || y1 <= y) return;
+
+        for (int yy = y; yy < y1; yy++) {
+            ulong rowBase = (ulong)(uint)yy * (ulong)(uint)pitchPixels;
+            for (int xx = x; xx < x1; xx++) {
+                ulong offset = rowBase + (ulong)(uint)xx;
+                if (maxPixels != 0 && offset >= maxPixels) continue;
+                if (offset > int.MaxValue) continue;
+                fb[(int)offset] = color;
+            }
+        }
+    }
+
     private static void DrawUefiSafeModeDiagnostics() {
         if (!TryGetUefiFramebufferInfo(out uint* fb, out int fbW, out int fbH, out int pitchPixels, out ulong maxPixels)) return;
 
@@ -2196,15 +2266,6 @@ unsafe class Program {
         DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, x + 14, y + 18, 30, 4, 0xCCFFFFFFu);
         DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, x + 14, y + 30, 30, 4, 0xCCFFFFFFu);
         DrawUefiTinyText(fb, fbW, fbH, pitchPixels, maxPixels, x, y + 66, label, 2, 0xFFFFFFFFu);
-    }
-
-    private static void DrawUefiFillRect(uint* fb, int fbW, int fbH, int pitchPixels, ulong maxPixels, int x, int y, int w, int h, uint color) {
-        if (!TryGetClippedRect(fbW, fbH, x, y, w, h, 0, 0, fbW, fbH, out int x0, out int y0, out int x1, out int y1)) return;
-        for (int yy = y0; yy < y1; yy++) {
-            for (int xx = x0; xx < x1; xx++) {
-                TryWriteUefiPixel(fb, fbW, fbH, pitchPixels, maxPixels, xx, yy, color);
-            }
-        }
     }
 
     private static void DrawUefiTinyText(uint* fb, int fbW, int fbH, int pitchPixels, ulong maxPixels, int x, int y, string text, int scale, uint color) {
