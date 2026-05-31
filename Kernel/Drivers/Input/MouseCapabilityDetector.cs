@@ -283,10 +283,21 @@ namespace guideXOS.Kernel.Drivers.Input {
         private static void DeterminePrimaryCapability() {
             // Already set during detection, but verify we have something
             if (_primaryCapability == MouseCapability.None) {
-                // Fall back to keyboard emulation
-                _primaryCapability = MouseCapability.KeyboardEmulation;
-                _mouseEnabled = true;
-                DebugLog("[MouseCapability] Falling back to keyboard emulation");
+                // In UEFI mode with no real hardware detected, do NOT fall back to
+                // KeyboardEmulation and do NOT report mouse as enabled.  Keyboard
+                // emulation is a legacy-input concept that requires PS/2 keyboard
+                // processing which must not run in UEFI safe mode.  Leaving the
+                // capability as None means mouse is correctly reported as disabled.
+                if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                    // No real mouse capability available in UEFI mode.
+                    // _primaryCapability stays None, _mouseEnabled stays false.
+                    DebugLog("[MouseCapability] UEFI mode: no capability detected, leaving disabled");
+                } else {
+                    // Fall back to keyboard emulation in Legacy mode only
+                    _primaryCapability = MouseCapability.KeyboardEmulation;
+                    _mouseEnabled = true;
+                    DebugLog("[MouseCapability] Falling back to keyboard emulation");
+                }
             }
         }
 

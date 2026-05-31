@@ -343,6 +343,28 @@ unsafe class Program {
     private const bool SKIP_FIRST_FRAME_BACKGROUND_DRAW = true;
     private const bool SKIP_UEFI_BACKGROUND_DRAW_ALL_FRAMES = true;
     private const bool UEFI_STEADY_STATE_SERIAL_ONLY = true;
+
+    // ---------------------------------------------------------------------------
+    // UEFI SAFE-MODE STEADY-STATE FAST PATH — WHY IT EXISTS
+    // ---------------------------------------------------------------------------
+    // Post-ExitBootServices the managed heap is fragile. DrawUefiSafeModeDiagnostics()
+    // performs dozens of .ToString() and string-concatenation calls every frame.
+    // On frame 2 this caused an immediate crash (QEMU exit right after marker 'B').
+    // The UEFI_STEADY_STATE_SERIAL_ONLY fast path skips every managed-allocation
+    // operation on frame 2+ and replaces them with a single serial char sequence
+    // [Fn:S] (S = steady-state serial-only).  It is a temporary stabilisation
+    // mode.  Future work should replace diagnostics with non-allocating fixed-buffer
+    // or status-field rendering so the fast path can eventually be retired.
+    // ---------------------------------------------------------------------------
+
+    // When true, DrawUefiSafeModeDiagnostics() is restricted to frame 1 only.
+    // Default: true (safe).  Set false only for targeted diagnostics sessions.
+    private const bool UEFI_DIAGNOSTICS_FRAME1_ONLY = true;
+    // When true, DrawUefiSafeModeDiagnostics() runs every frame in the non-fast
+    // path.  MUST be false whenever UEFI_STEADY_STATE_SERIAL_ONLY is true,
+    // because the diagnostics method allocates managed strings every call.
+    private const bool UEFI_DRAW_DIAGNOSTICS_EACH_FRAME = false;
+
     private const bool SKIP_BACKGROUND_DRAW = false;
     private const bool SKIP_UI_DRAW = false;
     private const bool SKIP_DESKTOP_DRAW = false;
@@ -1315,6 +1337,19 @@ unsafe class Program {
 
                 if (debugFrame) SerialChar('B'); // B = EnsureGraphics done
 
+                // UEFI steady-state serial-only fast path: skip all managed draw/input/string
+                // work on frame 2+. DrawUefiSafeModeDiagnostics() and friends use managed string
+                // allocation which is unsafe on the UEFI heap after ExitBootServices.
+                if (isUefi && UEFI_STEADY_STATE_SERIAL_ONLY && frameCounter > 1) {
+                    if (debugFrame) {
+                        SerialChar('['); SerialChar('F');
+                        SerialChar((char)('0' + (frameCounter % 10)));
+                        SerialChar(':'); SerialChar('S'); SerialChar(']');
+                    }
+                    Thread.Sleep(16);
+                    continue;
+                }
+
                 if (shouldLog) {
                     // Use serial-only output to avoid BootConsole painting over the framebuffer
                     SerialChar('F'); SerialChar('1'); SerialChar('\n');
@@ -1431,31 +1466,49 @@ unsafe class Program {
 
                     if (frameCounter == 1) SerialBreadcrumb("F1_DIAGNOSTICS_ENTER");
                     if (!SKIP_DIAGNOSTICS_DRAW) {
-                        DrawUefiSafeModeDiagnostics();
+                        // Guard: managed string allocations in DrawUefiSafeModeDiagnostics() are
+                        // unsafe in the UEFI per-frame path. Only allow on frame 1, or when the
+                        // per-frame diagnostic constant is explicitly enabled (default: false).
+                        bool runDiag = UEFI_DRAW_DIAGNOSTICS_EACH_FRAME ||
+                                       (UEFI_DIAGNOSTICS_FRAME1_ONLY && frameCounter == 1);
+                        if (runDiag) {
+                            DrawUefiSafeModeDiagnostics();
+                        }
                     }
                     if (frameCounter == 1) SerialBreadcrumb("F1_DIAGNOSTICS_EXIT");
                 }
 
                 if (debugFrame) SerialChar('C'); // C = pre-mouse
 
+                // SAFE_INPUT_NONE hard gate: skip all input-related updates when no input
+                // backend is active. This covers mouse dispatcher, UEFI pointer polling,
+                // window manager input pass, PS/2, Kbd2Mouse, and MouseInputManager update.
+                bool inputActive = ActiveSafeModeInputBackend != SafeModeInputBackend.SAFE_INPUT_NONE;
+
                 // Poll mouse input
-                try {
-                    MouseEventDispatcher.Update();
-                } catch { }
+                if (inputActive) {
+                    try {
+                        MouseEventDispatcher.Update();
+                    } catch { }
+                }
 
                 if (isUefi) {
                     SetSafeModeFramePhase("input-enter");
-                    PollUefiInput();
+                    if (inputActive) {
+                        PollUefiInput();
+                    }
                     SetSafeModeFramePhase("input-exit");
                 }
 
                 if (debugFrame) SerialChar('D'); // D = post-mouse
 
-                // Per-frame input pass
+                // Per-frame input pass — skip when no input backend is active
                 WindowManager.MouseHandled = false;
-                try {
-                    WindowManager.InputAll();
-                } catch { }
+                if (inputActive) {
+                    try {
+                        WindowManager.InputAll();
+                    } catch { }
+                }
 
                 if (debugFrame) SerialChar('E'); // E = post-input
 
