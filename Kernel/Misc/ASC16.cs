@@ -22,8 +22,16 @@ namespace guideXOS {
         /// <param name="y"></param>
         /// <param name="color"></param>
         public static void DrawString(string text, int x, int y, uint color) {
+            if (text == null) return;
+            if (Framebuffer.Graphics == null || Framebuffer.Graphics.VideoMemory == null || Framebuffer.Graphics.Width <= 0 || Framebuffer.Graphics.Height <= 0) return;
+            if (y < 0 || y >= Framebuffer.Graphics.Height || y + 16 <= 0) return;
+
+            int maxWidth = Framebuffer.Graphics.Width;
             for (int c = 0; c < text.Length; c++) {
-                DrawChar(text[c], x + (c * 8), y, color);
+                int charX = x + (c * 8);
+                if (charX >= maxWidth) break;
+                if (charX + 8 <= 0) continue;
+                DrawChar(text[c], charX, y, color);
             }
         }
         /// <summary>
@@ -34,6 +42,8 @@ namespace guideXOS {
         /// <param name="y"></param>
         /// <param name="color"></param>
         public static void DrawChar(char chr, int x, int y, uint color) {
+            if (Framebuffer.Graphics == null || Framebuffer.Graphics.VideoMemory == null || Framebuffer.Graphics.Width <= 0 || Framebuffer.Graphics.Height <= 0) return;
+            if (x >= Framebuffer.Graphics.Width || y >= Framebuffer.Graphics.Height || x + 8 <= 0 || y + 16 <= 0) return;
             int offset = (chr & 0xFF) * 16;
             for (int i = 0; i < 16; i++) {
                 for (int j = 0; j < 8; j++) {

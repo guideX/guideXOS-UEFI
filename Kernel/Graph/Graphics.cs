@@ -31,6 +31,7 @@ namespace guideXOS.Graph {
             }
         }
         public virtual void FillRectangle(int X, int Y, int Width, int Height, uint Color) {
+            if (VideoMemory == null || this.Width <= 0 || this.Height <= 0 || Width <= 0 || Height <= 0) return;
             int x0 = X;
             int y0 = Y;
             int x1 = X + Width;
@@ -49,6 +50,7 @@ namespace guideXOS.Graph {
         }
         public virtual void AFillRectangle(int X, int Y, int Width, int Height, uint Color) {
             // Optimized alpha fill to reduce per-pixel function overhead
+            if (VideoMemory == null || this.Width <= 0 || this.Height <= 0 || Width <= 0 || Height <= 0) return;
             int x0 = X; int y0 = Y; int x1 = X + Width; int y1 = Y + Height;
             if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0; if (x1 > this.Width) x1 = this.Width; if (y1 > this.Height) y1 = this.Height;
             if (x1 <= x0 || y1 <= y0) return;
@@ -73,7 +75,7 @@ namespace guideXOS.Graph {
         }
 
         public virtual uint GetPoint(int X, int Y) {
-            if (X > 0 && Y > 0 && X < Width && Y < Height) {
+            if (VideoMemory != null && X >= 0 && Y >= 0 && X < Width && Y < Height) {
                 return VideoMemory[Width * Y + X];
             }
             return 0;
@@ -103,7 +105,7 @@ namespace guideXOS.Graph {
                 color = Color.ToArgb((byte)newR, (byte)newG, (byte)newB);
             }
 
-            if (X > 0 && Y > 0 && X < Width && Y < Height) {
+            if (VideoMemory != null && X >= 0 && Y >= 0 && X < Width && Y < Height) {
                 VideoMemory[Width * Y + X] = color;
             }
         }

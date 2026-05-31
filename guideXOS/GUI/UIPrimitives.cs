@@ -3,10 +3,15 @@ using guideXOS.Kernel.Drivers;
 
 namespace guideXOS.GUI {
     // Lightweight UI drawing helpers for rounded rectangles using only basic primitives
-    internal static class UIPrimitives {
+    internal static unsafe class UIPrimitives {
         private static Graphics G => Framebuffer.Graphics;
 
+        private static bool HasGraphics() {
+            return G != null && G.VideoMemory != null && G.Width > 0 && G.Height > 0;
+        }
+
         public static void AFillRoundedRect(int x, int y, int w, int h, uint color, int radius = 4) {
+            if (!HasGraphics()) return;
             if (w <= 0 || h <= 0) return;
             if (radius < 1) { G.AFillRectangle(x, y, w, h, color); return; }
             if (radius * 2 > w) radius = w / 2;
@@ -33,6 +38,7 @@ namespace guideXOS.GUI {
 
         // Only top corners rounded (for title bars)
         public static void AFillRoundedRectTop(int x, int y, int w, int h, uint color, int radius = 4) {
+            if (!HasGraphics()) return;
             if (w <= 0 || h <= 0) return;
             if (radius < 1) { G.AFillRectangle(x, y, w, h, color); return; }
             if (radius * 2 > w) radius = w / 2;
@@ -50,6 +56,7 @@ namespace guideXOS.GUI {
 
         // Only bottom corners rounded (for body bottoms)
         public static void AFillRoundedRectBottom(int x, int y, int w, int h, uint color, int radius = 4) {
+            if (!HasGraphics()) return;
             if (w <= 0 || h <= 0) return;
             if (radius < 1) { G.AFillRectangle(x, y, w, h, color); return; }
             if (radius * 2 > w) radius = w / 2;
@@ -66,6 +73,7 @@ namespace guideXOS.GUI {
         }
 
         public static void DrawRoundedRect(int x, int y, int w, int h, uint color, int thickness = 1, int radius = 4) {
+            if (!HasGraphics()) return;
             if (w <= 0 || h <= 0 || thickness <= 0) return;
             if (radius < 1) { G.DrawRectangle(x, y, w, h, color, thickness); return; }
             if (radius * 2 > w) radius = w / 2;

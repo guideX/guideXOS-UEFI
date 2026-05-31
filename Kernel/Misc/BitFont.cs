@@ -15,7 +15,7 @@ namespace guideXOS.Misc {
         }
     }
 
-    public static class BitFont {
+    public static unsafe class BitFont {
         public static List<BitFontDescriptor> RegisteredBitFont;
 
         public static void Initialize() {
@@ -32,6 +32,15 @@ namespace guideXOS.Misc {
         private static int DrawChar(byte[] Raw, int Size, int Size8, uint Color, int Index, int X, int Y, bool Calculate = false) {
             if (Index < 0) {
                 return Size / 2;
+            }
+
+            if (!Calculate) {
+                if (Framebuffer.Graphics == null || Framebuffer.Graphics.VideoMemory == null || Framebuffer.Graphics.Width <= 0 || Framebuffer.Graphics.Height <= 0) {
+                    return Size / 2;
+                }
+                if (X >= Framebuffer.Graphics.Width || Y >= Framebuffer.Graphics.Height || X + Size <= 0 || Y + Size <= 0) {
+                    return Size / 2;
+                }
             }
 
             int MaxX = 0;
@@ -96,6 +105,8 @@ namespace guideXOS.Misc {
 
         public static int DrawString(string FontName, uint color, string Text, int X, int Y, int LineWidth = -1, int Divide = 0) {
             BitFontDescriptor bitFontDescriptor = GetBitFontDescriptor(FontName);
+            if (Text == null) return 0;
+            if (Framebuffer.Graphics == null || Framebuffer.Graphics.VideoMemory == null || Framebuffer.Graphics.Width <= 0 || Framebuffer.Graphics.Height <= 0) return 0;
 
             int Size = bitFontDescriptor.Size;
             int Size8 = Size / 8;
@@ -104,12 +115,16 @@ namespace guideXOS.Misc {
             int UsedX = 0;
             for (int i = 0; i < Text.Length; i++) {
                 char c = Text[i];
+                int lineY = Y + bitFontDescriptor.Size * Line;
                 if (c == '\n' || (LineWidth != -1 && UsedX + bitFontDescriptor.Size > LineWidth)) {
                     Line++;
                     UsedX = 0;
                     continue;
                 }
-                UsedX += BitFont.DrawChar(bitFontDescriptor.Raw, Size, Size8, color, bitFontDescriptor.Charset.IndexOf(c), UsedX + X, Y + bitFontDescriptor.Size * Line, false) + 2 + Divide;
+                if (lineY >= Framebuffer.Graphics.Height) break;
+                if (lineY + bitFontDescriptor.Size <= 0) continue;
+                if (UsedX + X >= Framebuffer.Graphics.Width) break;
+                UsedX += BitFont.DrawChar(bitFontDescriptor.Raw, Size, Size8, color, bitFontDescriptor.Charset.IndexOf(c), UsedX + X, lineY, false) + 2 + Divide;
             }
 
             return UsedX;

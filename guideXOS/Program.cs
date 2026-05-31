@@ -92,6 +92,12 @@ unsafe class Program {
     /// UEFI direct renderer toggle (debug-only)
     /// </summary>
     private static bool _useUefiDirectRenderer = false;
+    private enum SafeModeInputBackend {
+        SAFE_INPUT_NONE,
+        SAFE_INPUT_PS2_KEYBOARD,
+        SAFE_INPUT_PS2_MOUSE,
+        SAFE_INPUT_PS2_BOTH
+    }
     /// <summary>
     /// Last Icon Cache Refresh
     /// </summary>
@@ -117,8 +123,10 @@ unsafe class Program {
 
     private sealed class SafeModeDiagnostics {
         public ulong FrameCounter;
+        public ulong LastCompletedFrame;
         public ulong TimerCounter;
         public ulong InputPollCounter;
+        public ulong LastCompletedInputPoll;
         public ulong KeyboardEventCounter;
         public ulong MouseEventCounter;
         public ulong InputPollFaultCounter;
@@ -128,7 +136,11 @@ unsafe class Program {
         public ulong MaxPollDurationTicks;
         public ulong LastInputStatusCode;
         public string LastInputResult;
+        public string LastFramePhase;
+        public string LastCompletedFramePhase;
         public string LastInputPhase;
+        public string LastInputSubphase;
+        public string LastPs2Operation;
         public string InputPollStatus;
         public string KeyboardStatus;
         public string MouseStatus;
@@ -138,6 +150,14 @@ unsafe class Program {
         public string TimerStatus;
         public string RenderStatus;
         public string ReadyStatus;
+        public byte LastPs2StatusByte;
+        public byte LastPs2DataByte;
+        public ushort LastPs2Port;
+        public byte LastPs2WriteValue;
+        public int LastMousePacketByteCount;
+        public byte LastMousePacketByte0;
+        public byte LastMousePacketByte1;
+        public byte LastMousePacketByte2;
         public bool KeyboardAvailable;
         public bool MouseAvailable;
         public bool TimerTickAvailable;
@@ -151,8 +171,10 @@ unsafe class Program {
 
     private static void ResetSafeModeDiagnostics() {
         _safeModeDiagnostics.FrameCounter = 0;
+        _safeModeDiagnostics.LastCompletedFrame = 0;
         _safeModeDiagnostics.TimerCounter = 0;
         _safeModeDiagnostics.InputPollCounter = 0;
+        _safeModeDiagnostics.LastCompletedInputPoll = 0;
         _safeModeDiagnostics.KeyboardEventCounter = 0;
         _safeModeDiagnostics.MouseEventCounter = 0;
         _safeModeDiagnostics.InputPollFaultCounter = 0;
@@ -162,7 +184,11 @@ unsafe class Program {
         _safeModeDiagnostics.MaxPollDurationTicks = 0;
         _safeModeDiagnostics.LastInputStatusCode = 0;
         _safeModeDiagnostics.LastInputResult = "idle";
+        _safeModeDiagnostics.LastFramePhase = "frame-enter";
+        _safeModeDiagnostics.LastCompletedFramePhase = "none";
         _safeModeDiagnostics.LastInputPhase = "init-start";
+        _safeModeDiagnostics.LastInputSubphase = "none";
+        _safeModeDiagnostics.LastPs2Operation = "none";
         _safeModeDiagnostics.InputPollStatus = "INPUT POLL INIT";
         _safeModeDiagnostics.KeyboardStatus = "KEYBOARD: unavailable";
         _safeModeDiagnostics.MouseStatus = "MOUSE: unavailable";
@@ -172,6 +198,14 @@ unsafe class Program {
         _safeModeDiagnostics.TimerStatus = "TIMER: checking";
         _safeModeDiagnostics.RenderStatus = "RENDER LOOP ACTIVE";
         _safeModeDiagnostics.ReadyStatus = "SAFE MODE READY";
+        _safeModeDiagnostics.LastPs2StatusByte = 0;
+        _safeModeDiagnostics.LastPs2DataByte = 0;
+        _safeModeDiagnostics.LastPs2Port = 0;
+        _safeModeDiagnostics.LastPs2WriteValue = 0;
+        _safeModeDiagnostics.LastMousePacketByteCount = 0;
+        _safeModeDiagnostics.LastMousePacketByte0 = 0;
+        _safeModeDiagnostics.LastMousePacketByte1 = 0;
+        _safeModeDiagnostics.LastMousePacketByte2 = 0;
         _safeModeDiagnostics.KeyboardAvailable = false;
         _safeModeDiagnostics.MouseAvailable = false;
         _safeModeDiagnostics.TimerTickAvailable = false;
@@ -184,6 +218,64 @@ unsafe class Program {
     private static void SetSafeModeInputPhase(string phase) {
         if (phase != null) {
             _safeModeDiagnostics.LastInputPhase = phase;
+        }
+    }
+
+    private static void SetSafeModeFramePhase(string phase) {
+        if (phase != null) {
+            _safeModeDiagnostics.LastFramePhase = phase;
+        }
+    }
+
+    private static void CompleteSafeModeFrame(string phase) {
+        _safeModeDiagnostics.LastCompletedFrame = _safeModeDiagnostics.FrameCounter;
+        if (phase != null) {
+            _safeModeDiagnostics.LastCompletedFramePhase = phase;
+        }
+    }
+
+    private static void SetSafeModeInputSubphase(string subphase) {
+        if (subphase != null) {
+            _safeModeDiagnostics.LastInputSubphase = subphase;
+        }
+    }
+
+    private static void CompleteSafeModeInputPoll(string phase) {
+        _safeModeDiagnostics.LastCompletedInputPoll = _safeModeDiagnostics.InputPollCounter;
+        if (phase != null) {
+            _safeModeDiagnostics.LastInputSubphase = phase;
+        }
+    }
+
+    private static void SetSafeModePs2Operation(string operation) {
+        if (operation != null) {
+            _safeModeDiagnostics.LastPs2Operation = operation;
+        }
+    }
+
+    private static void RecordSafeModePs2Read(ushort port, byte value, string operation) {
+        _safeModeDiagnostics.LastPs2Port = port;
+        _safeModeDiagnostics.LastPs2DataByte = value;
+        if (port == 0x64) {
+            _safeModeDiagnostics.LastPs2StatusByte = value;
+        }
+        SetSafeModePs2Operation(operation);
+    }
+
+    private static void RecordSafeModePs2Write(ushort port, byte value, string operation) {
+        _safeModeDiagnostics.LastPs2Port = port;
+        _safeModeDiagnostics.LastPs2WriteValue = value;
+        SetSafeModePs2Operation(operation);
+    }
+
+    private static void RecordSafeModeMousePacketByte(int index, byte value) {
+        _safeModeDiagnostics.LastMousePacketByteCount = index + 1;
+        if (index == 0) {
+            _safeModeDiagnostics.LastMousePacketByte0 = value;
+        } else if (index == 1) {
+            _safeModeDiagnostics.LastMousePacketByte1 = value;
+        } else if (index == 2) {
+            _safeModeDiagnostics.LastMousePacketByte2 = value;
         }
     }
 
@@ -210,9 +302,75 @@ unsafe class Program {
         }
     }
 
+    /*
+     * SAFE MODE INPUT BACKEND DIAGNOSTIC SELECTOR
+     *
+     * Change ActiveSafeModeInputBackend here when bringing up UEFI Safe Mode input.
+     * Keep this as a simple compile-time switch so the boot flow stays stable and the
+     * active diagnostic mode is obvious near the top of Program.cs.
+     *
+     * Diagnostic modes:
+     * 1. SAFE_INPUT_NONE
+     *    - Disable safe-mode PS/2 input polling completely.
+     *    - Use this when checking whether freezes or corruption happen without any input work.
+     *
+     * 2. SAFE_INPUT_PS2_KEYBOARD
+     *    - Poll only the PS/2 keyboard path.
+     *    - Use this when validating keyboard bytes without involving mouse packet handling.
+     *
+     * 3. SAFE_INPUT_PS2_MOUSE
+     *    - Poll only the PS/2 mouse path.
+     *    - Use this when validating mouse packets without involving keyboard decode logic.
+     *
+     * 4. SAFE_INPUT_PS2_BOTH
+     *    - Poll both PS/2 keyboard and PS/2 mouse paths.
+     *    - Use this for the normal safe-mode diagnostic configuration once isolated tests pass.
+     */
+    private const SafeModeInputBackend ActiveSafeModeInputBackend = SafeModeInputBackend.SAFE_INPUT_NONE;
     private const ulong SafeModeInputPollTimeoutCycles = 12000000;
     private const int SafeModeInputByteBudget = 32;
+    private const int SafeModeKeyboardByteBudget = 16;
+    private const int SafeModeMousePacketBudget = 4;
     private const int SafeModePs2WaitBudget = 512;
+    private const int SafeModeCursorRestoreWidth = 16;
+    private const int SafeModeCursorRestoreHeight = 20;
+    private const int SafeModeCursorDrawWidth = 13;
+    private const int SafeModeCursorDrawHeight = 18;
+    private const int SafeModeDiagnosticsPanelMargin = 24;
+    private const int SafeModeDiagnosticsPanelY = 82;
+    private const int SafeModeDiagnosticsPanelWidth = 340;
+    private const int SafeModeDiagnosticsPanelHeight = 222;
+    private const bool SKIP_BACKGROUND_DRAW = false;
+    private const bool SKIP_UI_DRAW = false;
+    private const bool SKIP_DESKTOP_DRAW = false;
+    private const bool SKIP_ICON_DRAW = false;
+    private const bool SKIP_TASKBAR_DRAW = false;
+    private const bool SKIP_WINDOWMANAGER_DRAW = false;
+    private const bool SKIP_DIAGNOSTICS_DRAW = false;
+    private const bool SKIP_CURSOR_DRAW = false;
+    private const bool SKIP_PRESENT = false;
+    private const bool FIRST_FRAME_SERIAL_ONLY = true;
+
+    private static bool SafeModeKeyboardEnabled =>
+        ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_PS2_KEYBOARD ||
+        ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_PS2_BOTH;
+
+    private static bool SafeModeMouseEnabled =>
+        ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_PS2_MOUSE ||
+        ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_PS2_BOTH;
+
+    private static string GetSafeModeBackendLabel() {
+        switch (ActiveSafeModeInputBackend) {
+            case SafeModeInputBackend.SAFE_INPUT_NONE:
+                return "NONE";
+            case SafeModeInputBackend.SAFE_INPUT_PS2_KEYBOARD:
+                return "PS2_KEYBOARD";
+            case SafeModeInputBackend.SAFE_INPUT_PS2_MOUSE:
+                return "PS2_MOUSE";
+            default:
+                return "PS2_BOTH";
+        }
+    }
 
     private static void UpdateSafeModeTimerState() {
         ulong ticks = GetSafeTimerTicks();
@@ -250,21 +408,27 @@ unsafe class Program {
             _safeModeDiagnostics.InputPollStatus = statusText;
         }
 
+        CompleteSafeModeInputPoll("input-exit");
+
         _safeModeDiagnostics.KeyboardStatus = _safeModeDiagnostics.KeyboardAvailable
             ? "KEYBOARD READY"
-            : "KEYBOARD UNAVAILABLE";
+            : (SafeModeKeyboardEnabled ? "KEYBOARD UNAVAILABLE" : "KEYBOARD DISABLED");
         _safeModeDiagnostics.MouseStatus = _safeModeDiagnostics.MouseAvailable
             ? "MOUSE READY"
-            : "MOUSE UNAVAILABLE";
+            : (SafeModeMouseEnabled ? "MOUSE UNAVAILABLE" : "MOUSE DISABLED");
         _safeModeDiagnostics.UsbHidStatus = _safeModeDiagnostics.UsbHidImplemented
             ? "USB HID ACTIVE"
             : "USB HID NOT IMPLEMENTED";
-        _safeModeDiagnostics.Ps2Status = _safeModeDiagnostics.InputUsingPs2Path
-            ? (_uefiInputInitialized ? "PS2 POLLING" : "PS2 PROBING")
-            : "PS2 DISABLED";
+        _safeModeDiagnostics.Ps2Status = ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_NONE
+            ? "PS2 INPUT DISABLED"
+            : ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_PS2_KEYBOARD
+                ? "PS2 KEYBOARD POLLING"
+                : ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_PS2_MOUSE
+                    ? "PS2 MOUSE POLLING"
+                    : (_uefiInputInitialized ? "PS2 KEYBOARD MOUSE" : "PS2 PROBING");
         _safeModeDiagnostics.UefiInputStatus = _safeModeDiagnostics.InputUsingUefiBootServices
             ? "UEFI INPUT PRE EXIT"
-            : "UEFI INPUT PRE EXIT ONLY";
+            : ("UEFI INPUT PRE EXIT ONLY " + GetSafeModeBackendLabel());
     }
     #endregion
     /// <summary>
@@ -930,6 +1094,14 @@ unsafe class Program {
         Native.Out8(0x3F8, (byte)c);
     }
 
+    private static void SerialBreadcrumb(string breadcrumb) {
+        if (breadcrumb == null) return;
+        for (int i = 0; i < breadcrumb.Length; i++) {
+            SerialChar(breadcrumb[i]);
+        }
+        SerialChar('\n');
+    }
+
     /// <summary>
     /// Main render loop - extracted from SMain to keep stack frames small
     /// </summary>
@@ -950,6 +1122,7 @@ unsafe class Program {
         for (; ; ) {
             try {
                 frameCounter++;
+                SetSafeModeFramePhase("frame-enter");
 
                 if (isUefi) {
                     UpdateSafeModeRenderDiagnostics(frameCounter);
@@ -974,6 +1147,7 @@ unsafe class Program {
                 // CRITICAL: Ensure Graphics object exists and points at the real framebuffer.
                 // In UEFI mode, this is only safe during the first GUI frame; repeated
                 // managed-reference repair can trip over post-ExitBootServices state.
+                SetSafeModeFramePhase("render-enter");
                 if (!isUefi || frameCounter == 1) {
                     Framebuffer.EnsureGraphics();
 
@@ -987,6 +1161,7 @@ unsafe class Program {
                         }
                     }
                 }
+                SetSafeModeFramePhase("render-exit");
 
                 if (debugFrame) SerialChar('B'); // B = EnsureGraphics done
 
@@ -1011,6 +1186,94 @@ unsafe class Program {
                     } catch { }
                 }
 
+                if (isUefi) {
+                    if (frameCounter == 1) SerialBreadcrumb("F1_BEGIN");
+
+                    if (frameCounter == 1) SerialBreadcrumb("F1_UI_ENTER");
+                    if (FIRST_FRAME_SERIAL_ONLY && frameCounter == 1) {
+                        if (!SKIP_BACKGROUND_DRAW) {
+                            SerialBreadcrumb("F1_BACKGROUND_ENTER");
+                            DrawUefiHeartbeat(frameCounter);
+                            SerialBreadcrumb("F1_BACKGROUND_EXIT");
+                        }
+
+                        if (!SKIP_UI_DRAW) {
+                            SerialBreadcrumb("F1_UI_EXIT");
+                        }
+
+                        if (!SKIP_DESKTOP_DRAW) {
+                            SerialBreadcrumb("F1_DESKTOP_ENTER");
+                            SerialBreadcrumb("F1_DESKTOP_EXIT");
+                        }
+
+                        if (!SKIP_ICON_DRAW) {
+                            SerialBreadcrumb("F1_ICONS_ENTER");
+                            SerialBreadcrumb("F1_ICONS_EXIT");
+                        }
+
+                        if (!SKIP_TASKBAR_DRAW) {
+                            SerialBreadcrumb("F1_TASKBAR_ENTER");
+                            SerialBreadcrumb("F1_START_BUTTON_ENTER");
+                            SerialBreadcrumb("F1_START_BUTTON_EXIT");
+                            SerialBreadcrumb("F1_TASKBAR_EXIT");
+                        }
+
+                        if (!SKIP_WINDOWMANAGER_DRAW) {
+                            SerialBreadcrumb("F1_WINDOWMANAGER_ENTER");
+                            SerialBreadcrumb("F1_WINDOWMANAGER_EXIT");
+                        }
+
+                        if (!SKIP_DIAGNOSTICS_DRAW) {
+                            SerialBreadcrumb("F1_DIAGNOSTICS_ENTER");
+                            SerialBreadcrumb("F1_DIAGNOSTICS_EXIT");
+                        }
+
+                        if (!SKIP_CURSOR_DRAW) {
+                            SerialBreadcrumb("F1_CURSOR_ENTER");
+                            SerialBreadcrumb("F1_CURSOR_EXIT");
+                        }
+
+                        if (!SKIP_PRESENT) {
+                            SerialBreadcrumb("F1_PRESENT_ENTER");
+                            SerialBreadcrumb("F1_PRESENT_EXIT");
+                        }
+
+                        if (frameCounter == 1) SerialBreadcrumb("F1_END");
+                        Thread.Sleep(16);
+                        continue;
+                    }
+
+                    if (frameCounter == 1) SerialBreadcrumb("F1_BACKGROUND_ENTER");
+                    if (frameCounter == 1 && !SKIP_BACKGROUND_DRAW) {
+                        DrawUefiReadyDesktop(false);
+                    } else if (frameCounter == 1 && SKIP_BACKGROUND_DRAW) {
+                        DrawUefiHeartbeat(frameCounter);
+                    }
+                    if (frameCounter == 1) SerialBreadcrumb("F1_BACKGROUND_EXIT");
+
+                    if (frameCounter == 1) SerialBreadcrumb("F1_DESKTOP_ENTER");
+                    if (!SKIP_DESKTOP_DRAW) {
+                        // UEFI desktop draw is represented by the ready desktop render above.
+                    }
+                    if (frameCounter == 1) SerialBreadcrumb("F1_DESKTOP_EXIT");
+
+                    if (frameCounter == 1) SerialBreadcrumb("F1_ICONS_ENTER");
+                    if (frameCounter == 1) SerialBreadcrumb("F1_ICONS_EXIT");
+
+                    if (frameCounter == 1) SerialBreadcrumb("F1_TASKBAR_ENTER");
+                    if (frameCounter == 1) SerialBreadcrumb("F1_START_BUTTON_ENTER");
+                    if (frameCounter == 1) SerialBreadcrumb("F1_START_BUTTON_EXIT");
+                    if (frameCounter == 1) SerialBreadcrumb("F1_TASKBAR_EXIT");
+
+                    if (frameCounter == 1) SerialBreadcrumb("F1_UI_EXIT");
+
+                    if (frameCounter == 1) SerialBreadcrumb("F1_DIAGNOSTICS_ENTER");
+                    if (!SKIP_DIAGNOSTICS_DRAW) {
+                        DrawUefiSafeModeDiagnostics();
+                    }
+                    if (frameCounter == 1) SerialBreadcrumb("F1_DIAGNOSTICS_EXIT");
+                }
+
                 if (debugFrame) SerialChar('C'); // C = pre-mouse
 
                 // Poll mouse input
@@ -1019,7 +1282,9 @@ unsafe class Program {
                 } catch { }
 
                 if (isUefi) {
+                    SetSafeModeFramePhase("input-enter");
                     PollUefiInput();
+                    SetSafeModeFramePhase("input-exit");
                 }
 
                 if (debugFrame) SerialChar('D'); // D = post-mouse
@@ -1092,12 +1357,6 @@ unsafe class Program {
 
                 if (debugFrame) SerialChar('H'); // H = post-background
 
-                if (isUefi && frameCounter == 1) {
-                    SerialChar('U'); SerialChar('I');
-                    DrawUefiReadyDesktop();
-                    SerialChar('D'); SerialChar('\n');
-                }
-
                 // Context menu - skip in UEFI (RightMenu is null)
                 if (!isUefi) {
                     try {
@@ -1155,10 +1414,6 @@ unsafe class Program {
                     WindowManager.CleanupClosedWindows();
                 } catch { }
 
-                if (isUefi) {
-                    DrawUefiSafeModeDiagnostics();
-                }
-
                 if (debugFrame) SerialChar('K'); // K = pre-cursor
 
                 // Draw cursor. UEFI uses a direct framebuffer cursor because the managed
@@ -1175,14 +1430,25 @@ unsafe class Program {
                         if (debugFrame) { SerialChar('x'); SerialChar('K'); }
                     }
                 } else {
-                    DrawUefiCursor();
+                    if (frameCounter == 1) SerialBreadcrumb("F1_CURSOR_ENTER");
+                    if (!SKIP_CURSOR_DRAW) {
+                        DrawUefiCursor();
+                    }
+                    if (frameCounter == 1) SerialBreadcrumb("F1_CURSOR_EXIT");
                 }
 
                 if (debugFrame) SerialChar('L'); // L = pre-update
 
                 //refresh screen
                 try {
-                    Framebuffer.Update();
+                    if (isUefi && frameCounter == 1) SerialBreadcrumb("F1_PRESENT_ENTER");
+                    if (!SKIP_PRESENT) {
+                        SetSafeModeFramePhase("framebuffer-update");
+                        Framebuffer.Update();
+                    }
+                    SetSafeModeFramePhase("frame-exit");
+                    CompleteSafeModeFrame("frame-exit");
+                    if (isUefi && frameCounter == 1) SerialBreadcrumb("F1_PRESENT_EXIT");
                 } catch {
                     if (debugFrame) { SerialChar('!'); SerialChar('L'); SerialChar('\n'); }
                     Thread.Sleep(1);
@@ -1240,75 +1506,93 @@ unsafe class Program {
     /// <summary>
     /// One-time UEFI ready screen drawn directly to GOP memory.
     /// </summary>
-    private static void DrawUefiReadyDesktop() {
-        uint* fb = GetUefiFramebuffer();
-        int fbW = Framebuffer.Width;
-        int fbH = Framebuffer.Height;
-        if (fb == null || fbW <= 0 || fbH <= 0) return;
+    private static void DrawUefiReadyDesktop(bool emitFirstFrameBreadcrumbs) {
+        if (!TryGetUefiFramebufferInfo(out uint* fb, out int fbW, out int fbH, out int pitchPixels, out ulong maxPixels)) return;
 
+        if (emitFirstFrameBreadcrumbs) SerialBreadcrumb("F1_BACKGROUND_ENTER");
         for (int y = 0; y < fbH; y++) {
-            int shade = (y * 64) / fbH;
+            int shade = fbH > 0 ? (y * 64) / fbH : 0;
             uint color = (uint)(0xFF102030 + (shade << 16) + (shade << 8));
-            for (int x = 0; x < fbW; x++) {
-                fb[y * fbW + x] = color;
-            }
+            DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 0, y, fbW, 1, color);
         }
 
-        DrawUefiFillRect(fb, fbW, fbH, 0, 0, fbW, 58, 0xFF182836u);
-        DrawUefiFillRect(fb, fbW, fbH, 0, fbH - 44, fbW, 44, 0xFF151A22u);
-        DrawUefiFillRect(fb, fbW, fbH, 0, 58, fbW, 2, 0xFF36C2B4u);
-        DrawUefiFillRect(fb, fbW, fbH, 0, fbH - 46, fbW, 2, 0xFF36C2B4u);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 0, 0, fbW, 58, 0xFF182836u);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 0, 58, fbW, 2, 0xFF36C2B4u);
+        if (emitFirstFrameBreadcrumbs) SerialBreadcrumb("F1_ICONS_ENTER");
+        DrawUefiTinyText(fb, fbW, fbH, pitchPixels, maxPixels, 24, 18, "GUIDEXOS SAFE MODE", 3, 0xFFFFFFFFu);
+        DrawUefiTinyText(fb, fbW, fbH, pitchPixels, maxPixels, 24, 82, "RAMDISK OK", 2, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, pitchPixels, maxPixels, 24, 110, _safeModeDiagnostics.RenderStatus, 2, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, pitchPixels, maxPixels, 24, 138, _safeModeDiagnostics.InputPollStatus, 2, 0xFFCDEEEAu);
+        if (emitFirstFrameBreadcrumbs) SerialBreadcrumb("F1_ICONS_EXIT");
+        if (emitFirstFrameBreadcrumbs) SerialBreadcrumb("F1_BACKGROUND_EXIT");
 
-        DrawUefiTinyText(fb, fbW, fbH, 24, 18, "GUIDEXOS SAFE MODE", 3, 0xFFFFFFFFu);
-        DrawUefiTinyText(fb, fbW, fbH, 24, 82, "RAMDISK OK", 2, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, 24, 110, _safeModeDiagnostics.RenderStatus, 2, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, 24, 138, _safeModeDiagnostics.InputPollStatus, 2, 0xFFCDEEEAu);
-
+        if (emitFirstFrameBreadcrumbs) SerialBreadcrumb("F1_TASKBAR_ENTER");
         int iconY = fbH > 260 ? 210 : 150;
-        DrawUefiLauncher(fb, fbW, fbH, 36, iconY, 0xFF47D6C8u, "FILES");
-        DrawUefiLauncher(fb, fbW, fbH, 132, iconY, 0xFFFFD166u, "APPS");
-        DrawUefiLauncher(fb, fbW, fbH, 228, iconY, 0xFFFF6B6Bu, "SETUP");
-
-        DrawUefiFillRect(fb, fbW, fbH, 18, fbH - 34, 92, 24, 0xFF263241u);
-        DrawUefiTinyText(fb, fbW, fbH, 30, fbH - 28, "START", 2, 0xFFFFFFFFu);
-        DrawUefiTinyText(fb, fbW, fbH, fbW - 212, fbH - 28, _safeModeDiagnostics.ReadyStatus, 2, 0xFFCDEEEAu);
+        DrawUefiLauncher(fb, fbW, fbH, pitchPixels, maxPixels, 36, iconY, 0xFF47D6C8u, "FILES");
+        DrawUefiLauncher(fb, fbW, fbH, pitchPixels, maxPixels, 132, iconY, 0xFFFFD166u, "APPS");
+        DrawUefiLauncher(fb, fbW, fbH, pitchPixels, maxPixels, 228, iconY, 0xFFFF6B6Bu, "SETUP");
+        if (emitFirstFrameBreadcrumbs) SerialBreadcrumb("F1_START_BUTTON_ENTER");
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 0, fbH - 44, fbW, 44, 0xFF151A22u);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 0, fbH - 46, fbW, 2, 0xFF36C2B4u);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 18, fbH - 34, 92, 24, 0xFF263241u);
+        DrawUefiTinyText(fb, fbW, fbH, pitchPixels, maxPixels, 30, fbH - 28, "START", 2, 0xFFFFFFFFu);
+        DrawUefiTinyText(fb, fbW, fbH, pitchPixels, maxPixels, fbW - 212, fbH - 28, _safeModeDiagnostics.ReadyStatus, 2, 0xFFCDEEEAu);
+        if (emitFirstFrameBreadcrumbs) SerialBreadcrumb("F1_START_BUTTON_EXIT");
+        if (emitFirstFrameBreadcrumbs) SerialBreadcrumb("F1_TASKBAR_EXIT");
     }
 
     private static void DrawUefiSafeModeDiagnostics() {
-        uint* fb = GetUefiFramebuffer();
-        int fbW = Framebuffer.Width;
-        int fbH = Framebuffer.Height;
-        if (fb == null || fbW <= 0 || fbH <= 0) return;
+        if (!TryGetUefiFramebufferInfo(out uint* fb, out int fbW, out int fbH, out int pitchPixels, out ulong maxPixels)) return;
 
-        int x = fbW > 820 ? fbW - 372 : 24;
-        int y = 82;
-        int w = fbW > 820 ? 340 : fbW - 48;
-        int h = 222;
-        if (w < 180) return;
+        int panelX = fbW > 820 ? fbW - (SafeModeDiagnosticsPanelWidth + SafeModeDiagnosticsPanelMargin) : SafeModeDiagnosticsPanelMargin;
+        int panelY = SafeModeDiagnosticsPanelY;
+        int panelW = fbW > 820 ? SafeModeDiagnosticsPanelWidth : fbW - (SafeModeDiagnosticsPanelMargin * 2);
+        int panelH = SafeModeDiagnosticsPanelHeight;
+        if (panelW < 180 || !TryGetClippedRect(fbW, fbH, panelX, panelY, panelW, panelH, 0, 0, fbW, fbH, out int drawX0, out int drawY0, out int drawX1, out int drawY1)) return;
 
-        DrawUefiFillRect(fb, fbW, fbH, x, y, w, h, 0xCC1A2430u);
-        DrawUefiFillRect(fb, fbW, fbH, x, y, w, 2, 0xFF36C2B4u);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, panelX, panelY, panelW, panelH, 0xCC1A2430u);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, panelX, panelY, panelW, 2, 0xFF36C2B4u);
 
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 10, "SAFE MODE DIAGNOSTICS", 1, 0xFFFFFFFFu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 28, "FRAME " + _safeModeDiagnostics.FrameCounter.ToString(), 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 42, "TICK " + _safeModeDiagnostics.TimerCounter.ToString(), 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 56, "POLL " + _safeModeDiagnostics.InputPollCounter.ToString(), 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 70, "KEY " + _safeModeDiagnostics.KeyboardEventCounter.ToString(), 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 84, "MOUSE " + _safeModeDiagnostics.MouseEventCounter.ToString(), 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 98, "FAULT " + _safeModeDiagnostics.InputPollFaultCounter.ToString(), 1, 0xFFFFD166u);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 112, "TIMEOUT " + _safeModeDiagnostics.InputPollTimeoutCounter.ToString(), 1, 0xFFFFD166u);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 126, "MAXPOLL " + _safeModeDiagnostics.MaxPollDurationTicks.ToString(), 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 140, "LASTPOLL " + _safeModeDiagnostics.LastPollDurationTicks.ToString(), 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 154, "CODE " + _safeModeDiagnostics.LastInputStatusCode.ToString(), 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 168, "LAST " + _safeModeDiagnostics.LastInputResult, 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 182, "PHASE " + _safeModeDiagnostics.LastInputPhase, 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 196, "WATCHDOG " + _safeModeDiagnostics.WatchdogSkipCounter.ToString(), 1, 0xFFFFD166u);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 210, _safeModeDiagnostics.TimerStatus, 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 224, _safeModeDiagnostics.KeyboardStatus, 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 238, _safeModeDiagnostics.MouseStatus, 1, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 252, _safeModeDiagnostics.UefiInputStatus, 1, 0xFFFFD166u);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 266, _safeModeDiagnostics.Ps2Status, 1, 0xFFFFD166u);
-        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 280, _safeModeDiagnostics.UsbHidStatus, 1, 0xFFFFD166u);
+        int textClipX = drawX0 + 10;
+        int textClipY = drawY0 + 10;
+        int textClipW = (drawX1 - drawX0) - 20;
+        int textClipH = (drawY1 - drawY0) - 20;
+        if (textClipW <= 0 || textClipH <= 0) return;
+
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 10, "SAFE MODE DIAGNOSTICS", 1, 0xFFFFFFFFu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 28, "FRAME " + _safeModeDiagnostics.FrameCounter.ToString(), 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 42, "CFRAME " + _safeModeDiagnostics.LastCompletedFrame.ToString(), 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 56, "TICK " + _safeModeDiagnostics.TimerCounter.ToString(), 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 70, "POLL " + _safeModeDiagnostics.InputPollCounter.ToString(), 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 84, "CPOLL " + _safeModeDiagnostics.LastCompletedInputPoll.ToString(), 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 98, "KEY " + _safeModeDiagnostics.KeyboardEventCounter.ToString(), 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 112, "MOUSE " + _safeModeDiagnostics.MouseEventCounter.ToString(), 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 126, "FAULT " + _safeModeDiagnostics.InputPollFaultCounter.ToString(), 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 140, "TIMEOUT " + _safeModeDiagnostics.InputPollTimeoutCounter.ToString(), 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 154, "MAXPOLL " + _safeModeDiagnostics.MaxPollDurationTicks.ToString(), 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 168, "LASTPOLL " + _safeModeDiagnostics.LastPollDurationTicks.ToString(), 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 182, "CODE " + _safeModeDiagnostics.LastInputStatusCode.ToString(), 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 196, "FRAMEPH " + _safeModeDiagnostics.LastFramePhase, 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 210, "CFRAMEPH " + _safeModeDiagnostics.LastCompletedFramePhase, 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 224, "LAST " + _safeModeDiagnostics.LastInputResult, 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 238, "PHASE " + _safeModeDiagnostics.LastInputPhase, 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 252, "SUBPH " + _safeModeDiagnostics.LastInputSubphase, 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 266, "PS2OP " + _safeModeDiagnostics.LastPs2Operation, 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 280, "PS2STS " + _safeModeDiagnostics.LastPs2StatusByte.ToString(), 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 294, "PS2DAT " + _safeModeDiagnostics.LastPs2DataByte.ToString(), 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 308, "MPKTN " + _safeModeDiagnostics.LastMousePacketByteCount.ToString(), 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 322, "MPKT0 " + _safeModeDiagnostics.LastMousePacketByte0.ToString(), 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 336, "MPKT1 " + _safeModeDiagnostics.LastMousePacketByte1.ToString(), 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 350, "MPKT2 " + _safeModeDiagnostics.LastMousePacketByte2.ToString(), 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 364, "PS2PORT " + _safeModeDiagnostics.LastPs2Port.ToString(), 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 378, "PS2WR " + _safeModeDiagnostics.LastPs2WriteValue.ToString(), 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 392, "WATCHDOG " + _safeModeDiagnostics.WatchdogSkipCounter.ToString(), 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 406, _safeModeDiagnostics.TimerStatus, 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 420, _safeModeDiagnostics.KeyboardStatus, 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 434, _safeModeDiagnostics.MouseStatus, 1, 0xFFCDEEEAu, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 448, _safeModeDiagnostics.UefiInputStatus, 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 462, _safeModeDiagnostics.Ps2Status, 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, textClipX, panelY + 476, _safeModeDiagnostics.UsbHidStatus, 1, 0xFFFFD166u, textClipX, textClipY, textClipW, textClipH);
     }
 
     private static uint* GetUefiFramebuffer() {
@@ -1324,9 +1608,19 @@ unsafe class Program {
         }
 
         ulong pollStart = GetSafeCycleCounter();
+        int keyboardBytesProcessed = 0;
+        int mousePacketsProcessed = 0;
         _safeModeDiagnostics.InputPollCounter++;
         SetSafeModeInputPhase("POLL-ENTER");
         SetSafeModeInputResult("POLLING", 0);
+        SetSafeModeInputSubphase("ps2-poll-enter");
+
+        if (ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_NONE) {
+            SetSafeModeInputSubphase("input-disabled");
+            SetSafeModeInputResult("INPUT-DISABLED", 0);
+            FinalizeSafeModeInputPoll(pollStart, "INPUT DISABLED");
+            return;
+        }
 
         Framebuffer.RecoverUefiState();
         try {
@@ -1342,34 +1636,70 @@ unsafe class Program {
                     return;
                 }
 
+                SetSafeModeInputSubphase("ps2-status-read");
                 byte status = Native.In8(0x64);
+                RecordSafeModePs2Read(0x64, status, "read-status");
                 if ((status & 0x01) == 0) {
                     SetSafeModeInputPhase("POLL-EXIT");
+                    SetSafeModeInputSubphase("input-exit");
                     SetSafeModeInputResult("NO-DATA", 0);
                     FinalizeSafeModeInputPoll(pollStart, "INPUT POLL " + _safeModeDiagnostics.InputPollCounter.ToString());
                     return;
                 }
 
                 bool fromMouse = (status & 0x20) != 0;
+                SetSafeModeInputSubphase("ps2-data-read");
                 byte data = Native.In8(0x60);
+                RecordSafeModePs2Read(0x60, data, fromMouse ? "read-mouse-data" : "read-keyboard-data");
                 if (!_uefiAnyInputByteSeen) {
                     _uefiAnyInputByteSeen = true;
                     SerialChar('D'); SerialChar('A'); SerialChar('T'); SerialChar('\n');
                 }
 
                 if (fromMouse) {
-                    ProcessUefiPs2MouseByte(data);
+                    if (!SafeModeMouseEnabled) {
+                        SetSafeModeInputSubphase("mouse-disabled-skip");
+                        SetSafeModeInputResult("MOUSE-DISABLED", data);
+                        continue;
+                    }
+
+                    if (mousePacketsProcessed >= SafeModeMousePacketBudget && _uefiMousePhase == 0) {
+                        SetSafeModeInputSubphase("mouse-cap-reached");
+                        SetSafeModeInputResult("MOUSE-CAP", (ulong)mousePacketsProcessed);
+                        FinalizeSafeModeInputPoll(pollStart, "INPUT POLL " + _safeModeDiagnostics.InputPollCounter.ToString());
+                        return;
+                    }
+
+                    if (ProcessUefiPs2MouseByte(data)) {
+                        mousePacketsProcessed++;
+                    }
                 } else {
+                    if (!SafeModeKeyboardEnabled) {
+                        SetSafeModeInputSubphase("keyboard-disabled-skip");
+                        SetSafeModeInputResult("KEYBOARD-DISABLED", data);
+                        continue;
+                    }
+
+                    if (keyboardBytesProcessed >= SafeModeKeyboardByteBudget) {
+                        SetSafeModeInputSubphase("keyboard-cap-reached");
+                        SetSafeModeInputResult("KEYBOARD-CAP", (ulong)keyboardBytesProcessed);
+                        FinalizeSafeModeInputPoll(pollStart, "INPUT POLL " + _safeModeDiagnostics.InputPollCounter.ToString());
+                        return;
+                    }
+
+                    keyboardBytesProcessed++;
                     ProcessUefiPs2KeyboardByte(data);
                 }
             }
 
             SetSafeModeInputPhase("POLL-EXIT");
+            SetSafeModeInputSubphase("input-exit");
             SetSafeModeInputResult("BYTE-BUDGET", (ulong)SafeModeInputByteBudget);
             FinalizeSafeModeInputPoll(pollStart, "INPUT POLL " + _safeModeDiagnostics.InputPollCounter.ToString());
         } catch {
             _safeModeDiagnostics.InputPollFaultCounter++;
             SetSafeModeInputPhase("POLL-ERROR");
+            SetSafeModeInputSubphase("poll-error");
             SetSafeModeInputResult("FAULT", 2);
             FinalizeSafeModeInputPoll(pollStart, "INPUT POLL FAULT");
         }
@@ -1514,24 +1844,54 @@ unsafe class Program {
 
         return ConsoleKey.None;
     }
-    private static void ProcessUefiPs2MouseByte(byte data) {
-        if (data == 0xFA || data == 0xFE) return;
+    private static bool ProcessUefiPs2MouseByte(byte data) {
+        if (data == 0xFA || data == 0xFE) return false;
+
+        if (_uefiMousePhase < 0 || _uefiMousePhase > 2) {
+            _uefiMousePhase = 0;
+            SetSafeModeInputSubphase("ps2-mouse-reset");
+            SetSafeModeInputResult("MOUSE-PHASE-RESET", (ulong)data);
+        }
 
         if (_uefiMousePhase == 0) {
-            if ((data & 0x08) == 0) return;
-            if ((data & 0xC0) != 0) return;
+            SetSafeModeInputSubphase("ps2-mouse-byte");
+            RecordSafeModeMousePacketByte(0, data);
+            if ((data & 0x08) == 0) {
+                SetSafeModeInputResult("MOUSE-BAD-SYNC", (ulong)data);
+                return false;
+            }
+            if ((data & 0xC0) != 0) {
+                SetSafeModeInputResult("MOUSE-OVERFLOW", (ulong)data);
+                return false;
+            }
             _uefiMouseB0 = data;
             _uefiMousePhase = 1;
-            return;
+            return false;
         }
         if (_uefiMousePhase == 1) {
+            SetSafeModeInputSubphase("ps2-mouse-byte");
+            RecordSafeModeMousePacketByte(1, data);
             _uefiMouseB1 = data;
             _uefiMousePhase = 2;
-            return;
+            return false;
         }
 
+        SetSafeModeInputSubphase("ps2-mouse-packet");
+        RecordSafeModeMousePacketByte(2, data);
         byte b2 = data;
         _uefiMousePhase = 0;
+
+        if ((_uefiMouseB0 & 0x08) == 0) {
+            SetSafeModeInputResult("MOUSE-PACKET-DESYNC", (ulong)_uefiMouseB0);
+            return false;
+        }
+
+        bool xOverflow = (_uefiMouseB0 & 0x40) != 0;
+        bool yOverflow = (_uefiMouseB0 & 0x80) != 0;
+        if (xOverflow || yOverflow) {
+            SetSafeModeInputResult("MOUSE-PACKET-OVERFLOW", (ulong)_uefiMouseB0);
+            return false;
+        }
 
         int dx = _uefiMouseB1;
         int dy = b2;
@@ -1543,6 +1903,7 @@ unsafe class Program {
 
         int maxX = Framebuffer.Width > 0 ? Framebuffer.Width - 1 : 0;
         int maxY = Framebuffer.Height > 0 ? Framebuffer.Height - 1 : 0;
+        SetSafeModeInputSubphase("ps2-mouse-apply");
         Control.MousePosition.X = Math.Clamp(Control.MousePosition.X + dx, 0, maxX);
         Control.MousePosition.Y = Math.Clamp(Control.MousePosition.Y - dy, 0, maxY);
 
@@ -1559,6 +1920,7 @@ unsafe class Program {
         SetSafeModeInputPhase("MOUSE-EVENT");
         SetSafeModeInputResult("MOUSE", (ulong)_uefiMouseB0);
         Control.MouseButtons = buttons;
+        return true;
     }
 
     private static bool UefiPs2WaitInputClear() {
@@ -1684,15 +2046,96 @@ unsafe class Program {
         }
     }
 
-    private static void DrawUefiCursor() {
+    private static bool TryGetUefiFramebufferInfo(out uint* fb, out int fbW, out int fbH, out int pitchPixels, out ulong maxPixels) {
         Framebuffer.RecoverUefiState();
-        uint* fb = GetUefiFramebuffer();
-        int fbW = Framebuffer.Width;
-        int fbH = Framebuffer.Height;
-        if (fb == null || fbW <= 0 || fbH <= 0) return;
+        fb = GetUefiFramebuffer();
+        fbW = Framebuffer.Width;
+        fbH = Framebuffer.Height;
+        pitchPixels = fbW;
+        maxPixels = 0;
 
-        if (_uefiCursorEverDrawn) {
-            RestoreUefiCursorArea(fb, fbW, fbH, _uefiCursorLastX, _uefiCursorLastY);
+        if (fb == null || fbW <= 0 || fbH <= 0) return false;
+
+        UefiBootInfo* bootInfo = Framebuffer.OriginalBootInfo;
+        if (bootInfo != null) {
+            if (bootInfo->FramebufferBase == 0 || bootInfo->FramebufferWidth == 0 || bootInfo->FramebufferHeight == 0) return false;
+            if (bootInfo->FramebufferPitch == 0 || (bootInfo->FramebufferPitch & 3u) != 0) return false;
+
+            fbW = (int)bootInfo->FramebufferWidth;
+            fbH = (int)bootInfo->FramebufferHeight;
+            pitchPixels = (int)(bootInfo->FramebufferPitch / 4u);
+            if (fbW <= 0 || fbH <= 0 || pitchPixels <= 0 || pitchPixels < fbW) return false;
+
+            ulong requiredBytes = (ulong)(uint)pitchPixels * (ulong)(uint)fbH * 4UL;
+            if (requiredBytes == 0) return false;
+            if (bootInfo->FramebufferSize != 0) {
+                if (requiredBytes > bootInfo->FramebufferSize) return false;
+                maxPixels = bootInfo->FramebufferSize / 4UL;
+            } else {
+                maxPixels = (ulong)(uint)pitchPixels * (ulong)(uint)fbH;
+            }
+
+            return true;
+        }
+
+        if (pitchPixels < fbW) return false;
+        maxPixels = (ulong)(uint)pitchPixels * (ulong)(uint)fbH;
+        return maxPixels != 0;
+    }
+
+    private static bool TryGetClippedRect(int fbW, int fbH, int x, int y, int w, int h, int clipX, int clipY, int clipW, int clipH, out int x0, out int y0, out int x1, out int y1) {
+        x0 = 0;
+        y0 = 0;
+        x1 = 0;
+        y1 = 0;
+        if (fbW <= 0 || fbH <= 0 || w <= 0 || h <= 0 || clipW <= 0 || clipH <= 0) return false;
+
+        long left = x;
+        long top = y;
+        long right = left + w;
+        long bottom = top + h;
+
+        long clipLeft = clipX;
+        long clipTop = clipY;
+        long clipRight = clipLeft + clipW;
+        long clipBottom = clipTop + clipH;
+
+        if (clipLeft < 0) clipLeft = 0;
+        if (clipTop < 0) clipTop = 0;
+        if (clipRight > fbW) clipRight = fbW;
+        if (clipBottom > fbH) clipBottom = fbH;
+        if (clipRight <= clipLeft || clipBottom <= clipTop) return false;
+
+        if (left < clipLeft) left = clipLeft;
+        if (top < clipTop) top = clipTop;
+        if (right > clipRight) right = clipRight;
+        if (bottom > clipBottom) bottom = clipBottom;
+        if (left >= right || top >= bottom) return false;
+
+        x0 = (int)left;
+        y0 = (int)top;
+        x1 = (int)right;
+        y1 = (int)bottom;
+        return true;
+    }
+
+    private static bool TryWriteUefiPixel(uint* fb, int fbW, int fbH, int pitchPixels, ulong maxPixels, int x, int y, uint color) {
+        if (fb == null || fbW <= 0 || fbH <= 0 || pitchPixels <= 0) return false;
+        if ((uint)x >= (uint)fbW || (uint)y >= (uint)fbH) return false;
+
+        ulong offset = ((ulong)(uint)y * (ulong)(uint)pitchPixels) + (ulong)(uint)x;
+        if (maxPixels != 0 && offset >= maxPixels) return false;
+        if (offset > int.MaxValue) return false;
+
+        fb[(int)offset] = color;
+        return true;
+    }
+
+    private static void DrawUefiCursor() {
+        if (!TryGetUefiFramebufferInfo(out uint* fb, out int fbW, out int fbH, out int pitchPixels, out ulong maxPixels)) return;
+
+        if (_uefiCursorEverDrawn && IsUefiCursorAreaRestorable(_uefiCursorLastX, _uefiCursorLastY, fbW, fbH)) {
+            RestoreUefiCursorArea(fb, fbW, fbH, pitchPixels, maxPixels, _uefiCursorLastX, _uefiCursorLastY);
         }
 
         int x = Math.Clamp(Control.MousePosition.X, 0, fbW - 1);
@@ -1701,15 +2144,14 @@ unsafe class Program {
         uint fill = pressed ? 0xFFFFD166u : 0xFFFFFFFFu;
         uint edge = 0xFF000000u;
 
-        for (int yy = 0; yy < 18; yy++) {
-            for (int xx = 0; xx < 13; xx++) {
+        for (int yy = 0; yy < SafeModeCursorDrawHeight; yy++) {
+            for (int xx = 0; xx < SafeModeCursorDrawWidth; xx++) {
                 bool outline = xx == 0 || yy == 0 || xx == yy || (yy > 8 && xx == 5) || (yy > 8 && yy < 15 && xx == 6);
                 bool inside = xx < yy && xx < 9;
                 if (!outline && !inside) continue;
                 int px = x + xx;
                 int py = y + yy;
-                if ((uint)px >= (uint)fbW || (uint)py >= (uint)fbH) continue;
-                fb[py * fbW + px] = outline ? edge : fill;
+                TryWriteUefiPixel(fb, fbW, fbH, pitchPixels, maxPixels, px, py, outline ? edge : fill);
             }
         }
 
@@ -1718,19 +2160,25 @@ unsafe class Program {
         _uefiCursorEverDrawn = true;
     }
 
-    private static void RestoreUefiCursorArea(uint* fb, int fbW, int fbH, int x, int y) {
-        for (int yy = y; yy < y + 20; yy++) {
-            if ((uint)yy >= (uint)fbH) continue;
+    private static bool IsUefiCursorAreaRestorable(int x, int y, int fbW, int fbH) {
+        if (fbW <= 0 || fbH <= 0) return false;
+        if (x <= -SafeModeCursorRestoreWidth || y <= -SafeModeCursorRestoreHeight) return false;
+        if (x >= fbW || y >= fbH) return false;
+        return true;
+    }
+
+    private static void RestoreUefiCursorArea(uint* fb, int fbW, int fbH, int pitchPixels, ulong maxPixels, int x, int y) {
+        if (!TryGetClippedRect(fbW, fbH, x, y, SafeModeCursorRestoreWidth, SafeModeCursorRestoreHeight, 0, 0, fbW, fbH, out int startX, out int startY, out int endX, out int endY)) return;
+
+        for (int yy = startY; yy < endY; yy++) {
             int shade = (yy * 64) / fbH;
             uint color = (uint)(0xFF102030 + (shade << 16) + (shade << 8));
             if (yy < 58) color = 0xFF182836u;
             if (yy >= fbH - 44) color = 0xFF151A22u;
             if ((yy >= 58 && yy < 60) || (yy >= fbH - 46 && yy < fbH - 44)) color = 0xFF36C2B4u;
 
-            int row = yy * fbW;
-            for (int xx = x; xx < x + 16; xx++) {
-                if ((uint)xx >= (uint)fbW) continue;
-                fb[row + xx] = color;
+            for (int xx = startX; xx < endX; xx++) {
+                TryWriteUefiPixel(fb, fbW, fbH, pitchPixels, maxPixels, xx, yy, color);
             }
         }
     }
@@ -1742,49 +2190,67 @@ unsafe class Program {
         if (x < 310 && y + 20 >= iconY && y <= iconY + 92) return true;
         return false;
     }
-    private static void DrawUefiLauncher(uint* fb, int fbW, int fbH, int x, int y, uint color, string label) {
-        DrawUefiFillRect(fb, fbW, fbH, x, y, 58, 58, 0xFF203040u);
-        DrawUefiFillRect(fb, fbW, fbH, x + 8, y + 8, 42, 42, color);
-        DrawUefiFillRect(fb, fbW, fbH, x + 14, y + 18, 30, 4, 0xCCFFFFFFu);
-        DrawUefiFillRect(fb, fbW, fbH, x + 14, y + 30, 30, 4, 0xCCFFFFFFu);
-        DrawUefiTinyText(fb, fbW, fbH, x, y + 66, label, 2, 0xFFFFFFFFu);
+    private static void DrawUefiLauncher(uint* fb, int fbW, int fbH, int pitchPixels, ulong maxPixels, int x, int y, uint color, string label) {
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, x, y, 58, 58, 0xFF203040u);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, x + 8, y + 8, 42, 42, color);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, x + 14, y + 18, 30, 4, 0xCCFFFFFFu);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, x + 14, y + 30, 30, 4, 0xCCFFFFFFu);
+        DrawUefiTinyText(fb, fbW, fbH, pitchPixels, maxPixels, x, y + 66, label, 2, 0xFFFFFFFFu);
     }
 
-    private static void DrawUefiFillRect(uint* fb, int fbW, int fbH, int x, int y, int w, int h, uint color) {
-        int x0 = x < 0 ? 0 : x;
-        int y0 = y < 0 ? 0 : y;
-        int x1 = x + w;
-        int y1 = y + h;
-        if (x1 > fbW) x1 = fbW;
-        if (y1 > fbH) y1 = fbH;
-        if (x1 <= x0 || y1 <= y0) return;
+    private static void DrawUefiFillRect(uint* fb, int fbW, int fbH, int pitchPixels, ulong maxPixels, int x, int y, int w, int h, uint color) {
+        if (!TryGetClippedRect(fbW, fbH, x, y, w, h, 0, 0, fbW, fbH, out int x0, out int y0, out int x1, out int y1)) return;
         for (int yy = y0; yy < y1; yy++) {
-            int row = yy * fbW;
             for (int xx = x0; xx < x1; xx++) {
-                fb[row + xx] = color;
+                TryWriteUefiPixel(fb, fbW, fbH, pitchPixels, maxPixels, xx, yy, color);
             }
         }
     }
 
-    private static void DrawUefiTinyText(uint* fb, int fbW, int fbH, int x, int y, string text, int scale, uint color) {
+    private static void DrawUefiTinyText(uint* fb, int fbW, int fbH, int pitchPixels, ulong maxPixels, int x, int y, string text, int scale, uint color) {
+        DrawUefiTinyTextClipped(fb, fbW, fbH, pitchPixels, maxPixels, x, y, text, scale, color, 0, 0, fbW, fbH);
+    }
+
+    private static void DrawUefiTinyTextClipped(uint* fb, int fbW, int fbH, int pitchPixels, ulong maxPixels, int x, int y, string text, int scale, uint color, int clipX, int clipY, int clipW, int clipH) {
+        if (fb == null || text == null || scale <= 0 || clipW <= 0 || clipH <= 0) return;
+
+        int glyphWidth = 5 * scale;
+        int glyphHeight = 7 * scale;
+        int advance = 6 * scale;
+        int spaceAdvance = 4 * scale;
+        long clipRight = (long)clipX + clipW;
+        long clipBottom = (long)clipY + clipH;
+
+        if (y < clipY || y >= clipBottom) return;
+        if ((long)y + glyphHeight > clipBottom) return;
+
         int cursorX = x;
         for (int i = 0; i < text.Length; i++) {
             char c = text[i];
             if (c == ' ') {
-                cursorX += 4 * scale;
+                if ((long)cursorX + spaceAdvance > clipRight) break;
+                cursorX += spaceAdvance;
                 continue;
             }
-            DrawUefiGlyph(fb, fbW, fbH, cursorX, y, c, scale, color);
-            cursorX += 6 * scale;
+
+            if ((long)cursorX + glyphWidth > clipRight) break;
+            DrawUefiGlyph(fb, fbW, fbH, pitchPixels, maxPixels, cursorX, y, c, scale, color, clipX, clipY, clipW, clipH);
+            cursorX += advance;
         }
     }
 
-    private static void DrawUefiGlyph(uint* fb, int fbW, int fbH, int x, int y, char c, int scale, uint color) {
+    private static void DrawUefiGlyph(uint* fb, int fbW, int fbH, int pitchPixels, ulong maxPixels, int x, int y, char c, int scale, uint color, int clipX, int clipY, int clipW, int clipH) {
         for (int row = 0; row < 7; row++) {
             byte bits = UefiGlyphRow(c, row);
             for (int col = 0; col < 5; col++) {
                 if ((bits & (1 << (4 - col))) == 0) continue;
-                DrawUefiFillRect(fb, fbW, fbH, x + col * scale, y + row * scale, scale, scale, color);
+                if (TryGetClippedRect(fbW, fbH, x + (col * scale), y + (row * scale), scale, scale, clipX, clipY, clipW, clipH, out int gx0, out int gy0, out int gx1, out int gy1)) {
+                    for (int yy = gy0; yy < gy1; yy++) {
+                        for (int xx = gx0; xx < gx1; xx++) {
+                            TryWriteUefiPixel(fb, fbW, fbH, pitchPixels, maxPixels, xx, yy, color);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1830,26 +2296,15 @@ unsafe class Program {
     /// Tiny UEFI proof-of-life marker drawn directly to GOP memory.
     /// </summary>
     private static void DrawUefiHeartbeat(int frameCounter) {
-        uint* fb = Framebuffer.OriginalVideoMemory != null
-            ? Framebuffer.OriginalVideoMemory
-            : (Framebuffer.VideoMemory != null
-                ? Framebuffer.VideoMemory
-                : (Framebuffer.Graphics != null ? Framebuffer.Graphics.VideoMemory : null));
-        int fbW = Framebuffer.Width;
-        int fbH = Framebuffer.Height;
-
-        if (fb == null || fbW <= 0 || fbH <= 0) {
-            return;
-        }
+        if (!TryGetUefiFramebufferInfo(out uint* fb, out int fbW, out int fbH, out int pitchPixels, out ulong maxPixels)) return;
 
         uint color = ((frameCounter / 30) & 1) == 0 ? 0xFFFFFFFFu : 0xFFFF3040u;
         int maxY = fbH < 24 ? fbH : 24;
         int maxX = fbW < 24 ? fbW : 24;
 
         for (int y = 8; y < maxY; y++) {
-            int row = y * fbW;
             for (int x = 8; x < maxX; x++) {
-                fb[row + x] = color;
+                TryWriteUefiPixel(fb, fbW, fbH, pitchPixels, maxPixels, x, y, color);
             }
         }
     }
