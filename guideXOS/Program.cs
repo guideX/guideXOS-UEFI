@@ -114,6 +114,158 @@ unsafe class Program {
     private static bool _uefiAnyInputByteSeen = false;
     private static bool _uefiSerialSeen = false;
     private static bool _uefiUnknownKeySeen = false;
+
+    private sealed class SafeModeDiagnostics {
+        public ulong FrameCounter;
+        public ulong TimerCounter;
+        public ulong InputPollCounter;
+        public ulong KeyboardEventCounter;
+        public ulong MouseEventCounter;
+        public ulong InputPollFaultCounter;
+        public ulong InputPollTimeoutCounter;
+        public ulong WatchdogSkipCounter;
+        public ulong LastPollDurationTicks;
+        public ulong MaxPollDurationTicks;
+        public ulong LastInputStatusCode;
+        public string LastInputResult;
+        public string LastInputPhase;
+        public string InputPollStatus;
+        public string KeyboardStatus;
+        public string MouseStatus;
+        public string UsbHidStatus;
+        public string Ps2Status;
+        public string UefiInputStatus;
+        public string TimerStatus;
+        public string RenderStatus;
+        public string ReadyStatus;
+        public bool KeyboardAvailable;
+        public bool MouseAvailable;
+        public bool TimerTickAvailable;
+        public bool RenderingAlive;
+        public bool InputUsingPs2Path;
+        public bool InputUsingUefiBootServices;
+        public bool UsbHidImplemented;
+    }
+
+    private static readonly SafeModeDiagnostics _safeModeDiagnostics = new SafeModeDiagnostics();
+
+    private static void ResetSafeModeDiagnostics() {
+        _safeModeDiagnostics.FrameCounter = 0;
+        _safeModeDiagnostics.TimerCounter = 0;
+        _safeModeDiagnostics.InputPollCounter = 0;
+        _safeModeDiagnostics.KeyboardEventCounter = 0;
+        _safeModeDiagnostics.MouseEventCounter = 0;
+        _safeModeDiagnostics.InputPollFaultCounter = 0;
+        _safeModeDiagnostics.InputPollTimeoutCounter = 0;
+        _safeModeDiagnostics.WatchdogSkipCounter = 0;
+        _safeModeDiagnostics.LastPollDurationTicks = 0;
+        _safeModeDiagnostics.MaxPollDurationTicks = 0;
+        _safeModeDiagnostics.LastInputStatusCode = 0;
+        _safeModeDiagnostics.LastInputResult = "idle";
+        _safeModeDiagnostics.LastInputPhase = "init-start";
+        _safeModeDiagnostics.InputPollStatus = "INPUT POLL INIT";
+        _safeModeDiagnostics.KeyboardStatus = "KEYBOARD: unavailable";
+        _safeModeDiagnostics.MouseStatus = "MOUSE: unavailable";
+        _safeModeDiagnostics.UsbHidStatus = "USB HID: not implemented";
+        _safeModeDiagnostics.Ps2Status = "PS/2: probing";
+        _safeModeDiagnostics.UefiInputStatus = "UEFI input: pre-exit only";
+        _safeModeDiagnostics.TimerStatus = "TIMER: checking";
+        _safeModeDiagnostics.RenderStatus = "RENDER LOOP ACTIVE";
+        _safeModeDiagnostics.ReadyStatus = "SAFE MODE READY";
+        _safeModeDiagnostics.KeyboardAvailable = false;
+        _safeModeDiagnostics.MouseAvailable = false;
+        _safeModeDiagnostics.TimerTickAvailable = false;
+        _safeModeDiagnostics.RenderingAlive = false;
+        _safeModeDiagnostics.InputUsingPs2Path = true;
+        _safeModeDiagnostics.InputUsingUefiBootServices = false;
+        _safeModeDiagnostics.UsbHidImplemented = false;
+    }
+
+    private static void SetSafeModeInputPhase(string phase) {
+        if (phase != null) {
+            _safeModeDiagnostics.LastInputPhase = phase;
+        }
+    }
+
+    private static void SetSafeModeInputResult(string result, ulong statusCode) {
+        if (result != null) {
+            _safeModeDiagnostics.LastInputResult = result;
+        }
+        _safeModeDiagnostics.LastInputStatusCode = statusCode;
+    }
+
+    private static ulong GetSafeTimerTicks() {
+        try {
+            return Timer.Ticks;
+        } catch {
+            return 0;
+        }
+    }
+
+    private static ulong GetSafeCycleCounter() {
+        try {
+            return Native.Rdtsc();
+        } catch {
+            return 0;
+        }
+    }
+
+    private const ulong SafeModeInputPollTimeoutCycles = 12000000;
+    private const int SafeModeInputByteBudget = 32;
+    private const int SafeModePs2WaitBudget = 512;
+
+    private static void UpdateSafeModeTimerState() {
+        ulong ticks = GetSafeTimerTicks();
+        _safeModeDiagnostics.TimerCounter = ticks;
+        _safeModeDiagnostics.TimerTickAvailable = ticks != 0;
+        _safeModeDiagnostics.TimerStatus = ticks != 0 ? "TIMER TICKING" : "TIMER STALLED ZERO";
+    }
+
+    private static void UpdateSafeModeRenderDiagnostics(int frameCounter) {
+        _safeModeDiagnostics.FrameCounter = (ulong)frameCounter;
+        _safeModeDiagnostics.RenderingAlive = true;
+        _safeModeDiagnostics.RenderStatus = "RENDER LOOP ACTIVE";
+        _safeModeDiagnostics.ReadyStatus = frameCounter >= 4 ? "SAFE MODE READY" : "SAFE MODE STARTING";
+        UpdateSafeModeTimerState();
+    }
+
+    private static bool HasSafeModeInputTimedOut(ulong startCycles) {
+        if (startCycles == 0) return false;
+        ulong currentCycles = GetSafeCycleCounter();
+        if (currentCycles == 0 || currentCycles < startCycles) return false;
+        return (currentCycles - startCycles) > SafeModeInputPollTimeoutCycles;
+    }
+
+    private static void FinalizeSafeModeInputPoll(ulong startCycles, string statusText) {
+        ulong endCycles = GetSafeCycleCounter();
+        if (startCycles != 0 && endCycles >= startCycles) {
+            ulong duration = endCycles - startCycles;
+            _safeModeDiagnostics.LastPollDurationTicks = duration;
+            if (duration > _safeModeDiagnostics.MaxPollDurationTicks) {
+                _safeModeDiagnostics.MaxPollDurationTicks = duration;
+            }
+        }
+
+        if (statusText != null) {
+            _safeModeDiagnostics.InputPollStatus = statusText;
+        }
+
+        _safeModeDiagnostics.KeyboardStatus = _safeModeDiagnostics.KeyboardAvailable
+            ? "KEYBOARD READY"
+            : "KEYBOARD UNAVAILABLE";
+        _safeModeDiagnostics.MouseStatus = _safeModeDiagnostics.MouseAvailable
+            ? "MOUSE READY"
+            : "MOUSE UNAVAILABLE";
+        _safeModeDiagnostics.UsbHidStatus = _safeModeDiagnostics.UsbHidImplemented
+            ? "USB HID ACTIVE"
+            : "USB HID NOT IMPLEMENTED";
+        _safeModeDiagnostics.Ps2Status = _safeModeDiagnostics.InputUsingPs2Path
+            ? (_uefiInputInitialized ? "PS2 POLLING" : "PS2 PROBING")
+            : "PS2 DISABLED";
+        _safeModeDiagnostics.UefiInputStatus = _safeModeDiagnostics.InputUsingUefiBootServices
+            ? "UEFI INPUT PRE EXIT"
+            : "UEFI INPUT PRE EXIT ONLY";
+    }
     #endregion
     /// <summary>
     /// USB Mouse Test
@@ -789,9 +941,19 @@ unsafe class Program {
         int frameCounter = 0;
         bool isUefi = (BootConsole.CurrentMode == guideXOS.BootMode.UEFI);
 
+        if (isUefi) {
+            ResetSafeModeDiagnostics();
+            SetSafeModeInputPhase("INIT-OK");
+            SetSafeModeInputResult("READY", 0);
+        }
+
         for (; ; ) {
             try {
                 frameCounter++;
+
+                if (isUefi) {
+                    UpdateSafeModeRenderDiagnostics(frameCounter);
+                }
 
                 // In UEFI mode, optionally use simplified direct framebuffer rendering (debug-only)
                 if (isUefi && _useUefiDirectRenderer) {
@@ -993,6 +1155,10 @@ unsafe class Program {
                     WindowManager.CleanupClosedWindows();
                 } catch { }
 
+                if (isUefi) {
+                    DrawUefiSafeModeDiagnostics();
+                }
+
                 if (debugFrame) SerialChar('K'); // K = pre-cursor
 
                 // Draw cursor. UEFI uses a direct framebuffer cursor because the managed
@@ -1026,6 +1192,7 @@ unsafe class Program {
                 if (debugFrame) { SerialChar('Z'); SerialChar('\n'); } // Z = frame complete
 
                 if (isUefi && frameCounter == 4) {
+                    _safeModeDiagnostics.ReadyStatus = "SAFE MODE READY";
                     BootConsole.WriteLine("[SAFE_MODE] READY");
                     SerialChar('R'); SerialChar('E'); SerialChar('A'); SerialChar('D'); SerialChar('Y'); SerialChar('\n');
                 }
@@ -1094,8 +1261,8 @@ unsafe class Program {
 
         DrawUefiTinyText(fb, fbW, fbH, 24, 18, "GUIDEXOS SAFE MODE", 3, 0xFFFFFFFFu);
         DrawUefiTinyText(fb, fbW, fbH, 24, 82, "RAMDISK OK", 2, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, 24, 110, "RENDER LOOP ACTIVE", 2, 0xFFCDEEEAu);
-        DrawUefiTinyText(fb, fbW, fbH, 24, 138, "INPUT POLL ACTIVE", 2, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, 24, 110, _safeModeDiagnostics.RenderStatus, 2, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, 24, 138, _safeModeDiagnostics.InputPollStatus, 2, 0xFFCDEEEAu);
 
         int iconY = fbH > 260 ? 210 : 150;
         DrawUefiLauncher(fb, fbW, fbH, 36, iconY, 0xFF47D6C8u, "FILES");
@@ -1104,7 +1271,44 @@ unsafe class Program {
 
         DrawUefiFillRect(fb, fbW, fbH, 18, fbH - 34, 92, 24, 0xFF263241u);
         DrawUefiTinyText(fb, fbW, fbH, 30, fbH - 28, "START", 2, 0xFFFFFFFFu);
-        DrawUefiTinyText(fb, fbW, fbH, fbW - 212, fbH - 28, "SAFE MODE READY", 2, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, fbW - 212, fbH - 28, _safeModeDiagnostics.ReadyStatus, 2, 0xFFCDEEEAu);
+    }
+
+    private static void DrawUefiSafeModeDiagnostics() {
+        uint* fb = GetUefiFramebuffer();
+        int fbW = Framebuffer.Width;
+        int fbH = Framebuffer.Height;
+        if (fb == null || fbW <= 0 || fbH <= 0) return;
+
+        int x = fbW > 820 ? fbW - 372 : 24;
+        int y = 82;
+        int w = fbW > 820 ? 340 : fbW - 48;
+        int h = 222;
+        if (w < 180) return;
+
+        DrawUefiFillRect(fb, fbW, fbH, x, y, w, h, 0xCC1A2430u);
+        DrawUefiFillRect(fb, fbW, fbH, x, y, w, 2, 0xFF36C2B4u);
+
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 10, "SAFE MODE DIAGNOSTICS", 1, 0xFFFFFFFFu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 28, "FRAME " + _safeModeDiagnostics.FrameCounter.ToString(), 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 42, "TICK " + _safeModeDiagnostics.TimerCounter.ToString(), 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 56, "POLL " + _safeModeDiagnostics.InputPollCounter.ToString(), 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 70, "KEY " + _safeModeDiagnostics.KeyboardEventCounter.ToString(), 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 84, "MOUSE " + _safeModeDiagnostics.MouseEventCounter.ToString(), 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 98, "FAULT " + _safeModeDiagnostics.InputPollFaultCounter.ToString(), 1, 0xFFFFD166u);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 112, "TIMEOUT " + _safeModeDiagnostics.InputPollTimeoutCounter.ToString(), 1, 0xFFFFD166u);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 126, "MAXPOLL " + _safeModeDiagnostics.MaxPollDurationTicks.ToString(), 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 140, "LASTPOLL " + _safeModeDiagnostics.LastPollDurationTicks.ToString(), 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 154, "CODE " + _safeModeDiagnostics.LastInputStatusCode.ToString(), 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 168, "LAST " + _safeModeDiagnostics.LastInputResult, 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 182, "PHASE " + _safeModeDiagnostics.LastInputPhase, 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 196, "WATCHDOG " + _safeModeDiagnostics.WatchdogSkipCounter.ToString(), 1, 0xFFFFD166u);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 210, _safeModeDiagnostics.TimerStatus, 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 224, _safeModeDiagnostics.KeyboardStatus, 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 238, _safeModeDiagnostics.MouseStatus, 1, 0xFFCDEEEAu);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 252, _safeModeDiagnostics.UefiInputStatus, 1, 0xFFFFD166u);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 266, _safeModeDiagnostics.Ps2Status, 1, 0xFFFFD166u);
+        DrawUefiTinyText(fb, fbW, fbH, x + 10, y + 280, _safeModeDiagnostics.UsbHidStatus, 1, 0xFFFFD166u);
     }
 
     private static uint* GetUefiFramebuffer() {
@@ -1119,28 +1323,60 @@ unsafe class Program {
             InitializeUefiInput();
         }
 
+        ulong pollStart = GetSafeCycleCounter();
+        _safeModeDiagnostics.InputPollCounter++;
+        SetSafeModeInputPhase("POLL-ENTER");
+        SetSafeModeInputResult("POLLING", 0);
+
         Framebuffer.RecoverUefiState();
-        PollUefiSerialInput();
+        try {
+            PollUefiSerialInput();
 
-        for (int i = 0; i < 32; i++) {
-            byte status = Native.In8(0x64);
-            if ((status & 0x01) == 0) return;
+            for (int i = 0; i < SafeModeInputByteBudget; i++) {
+                if (HasSafeModeInputTimedOut(pollStart)) {
+                    _safeModeDiagnostics.InputPollTimeoutCounter++;
+                    _safeModeDiagnostics.WatchdogSkipCounter++;
+                    SetSafeModeInputPhase("POLL-TIMEOUT");
+                    SetSafeModeInputResult("TIMEOUT", 1);
+                    FinalizeSafeModeInputPoll(pollStart, "INPUT POLL TIMEOUT");
+                    return;
+                }
 
-            bool fromMouse = (status & 0x20) != 0;
-            byte data = Native.In8(0x60);
-            if (!_uefiAnyInputByteSeen) {
-                _uefiAnyInputByteSeen = true;
-                SerialChar('D'); SerialChar('A'); SerialChar('T'); SerialChar('\n');
+                byte status = Native.In8(0x64);
+                if ((status & 0x01) == 0) {
+                    SetSafeModeInputPhase("POLL-EXIT");
+                    SetSafeModeInputResult("NO-DATA", 0);
+                    FinalizeSafeModeInputPoll(pollStart, "INPUT POLL " + _safeModeDiagnostics.InputPollCounter.ToString());
+                    return;
+                }
+
+                bool fromMouse = (status & 0x20) != 0;
+                byte data = Native.In8(0x60);
+                if (!_uefiAnyInputByteSeen) {
+                    _uefiAnyInputByteSeen = true;
+                    SerialChar('D'); SerialChar('A'); SerialChar('T'); SerialChar('\n');
+                }
+
+                if (fromMouse) {
+                    ProcessUefiPs2MouseByte(data);
+                } else {
+                    ProcessUefiPs2KeyboardByte(data);
+                }
             }
-            if (fromMouse) {
-                ProcessUefiPs2MouseByte(data);
-            } else {
-                ProcessUefiPs2KeyboardByte(data);
-            }
+
+            SetSafeModeInputPhase("POLL-EXIT");
+            SetSafeModeInputResult("BYTE-BUDGET", (ulong)SafeModeInputByteBudget);
+            FinalizeSafeModeInputPoll(pollStart, "INPUT POLL " + _safeModeDiagnostics.InputPollCounter.ToString());
+        } catch {
+            _safeModeDiagnostics.InputPollFaultCounter++;
+            SetSafeModeInputPhase("POLL-ERROR");
+            SetSafeModeInputResult("FAULT", 2);
+            FinalizeSafeModeInputPoll(pollStart, "INPUT POLL FAULT");
         }
     }
 
     private static void InitializeUefiInput() {
+        SetSafeModeInputPhase("INIT-START");
         _uefiInputInitialized = true;
         _uefiMousePhase = 0;
         _uefiKeyboardExtended = false;
@@ -1156,11 +1392,17 @@ unsafe class Program {
 
         UefiPs2Drain(64);
         bool configRead = UefiPs2ReadConfig(out byte config);
+        _safeModeDiagnostics.InputUsingPs2Path = true;
+        _safeModeDiagnostics.InputUsingUefiBootServices = false;
+        _safeModeDiagnostics.UsbHidImplemented = false;
         if (configRead) {
             config &= 0xFC; // IRQs stay disabled; we poll instead.
             config &= unchecked((byte)~0x30); // Enable keyboard and aux clocks.
             config |= 0x40; // Translate keyboard set 2 to set 1 when supported.
             UefiPs2WriteConfig(config);
+            SetSafeModeInputResult("CONFIG-OK", config);
+        } else {
+            SetSafeModeInputResult("CONFIG-MISS", 0x20);
         }
 
         if (UefiPs2WaitInputClear()) Native.Out8(0x64, 0xAE); // Enable keyboard port.
@@ -1176,6 +1418,8 @@ unsafe class Program {
         SerialChar('I'); SerialChar('N'); SerialChar('P');
         SerialChar(configRead ? 'C' : 'N');
         SerialChar('\n');
+        SetSafeModeInputPhase("INIT-OK");
+        FinalizeSafeModeInputPoll(0, "INPUT POLL INIT");
     }
 
     private static void ProcessUefiPs2KeyboardByte(byte scancode) {
@@ -1310,14 +1554,20 @@ unsafe class Program {
             _uefiMouseSeen = true;
             SerialChar('M'); SerialChar('O'); SerialChar('U'); SerialChar('\n');
         }
+        _safeModeDiagnostics.MouseAvailable = true;
+        _safeModeDiagnostics.MouseEventCounter++;
+        SetSafeModeInputPhase("MOUSE-EVENT");
+        SetSafeModeInputResult("MOUSE", (ulong)_uefiMouseB0);
         Control.MouseButtons = buttons;
     }
 
     private static bool UefiPs2WaitInputClear() {
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < SafeModePs2WaitBudget; i++) {
             if ((Native.In8(0x64) & 0x02) == 0) return true;
             Native.Nop();
         }
+        _safeModeDiagnostics.InputPollTimeoutCounter++;
+        SetSafeModeInputResult("WAIT-TIMEOUT", 0x64);
         return false;
     }
 
@@ -1339,6 +1589,8 @@ unsafe class Program {
                 _uefiSerialSeen = true;
                 SerialChar('S'); SerialChar('E'); SerialChar('R'); SerialChar('\n');
             }
+            SetSafeModeInputPhase("KEY-EVENT");
+            SetSafeModeInputResult("SERIAL", b);
             DispatchUefiKey(key, ConsoleKeyState.Pressed, b);
             DispatchUefiKey(key, ConsoleKeyState.Released, b);
         }
@@ -1356,6 +1608,12 @@ unsafe class Program {
             _uefiKeyboardSeen = true;
             SerialChar('K'); SerialChar('E'); SerialChar('Y'); SerialChar('\n');
         }
+        _safeModeDiagnostics.KeyboardAvailable = true;
+        if (state == ConsoleKeyState.Pressed) {
+            _safeModeDiagnostics.KeyboardEventCounter++;
+        }
+        SetSafeModeInputPhase("KEY-EVENT");
+        SetSafeModeInputResult("KEY", scanCode);
         Keyboard.KeyInfo = info;
         Keyboard.InvokeOnKeyChanged(info);
         Kbd2Mouse.OnKeyChanged(info);
@@ -1365,7 +1623,7 @@ unsafe class Program {
         config = 0;
         if (!UefiPs2WaitInputClear()) return false;
         Native.Out8(0x64, 0x20);
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < SafeModePs2WaitBudget; i++) {
             if ((Native.In8(0x64) & 0x01) != 0) {
                 config = Native.In8(0x60);
                 return true;
@@ -1389,7 +1647,7 @@ unsafe class Program {
     }
 
     private static void UefiPs2ReadAndDiscardAck(bool requireMouseSource) {
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < SafeModePs2WaitBudget; i++) {
             byte status = Native.In8(0x64);
             if ((status & 0x01) != 0) {
                 if (!requireMouseSource || (status & 0x20) != 0) {
@@ -1408,7 +1666,7 @@ unsafe class Program {
         if (!UefiPs2WaitInputClear()) return;
         Native.Out8(0x60, value);
 
-        for (int i = 0; i < 10000; i++) {
+        for (int i = 0; i < SafeModePs2WaitBudget; i++) {
             byte status = Native.In8(0x64);
             if ((status & 0x01) != 0) {
                 Native.In8(0x60);
@@ -1533,6 +1791,17 @@ unsafe class Program {
 
     private static byte UefiGlyphRow(char c, int row) {
         switch (c) {
+            case '-': return row == 3 ? (byte)0x0E : (byte)0x00;
+            case '0': return row == 0 ? (byte)0x0E : row == 1 ? (byte)0x11 : row == 2 ? (byte)0x13 : row == 3 ? (byte)0x15 : row == 4 ? (byte)0x19 : row == 5 ? (byte)0x11 : (byte)0x0E;
+            case '1': return row == 0 ? (byte)0x04 : row == 1 ? (byte)0x0C : row == 2 ? (byte)0x04 : row == 3 ? (byte)0x04 : row == 4 ? (byte)0x04 : row == 5 ? (byte)0x04 : (byte)0x0E;
+            case '2': return row == 0 ? (byte)0x0E : row == 1 ? (byte)0x11 : row == 2 ? (byte)0x01 : row == 3 ? (byte)0x02 : row == 4 ? (byte)0x04 : row == 5 ? (byte)0x08 : (byte)0x1F;
+            case '3': return row == 0 ? (byte)0x1E : row == 1 ? (byte)0x01 : row == 2 ? (byte)0x01 : row == 3 ? (byte)0x0E : row == 4 ? (byte)0x01 : row == 5 ? (byte)0x01 : (byte)0x1E;
+            case '4': return row == 0 ? (byte)0x02 : row == 1 ? (byte)0x06 : row == 2 ? (byte)0x0A : row == 3 ? (byte)0x12 : row == 4 ? (byte)0x1F : row == 5 ? (byte)0x02 : (byte)0x02;
+            case '5': return row == 0 ? (byte)0x1F : row == 1 ? (byte)0x10 : row == 2 ? (byte)0x10 : row == 3 ? (byte)0x1E : row == 4 ? (byte)0x01 : row == 5 ? (byte)0x01 : (byte)0x1E;
+            case '6': return row == 0 ? (byte)0x06 : row == 1 ? (byte)0x08 : row == 2 ? (byte)0x10 : row == 3 ? (byte)0x1E : row == 4 ? (byte)0x11 : row == 5 ? (byte)0x11 : (byte)0x0E;
+            case '7': return row == 0 ? (byte)0x1F : row == 1 ? (byte)0x01 : row == 2 ? (byte)0x02 : row == 3 ? (byte)0x04 : row == 4 ? (byte)0x08 : row == 5 ? (byte)0x08 : (byte)0x08;
+            case '8': return row == 0 ? (byte)0x0E : row == 1 ? (byte)0x11 : row == 2 ? (byte)0x11 : row == 3 ? (byte)0x0E : row == 4 ? (byte)0x11 : row == 5 ? (byte)0x11 : (byte)0x0E;
+            case '9': return row == 0 ? (byte)0x0E : row == 1 ? (byte)0x11 : row == 2 ? (byte)0x11 : row == 3 ? (byte)0x0F : row == 4 ? (byte)0x01 : row == 5 ? (byte)0x02 : (byte)0x1C;
             case 'A': return row == 0 ? (byte)0x0E : row == 1 ? (byte)0x11 : row == 2 ? (byte)0x11 : row == 3 ? (byte)0x1F : row == 4 ? (byte)0x11 : row == 5 ? (byte)0x11 : (byte)0x11;
             case 'B': return row == 0 ? (byte)0x1E : row == 1 ? (byte)0x11 : row == 2 ? (byte)0x11 : row == 3 ? (byte)0x1E : row == 4 ? (byte)0x11 : row == 5 ? (byte)0x11 : (byte)0x1E;
             case 'C': return row == 0 ? (byte)0x0F : row == 1 ? (byte)0x10 : row == 2 ? (byte)0x10 : row == 3 ? (byte)0x10 : row == 4 ? (byte)0x10 : row == 5 ? (byte)0x10 : (byte)0x0F;
