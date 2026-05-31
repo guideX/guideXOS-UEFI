@@ -341,6 +341,8 @@ unsafe class Program {
     private const int SafeModeDiagnosticsPanelWidth = 340;
     private const int SafeModeDiagnosticsPanelHeight = 222;
     private const bool SKIP_FIRST_FRAME_BACKGROUND_DRAW = true;
+    private const bool SKIP_UEFI_BACKGROUND_DRAW_ALL_FRAMES = true;
+    private const bool UEFI_STEADY_STATE_SERIAL_ONLY = true;
     private const bool SKIP_BACKGROUND_DRAW = false;
     private const bool SKIP_UI_DRAW = false;
     private const bool SKIP_DESKTOP_DRAW = false;
@@ -1152,6 +1154,43 @@ unsafe class Program {
         SerialChar('\n');
     }
 
+    private static bool ShouldEmitExplicitFrameBreadcrumbs(int frameCounter) {
+        return frameCounter >= 2 && frameCounter <= 5;
+    }
+
+    private static void SerialFrameBreadcrumb(int frameCounter, string phase) {
+        if (!ShouldEmitExplicitFrameBreadcrumbs(frameCounter) || phase == null) return;
+        SerialBreadcrumb("F" + frameCounter.ToString() + "_" + phase);
+    }
+
+    private static void SerialFramePhaseEnter(int frameCounter, string phase) {
+        if (phase == null) return;
+        SerialFrameBreadcrumb(frameCounter, phase + "_ENTER");
+    }
+
+    private static void SerialFramePhaseExit(int frameCounter, string phase) {
+        if (phase == null) return;
+        SerialFrameBreadcrumb(frameCounter, phase + "_EXIT");
+    }
+
+    private static void SerialFrameBackgroundSkipped(int frameCounter) {
+        SerialFrameBreadcrumb(frameCounter, "BACKGROUND_SKIPPED");
+    }
+
+    private static void SerialFrameBackgroundBreadcrumb(int frameCounter, string phase) {
+        if (phase == null) return;
+        if (frameCounter == 1) {
+            SerialBreadcrumb("F1_BG_" + phase);
+            return;
+        }
+        SerialFrameBreadcrumb(frameCounter, "BG_" + phase);
+    }
+
+    private static void SerialFrameBackgroundReason(int frameCounter, string reason) {
+        if (reason == null) return;
+        SerialFrameBackgroundBreadcrumb(frameCounter, "REASON_" + reason);
+    }
+
     private static void SerialBackgroundReason(string reason) {
         if (reason == null) return;
         SerialBreadcrumb("F1_BG_REASON_" + reason);
@@ -1164,6 +1203,11 @@ unsafe class Program {
 
     private static bool ShouldSkipFirstFrameBackgroundDraw(int frameCounter) {
         return frameCounter == 1 && SKIP_FIRST_FRAME_BACKGROUND_DRAW;
+    }
+
+    private static bool ShouldSkipUefiBackgroundDraw(int frameCounter) {
+        if (ShouldSkipFirstFrameBackgroundDraw(frameCounter)) return true;
+        return frameCounter >= 2 && SKIP_UEFI_BACKGROUND_DRAW_ALL_FRAMES;
     }
 
     private static bool TryDrawUefiFirstFrameBackground(int frameCounter, bool emitFirstFrameBreadcrumbs) {
@@ -1182,6 +1226,28 @@ unsafe class Program {
         } catch {
             SerialBackgroundReason("DRAW_EXCEPTION");
             if (emitFirstFrameBreadcrumbs) SerialBreadcrumb("F1_BG_DISPATCH_EXIT");
+            return false;
+        }
+    }
+
+    private static bool TryDrawUefiSteadyStateBackground(int frameCounter) {
+        SerialFrameBackgroundBreadcrumb(frameCounter, "DISPATCH_ENTER");
+
+        if (ShouldSkipUefiBackgroundDraw(frameCounter)) {
+            SerialFrameBackgroundReason(frameCounter, frameCounter == 1 ? "FIRST_FRAME_SKIP_SWITCH" : "ALL_FRAMES_SKIP_SWITCH");
+            SerialFrameBackgroundSkipped(frameCounter);
+            SerialFrameBackgroundBreadcrumb(frameCounter, "DISPATCH_EXIT");
+            return false;
+        }
+
+        try {
+            DrawUefiHeartbeat(frameCounter);
+            SerialFrameBackgroundBreadcrumb(frameCounter, "DISPATCH_EXIT");
+            return true;
+        } catch {
+            SerialFrameBackgroundReason(frameCounter, "DRAW_EXCEPTION");
+            SerialFrameBackgroundSkipped(frameCounter);
+            SerialFrameBackgroundBreadcrumb(frameCounter, "DISPATCH_EXIT");
             return false;
         }
     }
@@ -1444,11 +1510,17 @@ unsafe class Program {
                     if (!isUefi) {
                         BackgroundRotationManager.DrawBackground();
                     } else {
-                        // UEFI: avoid full-screen MMIO blits during bring-up.
-                        // The boot splash remains as the background while UI elements render.
+                        SerialFramePhaseEnter(frameCounter, "BACKGROUND");
+                        TryDrawUefiSteadyStateBackground(frameCounter);
+                        SerialFramePhaseExit(frameCounter, "BACKGROUND");
                     }
                 } catch {
                     if (debugFrame) { SerialChar('!'); SerialChar('G'); }
+                    if (isUefi) {
+                        SerialFrameBackgroundReason(frameCounter, "DISPATCH_EXCEPTION");
+                        SerialFrameBackgroundSkipped(frameCounter);
+                        SerialFramePhaseExit(frameCounter, "BACKGROUND");
+                    }
                 }
 
                 if (debugFrame) SerialChar('H'); // H = post-background
@@ -1560,9 +1632,34 @@ unsafe class Program {
                 }
 
                 if (isUefi) {
+                    if (ShouldEmitExplicitFrameBreadcrumbs(frameCounter)) {
+                        SerialFrameBreadcrumb(frameCounter, "BEGIN");
+                    }
+
+                    SerialFramePhaseEnter(frameCounter, "BACKGROUND");
                     DrawUefiHeartbeat(frameCounter);
+                    SerialFramePhaseExit(frameCounter, "BACKGROUND");
+                    SerialFramePhaseEnter(frameCounter, "DESKTOP");
+                    SerialFramePhaseExit(frameCounter, "DESKTOP");
+                    SerialFramePhaseEnter(frameCounter, "ICONS");
+                    SerialFramePhaseExit(frameCounter, "ICONS");
+                    SerialFramePhaseEnter(frameCounter, "TASKBAR");
+                    SerialFramePhaseExit(frameCounter, "TASKBAR");
+                    SerialFramePhaseEnter(frameCounter, "WINDOWMANAGER");
+                    SerialFramePhaseExit(frameCounter, "WINDOWMANAGER");
+                    SerialFramePhaseEnter(frameCounter, "DIAGNOSTICS");
+                    SerialFramePhaseExit(frameCounter, "DIAGNOSTICS");
+                    SerialFramePhaseEnter(frameCounter, "CURSOR");
+                    SerialFramePhaseExit(frameCounter, "CURSOR");
+                    SerialFramePhaseEnter(frameCounter, "PRESENT");
+                    SerialFramePhaseExit(frameCounter, "PRESENT");
+                    SerialFramePhaseEnter(frameCounter, "TAIL");
                     if ((frameCounter & 0xFFFF) == 0) {
                         SerialChar('H'); SerialChar('B'); SerialChar('\n');
+                    }
+                    SerialFramePhaseExit(frameCounter, "TAIL");
+                    if (ShouldEmitExplicitFrameBreadcrumbs(frameCounter)) {
+                        SerialFrameBreadcrumb(frameCounter, "END");
                     }
                 }
 
@@ -2419,41 +2516,43 @@ unsafe class Program {
     /// Tiny UEFI proof-of-life marker drawn directly to GOP memory.
     /// </summary>
     private static void DrawUefiHeartbeat(int frameCounter) {
-        SerialBreadcrumb("F1_BG_HEARTBEAT_ENTER");
-        SerialBreadcrumb("F1_BG_VALIDATE_ENTER");
+        SerialFrameBackgroundBreadcrumb(frameCounter, "HEARTBEAT_ENTER");
+        SerialFrameBackgroundBreadcrumb(frameCounter, "VALIDATE_ENTER");
         if (!TryGetUefiFramebufferInfo(out uint* fb, out int fbW, out int fbH, out int pitchPixels, out ulong maxPixels)) {
-            SerialBackgroundReason("VALIDATE_FAIL");
-            SerialBreadcrumb("F1_BG_HEARTBEAT_EXIT");
+            SerialFrameBackgroundReason(frameCounter, "VALIDATE_FAIL");
+            SerialFrameBackgroundBreadcrumb(frameCounter, "HEARTBEAT_EXIT");
             return;
         }
-        SerialBreadcrumb("F1_BG_VALIDATE_EXIT");
+        SerialFrameBackgroundBreadcrumb(frameCounter, "VALIDATE_EXIT");
 
         if (Framebuffer.Graphics == null) {
-            SerialBackgroundReason("GRAPHICS_NULL_DIRECT_FB_OK");
+            SerialFrameBackgroundReason(frameCounter, "GRAPHICS_NULL_DIRECT_FB_OK");
         }
         if (maxXOrYTooSmall(fbW, fbH)) {
-            SerialBackgroundReason("SMALL_FB_REGION");
+            SerialFrameBackgroundReason(frameCounter, "SMALL_FB_REGION");
         }
 
-        SerialBreadcrumb("F1_BG_HEARTBEAT_BOUNDS_ENTER");
+        SerialFrameBackgroundBreadcrumb(frameCounter, "CLEAR_ENTER");
+        SerialFrameBackgroundBreadcrumb(frameCounter, "CLEAR_EXIT");
+        SerialFrameBackgroundBreadcrumb(frameCounter, "HEARTBEAT_BOUNDS_ENTER");
         uint color = ((frameCounter / 30) & 1) == 0 ? 0xFFFFFFFFu : 0xFFFF3040u;
         int maxY = fbH < 24 ? fbH : 24;
         int maxX = fbW < 24 ? fbW : 24;
-        SerialBreadcrumb("F1_BG_HEARTBEAT_BOUNDS_EXIT");
+        SerialFrameBackgroundBreadcrumb(frameCounter, "HEARTBEAT_BOUNDS_EXIT");
 
-        SerialBreadcrumb("F1_BG_FILL_ENTER");
+        SerialFrameBackgroundBreadcrumb(frameCounter, "FILL_ENTER");
         for (int y = 8; y < maxY; y++) {
             if (ShouldLogBackgroundRow(y - 8, (maxY - 1) - 8)) {
                 int heartbeatRow = y - 8;
-                SerialBreadcrumb(heartbeatRow == ((maxY - 1) - 8) ? "F1_BG_ROW_LAST" : ("F1_BG_ROW_" + heartbeatRow.ToString()));
+                SerialFrameBackgroundBreadcrumb(frameCounter, heartbeatRow == ((maxY - 1) - 8) ? "ROW_LAST" : ("ROW_" + heartbeatRow.ToString()));
             }
             for (int x = 8; x < maxX; x++) {
                 TryWriteUefiPixel(fb, fbW, fbH, pitchPixels, maxPixels, x, y, color);
             }
         }
-        SerialBreadcrumb("F1_BG_FILL_EXIT");
-        SerialBreadcrumb("F1_BG_DONE");
-        SerialBreadcrumb("F1_BG_HEARTBEAT_EXIT");
+        SerialFrameBackgroundBreadcrumb(frameCounter, "FILL_EXIT");
+        SerialFrameBackgroundBreadcrumb(frameCounter, "DONE");
+        SerialFrameBackgroundBreadcrumb(frameCounter, "HEARTBEAT_EXIT");
     }
 
     private static bool maxXOrYTooSmall(int fbW, int fbH) {
