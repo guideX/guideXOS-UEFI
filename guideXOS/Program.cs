@@ -342,7 +342,7 @@ unsafe class Program {
     private const int SafeModeDiagnosticsPanelHeight = 222;
     private const bool SKIP_FIRST_FRAME_BACKGROUND_DRAW = true;
     private const bool SKIP_UEFI_BACKGROUND_DRAW_ALL_FRAMES = true;
-    private const bool UEFI_STEADY_STATE_SERIAL_ONLY = true;
+    private const bool UEFI_STEADY_STATE_SERIAL_ONLY = false;
 
     // ---------------------------------------------------------------------------
     // UEFI SAFE-MODE STEADY-STATE FAST PATH — WHY IT EXISTS
@@ -356,6 +356,24 @@ unsafe class Program {
     // mode.  Future work should replace diagnostics with non-allocating fixed-buffer
     // or status-field rendering so the fast path can eventually be retired.
     // ---------------------------------------------------------------------------
+    //
+    // UEFI_STEADY_STATE_SERIAL_ONLY  = true
+    //   No visual per-frame rendering after frame 1.  Pure serial heartbeat only.
+    //   Serial pattern: [Fn:S].  Safest option — proven to survive frame 2+.
+    //
+    // UEFI_STEADY_STATE_MINIMAL_RENDER = true
+    //   Non-allocating heartbeat-only visual rendering after frame 1.
+    //   Draws one 16x16 colour-toggling block via TryWriteUefiPixel.
+    //   No managed strings, no desktop/WM/input calls, no diagnostics panel.
+    //   Serial pattern: [Fn:M].  Next stabilisation milestone.
+    //
+    // Full desktop rendering remains disabled until the minimal render loop
+    // survives multiple frames reliably.
+    // ---------------------------------------------------------------------------
+
+    // When true, frame 2+ uses the allocation-free heartbeat visual path instead
+    // of the full render loop.  UEFI_STEADY_STATE_SERIAL_ONLY must be false.
+    private const bool UEFI_STEADY_STATE_MINIMAL_RENDER = true;
 
     // When true, DrawUefiSafeModeDiagnostics() is restricted to frame 1 only.
     // Default: true (safe).  Set false only for targeted diagnostics sessions.
@@ -1337,9 +1355,53 @@ unsafe class Program {
 
                 if (debugFrame) SerialChar('B'); // B = EnsureGraphics done
 
-                // UEFI steady-state serial-only fast path: skip all managed draw/input/string
-                // work on frame 2+. DrawUefiSafeModeDiagnostics() and friends use managed string
-                // allocation which is unsafe on the UEFI heap after ExitBootServices.
+                // -----------------------------------------------------------------
+                // UEFI steady-state minimal render path (frame 2+)
+                // Allocation-free: no .ToString(), no string concat, no new objects,
+                // no desktop/WM/input calls, no diagnostics panel.
+                // Draws one 16x16 colour-toggling block as a visible heartbeat.
+                // Serial pattern: [Fn:M] where n = frame digit (2-9, then 0).
+                // -----------------------------------------------------------------
+                if (isUefi && UEFI_STEADY_STATE_MINIMAL_RENDER && frameCounter > 1) {
+                    // Serial breadcrumb: [Fn:M]
+                    SerialChar('['); SerialChar('F');
+                    // Fixed per-frame markers 2–10 without dynamic string allocation
+                    switch (frameCounter) {
+                        case  2: SerialChar('2'); break;
+                        case  3: SerialChar('3'); break;
+                        case  4: SerialChar('4'); break;
+                        case  5: SerialChar('5'); break;
+                        case  6: SerialChar('6'); break;
+                        case  7: SerialChar('7'); break;
+                        case  8: SerialChar('8'); break;
+                        case  9: SerialChar('9'); break;
+                        case 10: SerialChar('A'); break;
+                        default: SerialChar((char)('0' + (frameCounter % 10))); break;
+                    }
+                    SerialChar(':'); SerialChar('M'); SerialChar(']');
+
+                    // Heartbeat block: top-left 16x16, alternates white / teal every 30 frames
+                    if (TryGetUefiFramebufferInfo(out uint* hbFb, out int hbW, out int hbH, out int hbPitch, out ulong hbMax)) {
+                        uint hbColor = ((frameCounter / 30) & 1) == 0 ? 0xFF00D4C0u : 0xFFFFFFFFu;
+                        int hbEndX = hbW < 16 ? hbW : 16;
+                        int hbEndY = hbH < 16 ? hbH : 16;
+                        for (int hy = 0; hy < hbEndY; hy++) {
+                            ulong rowBase = (ulong)(uint)hy * (ulong)(uint)hbPitch;
+                            for (int hx = 0; hx < hbEndX; hx++) {
+                                ulong off = rowBase + (ulong)(uint)hx;
+                                if (hbMax != 0 && off >= hbMax) break;
+                                if (off <= (ulong)int.MaxValue) hbFb[(int)off] = hbColor;
+                            }
+                        }
+                    }
+
+                    Thread.Sleep(16);
+                    continue;
+                }
+
+                // UEFI steady-state serial-only fast path (fallback / safest mode).
+                // UEFI_STEADY_STATE_SERIAL_ONLY must be true and MINIMAL_RENDER false.
+                // Serial pattern: [Fn:S].  No visual output at all.
                 if (isUefi && UEFI_STEADY_STATE_SERIAL_ONLY && frameCounter > 1) {
                     if (debugFrame) {
                         SerialChar('['); SerialChar('F');
