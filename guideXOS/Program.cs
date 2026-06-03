@@ -410,8 +410,9 @@ unsafe class Program {
     //   all rendering/input/WM/desktop/framebuffer.  Enable only after the halt
     //   test passes.
     // ---------------------------------------------------------------------------
-    private const bool UEFI_RENDER_LOOP_PROLOGUE_HALT = true;
+    private const bool UEFI_RENDER_LOOP_PROLOGUE_HALT = false;
     private const bool UEFI_RENDER_LOOP_PROLOGUE_ONLY = false;
+    private const bool UEFI_RENDER_LOOP_SAFE_PROLOGUE = true;
 
     private static bool SafeModeKeyboardEnabled =>
         ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_PS2_KEYBOARD ||
@@ -1321,6 +1322,9 @@ unsafe class Program {
         // RL_AFTER_ENTER_PRINT: we are now inside RenderLoop(), before any risky reads
         SerialBreadcrumb("RL_AFTER_ENTER_PRINT");
 
+        bool isUefi = (BootConsole.CurrentMode == guideXOS.BootMode.UEFI);
+        bool useSafeUefiPrologue = isUefi && UEFI_RENDER_LOOP_SAFE_PROLOGUE;
+
         // PROLOGUE HALT: if enabled, stay here forever — proves entry is stable
         if (UEFI_RENDER_LOOP_PROLOGUE_HALT) {
             SerialBreadcrumb("RL_PROLOGUE_HALT_ENTER");
@@ -1332,24 +1336,33 @@ unsafe class Program {
             }
         }
 
-        // RL_BEFORE_MOUSE_READ: about to read Control.MousePosition (managed static)
-        SerialBreadcrumb("RL_BEFORE_MOUSE_READ");
-        int lastMouseX = Control.MousePosition.X;
-        int lastMouseY = Control.MousePosition.Y;
-        SerialBreadcrumb("RL_AFTER_MOUSE_READ");
-
-        ulong lastMoveTick = Timer.Ticks;
+        int lastMouseX = 0;
+        int lastMouseY = 0;
+        ulong lastMoveTick = 0;
         const ulong ActiveMoveMs = 100;
         int frameCounter = 0;
-        bool isUefi = (BootConsole.CurrentMode == guideXOS.BootMode.UEFI);
 
-        SerialBreadcrumb("RL_BEFORE_RESET_DIAG");
-        if (isUefi) {
-            ResetSafeModeDiagnostics();
-            SetSafeModeInputPhase("INIT-OK");
-            SetSafeModeInputResult("READY", 0);
+        if (useSafeUefiPrologue) {
+            SerialBreadcrumb("RL_SAFE_PROLOGUE_ENTER");
+            SerialBreadcrumb("RL_SAFE_SKIP_MOUSE_READ");
+            SerialBreadcrumb("RL_SAFE_SKIP_RESET_DIAG");
+        } else {
+            // RL_BEFORE_MOUSE_READ: about to read Control.MousePosition (managed static)
+            SerialBreadcrumb("RL_BEFORE_MOUSE_READ");
+            lastMouseX = Control.MousePosition.X;
+            lastMouseY = Control.MousePosition.Y;
+            SerialBreadcrumb("RL_AFTER_MOUSE_READ");
+
+            lastMoveTick = Timer.Ticks;
+
+            SerialBreadcrumb("RL_BEFORE_RESET_DIAG");
+            if (isUefi) {
+                ResetSafeModeDiagnostics();
+                SetSafeModeInputPhase("INIT-OK");
+                SetSafeModeInputResult("READY", 0);
+            }
+            SerialBreadcrumb("RL_AFTER_RESET_DIAG");
         }
-        SerialBreadcrumb("RL_AFTER_RESET_DIAG");
 
         SerialBreadcrumb("RL_BEFORE_LOOP");
         for (; ; ) {
@@ -1362,9 +1375,11 @@ unsafe class Program {
                 frameCounter++;
                 SerialBreadcrumb("RL_AFTER_FRAME_COUNTER");
 
-                SetSafeModeFramePhase("frame-enter");
+                if (!useSafeUefiPrologue || frameCounter > 1) {
+                    SetSafeModeFramePhase("frame-enter");
+                }
 
-                if (isUefi) {
+                if (isUefi && (!useSafeUefiPrologue || frameCounter > 1)) {
                     UpdateSafeModeRenderDiagnostics(frameCounter);
                 }
 
