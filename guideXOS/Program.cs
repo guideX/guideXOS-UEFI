@@ -383,8 +383,8 @@ unsafe class Program {
     // because the diagnostics method allocates managed strings every call.
     private const bool UEFI_DRAW_DIAGNOSTICS_EACH_FRAME = false;
     private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;
-    private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = true;
-    private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = false;
+    private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = false;
+    private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
 
     private const bool SKIP_BACKGROUND_DRAW = false;
     private const bool SKIP_UI_DRAW = false;
