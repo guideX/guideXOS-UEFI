@@ -9,6 +9,14 @@ echo.
 REM Change to the directory where this script lives.
 cd /d "%~dp0"
 
+echo Refreshing build and ESP before boot...
+powershell.exe -ExecutionPolicy Bypass -File "build.ps1"
+if errorlevel 1 (
+    echo ERROR: build.ps1 failed; refusing to boot stale ESP content.
+    pause
+    exit /b 1
+)
+
 REM Verify files exist
 echo Checking files...
 if not exist "OVMF.fd" (

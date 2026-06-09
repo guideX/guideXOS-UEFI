@@ -29,6 +29,13 @@ Write-Host "Press Ctrl+C to stop QEMU" -ForegroundColor Yellow
 Write-Host "========================================" -ForegroundColor Gray
 Write-Host ""
 
+Write-Host "Refreshing build and ESP before QEMU..." -ForegroundColor Cyan
+& powershell.exe -ExecutionPolicy Bypass -File "$PSScriptRoot\build.ps1"
+if ($LASTEXITCODE -ne 0) {
+	Write-Host "Build refresh failed; refusing to start QEMU." -ForegroundColor Red
+	exit 1
+}
+
 # Run the batch file
 .\run_qemu.bat
 

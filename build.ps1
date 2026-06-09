@@ -82,6 +82,21 @@ function Write-Info($text) {
     Write-Host "  ? $text" -ForegroundColor Gray
 }
 
+function Get-ArtifactSnapshot($path) {
+    if (-not (Test-Path $path)) {
+        return $null
+    }
+
+    $item = Get-Item $path
+    $hash = Get-FileHash $path -Algorithm SHA256
+    return [pscustomobject]@{
+        Path = $item.FullName
+        Length = $item.Length
+        LastWriteTime = $item.LastWriteTime
+        Hash = $hash.Hash
+    }
+}
+
 function Write-Error($text) {
     Write-Host "  ? $text" -ForegroundColor Red
 }
@@ -502,8 +517,9 @@ if (-not $SkipRamdisk) {
         Write-Warning "Created placeholder files - replace with real assets!"
     }
     
-    $ramdiskBuilder = "$ToolsDir\ramdisk_builder.py"
-    $ramdiskOutput = "$RootDir\ramdisk.img"
+    $ramdiskBuilder = (Resolve-Path "$ToolsDir\ramdisk_builder.py").Path
+    $ramdiskOutput = (Join-Path $RootDir "ramdisk.img")
+    $ramdiskSource = (Resolve-Path $RamdiskSrc).Path
     
     if (-not (Test-Path $ramdiskBuilder)) {
         Write-Error "Ramdisk builder not found: $ramdiskBuilder"
@@ -511,7 +527,7 @@ if (-not $SkipRamdisk) {
     }
     
     Write-Info "Building ramdisk with Python..."
-    & $pythonExe @pythonExeArgs $ramdiskBuilder $RamdiskSrc $ramdiskOutput
+    & $pythonExe @pythonExeArgs $ramdiskBuilder $ramdiskSource $ramdiskOutput
     
     if ($LASTEXITCODE -eq 0 -and (Test-Path $ramdiskOutput)) {
         $size = (Get-Item $ramdiskOutput).Length
@@ -538,10 +554,34 @@ $bootloaderDst = "$ESPDir\EFI\BOOT\BOOTX64.EFI"
 
 if (Test-Path $bootloaderSrcEfi) {
     Copy-Item $bootloaderSrcEfi $bootloaderDst -Force
+    $bootSrc = Get-ArtifactSnapshot $bootloaderSrcEfi
+    $bootDst = Get-ArtifactSnapshot $bootloaderDst
+    if ($bootSrc.Hash -ne $bootDst.Hash) {
+        Write-Error "Bootloader copy verification failed"
+        Write-Error "  source: $($bootSrc.Path)"
+        Write-Error "  dest:   $($bootDst.Path)"
+        exit 1
+    }
     Write-Success "Copied bootloader: BOOTX64.EFI (from .efi)"
+    Write-Info "  source: $($bootSrc.Path)"
+    Write-Info "  dest:   $($bootDst.Path)"
+    Write-Info "  source timestamp/hash: $($bootSrc.LastWriteTime) / $($bootSrc.Hash)"
+    Write-Info "  dest timestamp/hash:   $($bootDst.LastWriteTime) / $($bootDst.Hash)"
 } elseif (Test-Path $bootloaderSrcExe) {
     Copy-Item $bootloaderSrcExe $bootloaderDst -Force
+    $bootSrc = Get-ArtifactSnapshot $bootloaderSrcExe
+    $bootDst = Get-ArtifactSnapshot $bootloaderDst
+    if ($bootSrc.Hash -ne $bootDst.Hash) {
+        Write-Error "Bootloader copy verification failed"
+        Write-Error "  source: $($bootSrc.Path)"
+        Write-Error "  dest:   $($bootDst.Path)"
+        exit 1
+    }
     Write-Success "Copied bootloader: BOOTX64.EFI (from .exe)"
+    Write-Info "  source: $($bootSrc.Path)"
+    Write-Info "  dest:   $($bootDst.Path)"
+    Write-Info "  source timestamp/hash: $($bootSrc.LastWriteTime) / $($bootSrc.Hash)"
+    Write-Info "  dest timestamp/hash:   $($bootDst.LastWriteTime) / $($bootDst.Hash)"
 } elseif ($SkipBootloader -and (Test-Path $bootloaderDst)) {
     Write-Warning "Bootloader build skipped; preserving existing ESP BOOTX64.EFI"
 } else {
@@ -554,10 +594,22 @@ $kernelSrc = "$RootDir\kernel.elf"
 $kernelDst = "$ESPDir\kernel.elf"
 if (Test-Path $kernelSrc) {
     Copy-Item $kernelSrc $kernelDst -Force
+    $kernelSrcInfo = Get-ArtifactSnapshot $kernelSrc
+    $kernelDstInfo = Get-ArtifactSnapshot $kernelDst
+    if (-not $kernelDstInfo -or $kernelSrcInfo.Hash -ne $kernelDstInfo.Hash) {
+        Write-Error "Kernel copy verification failed"
+        Write-Error "  source: $($kernelSrcInfo.Path)"
+        Write-Error "  dest:   $kernelDst"
+        exit 1
+    }
     Write-Success "Copied kernel: kernel.elf"
+    Write-Info "  source: $($kernelSrcInfo.Path)"
+    Write-Info "  dest:   $($kernelDstInfo.Path)"
+    Write-Info "  source timestamp/hash: $($kernelSrcInfo.LastWriteTime) / $($kernelSrcInfo.Hash)"
+    Write-Info "  dest timestamp/hash:   $($kernelDstInfo.LastWriteTime) / $($kernelDstInfo.Hash)"
 } else {
-    Write-Warning "Kernel ELF not found: $kernelSrc"
-    Write-Warning "You need to convert kernel.bin to ELF format manually"
+    Write-Error "Kernel ELF not found: $kernelSrc"
+    exit 1
 }
 
 # Copy ramdisk

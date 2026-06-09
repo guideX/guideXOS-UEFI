@@ -382,6 +382,9 @@ unsafe class Program {
     // path.  MUST be false whenever UEFI_STEADY_STATE_SERIAL_ONLY is true,
     // because the diagnostics method allocates managed strings every call.
     private const bool UEFI_DRAW_DIAGNOSTICS_EACH_FRAME = false;
+    private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;
+    private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = true;
+    private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = false;
 
     private const bool SKIP_BACKGROUND_DRAW = false;
     private const bool SKIP_UI_DRAW = false;
@@ -854,9 +857,16 @@ unsafe class Program {
         // [DIAG] Patch-active marker: if this does NOT appear in QEMU serial output,
         // a stale/wrong kernel image is being booted.
         SerialBreadcrumb("[DIAG] RENDER_LOOP_PROLOGUE_PATCH_ACTIVE");
+        SerialBreadcrumb("SMAIN_BEFORE_RENDERLOOP_DISPATCH");
 
         // Enter the main render loop (in a separate method to keep stack frames small)
-        RenderLoop();
+        if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI && UEFI_USE_TINY_RENDER_LOOP_BYPASS) {
+            SerialBreadcrumb("SMAIN_DISPATCH_TINY_UEFI");
+            RenderLoopUefiTinyBypass();
+        } else {
+            SerialBreadcrumb("SMAIN_DISPATCH_FULL_RENDERLOOP");
+            RenderLoop();
+        }
     }
 
     /// <summary>
@@ -1900,6 +1910,50 @@ unsafe class Program {
             uint color = (uint)(0xFF0D7D77 + (t << 16) + (t << 8) + t);
             for (int x = 0; x < fbW; x++) {
                 fb[y * fbW + x] = color;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Minimal UEFI-only render loop bypass for prologue isolation.
+    /// </summary>
+    private static void RenderLoopUefiTinyBypass() {
+        SerialBreadcrumb("UTINY_AFTER_ENTER");
+
+        if (UEFI_TINY_RENDER_LOOP_ENTRY_ONLY) {
+            SerialBreadcrumb("UTINY_ENTRY_ONLY");
+            for (; ; ) {
+                Native.Out8(0x3F8, (byte)'.');
+                for (int _t = 0; _t < 1000000; _t++) { }
+            }
+        }
+
+        if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI && UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS) {
+            SerialBreadcrumb("UTINY_GRAPHICS_ENTER");
+            SerialBreadcrumb("UTINY_F1_A");
+            Framebuffer.EnsureGraphics();
+            SerialBreadcrumb("UTINY_AFTER_ENSURE_GRAPHICS");
+            SerialBreadcrumb("UTINY_B");
+            if (Framebuffer.Graphics != null && Framebuffer.Graphics.VideoMemory != null && Framebuffer.Width > 0 && Framebuffer.Height > 0) {
+                int hbW = Framebuffer.Width < 16 ? Framebuffer.Width : 16;
+                int hbH = Framebuffer.Height < 16 ? Framebuffer.Height : 16;
+                uint hbColor = 0xFF00D4C0u;
+                for (int y = 0; y < hbH; y++) {
+                    ulong rowBase = (ulong)(uint)y * (ulong)(uint)Framebuffer.Width;
+                    for (int x = 0; x < hbW; x++) {
+                        ulong off = rowBase + (ulong)(uint)x;
+                        if (off <= (ulong)int.MaxValue) {
+                            Framebuffer.Graphics.VideoMemory[(int)off] = hbColor;
+                        }
+                    }
+                }
+            }
+            SerialBreadcrumb("UTINY_F1_END");
+            for (int frame = 2; ; frame++) {
+                if (frame == 2) SerialBreadcrumb("UTINY_F2_M");
+                else if (frame == 3) SerialBreadcrumb("UTINY_F3_M");
+                Native.Out8(0x3F8, (byte)'.');
+                for (int _t = 0; _t < 1000000; _t++) { }
             }
         }
     }

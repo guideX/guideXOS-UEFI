@@ -9,6 +9,13 @@ Write-Host ""
 # Change to the directory where this script lives.
 Set-Location $PSScriptRoot
 
+Write-Host "Refreshing build and ESP before boot..." -ForegroundColor Cyan
+& powershell.exe -ExecutionPolicy Bypass -File "$PSScriptRoot\build.ps1"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  ? build.ps1 failed; refusing to boot stale ESP content." -ForegroundColor Red
+    exit 1
+}
+
 # Verify files exist
 Write-Host "Checking files..." -ForegroundColor Yellow
 
