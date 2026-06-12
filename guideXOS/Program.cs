@@ -1931,28 +1931,40 @@ unsafe class Program {
         if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI && UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS) {
             SerialBreadcrumb("UTINY_GRAPHICS_ENTER");
             SerialBreadcrumb("UTINY_F1_A");
+            SerialBreadcrumb("UTINY_BEFORE_ENSURE_GRAPHICS");
             Framebuffer.EnsureGraphics();
             SerialBreadcrumb("UTINY_AFTER_ENSURE_GRAPHICS");
             SerialBreadcrumb("UTINY_B");
-            if (Framebuffer.Graphics != null && Framebuffer.Graphics.VideoMemory != null && Framebuffer.Width > 0 && Framebuffer.Height > 0) {
-                int hbW = Framebuffer.Width < 16 ? Framebuffer.Width : 16;
-                int hbH = Framebuffer.Height < 16 ? Framebuffer.Height : 16;
+            int fbW = Framebuffer.Width;
+            int fbH = Framebuffer.Height;
+            if (Framebuffer.Graphics != null && Framebuffer.Graphics.VideoMemory != null && fbW > 0 && fbH > 0) {
+                Framebuffer.Graphics.Clear(0xFF0D7D77u);
+                int hbW = fbW < 16 ? fbW : 16;
+                int hbH = fbH < 16 ? fbH : 16;
+                int hbX = 8;
+                int hbY = 8;
                 uint hbColor = 0xFF00D4C0u;
-                for (int y = 0; y < hbH; y++) {
-                    ulong rowBase = (ulong)(uint)y * (ulong)(uint)Framebuffer.Width;
-                    for (int x = 0; x < hbW; x++) {
-                        ulong off = rowBase + (ulong)(uint)x;
-                        if (off <= (ulong)int.MaxValue) {
-                            Framebuffer.Graphics.VideoMemory[(int)off] = hbColor;
-                        }
-                    }
-                }
+                if (hbX + hbW > fbW) hbX = 0;
+                if (hbY + hbH > fbH) hbY = 0;
+                Framebuffer.Graphics.FillRectangle(hbX, hbY, hbW, hbH, hbColor);
             }
             SerialBreadcrumb("UTINY_F1_END");
             for (int frame = 2; ; frame++) {
-                if (frame == 2) SerialBreadcrumb("UTINY_F2_M");
-                else if (frame == 3) SerialBreadcrumb("UTINY_F3_M");
-                Native.Out8(0x3F8, (byte)'.');
+                if (frame == 2) {
+                    SerialBreadcrumb("UTINY_F2_A");
+                    if (Framebuffer.Graphics != null && Framebuffer.Graphics.VideoMemory != null && fbW > 0 && fbH > 0) {
+                        Framebuffer.Graphics.FillRectangle(12, 12, 16, 16, 0xFF36C2B4u);
+                    }
+                    SerialBreadcrumb("UTINY_F2_M");
+                } else if (frame == 3) {
+                    SerialBreadcrumb("UTINY_F3_A");
+                    if (Framebuffer.Graphics != null && Framebuffer.Graphics.VideoMemory != null && fbW > 0 && fbH > 0) {
+                        Framebuffer.Graphics.FillRectangle(12, 12, 16, 16, 0xFF00D4C0u);
+                    }
+                    SerialBreadcrumb("UTINY_F3_M");
+                } else if ((frame & 0x3F) == 0) {
+                    Native.Out8(0x3F8, (byte)'.');
+                }
                 for (int _t = 0; _t < 1000000; _t++) { }
             }
         }
