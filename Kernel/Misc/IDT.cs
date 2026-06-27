@@ -140,6 +140,14 @@ public static class IDT {
                     break;
             }
 
+            if (irq == 14) {
+                BootConsole.WriteLine("UTINY_FAULT_PF");
+            } else if (irq == 13) {
+                BootConsole.WriteLine("UTINY_FAULT_GP");
+            } else if (irq == 8) {
+                BootConsole.WriteLine("UTINY_FAULT_DF");
+            }
+
             // Display enhanced graphical panic screen
             Panic.ShowEnhancedCrashScreen(
                 irq,

@@ -345,7 +345,7 @@ unsafe class Program {
     private const bool UEFI_STEADY_STATE_SERIAL_ONLY = false;
 
     // ---------------------------------------------------------------------------
-    // UEFI SAFE-MODE STEADY-STATE FAST PATH — WHY IT EXISTS
+    // UEFI SAFE-MODE STEADY-STATE FAST PATH â€” WHY IT EXISTS
     // ---------------------------------------------------------------------------
     // Post-ExitBootServices the managed heap is fragile. DrawUefiSafeModeDiagnostics()
     // performs dozens of .ToString() and string-concatenation calls every frame.
@@ -359,7 +359,7 @@ unsafe class Program {
     //
     // UEFI_STEADY_STATE_SERIAL_ONLY  = true
     //   No visual per-frame rendering after frame 1.  Pure serial heartbeat only.
-    //   Serial pattern: [Fn:S].  Safest option — proven to survive frame 2+.
+    //   Serial pattern: [Fn:S].  Safest option â€” proven to survive frame 2+.
     //
     // UEFI_STEADY_STATE_MINIMAL_RENDER = true
     //   Non-allocating heartbeat-only visual rendering after frame 1.
@@ -681,7 +681,7 @@ unsafe class Program {
             
             BootConsole.WriteLine("[KMAIN] Calling SMain");
 
-            // UEFI: Skip BitFont file loading here — File.Instance is unreliable at this
+            // UEFI: Skip BitFont file loading here â€” File.Instance is unreliable at this
             // stage (managed reference corruption). WindowManager.Initialize() already
             // creates a dummy IFont fallback that the taskbar can use.
             // BitFont from ramdisk can be loaded later in SMainSetupUefi after
@@ -887,7 +887,7 @@ unsafe class Program {
         // Initialize icons
         SetupIcons();
 
-        // UEFI: Skip BitFont file loading — File.Instance's managed vtable is
+        // UEFI: Skip BitFont file loading â€” File.Instance's managed vtable is
         // corrupted even after re-mount (FS Type shows garbage pointer).
         // File.ReadAllBytes will hang (infinite loop in corrupted dispatch).
         // WindowManager.Initialize() already creates a dummy IFont fallback.
@@ -1335,7 +1335,7 @@ unsafe class Program {
         bool isUefi = (BootConsole.CurrentMode == guideXOS.BootMode.UEFI);
         bool useSafeUefiPrologue = isUefi && UEFI_RENDER_LOOP_SAFE_PROLOGUE;
 
-        // PROLOGUE HALT: if enabled, stay here forever — proves entry is stable
+        // PROLOGUE HALT: if enabled, stay here forever â€” proves entry is stable
         if (UEFI_RENDER_LOOP_PROLOGUE_HALT) {
             SerialBreadcrumb("RL_PROLOGUE_HALT_ENTER");
             for (; ; ) {
@@ -1467,7 +1467,7 @@ unsafe class Program {
                 if (isUefi && UEFI_STEADY_STATE_MINIMAL_RENDER && frameCounter > 1) {
                     // Serial breadcrumb: [Fn:M]
                     SerialChar('['); SerialChar('F');
-                    // Fixed per-frame markers 2–10 without dynamic string allocation
+                    // Fixed per-frame markers 2â€“10 without dynamic string allocation
                     switch (frameCounter) {
                         case  2: SerialChar('2'); break;
                         case  3: SerialChar('3'); break;
@@ -1666,7 +1666,7 @@ unsafe class Program {
 
                 if (debugFrame) SerialChar('D'); // D = post-mouse
 
-                // Per-frame input pass — skip when no input backend is active
+                // Per-frame input pass â€” skip when no input backend is active
                 WindowManager.MouseHandled = false;
                 if (inputActive) {
                     try {
@@ -1935,36 +1935,62 @@ unsafe class Program {
             Framebuffer.EnsureGraphics();
             SerialBreadcrumb("UTINY_AFTER_ENSURE_GRAPHICS");
             SerialBreadcrumb("UTINY_B");
+            SerialBreadcrumb("UTINY_C1");
             int fbW = Framebuffer.Width;
+            SerialBreadcrumb("UTINY_C2");
             int fbH = Framebuffer.Height;
-            if (Framebuffer.Graphics != null && Framebuffer.Graphics.VideoMemory != null && fbW > 0 && fbH > 0) {
-                Framebuffer.Graphics.Clear(0xFF0D7D77u);
+            SerialBreadcrumb("UTINY_C3");
+            var graphics = Framebuffer.Graphics;
+            SerialBreadcrumb("UTINY_C4");
+            bool hasGraphics = graphics != null;
+            SerialBreadcrumb("UTINY_C5");
+            bool hasVideoMemory = hasGraphics && graphics.VideoMemory != null;
+            SerialBreadcrumb("UTINY_C6");
+            bool hasDimensions = fbW > 0 && fbH > 0;
+            SerialBreadcrumb("UTINY_C7");
+            if (hasGraphics && hasVideoMemory && hasDimensions) {
+                SerialBreadcrumb("UTINY_C8");
+                graphics.Clear(0xFF0D7D77u);
+                SerialBreadcrumb("UTINY_C9");
                 int hbW = fbW < 16 ? fbW : 16;
+                SerialBreadcrumb("UTINY_C10");
                 int hbH = fbH < 16 ? fbH : 16;
+                SerialBreadcrumb("UTINY_C11");
                 int hbX = 8;
+                SerialBreadcrumb("UTINY_C12");
                 int hbY = 8;
+                SerialBreadcrumb("UTINY_C13");
                 uint hbColor = 0xFF00D4C0u;
-                if (hbX + hbW > fbW) hbX = 0;
-                if (hbY + hbH > fbH) hbY = 0;
-                Framebuffer.Graphics.FillRectangle(hbX, hbY, hbW, hbH, hbColor);
+                SerialBreadcrumb("UTINY_C14");
+                if (hbX + hbW > fbW) {
+                    hbX = 0;
+                }
+                SerialBreadcrumb("UTINY_C15");
+                if (hbY + hbH > fbH) {
+                    hbY = 0;
+                }
+                SerialBreadcrumb("UTINY_C16");
+                graphics.FillRectangle(hbX, hbY, hbW, hbH, hbColor);
+                SerialBreadcrumb("UTINY_C17");
             }
             SerialBreadcrumb("UTINY_F1_END");
             for (int frame = 2; ; frame++) {
                 if (frame == 2) {
-                    SerialBreadcrumb("UTINY_F2_A");
-                    if (Framebuffer.Graphics != null && Framebuffer.Graphics.VideoMemory != null && fbW > 0 && fbH > 0) {
-                        Framebuffer.Graphics.FillRectangle(12, 12, 16, 16, 0xFF36C2B4u);
+                    SerialBreadcrumb("UTINY_C18");
+                    if (graphics != null && graphics.VideoMemory != null && fbW > 0 && fbH > 0) {
+                        SerialBreadcrumb("UTINY_C19");
+                        graphics.FillRectangle(12, 12, 16, 16, 0xFF36C2B4u);
+                        SerialBreadcrumb("UTINY_C20");
                     }
-                    SerialBreadcrumb("UTINY_F2_M");
                 } else if (frame == 3) {
-                    SerialBreadcrumb("UTINY_F3_A");
-                    if (Framebuffer.Graphics != null && Framebuffer.Graphics.VideoMemory != null && fbW > 0 && fbH > 0) {
-                        Framebuffer.Graphics.FillRectangle(12, 12, 16, 16, 0xFF00D4C0u);
+                    SerialBreadcrumb("UTINY_C21");
+                    if (graphics != null && graphics.VideoMemory != null && fbW > 0 && fbH > 0) {
+                        SerialBreadcrumb("UTINY_C22");
+                        graphics.FillRectangle(12, 12, 16, 16, 0xFF00D4C0u);
+                        SerialBreadcrumb("UTINY_C23");
                     }
-                    SerialBreadcrumb("UTINY_F3_M");
-                } else if ((frame & 0x3F) == 0) {
-                    Native.Out8(0x3F8, (byte)'.');
                 }
+                Native.Out8(0x3F8, (byte)'.');
                 for (int _t = 0; _t < 1000000; _t++) { }
             }
         }
