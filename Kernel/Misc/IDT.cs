@@ -109,6 +109,73 @@ public static class IDT {
     // Counter for IRQ0 debug output
     private static uint _irq0Count;
 
+    private static void SerialWriteLiteral(string text) {
+        if (text == null) return;
+        for (int i = 0; i < text.Length; i++) {
+            Native.Out8(0x3F8, (byte)text[i]);
+        }
+    }
+
+    private static void SerialWriteLineLiteral(string text) {
+        SerialWriteLiteral(text);
+        Native.Out8(0x3F8, (byte)'\n');
+    }
+
+    private static void SerialWriteHex8(byte value) {
+        for (int shift = 4; shift >= 0; shift -= 4) {
+            int nibble = (value >> shift) & 0xF;
+            byte c = (byte)(nibble < 10 ? ('0' + nibble) : ('A' + (nibble - 10)));
+            Native.Out8(0x3F8, c);
+        }
+    }
+
+    private static void SerialWriteHex64(ulong value) {
+        for (int shift = 60; shift >= 0; shift -= 4) {
+            int nibble = (int)((value >> shift) & 0xF);
+            byte c = (byte)(nibble < 10 ? ('0' + nibble) : ('A' + (nibble - 10)));
+            Native.Out8(0x3F8, c);
+        }
+    }
+
+    private static void SerialWriteHexLine8(string label, byte value) {
+        SerialWriteLiteral(label);
+        SerialWriteLiteral("0x");
+        SerialWriteHex8(value);
+        Native.Out8(0x3F8, (byte)'\n');
+    }
+
+    private static void SerialWriteHexLine64(string label, ulong value) {
+        SerialWriteLiteral(label);
+        SerialWriteLiteral("0x");
+        SerialWriteHex64(value);
+        Native.Out8(0x3F8, (byte)'\n');
+    }
+
+    private static unsafe void SerialWriteFaultBreadcrumbs(int irq, ulong errorCode, InterruptReturnStack* irs) {
+        switch (irq) {
+            case 14:
+                SerialWriteLineLiteral("UTINY_FAULT_PF");
+                break;
+            case 13:
+                SerialWriteLineLiteral("UTINY_FAULT_GP");
+                break;
+            case 8:
+                SerialWriteLineLiteral("UTINY_FAULT_DF");
+                break;
+        }
+
+        SerialWriteHexLine8("VEC=", (byte)irq);
+        SerialWriteHexLine64("ERR=", errorCode);
+
+        if (irq == 14) {
+            SerialWriteHexLine64("CR2=", Native.ReadCR2());
+        }
+
+        if (irs != null) {
+            SerialWriteHexLine64("RIP=", irs->rip);
+        }
+    }
+
     [RuntimeExport("intr_handler")]
     public static unsafe void intr_handler(int irq, IDTStackGeneric* stack) {
         // Prevent nested interrupts while inside managed interrupt handler.
@@ -139,6 +206,8 @@ public static class IDT {
                     hasErrorCode = false;
                     break;
             }
+
+            SerialWriteFaultBreadcrumbs(irq, stack->errorCode, irs);
 
             if (irq == 14) {
                 BootConsole.WriteLine("UTINY_FAULT_PF");

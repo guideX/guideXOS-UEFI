@@ -43,6 +43,14 @@ namespace guideXOS.Misc {
             // Take address of KMainWrapper to force linker to include it
             _kMainWrapperAddr = (IntPtr)(delegate*<UefiBootInfo*, void>)&KMainWrapper;
         }
+
+        private static void SerialRawLine(string text) {
+            if (text == null) return;
+            for (int i = 0; i < text.Length; i++) {
+                Native.Out8(0x3F8, (byte)text[i]);
+            }
+            Native.Out8(0x3F8, (byte)'\n');
+        }
         /// <summary>
         /// NEW UEFI entry point called from UEFI bootloader
         /// This is the modern entry point that receives guideXOS::BootInfo
@@ -416,7 +424,9 @@ namespace guideXOS.Misc {
             //     BootSplash.Tick();
             // }
             //BootConsole.WriteLine("BOOTSPLASH_CLEANUP");
+            SerialRawLine("POSTFS_A");
             BootSplash.Cleanup();
+            SerialRawLine("POSTFS_B");
 
             // SKIP uptime assignment - Timer.Ticks might not work with masked interrupts
             // and this might trigger static initialization that hangs
@@ -570,6 +580,27 @@ namespace guideXOS.Misc {
         /// Main kernel initialization (shared by both entry points)
         /// </summary>
         private static void KernelMain() {
+            Native.Out8(0x3F8, (byte)'K');
+            Native.Out8(0x3F8, (byte)'E');
+            Native.Out8(0x3F8, (byte)'R');
+            Native.Out8(0x3F8, (byte)'N');
+            Native.Out8(0x3F8, (byte)'E');
+            Native.Out8(0x3F8, (byte)'L');
+            Native.Out8(0x3F8, (byte)'M');
+            Native.Out8(0x3F8, (byte)'A');
+            Native.Out8(0x3F8, (byte)'I');
+            Native.Out8(0x3F8, (byte)'N');
+            Native.Out8(0x3F8, (byte)'_');
+            Native.Out8(0x3F8, (byte)'E');
+            Native.Out8(0x3F8, (byte)'N');
+            Native.Out8(0x3F8, (byte)'T');
+            Native.Out8(0x3F8, (byte)'R');
+            Native.Out8(0x3F8, (byte)'Y');
+            Native.Out8(0x3F8, (byte)'_');
+            Native.Out8(0x3F8, (byte)'R');
+            Native.Out8(0x3F8, (byte)'A');
+            Native.Out8(0x3F8, (byte)'W');
+            Native.Out8(0x3F8, (byte)'\n');
             BootConsole.WriteLine("[KERNELMAIN]");
             BootConsole.NewLine();
             Program.KMain(); // Call the main OS initialization - this sets up GUI, drivers, etc.
