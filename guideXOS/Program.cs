@@ -386,6 +386,7 @@ unsafe class Program {
     private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;
     private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = false;
     private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
+    private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = false;
     // TinyUEFI proof-pattern heartbeat is useful during bring-up, but keep it
     // opt-in so the serial log stays readable by default.
     private const bool UEFI_TINY_RENDER_HEARTBEAT_ENABLED = false;
@@ -868,9 +869,11 @@ unsafe class Program {
         // Enter the main render loop (in a separate method to keep stack frames small)
         bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
         bool useTinyUefi = isUefi && UEFI_USE_TINY_RENDER_LOOP_BYPASS && !UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
+        bool useNormalUefiDesktopStepProbe = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && NORMAL_DESKTOP_UEFI_STEP_PROBE;
         bool useNormalUefiDesktop = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
         LogUefiRenderDispatchDiagnostics(useTinyUefi, useNormalUefiDesktop);
         SerialBreadcrumb(useTinyUefi ? "SMAIN_DISPATCH_REASON=TINY_UEFI" :
+                         useNormalUefiDesktopStepProbe ? "SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI_STEP_PROBE" :
                          useNormalUefiDesktop ? "SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI" :
                          isUefi ? "SMAIN_DISPATCH_REASON=FULL_UEFI" :
                          "SMAIN_DISPATCH_REASON=LEGACY");
@@ -878,6 +881,9 @@ unsafe class Program {
         if (useTinyUefi) {
             SerialBreadcrumb("SMAIN_DISPATCH_TINY_UEFI");
             RenderLoopUefiTinyBypass();
+        } else if (useNormalUefiDesktopStepProbe) {
+            SerialBreadcrumb("SMAIN_DISPATCH_NORMAL_DESKTOP_UEFI_STEP_PROBE");
+            RenderLoopNormalDesktopStepProbe();
         } else if (useNormalUefiDesktop) {
             SerialBreadcrumb("SMAIN_DISPATCH_NORMAL_DESKTOP_UEFI");
             RenderLoop();
@@ -1346,6 +1352,7 @@ unsafe class Program {
         SerialBreadcrumb(UEFI_STEADY_STATE_MINIMAL_RENDER ? "SMAIN_DIAG_SAFE_MINIMAL_RENDER=1" : "SMAIN_DIAG_SAFE_MINIMAL_RENDER=0");
         SerialBreadcrumb(UEFI_USE_TINY_RENDER_LOOP_BYPASS ? "SMAIN_DIAG_TINY_BYPASS=1" : "SMAIN_DIAG_TINY_BYPASS=0");
         SerialBreadcrumb(UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH ? "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=1" : "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=0");
+        SerialBreadcrumb(NORMAL_DESKTOP_UEFI_STEP_PROBE ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=0");
         SerialBreadcrumb(UEFI_TINY_RENDER_LOOP_ENTRY_ONLY ? "SMAIN_DIAG_TINY_ENTRY_ONLY=1" : "SMAIN_DIAG_TINY_ENTRY_ONLY=0");
         SerialBreadcrumb(UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS ? "SMAIN_DIAG_TINY_MINIMAL_GRAPHICS=1" : "SMAIN_DIAG_TINY_MINIMAL_GRAPHICS=0");
 
@@ -2187,6 +2194,176 @@ unsafe class Program {
                 for (int _t = 0; _t < 1000000; _t++) { }
             }
         }
+    }
+
+    /// <summary>
+    /// Diagnostic UEFI normal-desktop probe.
+    /// Runs the first-frame desktop operations one at a time with raw serial markers.
+    /// </summary>
+    private static void RenderLoopNormalDesktopStepProbe() {
+        SerialBreadcrumb("NORM_PROBE_ENTER");
+
+        bool graphicsReady = false;
+
+        SerialBreadcrumb("NORM_STEP_001_ENTER");
+        SerialBreadcrumb(Framebuffer.Graphics == null ? "NORM_STEP_001_GFX=NULL" : "NORM_STEP_001_GFX=OK");
+        Framebuffer.EnsureGraphics();
+        SerialBreadcrumb(Framebuffer.Graphics == null ? "NORM_STEP_001_AFTER_GFX=NULL" : "NORM_STEP_001_AFTER_GFX=OK");
+        SerialBreadcrumb("NORM_STEP_001_EXIT");
+
+        if (Framebuffer.Graphics == null || Framebuffer.Graphics.VideoMemory == null) {
+            SerialBreadcrumb("NORM_STEP_GFX_ABORT");
+            for (; ; ) {
+                Native.Out8(0x3F8, (byte)'.');
+                Thread.Sleep(16);
+            }
+        }
+
+        graphicsReady = true;
+
+        SerialBreadcrumb("NORM_STEP_002_ENTER");
+        SerialBreadcrumb("NORM_STEP_002_GFX_REPAIR_BEGIN");
+        if (Framebuffer.Width != 0 && Framebuffer.Graphics.Width != Framebuffer.Width) {
+            Framebuffer.Graphics.Width = Framebuffer.Width;
+        }
+        if (Framebuffer.Height != 0 && Framebuffer.Graphics.Height != Framebuffer.Height) {
+            Framebuffer.Graphics.Height = Framebuffer.Height;
+        }
+        SerialBreadcrumb("NORM_STEP_002_GFX_REPAIR_END");
+        SerialBreadcrumb("NORM_STEP_002_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_003_ENTER");
+        Framebuffer.Graphics.Clear(0xFF0B3C4Cu);
+        SerialBreadcrumb("NORM_STEP_003_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_004_ENTER");
+        Framebuffer.Graphics.FillRectangle(16, 16, 32, 32, 0xFFFF2020u);
+        SerialBreadcrumb("NORM_STEP_004_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_005_ENTER");
+        SerialBreadcrumb(Program.Wallpaper == null ? "NORM_STEP_005_WALLPAPER=NULL" : "NORM_STEP_005_WALLPAPER=OK");
+        BackgroundRotationManager.DrawBackground();
+        SerialBreadcrumb("NORM_STEP_005_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_006_ENTER");
+        Framebuffer.Graphics.FillRectangle(0, 0, Framebuffer.Width, Framebuffer.Height, 0xFF1E1E1Eu);
+        SerialBreadcrumb("NORM_STEP_006_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_007_ENTER");
+        SerialBreadcrumb(Desktop.Taskbar == null ? "NORM_STEP_007_TASKBAR=NULL" : "NORM_STEP_007_TASKBAR=OK");
+        if (Desktop.Taskbar != null) {
+            Desktop.Taskbar.DrawUefiStepProbeBackground();
+        }
+        SerialBreadcrumb("NORM_STEP_007_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_008_ENTER");
+        if (Desktop.Taskbar != null) {
+            Desktop.Taskbar.DrawUefiStepProbeStartButton();
+        }
+        SerialBreadcrumb("NORM_STEP_008_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_009_ENTER");
+        SerialBreadcrumb(Desktop.Apps == null ? "NORM_STEP_009_APPS=NULL" : "NORM_STEP_009_APPS=OK");
+        SerialBreadcrumb(WindowManager.Windows == null ? "NORM_STEP_009_WINDOWS=NULL" : "NORM_STEP_009_WINDOWS=OK");
+        SerialBreadcrumb(Desktop.HomeMode ? "NORM_STEP_009_HOMEMODE=1" : "NORM_STEP_009_HOMEMODE=0");
+        if (Desktop.Apps != null) {
+            SerialBreadcrumb("NORM_STEP_009_APP_COUNT");
+            SerialWriteUnsigned((ulong)Desktop.Apps.Length);
+            SerialChar('\n');
+        }
+        SerialBreadcrumb("NORM_STEP_009_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_010_ENTER");
+        ProbeNormalDesktopIconRenderWithoutPng();
+        SerialBreadcrumb("NORM_STEP_010_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_011_ENTER");
+        SerialBreadcrumb(WindowManager.Windows == null ? "NORM_STEP_011_WINDOWS=NULL" : "NORM_STEP_011_WINDOWS=OK");
+        if (WindowManager.Windows != null && WindowManager.Windows.Count == 0) {
+            SerialBreadcrumb("NORM_STEP_011_WINDOWS_ZERO");
+        }
+        if (WindowManager.Windows != null) {
+            WindowManager.DrawAllExceptTaskManager();
+            WindowManager.DrawTaskManager();
+        } else {
+            SerialBreadcrumb("NORM_STEP_011_WINDOWS_TRAVERSAL_SKIPPED");
+        }
+        SerialBreadcrumb("NORM_STEP_011_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_012_ENTER");
+        SerialBreadcrumb(WindowManager.font == null ? "NORM_STEP_012_FONT=NULL" : "NORM_STEP_012_FONT=OK");
+        if (WindowManager.font != null) {
+            SerialBreadcrumb("NORM_STEP_012_MEASURE_ENTER");
+            int probeTextW = WindowManager.font.MeasureString("NORM STEP FONT");
+            SerialBreadcrumb("NORM_STEP_012_MEASURE_EXIT");
+            SerialBreadcrumb("NORM_STEP_012_DRAW_ENTER");
+            WindowManager.font.DrawString(24, 24, "NORM STEP FONT", probeTextW > 0 ? probeTextW : 240, WindowManager.font.FontSize);
+            SerialBreadcrumb("NORM_STEP_012_DRAW_EXIT");
+        }
+        SerialBreadcrumb("NORM_STEP_012_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_013_ENTER");
+        if (!SKIP_CURSOR_DRAW) {
+            SerialBreadcrumb("NORM_STEP_013_CURSOR_DRAW_ENTER");
+            DrawUefiCursor();
+            SerialBreadcrumb("NORM_STEP_013_CURSOR_DRAW_EXIT");
+        } else {
+            SerialBreadcrumb("NORM_STEP_013_CURSOR_SKIPPED");
+        }
+        SerialBreadcrumb("NORM_STEP_013_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_014_ENTER");
+        Framebuffer.Update();
+        SerialBreadcrumb("NORM_STEP_014_EXIT");
+
+        if (graphicsReady) {
+            SerialBreadcrumb("NORM_PROBE_FRAME1_DONE");
+        }
+
+        for (;; ) {
+            Native.Out8(0x3F8, (byte)'.');
+            Thread.Sleep(16);
+        }
+    }
+
+    private static void ProbeNormalDesktopIconRenderWithoutPng() {
+        if (Framebuffer.Graphics == null || Framebuffer.Graphics.VideoMemory == null) {
+            SerialBreadcrumb("NORM_STEP_010_GFX=NULL");
+            return;
+        }
+
+        Image redIcon = CreateSolidProbeIcon(32, 32, 0xFFFF2020u);
+        Image greenIcon = CreateSolidProbeIcon(32, 32, 0xFF00FF00u);
+        Image whiteIcon = CreateSolidProbeIcon(32, 32, 0xFFFFFFFFu);
+
+        SerialBreadcrumb(redIcon == null ? "NORM_STEP_010_RED=NULL" : "NORM_STEP_010_RED=OK");
+        SerialBreadcrumb(greenIcon == null ? "NORM_STEP_010_GREEN=NULL" : "NORM_STEP_010_GREEN=OK");
+        SerialBreadcrumb(whiteIcon == null ? "NORM_STEP_010_WHITE=NULL" : "NORM_STEP_010_WHITE=OK");
+
+        if (redIcon != null) {
+            SerialBreadcrumb("NORM_STEP_010_RED_DRAW_ENTER");
+            Framebuffer.Graphics.DrawImage(80, 80, redIcon);
+            SerialBreadcrumb("NORM_STEP_010_RED_DRAW_EXIT");
+        }
+        if (greenIcon != null) {
+            SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_ENTER");
+            Framebuffer.Graphics.DrawImage(128, 80, greenIcon);
+            SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_EXIT");
+        }
+        if (whiteIcon != null) {
+            SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_ENTER");
+            Framebuffer.Graphics.DrawImage(176, 80, whiteIcon);
+            SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_EXIT");
+        }
+    }
+
+    private static Image CreateSolidProbeIcon(int width, int height, uint color) {
+        Image img = new Image(width, height);
+        if (img == null || img.RawData == null) return img;
+        for (int i = 0; i < img.RawData.Length; i++) {
+            img.RawData[i] = unchecked((int)color);
+        }
+        return img;
     }
 
     private static void DrawUefiTinyProofPattern(guideXOS.Graph.Graphics graphics, int fbW, int fbH, int frameCounter) {

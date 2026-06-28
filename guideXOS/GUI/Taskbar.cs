@@ -109,6 +109,14 @@ namespace guideXOS.GUI {
             }
         }
 
+        private static void ProbeSerialBreadcrumb(string breadcrumb) {
+            if (breadcrumb == null) return;
+            for (int i = 0; i < breadcrumb.Length; i++) {
+                Native.Out8(0x3F8, (byte)breadcrumb[i]);
+            }
+            Native.Out8(0x3F8, (byte)'\n');
+        }
+
         /// <summary>
         /// Draw UEFI Taskbar
         /// </summary>
@@ -200,6 +208,54 @@ namespace guideXOS.GUI {
 
             // Skip all the complex icon loading, Start Menu, workspace switcher, etc.
             // This is MINIMAL BOOT MODE
+        }
+
+        /// <summary>
+        /// UEFI taskbar probe that isolates background and start-button rendering.
+        /// </summary>
+        public void DrawUefiStepProbeBackground() {
+            int yTop = Framebuffer.Height - _barHeight;
+            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_DRAW_ENTER");
+            ProbeSerialBreadcrumb(Framebuffer.Graphics == null ? "NORM_STEP_007_GFX=NULL" : "NORM_STEP_007_GFX=OK");
+            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_RECT_ENTER");
+            Framebuffer.Graphics.FillRectangle(0, yTop, Framebuffer.Width, _barHeight, 0xFF1A1A1A);
+            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_RECT_EXIT");
+            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_LINE_ENTER");
+            Framebuffer.Graphics.FillRectangle(0, yTop, Framebuffer.Width, 1, 0xFF333333);
+            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_LINE_EXIT");
+            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_DRAW_EXIT");
+        }
+
+        /// <summary>
+        /// UEFI taskbar probe that isolates the start-button/icon draw.
+        /// </summary>
+        public void DrawUefiStepProbeStartButton() {
+            int yTop = Framebuffer.Height - _barHeight;
+            int startX = 12;
+            int startY = yTop + 4;
+            int startSize = _barHeight - 8;
+
+            ProbeSerialBreadcrumb("NORM_STEP_008_START_BUTTON_ENTER");
+            ProbeSerialBreadcrumb(_startIcon == null ? "NORM_STEP_008_START_ICON=NULL" : "NORM_STEP_008_START_ICON=OK");
+            ProbeSerialBreadcrumb(WindowManager.font == null ? "NORM_STEP_008_FONT=NULL" : "NORM_STEP_008_FONT=OK");
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_ENTER");
+            Framebuffer.Graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2E);
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_EXIT");
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_ENTER");
+            Framebuffer.Graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3E, 1);
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_EXIT");
+
+            ProbeSerialBreadcrumb("NORM_STEP_008_ICON_FACTORY_ENTER");
+            Image iconToShow = Icons.TaskbarIcon(32);
+            ProbeSerialBreadcrumb(iconToShow == null ? "NORM_STEP_008_ICON_FACTORY_NULL" : "NORM_STEP_008_ICON_FACTORY_OK");
+            ProbeSerialBreadcrumb("NORM_STEP_008_ICON_FACTORY_EXIT");
+
+            if (iconToShow != null) {
+                ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_ENTER");
+                Framebuffer.Graphics.DrawImage(startX, startY, iconToShow);
+                ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_EXIT");
+            }
+            ProbeSerialBreadcrumb("NORM_STEP_008_START_BUTTON_EXIT");
         }
 
         public void Draw() {
