@@ -390,6 +390,7 @@ unsafe class Program {
     internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = false;
+    private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER = false;
     // TinyUEFI proof-pattern heartbeat is useful during bring-up, but keep it
     // opt-in so the serial log stays readable by default.
     private const bool UEFI_TINY_RENDER_HEARTBEAT_ENABLED = false;
@@ -1420,6 +1421,7 @@ unsafe class Program {
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=0");
+        SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_WHITE_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_WHITE_FILLRECT_PLACEHOLDER=0");
         SerialBreadcrumb(UEFI_TINY_RENDER_LOOP_ENTRY_ONLY ? "SMAIN_DIAG_TINY_ENTRY_ONLY=1" : "SMAIN_DIAG_TINY_ENTRY_ONLY=0");
         SerialBreadcrumb(UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS ? "SMAIN_DIAG_TINY_MINIMAL_GRAPHICS=1" : "SMAIN_DIAG_TINY_MINIMAL_GRAPHICS=0");
 
@@ -2493,8 +2495,36 @@ unsafe class Program {
         }
         if (whiteIcon != null) {
             SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_ENTER");
-            SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_CALLSITE=Framebuffer.Graphics.DrawImage(176,80,whiteIcon)");
-            Framebuffer.Graphics.DrawImage(176, 80, whiteIcon);
+            SerialBreadcrumb("NORM_STEP_010_WHITE_A_ENTER");
+            SerialBreadcrumb("NORM_STEP_010_WHITE_IMAGE=OK");
+            int whiteIconWidth = whiteIcon.Width;
+            int whiteIconHeight = whiteIcon.Height;
+            SerialBreadcrumb("NORM_STEP_010_WHITE_DIMENSIONS_READ");
+            SerialBreadcrumb(whiteIcon.RawData == null ? "NORM_STEP_010_WHITE_RAWDATA=NULL" : "NORM_STEP_010_WHITE_RAWDATA=OK");
+            SerialBreadcrumb("NORM_STEP_010_WHITE_A_EXIT");
+            SerialBreadcrumb("NORM_STEP_010_WHITE_B_ENTER");
+            guideXOS.Graph.Graphics whiteGraphics = graphics;
+            SerialBreadcrumb("NORM_STEP_010_WHITE_RECEIVER=CACHED");
+            SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_OVERLOAD=DrawImage(int,int,Image,bool-default:true)");
+            SerialBreadcrumb("NORM_STEP_010_WHITE_FIRST_PIXEL_READ_ENTER");
+            int whiteFirstPixel = (whiteIcon.RawData != null && whiteIcon.RawData.Length > 0) ? whiteIcon.RawData[0] : 0;
+            SerialBreadcrumb("NORM_STEP_010_WHITE_FIRST_PIXEL_READ_EXIT");
+            SerialBreadcrumb("NORM_STEP_010_WHITE_FIRST_PIXEL_WRITE_ENTER");
+            if (whiteIcon.RawData != null && whiteIcon.RawData.Length > 0) {
+                whiteIcon.RawData[0] = whiteFirstPixel;
+            }
+            SerialBreadcrumb("NORM_STEP_010_WHITE_FIRST_PIXEL_WRITE_EXIT");
+            SerialBreadcrumb("NORM_STEP_010_WHITE_B_EXIT");
+            SerialBreadcrumb("NORM_STEP_010_WHITE_C_ENTER");
+            if (NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER) {
+                SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_PLACEHOLDER=FillRectangle");
+                whiteGraphics.FillRectangle(176, 80, whiteIconWidth, whiteIconHeight, 0xFFFFFFFFu);
+            } else {
+                SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_PLACEHOLDER=DrawImage");
+                SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_CALLSITE=whiteGraphics.DrawImage(176,80,whiteIcon)");
+                whiteGraphics.DrawImage(176, 80, whiteIcon);
+            }
+            SerialBreadcrumb("NORM_STEP_010_WHITE_C_EXIT");
             SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_EXIT");
         }
     }

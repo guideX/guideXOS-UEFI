@@ -3,7 +3,9 @@ param(
     [ValidateSet('DrawImage', 'FillRectangle')]
     [string]$Step10RedMode = 'DrawImage',
     [ValidateSet('DrawImage', 'FillRectangle')]
-    [string]$Step10GreenMode = 'FillRectangle'
+    [string]$Step10GreenMode = 'FillRectangle',
+    [ValidateSet('DrawImage', 'FillRectangle')]
+    [string]$Step10WhiteMode = 'FillRectangle'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,6 +46,24 @@ function Assert-SingleReplacement {
     }
 
     return $Text.Replace($Old, $New)
+}
+
+function Get-LastMatchingLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Pattern
+    )
+
+    $escapedPattern = [regex]::Escape($Pattern)
+    $matches = [regex]::Matches($Text, "(?m)^.*$escapedPattern.*$")
+    if ($matches.Count -gt 0) {
+        return $matches[$matches.Count - 1].Value
+    }
+
+    return $null
 }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -91,6 +111,11 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = false;' `
         -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = $step10GreenPlaceholder;" `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER'
+    $step10WhitePlaceholder = if ($Step10WhiteMode -eq 'FillRectangle') { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER = false;' `
+        -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER = $step10WhitePlaceholder;" `
+        -Label 'NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER'
 
     $probeAnchor = 'SerialBreadcrumb("NORM_PROBE_ENTER");'
     $probeAnchorCount = [regex]::Matches($patched, [regex]::Escape($probeAnchor)).Count
@@ -110,6 +135,7 @@ try {
     Write-Host "[probe] Run ID: $runId" -ForegroundColor Cyan
     Write-Host "[probe] Step 10 red mode: $Step10RedMode" -ForegroundColor Cyan
     Write-Host "[probe] Step 10 green mode: $Step10GreenMode" -ForegroundColor Cyan
+    Write-Host "[probe] Step 10 white mode: $Step10WhiteMode" -ForegroundColor Cyan
     Write-Host "[probe] Safe placeholders until step 10: enabled" -ForegroundColor Cyan
     Write-Host "[probe] Patched Program.cs for temporary step probe" -ForegroundColor Cyan
     Write-Host "[probe] Building via build.ps1..." -ForegroundColor Cyan
@@ -212,6 +238,7 @@ try {
     $step8SafePlaceholdersEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=1')
     $step10RedPlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=1')
     $step10GreenPlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=1')
+    $step10WhitePlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP10_WHITE_FILLRECT_PLACEHOLDER=1')
     $step8BorderExitPresent = $serialText.Contains('NORM_STEP_008_BUTTON_BORDER_EXIT')
     $step9EnterPresent = $serialText.Contains('NORM_STEP_009_ENTER')
     $step10RedDrawEnterPresent = $serialText.Contains('NORM_STEP_010_RED_DRAW_ENTER')
@@ -231,8 +258,36 @@ try {
     $step10GreenFirstPixelReadExitPresent = $serialText.Contains('NORM_STEP_010_GREEN_FIRST_PIXEL_READ_EXIT')
     $step10GreenFirstPixelWriteEnterPresent = $serialText.Contains('NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_ENTER')
     $step10GreenFirstPixelWriteExitPresent = $serialText.Contains('NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_EXIT')
+    $step10WhiteAEnterPresent = $serialText.Contains('NORM_STEP_010_WHITE_A_ENTER')
+    $step10WhiteAExitPresent = $serialText.Contains('NORM_STEP_010_WHITE_A_EXIT')
+    $step10WhiteBEnterPresent = $serialText.Contains('NORM_STEP_010_WHITE_B_ENTER')
+    $step10WhiteBExitPresent = $serialText.Contains('NORM_STEP_010_WHITE_B_EXIT')
+    $step10WhiteCEnterPresent = $serialText.Contains('NORM_STEP_010_WHITE_C_ENTER')
+    $step10WhiteCExitPresent = $serialText.Contains('NORM_STEP_010_WHITE_C_EXIT')
+    $step10WhiteDrawEnterPresent = $serialText.Contains('NORM_STEP_010_WHITE_DRAW_ENTER')
+    $step10WhiteDrawExitPresent = $serialText.Contains('NORM_STEP_010_WHITE_DRAW_EXIT')
+    $whiteMarkerSequence = @(
+        'NORM_STEP_010_WHITE_DRAW_ENTER'
+        'NORM_STEP_010_WHITE_A_ENTER'
+        'NORM_STEP_010_WHITE_A_EXIT'
+        'NORM_STEP_010_WHITE_B_ENTER'
+        'NORM_STEP_010_WHITE_B_EXIT'
+        'NORM_STEP_010_WHITE_C_ENTER'
+        'NORM_STEP_010_WHITE_C_EXIT'
+        'NORM_STEP_010_WHITE_DRAW_EXIT'
+    )
+    $whiteDeepestMarker = $null
+    foreach ($marker in $whiteMarkerSequence) {
+        if ($serialText.Contains($marker)) {
+            $whiteDeepestMarker = $marker
+        }
+    }
     $step11EnterPresent = $serialText.Contains('NORM_STEP_011_ENTER')
     $step10BlueDrawEnterPresent = $serialText.Contains('NORM_STEP_010_BLUE_DRAW_ENTER')
+    $lastVecLine = Get-LastMatchingLine -Text $serialText -Pattern 'VEC='
+    $lastErrLine = Get-LastMatchingLine -Text $serialText -Pattern 'ERR='
+    $lastCr2Line = Get-LastMatchingLine -Text $serialText -Pattern 'CR2='
+    $lastRipLine = Get-LastMatchingLine -Text $serialText -Pattern 'RIP='
 
     if ($validRun) {
         Write-Host "[probe] Valid fresh run detected." -ForegroundColor Green
@@ -241,6 +296,7 @@ try {
         Write-Host "[probe] Step 8 safe placeholders enabled: $step8SafePlaceholdersEnabled" -ForegroundColor Green
         Write-Host "[probe] Step 10 red placeholder enabled: $step10RedPlaceholderEnabled" -ForegroundColor Green
         Write-Host "[probe] Step 10 green placeholder enabled: $step10GreenPlaceholderEnabled" -ForegroundColor Green
+        Write-Host "[probe] Step 10 white placeholder enabled: $step10WhitePlaceholderEnabled" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_008_BUTTON_BORDER_EXIT present: $step8BorderExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_009_ENTER present: $step9EnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_010_RED_DRAW_ENTER present: $step10RedDrawEnterPresent" -ForegroundColor Green
@@ -260,10 +316,23 @@ try {
         Write-Host "[probe] NORM_STEP_010_GREEN_FIRST_PIXEL_READ_EXIT present: $step10GreenFirstPixelReadExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_ENTER present: $step10GreenFirstPixelWriteEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_EXIT present: $step10GreenFirstPixelWriteExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_WHITE_DRAW_ENTER present: $step10WhiteDrawEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_WHITE_A_ENTER present: $step10WhiteAEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_WHITE_A_EXIT present: $step10WhiteAExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_WHITE_B_ENTER present: $step10WhiteBEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_WHITE_B_EXIT present: $step10WhiteBExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_WHITE_C_ENTER present: $step10WhiteCEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_WHITE_C_EXIT present: $step10WhiteCExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_WHITE_DRAW_EXIT present: $step10WhiteDrawExitPresent" -ForegroundColor Green
+        Write-Host "[probe] Deepest white marker reached: $whiteDeepestMarker" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_010_BLUE_DRAW_ENTER present: $step10BlueDrawEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_011_ENTER present: $step11EnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_003_EXIT present: $($serialText.Contains('NORM_STEP_003_EXIT'))" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_004_EXIT present: $($serialText.Contains('NORM_STEP_004_EXIT'))" -ForegroundColor Green
+        Write-Host "[probe] Fault VEC: $lastVecLine" -ForegroundColor Yellow
+        Write-Host "[probe] Fault ERR: $lastErrLine" -ForegroundColor Yellow
+        Write-Host "[probe] Fault CR2: $lastCr2Line" -ForegroundColor Yellow
+        Write-Host "[probe] Fault RIP: $lastRipLine" -ForegroundColor Yellow
         if ($faultLines.Count -gt 0) {
             Write-Host "[probe] Fault lines:" -ForegroundColor Yellow
             $faultLines | ForEach-Object { Write-Host "[probe]   $_" -ForegroundColor Yellow }
@@ -283,6 +352,7 @@ try {
             "STEP8_SAFE_PLACEHOLDERS_ENABLED=$step8SafePlaceholdersEnabled"
             "STEP10_RED_PLACEHOLDER_ENABLED=$step10RedPlaceholderEnabled"
             "STEP10_GREEN_PLACEHOLDER_ENABLED=$step10GreenPlaceholderEnabled"
+            "STEP10_WHITE_PLACEHOLDER_ENABLED=$step10WhitePlaceholderEnabled"
             "LAST_ENTER=$lastEnter"
             "MATCHING_EXIT=$matchingExit"
             "MATCHING_EXIT_PRESENT=$matchingExitPresent"
@@ -305,10 +375,23 @@ try {
             "NORM_STEP_010_GREEN_FIRST_PIXEL_READ_EXIT_PRESENT=$step10GreenFirstPixelReadExitPresent"
             "NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_ENTER_PRESENT=$step10GreenFirstPixelWriteEnterPresent"
             "NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_EXIT_PRESENT=$step10GreenFirstPixelWriteExitPresent"
+            "NORM_STEP_010_WHITE_DRAW_ENTER_PRESENT=$step10WhiteDrawEnterPresent"
+            "NORM_STEP_010_WHITE_A_ENTER_PRESENT=$step10WhiteAEnterPresent"
+            "NORM_STEP_010_WHITE_A_EXIT_PRESENT=$step10WhiteAExitPresent"
+            "NORM_STEP_010_WHITE_B_ENTER_PRESENT=$step10WhiteBEnterPresent"
+            "NORM_STEP_010_WHITE_B_EXIT_PRESENT=$step10WhiteBExitPresent"
+            "NORM_STEP_010_WHITE_C_ENTER_PRESENT=$step10WhiteCEnterPresent"
+            "NORM_STEP_010_WHITE_C_EXIT_PRESENT=$step10WhiteCExitPresent"
+            "NORM_STEP_010_WHITE_DRAW_EXIT_PRESENT=$step10WhiteDrawExitPresent"
+            "WHITE_DEEPEST_MARKER=$whiteDeepestMarker"
             "NORM_STEP_010_BLUE_DRAW_ENTER_PRESENT=$step10BlueDrawEnterPresent"
             "NORM_STEP_011_ENTER_PRESENT=$step11EnterPresent"
             "NORM_STEP_003_EXIT_PRESENT=$($serialText.Contains('NORM_STEP_003_EXIT'))"
             "NORM_STEP_004_EXIT_PRESENT=$($serialText.Contains('NORM_STEP_004_EXIT'))"
+            "FAULT_VEC=$lastVecLine"
+            "FAULT_ERR=$lastErrLine"
+            "FAULT_CR2=$lastCr2Line"
+            "FAULT_RIP=$lastRipLine"
             "VEC_LINES=$($vecLines.Count)"
             "FAULT_LINES=$($faultLines.Count)"
             "CR2_LINES=$($cr2Lines.Count)"
