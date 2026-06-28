@@ -388,6 +388,7 @@ unsafe class Program {
     private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
     private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = false;
     internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = false;
+    internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_FONT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_CURSOR_DRAW = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;
@@ -1347,7 +1348,7 @@ unsafe class Program {
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_008 Framebuffer.Graphics.FillRectangle/DrawRectangle/DrawImage in taskbar probe");
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_010 Framebuffer.Graphics.DrawImage x3 in icon probe");
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_011 WindowManager.DrawAllExceptTaskManager()/DrawTaskManager() [direct Framebuffer.Graphics calls in subpaths]");
-        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_012 WindowManager.font.DrawString() [no direct Framebuffer.Graphics receiver call]");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_012 WindowManager.font.MeasureString()/DrawString() [probe-only safe font placeholder available]");
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_013 DrawUefiCursor() [no direct Framebuffer.Graphics receiver call]");
         SerialBreadcrumb("NORM_GFX_CALLSITE_REPORT_END");
     }
@@ -1422,6 +1423,7 @@ unsafe class Program {
         SerialBreadcrumb(UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH ? "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=1" : "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_STEP_PROBE ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=0");
+        SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SAFE_FONT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_FONT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_FONT_PLACEHOLDER=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_WINDOW_TRAVERSAL=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_WINDOW_TRAVERSAL=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SKIP_CURSOR_DRAW ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_CURSOR_DRAW=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_CURSOR_DRAW=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_CURSOR_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_CURSOR_PLACEHOLDER=0");
@@ -2434,7 +2436,14 @@ unsafe class Program {
 
         SerialBreadcrumb("NORM_STEP_012_ENTER");
         SerialBreadcrumb(WindowManager.font == null ? "NORM_STEP_012_FONT=NULL" : "NORM_STEP_012_FONT=OK");
-        if (WindowManager.font != null) {
+        if (NORMAL_DESKTOP_UEFI_PROBE_SAFE_FONT_PLACEHOLDER) {
+            SerialBreadcrumb("NORM_STEP_012_SAFE_FONT_PLACEHOLDER=1");
+            var probeGraphics = Framebuffer.Graphics;
+            if (probeGraphics != null && probeGraphics.VideoMemory != null && probeGraphics.Width > 0 && probeGraphics.Height > 0) {
+                probeGraphics.FillRectangle(24, 24, 160, 24, 0xFF263238u);
+            }
+            SerialBreadcrumb("NORM_STEP_012_SAFE_FONT_PLACEHOLDER_EXIT");
+        } else if (WindowManager.font != null) {
             SerialBreadcrumb("NORM_STEP_012_MEASURE_ENTER");
             int probeTextW = WindowManager.font.MeasureString("NORM STEP FONT");
             SerialBreadcrumb("NORM_STEP_012_MEASURE_EXIT");

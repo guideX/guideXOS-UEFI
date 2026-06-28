@@ -6,6 +6,7 @@ param(
     [string]$Step10GreenMode = 'FillRectangle',
     [ValidateSet('DrawImage', 'FillRectangle')]
     [string]$Step10WhiteMode = 'FillRectangle',
+    [switch]$SafeFontPlaceholder,
     [switch]$SkipWindowTraversal,
     [switch]$SkipCursorDraw,
     [switch]$CursorPlaceholder
@@ -104,6 +105,11 @@ try {
         -Old 'internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = false;' `
         -New 'internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = true;' `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10'
+    $step12SafeFontPlaceholder = if ($SafeFontPlaceholder) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_FONT_PLACEHOLDER = false;' `
+        -New "internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_FONT_PLACEHOLDER = $step12SafeFontPlaceholder;" `
+        -Label 'NORMAL_DESKTOP_UEFI_PROBE_SAFE_FONT_PLACEHOLDER'
     $step11SkipWindowTraversal = if ($SkipWindowTraversal) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL = false;' `
@@ -155,6 +161,7 @@ try {
     Write-Host "[probe] Step 10 green mode: $Step10GreenMode" -ForegroundColor Cyan
     Write-Host "[probe] Step 10 white mode: $Step10WhiteMode" -ForegroundColor Cyan
     Write-Host "[probe] Step 11 skip window traversal: $SkipWindowTraversal" -ForegroundColor Cyan
+    Write-Host "[probe] Step 12 safe font placeholder: $SafeFontPlaceholder" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 skip cursor draw: $SkipCursorDraw" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 cursor placeholder: $CursorPlaceholder" -ForegroundColor Cyan
     Write-Host "[probe] Safe placeholders until step 10: enabled" -ForegroundColor Cyan
@@ -261,6 +268,7 @@ try {
     $step10GreenPlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=1')
     $step10WhitePlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP10_WHITE_FILLRECT_PLACEHOLDER=1')
     $step11SkipWindowTraversalEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_WINDOW_TRAVERSAL=1')
+    $step12SafeFontPlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_FONT_PLACEHOLDER=1')
     $step8BorderExitPresent = $serialText.Contains('NORM_STEP_008_BUTTON_BORDER_EXIT')
     $step9EnterPresent = $serialText.Contains('NORM_STEP_009_ENTER')
     $step10RedDrawEnterPresent = $serialText.Contains('NORM_STEP_010_RED_DRAW_ENTER')
@@ -299,6 +307,8 @@ try {
     $step11ExitPresent = $serialText.Contains('NORM_STEP_011_EXIT')
     $step12EnterPresent = $serialText.Contains('NORM_STEP_012_ENTER')
     $step12ExitPresent = $serialText.Contains('NORM_STEP_012_EXIT')
+    $step12SafeFontPlaceholderPresent = $serialText.Contains('NORM_STEP_012_SAFE_FONT_PLACEHOLDER=1')
+    $step12SafeFontPlaceholderExitPresent = $serialText.Contains('NORM_STEP_012_SAFE_FONT_PLACEHOLDER_EXIT')
     $step14EnterPresent = $serialText.Contains('NORM_STEP_014_ENTER')
     $step14ExitPresent = $serialText.Contains('NORM_STEP_014_EXIT')
     $step13SkipCursorDrawEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_CURSOR_DRAW=1')
@@ -466,6 +476,7 @@ try {
         Write-Host "[probe] Step 10 red placeholder enabled: $step10RedPlaceholderEnabled" -ForegroundColor Green
         Write-Host "[probe] Step 10 green placeholder enabled: $step10GreenPlaceholderEnabled" -ForegroundColor Green
         Write-Host "[probe] Step 10 white placeholder enabled: $step10WhitePlaceholderEnabled" -ForegroundColor Green
+        Write-Host "[probe] Step 12 safe font placeholder enabled: $step12SafeFontPlaceholderEnabled" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_008_BUTTON_BORDER_EXIT present: $step8BorderExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_009_ENTER present: $step9EnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_010_RED_DRAW_ENTER present: $step10RedDrawEnterPresent" -ForegroundColor Green
@@ -506,6 +517,8 @@ try {
         Write-Host "[probe] NORM_STEP_011_ENTER present: $step11EnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_012_ENTER present: $step12EnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_012_EXIT present: $step12ExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_012_SAFE_FONT_PLACEHOLDER present: $step12SafeFontPlaceholderPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_012_SAFE_FONT_PLACEHOLDER_EXIT present: $step12SafeFontPlaceholderExitPresent" -ForegroundColor Green
         Write-Host "[probe] Step 13 skip cursor draw enabled: $step13SkipCursorDrawEnabled" -ForegroundColor Green
         Write-Host "[probe] Step 13 cursor placeholder enabled: $step13CursorPlaceholderEnabled" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_A_ENTER present: $step13AEnterPresent" -ForegroundColor Green
@@ -564,6 +577,7 @@ try {
             "SERIAL_LOG=$serialLog"
             "STEP8_SAFE_PLACEHOLDERS_ENABLED=$step8SafePlaceholdersEnabled"
             "STEP11_SKIP_WINDOW_TRAVERSAL_ENABLED=$step11SkipWindowTraversalEnabled"
+            "STEP12_SAFE_FONT_PLACEHOLDER_ENABLED=$step12SafeFontPlaceholderEnabled"
             "STEP13_SKIP_CURSOR_DRAW_ENABLED=$step13SkipCursorDrawEnabled"
             "STEP13_CURSOR_PLACEHOLDER_ENABLED=$step13CursorPlaceholderEnabled"
             "STEP10_RED_PLACEHOLDER_ENABLED=$step10RedPlaceholderEnabled"
@@ -587,6 +601,8 @@ try {
             "NORM_STEP_011_EXIT_PRESENT=$step11ExitPresent"
             "NORM_STEP_012_ENTER_PRESENT=$step12EnterPresent"
             "NORM_STEP_012_EXIT_PRESENT=$step12ExitPresent"
+            "NORM_STEP_012_SAFE_FONT_PLACEHOLDER_PRESENT=$step12SafeFontPlaceholderPresent"
+            "NORM_STEP_012_SAFE_FONT_PLACEHOLDER_EXIT_PRESENT=$step12SafeFontPlaceholderExitPresent"
             "NORM_STEP_013_A_ENTER_PRESENT=$step13AEnterPresent"
             "NORM_STEP_013_A_EXIT_PRESENT=$step13AExitPresent"
             "NORM_STEP_013_B_ENTER_PRESENT=$step13BEnterPresent"
