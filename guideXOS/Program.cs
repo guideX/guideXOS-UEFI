@@ -389,6 +389,7 @@ unsafe class Program {
     private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = false;
     internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;
+    private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = false;
     // TinyUEFI proof-pattern heartbeat is useful during bring-up, but keep it
     // opt-in so the serial log stays readable by default.
     private const bool UEFI_TINY_RENDER_HEARTBEAT_ENABLED = false;
@@ -1418,6 +1419,7 @@ unsafe class Program {
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_STEP_PROBE ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=0");
+        SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=0");
         SerialBreadcrumb(UEFI_TINY_RENDER_LOOP_ENTRY_ONLY ? "SMAIN_DIAG_TINY_ENTRY_ONLY=1" : "SMAIN_DIAG_TINY_ENTRY_ONLY=0");
         SerialBreadcrumb(UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS ? "SMAIN_DIAG_TINY_MINIMAL_GRAPHICS=1" : "SMAIN_DIAG_TINY_MINIMAL_GRAPHICS=0");
 
@@ -2457,8 +2459,36 @@ unsafe class Program {
         }
         if (greenIcon != null) {
             SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_ENTER");
-            SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_CALLSITE=Framebuffer.Graphics.DrawImage(128,80,greenIcon)");
-            Framebuffer.Graphics.DrawImage(128, 80, greenIcon);
+            SerialBreadcrumb("NORM_STEP_010_GREEN_A_ENTER");
+            SerialBreadcrumb("NORM_STEP_010_GREEN_IMAGE=OK");
+            int greenIconWidth = greenIcon.Width;
+            int greenIconHeight = greenIcon.Height;
+            SerialBreadcrumb("NORM_STEP_010_GREEN_DIMENSIONS_READ");
+            SerialBreadcrumb("NORM_STEP_010_GREEN_A_EXIT");
+            SerialBreadcrumb("NORM_STEP_010_GREEN_B_ENTER");
+            guideXOS.Graph.Graphics greenGraphics = graphics;
+            SerialBreadcrumb("NORM_STEP_010_GREEN_RECEIVER=CACHED");
+            SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_OVERLOAD=DrawImage(int,int,Image,bool-default:true)");
+            SerialBreadcrumb(greenIcon.RawData == null ? "NORM_STEP_010_GREEN_RAWDATA=NULL" : "NORM_STEP_010_GREEN_RAWDATA=OK");
+            SerialBreadcrumb("NORM_STEP_010_GREEN_FIRST_PIXEL_READ_ENTER");
+            int greenFirstPixel = (greenIcon.RawData != null && greenIcon.RawData.Length > 0) ? greenIcon.RawData[0] : 0;
+            SerialBreadcrumb("NORM_STEP_010_GREEN_FIRST_PIXEL_READ_EXIT");
+            SerialBreadcrumb("NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_ENTER");
+            if (greenIcon.RawData != null && greenIcon.RawData.Length > 0) {
+                greenIcon.RawData[0] = greenFirstPixel;
+            }
+            SerialBreadcrumb("NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_EXIT");
+            SerialBreadcrumb("NORM_STEP_010_GREEN_B_EXIT");
+            SerialBreadcrumb("NORM_STEP_010_GREEN_C_ENTER");
+            if (NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER) {
+                SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_PLACEHOLDER=FillRectangle");
+                greenGraphics.FillRectangle(128, 80, greenIconWidth, greenIconHeight, 0xFF00FF00u);
+            } else {
+                SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_PLACEHOLDER=DrawImage");
+                SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_CALLSITE=greenGraphics.DrawImage(128,80,greenIcon)");
+                greenGraphics.DrawImage(128, 80, greenIcon);
+            }
+            SerialBreadcrumb("NORM_STEP_010_GREEN_C_EXIT");
             SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_EXIT");
         }
         if (whiteIcon != null) {

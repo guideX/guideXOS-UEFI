@@ -1,7 +1,9 @@
 param(
     [int]$CaptureSeconds = 120,
     [ValidateSet('DrawImage', 'FillRectangle')]
-    [string]$Step10RedMode = 'DrawImage'
+    [string]$Step10RedMode = 'DrawImage',
+    [ValidateSet('DrawImage', 'FillRectangle')]
+    [string]$Step10GreenMode = 'FillRectangle'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,6 +86,11 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;' `
         -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = $step10RedPlaceholder;" `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER'
+    $step10GreenPlaceholder = if ($Step10GreenMode -eq 'FillRectangle') { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = false;' `
+        -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = $step10GreenPlaceholder;" `
+        -Label 'NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER'
 
     $probeAnchor = 'SerialBreadcrumb("NORM_PROBE_ENTER");'
     $probeAnchorCount = [regex]::Matches($patched, [regex]::Escape($probeAnchor)).Count
@@ -102,6 +109,7 @@ try {
 
     Write-Host "[probe] Run ID: $runId" -ForegroundColor Cyan
     Write-Host "[probe] Step 10 red mode: $Step10RedMode" -ForegroundColor Cyan
+    Write-Host "[probe] Step 10 green mode: $Step10GreenMode" -ForegroundColor Cyan
     Write-Host "[probe] Safe placeholders until step 10: enabled" -ForegroundColor Cyan
     Write-Host "[probe] Patched Program.cs for temporary step probe" -ForegroundColor Cyan
     Write-Host "[probe] Building via build.ps1..." -ForegroundColor Cyan
@@ -203,11 +211,28 @@ try {
     $ripLines = $serialLines | Where-Object { $_ -match 'RIP=' }
     $step8SafePlaceholdersEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=1')
     $step10RedPlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=1')
+    $step10GreenPlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=1')
     $step8BorderExitPresent = $serialText.Contains('NORM_STEP_008_BUTTON_BORDER_EXIT')
     $step9EnterPresent = $serialText.Contains('NORM_STEP_009_ENTER')
     $step10RedDrawEnterPresent = $serialText.Contains('NORM_STEP_010_RED_DRAW_ENTER')
     $step10RedDrawExitPresent = $serialText.Contains('NORM_STEP_010_RED_DRAW_EXIT')
+    $step10GreenAEnterPresent = $serialText.Contains('NORM_STEP_010_GREEN_A_ENTER')
+    $step10GreenAExitPresent = $serialText.Contains('NORM_STEP_010_GREEN_A_EXIT')
+    $step10GreenBEnterPresent = $serialText.Contains('NORM_STEP_010_GREEN_B_ENTER')
+    $step10GreenBExitPresent = $serialText.Contains('NORM_STEP_010_GREEN_B_EXIT')
+    $step10GreenCEnterPresent = $serialText.Contains('NORM_STEP_010_GREEN_C_ENTER')
+    $step10GreenCExitPresent = $serialText.Contains('NORM_STEP_010_GREEN_C_EXIT')
+    $step10GreenImageOkPresent = $serialText.Contains('NORM_STEP_010_GREEN_IMAGE=OK')
+    $step10GreenDimensionsReadPresent = $serialText.Contains('NORM_STEP_010_GREEN_DIMENSIONS_READ')
+    $step10GreenReceiverCachedPresent = $serialText.Contains('NORM_STEP_010_GREEN_RECEIVER=CACHED')
+    $step10GreenDrawOverloadPresent = $serialText.Contains('NORM_STEP_010_GREEN_DRAW_OVERLOAD=DrawImage(int,int,Image,bool-default:true)')
+    $step10GreenRawDataOkPresent = $serialText.Contains('NORM_STEP_010_GREEN_RAWDATA=OK')
+    $step10GreenFirstPixelReadEnterPresent = $serialText.Contains('NORM_STEP_010_GREEN_FIRST_PIXEL_READ_ENTER')
+    $step10GreenFirstPixelReadExitPresent = $serialText.Contains('NORM_STEP_010_GREEN_FIRST_PIXEL_READ_EXIT')
+    $step10GreenFirstPixelWriteEnterPresent = $serialText.Contains('NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_ENTER')
+    $step10GreenFirstPixelWriteExitPresent = $serialText.Contains('NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_EXIT')
     $step11EnterPresent = $serialText.Contains('NORM_STEP_011_ENTER')
+    $step10BlueDrawEnterPresent = $serialText.Contains('NORM_STEP_010_BLUE_DRAW_ENTER')
 
     if ($validRun) {
         Write-Host "[probe] Valid fresh run detected." -ForegroundColor Green
@@ -215,10 +240,27 @@ try {
         Write-Host "[probe] Matching exit present: $matchingExitPresent" -ForegroundColor Green
         Write-Host "[probe] Step 8 safe placeholders enabled: $step8SafePlaceholdersEnabled" -ForegroundColor Green
         Write-Host "[probe] Step 10 red placeholder enabled: $step10RedPlaceholderEnabled" -ForegroundColor Green
+        Write-Host "[probe] Step 10 green placeholder enabled: $step10GreenPlaceholderEnabled" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_008_BUTTON_BORDER_EXIT present: $step8BorderExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_009_ENTER present: $step9EnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_010_RED_DRAW_ENTER present: $step10RedDrawEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_010_RED_DRAW_EXIT present: $step10RedDrawExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_A_ENTER present: $step10GreenAEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_A_EXIT present: $step10GreenAExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_B_ENTER present: $step10GreenBEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_B_EXIT present: $step10GreenBExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_C_ENTER present: $step10GreenCEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_C_EXIT present: $step10GreenCExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_IMAGE=OK present: $step10GreenImageOkPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_DIMENSIONS_READ present: $step10GreenDimensionsReadPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_RECEIVER=CACHED present: $step10GreenReceiverCachedPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_DRAW_OVERLOAD present: $step10GreenDrawOverloadPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_RAWDATA=OK present: $step10GreenRawDataOkPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_FIRST_PIXEL_READ_ENTER present: $step10GreenFirstPixelReadEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_FIRST_PIXEL_READ_EXIT present: $step10GreenFirstPixelReadExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_ENTER present: $step10GreenFirstPixelWriteEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_EXIT present: $step10GreenFirstPixelWriteExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_BLUE_DRAW_ENTER present: $step10BlueDrawEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_011_ENTER present: $step11EnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_003_EXIT present: $($serialText.Contains('NORM_STEP_003_EXIT'))" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_004_EXIT present: $($serialText.Contains('NORM_STEP_004_EXIT'))" -ForegroundColor Green
@@ -236,9 +278,11 @@ try {
         $summary = @(
             "RUN_ID=$runId"
             "STEP10_RED_MODE=$Step10RedMode"
+            "STEP10_GREEN_MODE=$Step10GreenMode"
             "SERIAL_LOG=$serialLog"
             "STEP8_SAFE_PLACEHOLDERS_ENABLED=$step8SafePlaceholdersEnabled"
             "STEP10_RED_PLACEHOLDER_ENABLED=$step10RedPlaceholderEnabled"
+            "STEP10_GREEN_PLACEHOLDER_ENABLED=$step10GreenPlaceholderEnabled"
             "LAST_ENTER=$lastEnter"
             "MATCHING_EXIT=$matchingExit"
             "MATCHING_EXIT_PRESENT=$matchingExitPresent"
@@ -246,6 +290,22 @@ try {
             "NORM_STEP_009_ENTER_PRESENT=$step9EnterPresent"
             "NORM_STEP_010_RED_DRAW_ENTER_PRESENT=$step10RedDrawEnterPresent"
             "NORM_STEP_010_RED_DRAW_EXIT_PRESENT=$step10RedDrawExitPresent"
+            "NORM_STEP_010_GREEN_A_ENTER_PRESENT=$step10GreenAEnterPresent"
+            "NORM_STEP_010_GREEN_A_EXIT_PRESENT=$step10GreenAExitPresent"
+            "NORM_STEP_010_GREEN_B_ENTER_PRESENT=$step10GreenBEnterPresent"
+            "NORM_STEP_010_GREEN_B_EXIT_PRESENT=$step10GreenBExitPresent"
+            "NORM_STEP_010_GREEN_C_ENTER_PRESENT=$step10GreenCEnterPresent"
+            "NORM_STEP_010_GREEN_C_EXIT_PRESENT=$step10GreenCExitPresent"
+            "NORM_STEP_010_GREEN_IMAGE_OK_PRESENT=$step10GreenImageOkPresent"
+            "NORM_STEP_010_GREEN_DIMENSIONS_READ_PRESENT=$step10GreenDimensionsReadPresent"
+            "NORM_STEP_010_GREEN_RECEIVER_CACHED_PRESENT=$step10GreenReceiverCachedPresent"
+            "NORM_STEP_010_GREEN_DRAW_OVERLOAD_PRESENT=$step10GreenDrawOverloadPresent"
+            "NORM_STEP_010_GREEN_RAWDATA_OK_PRESENT=$step10GreenRawDataOkPresent"
+            "NORM_STEP_010_GREEN_FIRST_PIXEL_READ_ENTER_PRESENT=$step10GreenFirstPixelReadEnterPresent"
+            "NORM_STEP_010_GREEN_FIRST_PIXEL_READ_EXIT_PRESENT=$step10GreenFirstPixelReadExitPresent"
+            "NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_ENTER_PRESENT=$step10GreenFirstPixelWriteEnterPresent"
+            "NORM_STEP_010_GREEN_FIRST_PIXEL_WRITE_EXIT_PRESENT=$step10GreenFirstPixelWriteExitPresent"
+            "NORM_STEP_010_BLUE_DRAW_ENTER_PRESENT=$step10BlueDrawEnterPresent"
             "NORM_STEP_011_ENTER_PRESENT=$step11EnterPresent"
             "NORM_STEP_003_EXIT_PRESENT=$($serialText.Contains('NORM_STEP_003_EXIT'))"
             "NORM_STEP_004_EXIT_PRESENT=$($serialText.Contains('NORM_STEP_004_EXIT'))"
