@@ -374,7 +374,7 @@ unsafe class Program {
     // When true, frame 2+ uses the allocation-free heartbeat visual path instead
     // of the full render loop.  UEFI_STEADY_STATE_SERIAL_ONLY must be false.
     private const bool UEFI_STEADY_STATE_MINIMAL_RENDER = true;
-    private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = true;
+    private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = false;
 
     // When true, DrawUefiSafeModeDiagnostics() is restricted to frame 1 only.
     // Default: true (safe).  Set false only for targeted diagnostics sessions.
@@ -383,10 +383,10 @@ unsafe class Program {
     // path.  MUST be false whenever UEFI_STEADY_STATE_SERIAL_ONLY is true,
     // because the diagnostics method allocates managed strings every call.
     private const bool UEFI_DRAW_DIAGNOSTICS_EACH_FRAME = false;
-    private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = false;
+    private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;
     private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = false;
     private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
-    private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = true;
+    private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = false;
     // TinyUEFI proof-pattern heartbeat is useful during bring-up, but keep it
     // opt-in so the serial log stays readable by default.
     private const bool UEFI_TINY_RENDER_HEARTBEAT_ENABLED = false;
