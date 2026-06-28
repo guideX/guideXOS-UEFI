@@ -40,16 +40,42 @@ namespace guideXOS.GUI {
         static List<PendingWindow> _pending;
         // Perf tracking toggled off by default (previous logic caused potential hang during early boot)
         private static bool _perfTrackingEnabled = false; // can be enabled later by TaskManager if desired
+        public static bool ProbeSerialMode = false;
         //private static Dictionary<int, ulong> _drawMs; // accumulated ms per owner
         //private static Dictionary<int, int> _cpuPct;    // last computed percent
         private static ulong _cpuEpochTick;
+
+        private static void ProbeSerialChar(char c) {
+            Native.Out8(0x3F8, (byte)c);
+        }
+
+        private static void ProbeSerialBreadcrumb(string breadcrumb) {
+            if (breadcrumb == null)
+                return;
+            for (int i = 0; i < breadcrumb.Length; i++) {
+                ProbeSerialChar(breadcrumb[i]);
+            }
+            ProbeSerialChar('\n');
+        }
+
+        private static unsafe void ProbeSerialWriteUnsigned(ulong value) {
+            char* digits = stackalloc char[21];
+            int len = 0;
+            do {
+                digits[len++] = (char)('0' + (value % 10UL));
+                value /= 10UL;
+            } while (value != 0 && len < 21);
+            while (len-- > 0) {
+                ProbeSerialChar(digits[len]);
+            }
+        }
         /// <summary>
         /// Initialize
         /// </summary>
         public static void Initialize() {
             Windows = new List<Window>();
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
-                // UEFI: Skip PNG decoding — DEFLATE decompression hangs after
+                // UEFI: Skip PNG decoding â€” DEFLATE decompression hangs after
                 // ExitBootServices.  Use plain placeholder images instead.
                 CloseButton = new Image(16, 16);
                 MinimizeButton = new Image(16, 16);
@@ -224,6 +250,53 @@ namespace guideXOS.GUI {
         /// Draw all windows except Task Manager (allows workspace switcher to be drawn on top)
         /// </summary>
         public static void DrawAllExceptTaskManager() {
+            if (ProbeSerialMode) {
+                ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_ENTER");
+                var windows = Windows;
+                ProbeSerialBreadcrumb(windows == null ? "NORM_STEP_011_DRAWALL_WINDOWS=NULL" : "NORM_STEP_011_DRAWALL_WINDOWS=OK");
+                if (windows == null) {
+                    ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_EXIT");
+                    return;
+                }
+
+                int count = windows.Count;
+                ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_COUNT");
+                ProbeSerialWriteUnsigned((ulong)count);
+                ProbeSerialChar('\n');
+                ProbeSerialBreadcrumb(count == 0 ? "NORM_STEP_011_DRAWALL_ZERO=1" : "NORM_STEP_011_DRAWALL_ZERO=0");
+                ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_LOOP_BEGIN");
+                for (int i = 0; i < count; i++) {
+                    ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_LOOP_CONDITION_TRUE");
+                    var w = windows[i];
+                    ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_WINDOW_BODY_ENTER");
+                    if (!w.Visible) {
+                        ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_WINDOW_BODY_SKIP_VISIBLE");
+                        continue;
+                    }
+                    if (w is guideXOS.DefaultApps.TaskManager) {
+                        ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_WINDOW_BODY_SKIP_TASKMANAGER");
+                        continue;
+                    }
+
+                    ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_BEFORE_ONDRAW");
+                    if (!_perfTrackingEnabled) {
+                        w.OnDraw();
+                        ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_AFTER_ONDRAW");
+                        continue;
+                    }
+                    Allocator.CurrentOwnerId = w.OwnerId;
+                    ulong t0 = Timer.Ticks;
+                    w.OnDraw();
+                    ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_AFTER_ONDRAW");
+                    ulong t1 = Timer.Ticks;
+                    ulong dt = t1 >= t0 ? t1 - t0 : 0UL;
+                    Allocator.CurrentOwnerId = 0;
+                }
+                if (_perfTrackingEnabled)
+                    UpdateCpuPercents();
+                ProbeSerialBreadcrumb("NORM_STEP_011_DRAWALL_EXIT");
+                return;
+            }
             for (int i = 0; i < Windows.Count; i++) {
                 var w = Windows[i];
                 if (!w.Visible)
@@ -231,7 +304,7 @@ namespace guideXOS.GUI {
                 // Skip Task Manager - it will be drawn later to stay on top
                 if (w is guideXOS.DefaultApps.TaskManager)
                     continue;
-                    
+
                 if (!_perfTrackingEnabled) {
                     w.OnDraw();
                     continue;
@@ -251,6 +324,39 @@ namespace guideXOS.GUI {
         /// Draw only Task Manager (always on top)
         /// </summary>
         public static void DrawTaskManager() {
+            if (ProbeSerialMode) {
+                ProbeSerialBreadcrumb("NORM_STEP_011_DRAWTASK_ENTER");
+                var windows = Windows;
+                ProbeSerialBreadcrumb(windows == null ? "NORM_STEP_011_DRAWTASK_WINDOWS=NULL" : "NORM_STEP_011_DRAWTASK_WINDOWS=OK");
+                if (windows == null) {
+                    ProbeSerialBreadcrumb("NORM_STEP_011_DRAWTASK_EXIT");
+                    return;
+                }
+
+                int count = windows.Count;
+                ProbeSerialBreadcrumb("NORM_STEP_011_DRAWTASK_COUNT");
+                ProbeSerialWriteUnsigned((ulong)count);
+                ProbeSerialChar('\n');
+                ProbeSerialBreadcrumb(count == 0 ? "NORM_STEP_011_DRAWTASK_ZERO=1" : "NORM_STEP_011_DRAWTASK_ZERO=0");
+                ProbeSerialBreadcrumb("NORM_STEP_011_DRAWTASK_LOOP_BEGIN");
+                for (int i = 0; i < count; i++) {
+                    ProbeSerialBreadcrumb("NORM_STEP_011_DRAWTASK_LOOP_CONDITION_TRUE");
+                    var w = windows[i];
+                    ProbeSerialBreadcrumb("NORM_STEP_011_DRAWTASK_WINDOW_BODY_ENTER");
+                    if (!w.Visible) {
+                        ProbeSerialBreadcrumb("NORM_STEP_011_DRAWTASK_WINDOW_BODY_SKIP_VISIBLE");
+                        continue;
+                    }
+                    if (w is guideXOS.DefaultApps.TaskManager) {
+                        ProbeSerialBreadcrumb("NORM_STEP_011_DRAWTASK_BEFORE_ONDRAW");
+                        w.OnDraw();
+                        ProbeSerialBreadcrumb("NORM_STEP_011_DRAWTASK_AFTER_ONDRAW");
+                        break; // Only one Task Manager should exist
+                    }
+                }
+                ProbeSerialBreadcrumb("NORM_STEP_011_DRAWTASK_EXIT");
+                return;
+            }
             for (int i = 0; i < Windows.Count; i++) {
                 var w = Windows[i];
                 if (!w.Visible)

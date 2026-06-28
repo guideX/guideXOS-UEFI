@@ -388,6 +388,7 @@ unsafe class Program {
     private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
     private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = false;
     internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = false;
+    private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER = false;
@@ -1419,6 +1420,7 @@ unsafe class Program {
         SerialBreadcrumb(UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH ? "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=1" : "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_STEP_PROBE ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=0");
+        SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_WINDOW_TRAVERSAL=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_WINDOW_TRAVERSAL=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_WHITE_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_WHITE_FILLRECT_PLACEHOLDER=0");
@@ -2271,6 +2273,7 @@ unsafe class Program {
     /// </summary>
     private static void RenderLoopNormalDesktopStepProbe() {
         SerialBreadcrumb("NORM_PROBE_ENTER");
+        WindowManager.ProbeSerialMode = true;
 
         bool graphicsReady = false;
 
@@ -2375,18 +2378,55 @@ unsafe class Program {
         SerialBreadcrumb("NORM_STEP_010_EXIT");
 
         SerialBreadcrumb("NORM_STEP_011_ENTER");
-        SerialBreadcrumb(WindowManager.Windows == null ? "NORM_STEP_011_WINDOWS=NULL" : "NORM_STEP_011_WINDOWS=OK");
-        if (WindowManager.Windows != null && WindowManager.Windows.Count == 0) {
-            SerialBreadcrumb("NORM_STEP_011_WINDOWS_ZERO");
-        }
-        if (WindowManager.Windows != null) {
-            SerialBreadcrumb("NORM_STEP_011_CALLSITE=WindowManager.DrawAllExceptTaskManager()/DrawTaskManager()");
-            WindowManager.DrawAllExceptTaskManager();
-            WindowManager.DrawTaskManager();
+        if (NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL) {
+            SerialBreadcrumb("NORM_STEP_011_SKIP_ZERO_WINDOWS");
+            SerialBreadcrumb("NORM_STEP_011_EXIT");
         } else {
-            SerialBreadcrumb("NORM_STEP_011_WINDOWS_TRAVERSAL_SKIPPED");
+            SerialBreadcrumb("NORM_STEP_011_A_ENTER");
+            var windows = WindowManager.Windows;
+            SerialBreadcrumb(windows == null ? "NORM_STEP_011_WINDOWS=NULL" : "NORM_STEP_011_WINDOWS=OK");
+            if (windows != null) {
+                SerialBreadcrumb("NORM_STEP_011_WINDOWS_COUNT");
+                SerialWriteUnsigned((ulong)windows.Count);
+                SerialChar('\n');
+                SerialBreadcrumb(windows.Count == 0 ? "NORM_STEP_011_WINDOWS_ZERO=1" : "NORM_STEP_011_WINDOWS_ZERO=0");
+            }
+            SerialBreadcrumb("NORM_STEP_011_A_EXIT");
+
+            SerialBreadcrumb("NORM_STEP_011_B_ENTER");
+            if (windows != null) {
+                SerialBreadcrumb("NORM_STEP_011_B_TRAVERSAL_BEGIN");
+                SerialBreadcrumb("NORM_STEP_011_B_FIRST_LOOP_CONDITION_ENTER");
+                bool step11HasWindows = windows.Count > 0;
+                if (windows.Count == 0) {
+                    SerialBreadcrumb("NORM_STEP_011_B_FIRST_LOOP_CONDITION_FALSE");
+                    SerialBreadcrumb("NORM_STEP_011_B_PER_WINDOW_BODY_SKIPPED_ZERO_WINDOWS");
+                } else {
+                    SerialBreadcrumb("NORM_STEP_011_B_FIRST_LOOP_CONDITION_TRUE");
+                    SerialBreadcrumb("NORM_STEP_011_B_PER_WINDOW_BODY_ENTER");
+                }
+                SerialBreadcrumb("NORM_STEP_011_B_CALLSITE=WindowManager.DrawAllExceptTaskManager()");
+                WindowManager.DrawAllExceptTaskManager();
+                if (step11HasWindows) {
+                    SerialBreadcrumb("NORM_STEP_011_B_PER_WINDOW_BODY_EXIT");
+                }
+                SerialBreadcrumb("NORM_STEP_011_B_TRAVERSAL_EXIT");
+            } else {
+                SerialBreadcrumb("NORM_STEP_011_B_WINDOWS_TRAVERSAL_SKIPPED");
+            }
+            SerialBreadcrumb("NORM_STEP_011_B_EXIT");
+
+            SerialBreadcrumb("NORM_STEP_011_C_ENTER");
+            if (windows != null) {
+                SerialBreadcrumb("NORM_STEP_011_C_CALLSITE=WindowManager.DrawTaskManager()");
+                WindowManager.DrawTaskManager();
+                SerialBreadcrumb("NORM_STEP_011_C_CALLSITE_EXIT");
+            } else {
+                SerialBreadcrumb("NORM_STEP_011_C_SKIP_DRAW_TASK_MANAGER");
+            }
+            SerialBreadcrumb("NORM_STEP_011_C_EXIT");
+            SerialBreadcrumb("NORM_STEP_011_EXIT");
         }
-        SerialBreadcrumb("NORM_STEP_011_EXIT");
 
         SerialBreadcrumb("NORM_STEP_012_ENTER");
         SerialBreadcrumb(WindowManager.font == null ? "NORM_STEP_012_FONT=NULL" : "NORM_STEP_012_FONT=OK");

@@ -5,7 +5,8 @@ param(
     [ValidateSet('DrawImage', 'FillRectangle')]
     [string]$Step10GreenMode = 'FillRectangle',
     [ValidateSet('DrawImage', 'FillRectangle')]
-    [string]$Step10WhiteMode = 'FillRectangle'
+    [string]$Step10WhiteMode = 'FillRectangle',
+    [switch]$SkipWindowTraversal
 )
 
 $ErrorActionPreference = 'Stop'
@@ -101,6 +102,11 @@ try {
         -Old 'internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = false;' `
         -New 'internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = true;' `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10'
+    $step11SkipWindowTraversal = if ($SkipWindowTraversal) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL = false;' `
+        -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL = $step11SkipWindowTraversal;" `
+        -Label 'NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL'
     $step10RedPlaceholder = if ($Step10RedMode -eq 'FillRectangle') { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;' `
@@ -136,6 +142,7 @@ try {
     Write-Host "[probe] Step 10 red mode: $Step10RedMode" -ForegroundColor Cyan
     Write-Host "[probe] Step 10 green mode: $Step10GreenMode" -ForegroundColor Cyan
     Write-Host "[probe] Step 10 white mode: $Step10WhiteMode" -ForegroundColor Cyan
+    Write-Host "[probe] Step 11 skip window traversal: $SkipWindowTraversal" -ForegroundColor Cyan
     Write-Host "[probe] Safe placeholders until step 10: enabled" -ForegroundColor Cyan
     Write-Host "[probe] Patched Program.cs for temporary step probe" -ForegroundColor Cyan
     Write-Host "[probe] Building via build.ps1..." -ForegroundColor Cyan
@@ -239,6 +246,7 @@ try {
     $step10RedPlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=1')
     $step10GreenPlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=1')
     $step10WhitePlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP10_WHITE_FILLRECT_PLACEHOLDER=1')
+    $step11SkipWindowTraversalEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_WINDOW_TRAVERSAL=1')
     $step8BorderExitPresent = $serialText.Contains('NORM_STEP_008_BUTTON_BORDER_EXIT')
     $step9EnterPresent = $serialText.Contains('NORM_STEP_009_ENTER')
     $step10RedDrawEnterPresent = $serialText.Contains('NORM_STEP_010_RED_DRAW_ENTER')
@@ -266,6 +274,77 @@ try {
     $step10WhiteCExitPresent = $serialText.Contains('NORM_STEP_010_WHITE_C_EXIT')
     $step10WhiteDrawEnterPresent = $serialText.Contains('NORM_STEP_010_WHITE_DRAW_ENTER')
     $step10WhiteDrawExitPresent = $serialText.Contains('NORM_STEP_010_WHITE_DRAW_EXIT')
+    $step11EnterPresent = $serialText.Contains('NORM_STEP_011_ENTER')
+    $step11SkipPresent = $serialText.Contains('NORM_STEP_011_SKIP_ZERO_WINDOWS')
+    $step11AEnterPresent = $serialText.Contains('NORM_STEP_011_A_ENTER')
+    $step11AExitPresent = $serialText.Contains('NORM_STEP_011_A_EXIT')
+    $step11BEnterPresent = $serialText.Contains('NORM_STEP_011_B_ENTER')
+    $step11BExitPresent = $serialText.Contains('NORM_STEP_011_B_EXIT')
+    $step11CEnterPresent = $serialText.Contains('NORM_STEP_011_C_ENTER')
+    $step11CExitPresent = $serialText.Contains('NORM_STEP_011_C_EXIT')
+    $step11ExitPresent = $serialText.Contains('NORM_STEP_011_EXIT')
+    $step12EnterPresent = $serialText.Contains('NORM_STEP_012_ENTER')
+    $step11MarkerSequence = @(
+        'NORM_STEP_011_ENTER'
+        'NORM_STEP_011_SKIP_ZERO_WINDOWS'
+        'NORM_STEP_011_A_ENTER'
+        'NORM_STEP_011_WINDOWS=NULL'
+        'NORM_STEP_011_WINDOWS=OK'
+        'NORM_STEP_011_WINDOWS_COUNT'
+        'NORM_STEP_011_WINDOWS_ZERO=1'
+        'NORM_STEP_011_WINDOWS_ZERO=0'
+        'NORM_STEP_011_A_EXIT'
+        'NORM_STEP_011_B_ENTER'
+        'NORM_STEP_011_B_TRAVERSAL_BEGIN'
+        'NORM_STEP_011_B_FIRST_LOOP_CONDITION_ENTER'
+        'NORM_STEP_011_B_FIRST_LOOP_CONDITION_FALSE'
+        'NORM_STEP_011_B_FIRST_LOOP_CONDITION_TRUE'
+        'NORM_STEP_011_B_PER_WINDOW_BODY_SKIPPED_ZERO_WINDOWS'
+        'NORM_STEP_011_B_PER_WINDOW_BODY_ENTER'
+        'NORM_STEP_011_B_CALLSITE=WindowManager.DrawAllExceptTaskManager()'
+        'NORM_STEP_011_B_PER_WINDOW_BODY_EXIT'
+        'NORM_STEP_011_B_TRAVERSAL_EXIT'
+        'NORM_STEP_011_B_EXIT'
+        'NORM_STEP_011_C_ENTER'
+        'NORM_STEP_011_C_CALLSITE=WindowManager.DrawTaskManager()'
+        'NORM_STEP_011_C_CALLSITE_EXIT'
+        'NORM_STEP_011_C_SKIP_DRAW_TASK_MANAGER'
+        'NORM_STEP_011_C_EXIT'
+        'NORM_STEP_011_DRAWALL_ENTER'
+        'NORM_STEP_011_DRAWALL_WINDOWS=NULL'
+        'NORM_STEP_011_DRAWALL_WINDOWS=OK'
+        'NORM_STEP_011_DRAWALL_COUNT'
+        'NORM_STEP_011_DRAWALL_ZERO=1'
+        'NORM_STEP_011_DRAWALL_ZERO=0'
+        'NORM_STEP_011_DRAWALL_LOOP_BEGIN'
+        'NORM_STEP_011_DRAWALL_LOOP_CONDITION_TRUE'
+        'NORM_STEP_011_DRAWALL_WINDOW_BODY_ENTER'
+        'NORM_STEP_011_DRAWALL_WINDOW_BODY_SKIP_VISIBLE'
+        'NORM_STEP_011_DRAWALL_WINDOW_BODY_SKIP_TASKMANAGER'
+        'NORM_STEP_011_DRAWALL_BEFORE_ONDRAW'
+        'NORM_STEP_011_DRAWALL_AFTER_ONDRAW'
+        'NORM_STEP_011_DRAWALL_EXIT'
+        'NORM_STEP_011_DRAWTASK_ENTER'
+        'NORM_STEP_011_DRAWTASK_WINDOWS=NULL'
+        'NORM_STEP_011_DRAWTASK_WINDOWS=OK'
+        'NORM_STEP_011_DRAWTASK_COUNT'
+        'NORM_STEP_011_DRAWTASK_ZERO=1'
+        'NORM_STEP_011_DRAWTASK_ZERO=0'
+        'NORM_STEP_011_DRAWTASK_LOOP_BEGIN'
+        'NORM_STEP_011_DRAWTASK_LOOP_CONDITION_TRUE'
+        'NORM_STEP_011_DRAWTASK_WINDOW_BODY_ENTER'
+        'NORM_STEP_011_DRAWTASK_WINDOW_BODY_SKIP_VISIBLE'
+        'NORM_STEP_011_DRAWTASK_BEFORE_ONDRAW'
+        'NORM_STEP_011_DRAWTASK_AFTER_ONDRAW'
+        'NORM_STEP_011_DRAWTASK_EXIT'
+        'NORM_STEP_011_EXIT'
+    )
+    $step11DeepestMarker = $null
+    foreach ($marker in $step11MarkerSequence) {
+        if ($serialText.Contains($marker)) {
+            $step11DeepestMarker = $marker
+        }
+    }
     $whiteMarkerSequence = @(
         'NORM_STEP_010_WHITE_DRAW_ENTER'
         'NORM_STEP_010_WHITE_A_ENTER'
@@ -282,7 +361,6 @@ try {
             $whiteDeepestMarker = $marker
         }
     }
-    $step11EnterPresent = $serialText.Contains('NORM_STEP_011_ENTER')
     $step10BlueDrawEnterPresent = $serialText.Contains('NORM_STEP_010_BLUE_DRAW_ENTER')
     $lastVecLine = Get-LastMatchingLine -Text $serialText -Pattern 'VEC='
     $lastErrLine = Get-LastMatchingLine -Text $serialText -Pattern 'ERR='
@@ -325,8 +403,17 @@ try {
         Write-Host "[probe] NORM_STEP_010_WHITE_C_EXIT present: $step10WhiteCExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_010_WHITE_DRAW_EXIT present: $step10WhiteDrawExitPresent" -ForegroundColor Green
         Write-Host "[probe] Deepest white marker reached: $whiteDeepestMarker" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_011_SKIP_ZERO_WINDOWS present: $step11SkipPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_011_A_ENTER present: $step11AEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_011_A_EXIT present: $step11AExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_011_B_ENTER present: $step11BEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_011_B_EXIT present: $step11BExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_011_C_ENTER present: $step11CEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_011_C_EXIT present: $step11CExitPresent" -ForegroundColor Green
+        Write-Host "[probe] Deepest step 11 marker reached: $step11DeepestMarker" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_010_BLUE_DRAW_ENTER present: $step10BlueDrawEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_011_ENTER present: $step11EnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_012_ENTER present: $step12EnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_003_EXIT present: $($serialText.Contains('NORM_STEP_003_EXIT'))" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_004_EXIT present: $($serialText.Contains('NORM_STEP_004_EXIT'))" -ForegroundColor Green
         Write-Host "[probe] Fault VEC: $lastVecLine" -ForegroundColor Yellow
@@ -350,12 +437,26 @@ try {
             "STEP10_GREEN_MODE=$Step10GreenMode"
             "SERIAL_LOG=$serialLog"
             "STEP8_SAFE_PLACEHOLDERS_ENABLED=$step8SafePlaceholdersEnabled"
+            "STEP11_SKIP_WINDOW_TRAVERSAL_ENABLED=$step11SkipWindowTraversalEnabled"
             "STEP10_RED_PLACEHOLDER_ENABLED=$step10RedPlaceholderEnabled"
             "STEP10_GREEN_PLACEHOLDER_ENABLED=$step10GreenPlaceholderEnabled"
             "STEP10_WHITE_PLACEHOLDER_ENABLED=$step10WhitePlaceholderEnabled"
+            "KERNEL_ELF_SHA256=$($kernelRoot.Sha256)"
+            "ESP_KERNEL_ELF_SHA256=$($kernelEsp.Sha256)"
             "LAST_ENTER=$lastEnter"
             "MATCHING_EXIT=$matchingExit"
             "MATCHING_EXIT_PRESENT=$matchingExitPresent"
+            "STEP11_DEEPEST_MARKER=$step11DeepestMarker"
+            "NORM_STEP_011_ENTER_PRESENT=$step11EnterPresent"
+            "NORM_STEP_011_SKIP_ZERO_WINDOWS_PRESENT=$step11SkipPresent"
+            "NORM_STEP_011_A_ENTER_PRESENT=$step11AEnterPresent"
+            "NORM_STEP_011_A_EXIT_PRESENT=$step11AExitPresent"
+            "NORM_STEP_011_B_ENTER_PRESENT=$step11BEnterPresent"
+            "NORM_STEP_011_B_EXIT_PRESENT=$step11BExitPresent"
+            "NORM_STEP_011_C_ENTER_PRESENT=$step11CEnterPresent"
+            "NORM_STEP_011_C_EXIT_PRESENT=$step11CExitPresent"
+            "NORM_STEP_011_EXIT_PRESENT=$step11ExitPresent"
+            "NORM_STEP_012_ENTER_PRESENT=$step12EnterPresent"
             "NORM_STEP_008_BUTTON_BORDER_EXIT_PRESENT=$step8BorderExitPresent"
             "NORM_STEP_009_ENTER_PRESENT=$step9EnterPresent"
             "NORM_STEP_010_RED_DRAW_ENTER_PRESENT=$step10RedDrawEnterPresent"
