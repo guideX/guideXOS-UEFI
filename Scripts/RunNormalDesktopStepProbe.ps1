@@ -1,5 +1,7 @@
 param(
-    [int]$CaptureSeconds = 120
+    [int]$CaptureSeconds = 120,
+    [ValidateSet('DrawImage', 'FillRectangle')]
+    [string]$Step10RedMode = 'DrawImage'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -73,6 +75,15 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = false;' `
         -New 'private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = true;' `
         -Label 'NORMAL_DESKTOP_UEFI_STEP_PROBE'
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = false;' `
+        -New 'internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = true;' `
+        -Label 'NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10'
+    $step10RedPlaceholder = if ($Step10RedMode -eq 'FillRectangle') { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;' `
+        -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = $step10RedPlaceholder;" `
+        -Label 'NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER'
 
     $probeAnchor = 'SerialBreadcrumb("NORM_PROBE_ENTER");'
     $probeAnchorCount = [regex]::Matches($patched, [regex]::Escape($probeAnchor)).Count
@@ -90,6 +101,8 @@ try {
     $programPatched = $true
 
     Write-Host "[probe] Run ID: $runId" -ForegroundColor Cyan
+    Write-Host "[probe] Step 10 red mode: $Step10RedMode" -ForegroundColor Cyan
+    Write-Host "[probe] Safe placeholders until step 10: enabled" -ForegroundColor Cyan
     Write-Host "[probe] Patched Program.cs for temporary step probe" -ForegroundColor Cyan
     Write-Host "[probe] Building via build.ps1..." -ForegroundColor Cyan
     & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $buildScript
@@ -183,15 +196,30 @@ try {
     $matchingExit = if ($lastEnter) { $lastEnter -replace '_ENTER$', '_EXIT' } else { $null }
     $matchingExitPresent = $matchingExit -and $serialText.Contains($matchingExit)
 
-    $faultLines = $serialLines | Where-Object { $_ -match 'CR2=|ERR=|RIP=|#PF|PAGE FAULT|FAULT|EXCEPTION' }
+    $faultLines = $serialLines | Where-Object { $_ -match 'VEC=|CR2=|ERR=|RIP=|#PF|PAGE FAULT|FAULT|EXCEPTION' }
+    $vecLines = $serialLines | Where-Object { $_ -match 'VEC=' }
     $cr2Lines = $serialLines | Where-Object { $_ -match 'CR2=' }
     $errLines = $serialLines | Where-Object { $_ -match 'ERR=' }
     $ripLines = $serialLines | Where-Object { $_ -match 'RIP=' }
+    $step8SafePlaceholdersEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=1')
+    $step10RedPlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=1')
+    $step8BorderExitPresent = $serialText.Contains('NORM_STEP_008_BUTTON_BORDER_EXIT')
+    $step9EnterPresent = $serialText.Contains('NORM_STEP_009_ENTER')
+    $step10RedDrawEnterPresent = $serialText.Contains('NORM_STEP_010_RED_DRAW_ENTER')
+    $step10RedDrawExitPresent = $serialText.Contains('NORM_STEP_010_RED_DRAW_EXIT')
+    $step11EnterPresent = $serialText.Contains('NORM_STEP_011_ENTER')
 
     if ($validRun) {
         Write-Host "[probe] Valid fresh run detected." -ForegroundColor Green
         Write-Host "[probe] Last step enter: $lastEnter" -ForegroundColor Green
         Write-Host "[probe] Matching exit present: $matchingExitPresent" -ForegroundColor Green
+        Write-Host "[probe] Step 8 safe placeholders enabled: $step8SafePlaceholdersEnabled" -ForegroundColor Green
+        Write-Host "[probe] Step 10 red placeholder enabled: $step10RedPlaceholderEnabled" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_008_BUTTON_BORDER_EXIT present: $step8BorderExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_009_ENTER present: $step9EnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_RED_DRAW_ENTER present: $step10RedDrawEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_010_RED_DRAW_EXIT present: $step10RedDrawExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_011_ENTER present: $step11EnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_003_EXIT present: $($serialText.Contains('NORM_STEP_003_EXIT'))" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_004_EXIT present: $($serialText.Contains('NORM_STEP_004_EXIT'))" -ForegroundColor Green
         if ($faultLines.Count -gt 0) {
@@ -200,18 +228,28 @@ try {
         } else {
             Write-Host "[probe] Fault lines: none detected" -ForegroundColor Green
         }
+        Write-Host "[probe] VEC lines: $($vecLines.Count)" -ForegroundColor Green
         Write-Host "[probe] CR2 lines: $($cr2Lines.Count)" -ForegroundColor Green
         Write-Host "[probe] ERR lines: $($errLines.Count)" -ForegroundColor Green
         Write-Host "[probe] RIP lines: $($ripLines.Count)" -ForegroundColor Green
 
         $summary = @(
             "RUN_ID=$runId"
+            "STEP10_RED_MODE=$Step10RedMode"
             "SERIAL_LOG=$serialLog"
+            "STEP8_SAFE_PLACEHOLDERS_ENABLED=$step8SafePlaceholdersEnabled"
+            "STEP10_RED_PLACEHOLDER_ENABLED=$step10RedPlaceholderEnabled"
             "LAST_ENTER=$lastEnter"
             "MATCHING_EXIT=$matchingExit"
             "MATCHING_EXIT_PRESENT=$matchingExitPresent"
+            "NORM_STEP_008_BUTTON_BORDER_EXIT_PRESENT=$step8BorderExitPresent"
+            "NORM_STEP_009_ENTER_PRESENT=$step9EnterPresent"
+            "NORM_STEP_010_RED_DRAW_ENTER_PRESENT=$step10RedDrawEnterPresent"
+            "NORM_STEP_010_RED_DRAW_EXIT_PRESENT=$step10RedDrawExitPresent"
+            "NORM_STEP_011_ENTER_PRESENT=$step11EnterPresent"
             "NORM_STEP_003_EXIT_PRESENT=$($serialText.Contains('NORM_STEP_003_EXIT'))"
             "NORM_STEP_004_EXIT_PRESENT=$($serialText.Contains('NORM_STEP_004_EXIT'))"
+            "VEC_LINES=$($vecLines.Count)"
             "FAULT_LINES=$($faultLines.Count)"
             "CR2_LINES=$($cr2Lines.Count)"
             "ERR_LINES=$($errLines.Count)"

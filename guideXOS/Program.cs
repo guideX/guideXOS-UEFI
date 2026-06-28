@@ -387,6 +387,8 @@ unsafe class Program {
     private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = false;
     private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
     private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = false;
+    internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = false;
+    private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;
     // TinyUEFI proof-pattern heartbeat is useful during bring-up, but keep it
     // opt-in so the serial log stays readable by default.
     private const bool UEFI_TINY_RENDER_HEARTBEAT_ENABLED = false;
@@ -1414,6 +1416,8 @@ unsafe class Program {
         SerialBreadcrumb(UEFI_USE_TINY_RENDER_LOOP_BYPASS ? "SMAIN_DIAG_TINY_BYPASS=1" : "SMAIN_DIAG_TINY_BYPASS=0");
         SerialBreadcrumb(UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH ? "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=1" : "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_STEP_PROBE ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=0");
+        SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=0");
+        SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=0");
         SerialBreadcrumb(UEFI_TINY_RENDER_LOOP_ENTRY_ONLY ? "SMAIN_DIAG_TINY_ENTRY_ONLY=1" : "SMAIN_DIAG_TINY_ENTRY_ONLY=0");
         SerialBreadcrumb(UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS ? "SMAIN_DIAG_TINY_MINIMAL_GRAPHICS=1" : "SMAIN_DIAG_TINY_MINIMAL_GRAPHICS=0");
 
@@ -2422,19 +2426,34 @@ unsafe class Program {
             return;
         }
 
+        guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
         Image redIcon = CreateSolidProbeIcon(32, 32, 0xFFFF2020u);
         Image greenIcon = CreateSolidProbeIcon(32, 32, 0xFF00FF00u);
         Image whiteIcon = CreateSolidProbeIcon(32, 32, 0xFFFFFFFFu);
 
+        SerialBreadcrumb("NORM_STEP_010_RED_IMAGE_ACCESS_ENTER");
         SerialBreadcrumb(redIcon == null ? "NORM_STEP_010_RED=NULL" : "NORM_STEP_010_RED=OK");
+        SerialBreadcrumb("NORM_STEP_010_RED_IMAGE_ACCESS_EXIT");
         SerialBreadcrumb(greenIcon == null ? "NORM_STEP_010_GREEN=NULL" : "NORM_STEP_010_GREEN=OK");
         SerialBreadcrumb(whiteIcon == null ? "NORM_STEP_010_WHITE=NULL" : "NORM_STEP_010_WHITE=OK");
 
         if (redIcon != null) {
+            SerialBreadcrumb("NORM_STEP_010_RED_IMAGE_BOUNDS_ENTER");
+            int redIconWidth = redIcon.Width;
+            int redIconHeight = redIcon.Height;
+            SerialBreadcrumb("NORM_STEP_010_RED_IMAGE_BOUNDS_EXIT");
+            SerialBreadcrumb("NORM_STEP_010_RED_DRAW_PATH_ENTER");
             SerialBreadcrumb("NORM_STEP_010_RED_DRAW_ENTER");
-            SerialBreadcrumb("NORM_STEP_010_RED_DRAW_CALLSITE=Framebuffer.Graphics.DrawImage(80,80,redIcon)");
-            Framebuffer.Graphics.DrawImage(80, 80, redIcon);
+            SerialBreadcrumb("NORM_STEP_010_RED_DRAW_CALLSITE=graphics.DrawImage(80,80,redIcon) OR graphics.FillRectangle(80,80,redIconWidth,redIconHeight,0xFFFF2020u)");
+            if (NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER) {
+                SerialBreadcrumb("NORM_STEP_010_RED_DRAW_PLACEHOLDER=FillRectangle");
+                graphics.FillRectangle(80, 80, redIconWidth, redIconHeight, 0xFFFF2020u);
+            } else {
+                SerialBreadcrumb("NORM_STEP_010_RED_DRAW_PLACEHOLDER=DrawImage");
+                graphics.DrawImage(80, 80, redIcon);
+            }
             SerialBreadcrumb("NORM_STEP_010_RED_DRAW_EXIT");
+            SerialBreadcrumb("NORM_STEP_010_RED_DRAW_PATH_EXIT");
         }
         if (greenIcon != null) {
             SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_ENTER");
