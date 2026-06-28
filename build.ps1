@@ -385,7 +385,8 @@ if (-not $SkipKernel) {
         if ($skipKernelRestore) {
             $publishArgs += " --no-restore"
         }
-        & cmd.exe /d /s /c "call `"$vcvars64`" >nul && $publishArgs"
+        $cmdPathPrefix = "set `"PATH=$env:SystemRoot\System32;C:\Program Files\dotnet`" && "
+        & "$env:SystemRoot\System32\cmd.exe" /d /s /c "$cmdPathPrefix call `"$vcvars64`" >nul && $publishArgs"
     } else {
         if ($skipKernelRestore) {
             dotnet publish $KernelProject -c Release --no-restore
