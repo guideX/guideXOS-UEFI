@@ -386,7 +386,11 @@ unsafe class Program {
     private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;
     private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = false;
     private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
+    // TinyUEFI proof-pattern heartbeat is useful during bring-up, but keep it
+    // opt-in so the serial log stays readable by default.
+    private const bool UEFI_TINY_RENDER_HEARTBEAT_ENABLED = false;
     private const int UEFI_TINY_RENDER_HEARTBEAT_PERIOD_FRAMES = 30;
+    private const bool UEFI_STEADY_STATE_HEARTBEAT_ENABLED = false;
 
     private const bool SKIP_BACKGROUND_DRAW = false;
     private const bool SKIP_UI_DRAW = false;
@@ -866,6 +870,10 @@ unsafe class Program {
         bool useTinyUefi = isUefi && UEFI_USE_TINY_RENDER_LOOP_BYPASS && !UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
         bool useNormalUefiDesktop = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
         LogUefiRenderDispatchDiagnostics(useTinyUefi, useNormalUefiDesktop);
+        SerialBreadcrumb(useTinyUefi ? "SMAIN_DISPATCH_REASON=TINY_UEFI" :
+                         useNormalUefiDesktop ? "SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI" :
+                         isUefi ? "SMAIN_DISPATCH_REASON=FULL_UEFI" :
+                         "SMAIN_DISPATCH_REASON=LEGACY");
 
         if (useTinyUefi) {
             SerialBreadcrumb("SMAIN_DISPATCH_TINY_UEFI");
@@ -918,7 +926,9 @@ unsafe class Program {
     /// </summary>
     private static void SMainSetupUefi() {
         BootConsole.WriteLine("[SMAIN] UEFI MODE");
+        LogUefiFramebufferSnapshot("SMAIN_FB_BEFORE_REPAIR");
         Framebuffer.RecoverUefiState();
+        LogUefiFramebufferSnapshot("SMAIN_FB_AFTER_REPAIR");
         BootConsole.WriteLine("[SMAIN] UEFI mode - disabling triple buffering");
         Framebuffer.TripleBuffered = false;
         // CRITICAL: In UEFI mode, static managed object references (like Framebuffer.Graphics
@@ -933,7 +943,9 @@ unsafe class Program {
             BootConsole.WriteLine("[SMAIN] WARNING: VideoMemory corrupted! Restoring from OriginalVideoMemory");
             Framebuffer.VideoMemory = Framebuffer.OriginalVideoMemory;
         }
+        LogUefiFramebufferSnapshot("SMAIN_GFX_BEFORE_ENSURE");
         Framebuffer.EnsureGraphics();
+        LogUefiFramebufferSnapshot("SMAIN_GFX_AFTER_ENSURE");
         BootConsole.WriteLine("[SMAIN] After EnsureGraphics: " + (Framebuffer.Graphics == null ? "NULL" : "OK"));
         if (Framebuffer.Graphics != null) {
             BootConsole.WriteLine("[SMAIN] Graphics.VideoMemory = " + ((ulong)Framebuffer.Graphics.VideoMemory).ToString("x"));
@@ -1287,6 +1299,36 @@ unsafe class Program {
             default:
                 return "UNKNOWN";
         }
+    }
+
+    private static void LogUefiFramebufferSnapshot(string phase) {
+        UefiBootInfo* bootInfo = Framebuffer.OriginalBootInfo;
+        uint fbW = bootInfo != null ? bootInfo->FramebufferWidth : Framebuffer.Width;
+        uint fbH = bootInfo != null ? bootInfo->FramebufferHeight : Framebuffer.Height;
+        uint pitchBytes = bootInfo != null ? bootInfo->FramebufferPitch : 0;
+        uint bpp = GetFramebufferBitsPerPixel(bootInfo);
+        uint gfxW = Framebuffer.Graphics != null ? (uint)Framebuffer.Graphics.Width : 0u;
+        uint gfxH = Framebuffer.Graphics != null ? (uint)Framebuffer.Graphics.Height : 0u;
+
+        SerialBreadcrumb(phase);
+        SerialBreadcrumb("SMAIN_FB_W");
+        SerialWriteUnsigned(fbW);
+        SerialChar('\n');
+        SerialBreadcrumb("SMAIN_FB_H");
+        SerialWriteUnsigned(fbH);
+        SerialChar('\n');
+        SerialBreadcrumb("SMAIN_FB_BPP");
+        SerialWriteUnsigned(bpp);
+        SerialChar('\n');
+        SerialBreadcrumb("SMAIN_FB_PITCH");
+        SerialWriteUnsigned(pitchBytes);
+        SerialChar('\n');
+        SerialBreadcrumb("SMAIN_GFX_W");
+        SerialWriteUnsigned(gfxW);
+        SerialChar('\n');
+        SerialBreadcrumb("SMAIN_GFX_H");
+        SerialWriteUnsigned(gfxH);
+        SerialChar('\n');
     }
 
     private static void LogUefiRenderDispatchDiagnostics(bool useTinyUefi, bool useNormalUefiDesktop) {
@@ -1981,7 +2023,9 @@ unsafe class Program {
                     }
 
                     SerialFramePhaseEnter(frameCounter, "BACKGROUND");
-                    DrawUefiHeartbeat(frameCounter);
+                    if (UEFI_STEADY_STATE_HEARTBEAT_ENABLED) {
+                        DrawUefiHeartbeat(frameCounter);
+                    }
                     SerialFramePhaseExit(frameCounter, "BACKGROUND");
                     SerialFramePhaseEnter(frameCounter, "DESKTOP");
                     SerialFramePhaseExit(frameCounter, "DESKTOP");
@@ -2137,7 +2181,7 @@ unsafe class Program {
                 if (graphics != null && graphics.VideoMemory != null && fbW > 0 && fbH > 0) {
                     DrawUefiTinyProofPattern(graphics, fbW, fbH, frame);
                 }
-                if ((frame % UEFI_TINY_RENDER_HEARTBEAT_PERIOD_FRAMES) == 0) {
+                if (UEFI_TINY_RENDER_HEARTBEAT_ENABLED && (frame % UEFI_TINY_RENDER_HEARTBEAT_PERIOD_FRAMES) == 0) {
                     Native.Out8(0x3F8, (byte)'.');
                 }
                 for (int _t = 0; _t < 1000000; _t++) { }

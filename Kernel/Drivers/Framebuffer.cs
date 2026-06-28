@@ -87,11 +87,27 @@ namespace guideXOS.Kernel.Drivers {
                     VideoMemory = OriginalVideoMemory;
                 }
             }
+            // Restore cached dimensions if the managed Graphics object survived but
+            // its width/height fields were cleared during UEFI state loss.
+            if (Graphics != null) {
+                if (Width != 0 && Graphics.Width != Width) {
+                    Graphics.Width = Width;
+                }
+                if (Height != 0 && Graphics.Height != Height) {
+                    Graphics.Height = Height;
+                }
+            }
             // STEP 2: If Graphics survived and already points at VideoMemory, we're done.
             if (Graphics != null && (ulong)Graphics.VideoMemory == (ulong)VideoMemory) return;
             // STEP 3: If Graphics exists but points elsewhere, fix it.
             if (Graphics != null && (ulong)VideoMemory != 0) {
                 Graphics.VideoMemory = VideoMemory;
+                if (Width != 0 && Graphics.Width != Width) {
+                    Graphics.Width = Width;
+                }
+                if (Height != 0 && Graphics.Height != Height) {
+                    Graphics.Height = Height;
+                }
                 return;
             }
             // STEP 4: Recreate Graphics from scratch.
