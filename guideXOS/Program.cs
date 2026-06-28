@@ -374,7 +374,7 @@ unsafe class Program {
     // When true, frame 2+ uses the allocation-free heartbeat visual path instead
     // of the full render loop.  UEFI_STEADY_STATE_SERIAL_ONLY must be false.
     private const bool UEFI_STEADY_STATE_MINIMAL_RENDER = true;
-    private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = false;
+    private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = true;
 
     // When true, DrawUefiSafeModeDiagnostics() is restricted to frame 1 only.
     // Default: true (safe).  Set false only for targeted diagnostics sessions.
@@ -383,10 +383,10 @@ unsafe class Program {
     // path.  MUST be false whenever UEFI_STEADY_STATE_SERIAL_ONLY is true,
     // because the diagnostics method allocates managed strings every call.
     private const bool UEFI_DRAW_DIAGNOSTICS_EACH_FRAME = false;
-    private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;
+    private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = false;
     private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = false;
     private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
-    private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = false;
+    private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = true;
     // TinyUEFI proof-pattern heartbeat is useful during bring-up, but keep it
     // opt-in so the serial log stays readable by default.
     private const bool UEFI_TINY_RENDER_HEARTBEAT_ENABLED = false;
@@ -1282,6 +1282,67 @@ unsafe class Program {
                 SerialChar((char)(nibble < 10 ? '0' + nibble : 'A' + (nibble - 10)));
             }
         }
+    }
+
+    private static void LogNormalDesktopStepProbeState(string phase, guideXOS.Graph.Graphics graphics, uint color) {
+        UefiBootInfo* bootInfo = Framebuffer.OriginalBootInfo;
+        uint fbW = bootInfo != null ? bootInfo->FramebufferWidth : Framebuffer.Width;
+        uint fbH = bootInfo != null ? bootInfo->FramebufferHeight : Framebuffer.Height;
+        uint pitchBytes = bootInfo != null ? bootInfo->FramebufferPitch : 0;
+        uint pitchPixels = pitchBytes != 0 ? pitchBytes / 4u : 0u;
+        ulong gfxVideoMemory = graphics != null ? (ulong)graphics.VideoMemory : 0UL;
+        ulong fbVideoMemory = (ulong)Framebuffer.VideoMemory;
+        ulong originalVideoMemory = (ulong)Framebuffer.OriginalVideoMemory;
+
+        SerialBreadcrumb(phase);
+        SerialBreadcrumb(graphics == null ? "NORM_STEP_003_GFX=NULL" : "NORM_STEP_003_GFX=OK");
+        SerialBreadcrumb(graphics != null && graphics.VideoMemory != null ? "NORM_STEP_003_GFX_VM=SET" : "NORM_STEP_003_GFX_VM=NULL");
+        SerialBreadcrumb("NORM_STEP_003_GFX_W");
+        SerialWriteUnsigned(graphics != null ? (ulong)graphics.Width : 0UL);
+        SerialChar('\n');
+        SerialBreadcrumb("NORM_STEP_003_GFX_H");
+        SerialWriteUnsigned(graphics != null ? (ulong)graphics.Height : 0UL);
+        SerialChar('\n');
+        SerialBreadcrumb("NORM_STEP_003_GFX_VM");
+        SerialWriteHex(gfxVideoMemory);
+        SerialChar('\n');
+        SerialBreadcrumb("NORM_STEP_003_FB_VM");
+        SerialWriteHex(fbVideoMemory);
+        SerialChar('\n');
+        SerialBreadcrumb("NORM_STEP_003_FB_W");
+        SerialWriteUnsigned(fbW);
+        SerialChar('\n');
+        SerialBreadcrumb("NORM_STEP_003_FB_H");
+        SerialWriteUnsigned(fbH);
+        SerialChar('\n');
+        SerialBreadcrumb("NORM_STEP_003_FB_PITCH_BYTES");
+        SerialWriteUnsigned(pitchBytes);
+        SerialChar('\n');
+        SerialBreadcrumb("NORM_STEP_003_FB_PITCH_PIXELS");
+        SerialWriteUnsigned(pitchPixels);
+        SerialChar('\n');
+        SerialBreadcrumb("NORM_STEP_003_ORIG_FB_VM");
+        SerialWriteHex(originalVideoMemory);
+        SerialChar('\n');
+        SerialBreadcrumb("NORM_STEP_003_COLOR");
+        SerialWriteHex(color);
+        SerialChar('\n');
+        SerialBreadcrumb(gfxVideoMemory == fbVideoMemory ? "NORM_STEP_003_VM_MATCH=1" : "NORM_STEP_003_VM_MATCH=0");
+    }
+
+    private static void ReportNormalDesktopStepProbeGraphicsCallsites() {
+        SerialBreadcrumb("NORM_GFX_CALLSITE_REPORT_BEGIN");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_003 graphics.Clear(0xFF0B3C4Cu) via cached receiver guard");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_004 Framebuffer.Graphics.FillRectangle(16,16,32,32,0xFFFF2020u)");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_005 BackgroundRotationManager.DrawBackground() [direct Framebuffer.Graphics.DrawImage/FillRectangle inside helper]");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_006 Framebuffer.Graphics.FillRectangle(0,0,Framebuffer.Width,Framebuffer.Height,0xFF1E1E1Eu)");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_007 Framebuffer.Graphics.FillRectangle x2 in taskbar probe");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_008 Framebuffer.Graphics.FillRectangle/DrawRectangle/DrawImage in taskbar probe");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_010 Framebuffer.Graphics.DrawImage x3 in icon probe");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_011 WindowManager.DrawAllExceptTaskManager()/DrawTaskManager() [direct Framebuffer.Graphics calls in subpaths]");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_012 WindowManager.font.DrawString() [no direct Framebuffer.Graphics receiver call]");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_013 DrawUefiCursor() [no direct Framebuffer.Graphics receiver call]");
+        SerialBreadcrumb("NORM_GFX_CALLSITE_REPORT_END");
     }
 
     private static uint GetFramebufferBitsPerPixel(UefiBootInfo* bootInfo) {
@@ -2231,21 +2292,49 @@ unsafe class Program {
         }
         SerialBreadcrumb("NORM_STEP_002_GFX_REPAIR_END");
         SerialBreadcrumb("NORM_STEP_002_EXIT");
+        LogNormalDesktopStepProbeState("NORM_STEP_002_STATE", Framebuffer.Graphics, 0xFF0D7D77u);
+        ReportNormalDesktopStepProbeGraphicsCallsites();
 
         SerialBreadcrumb("NORM_STEP_003_ENTER");
-        Framebuffer.Graphics.Clear(0xFF0B3C4Cu);
+        SerialBreadcrumb("NORM_STEP_003_A_ENTER");
+        guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
+        LogNormalDesktopStepProbeState("NORM_STEP_003_A_STATE", graphics, 0xFF0D7D77u);
+        SerialBreadcrumb("NORM_STEP_003_A_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_003_B_ENTER");
+        if (graphics != null) {
+            if (Framebuffer.Width != 0 && graphics.Width != Framebuffer.Width) {
+                graphics.Width = Framebuffer.Width;
+            }
+            if (Framebuffer.Height != 0 && graphics.Height != Framebuffer.Height) {
+                graphics.Height = Framebuffer.Height;
+            }
+        }
+        LogNormalDesktopStepProbeState("NORM_STEP_003_B_STATE", graphics, 0xFF0D7D77u);
+        SerialBreadcrumb("NORM_STEP_003_B_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_003_C_ENTER");
+        SerialBreadcrumb("NORM_STEP_003_CLEAR_METHOD=Framebuffer.Graphics.Clear(uint)");
+        SerialBreadcrumb("NORM_STEP_003_CLEAR_SOURCE=UEFI cached graphics receiver guard / NativeAOT receiver-call guard");
+        LogNormalDesktopStepProbeState("NORM_STEP_003_C_STATE", graphics, 0xFF0D7D77u);
+        SerialBreadcrumb("NORM_STEP_003_CLEAR_CALLSITE=graphics.Clear(0xFF0B3C4Cu)");
+        graphics.Clear(0xFF0B3C4Cu);
+        SerialBreadcrumb("NORM_STEP_003_C_EXIT");
         SerialBreadcrumb("NORM_STEP_003_EXIT");
 
         SerialBreadcrumb("NORM_STEP_004_ENTER");
+        SerialBreadcrumb("NORM_STEP_004_CALLSITE=Framebuffer.Graphics.FillRectangle(16,16,32,32,0xFFFF2020u)");
         Framebuffer.Graphics.FillRectangle(16, 16, 32, 32, 0xFFFF2020u);
         SerialBreadcrumb("NORM_STEP_004_EXIT");
 
         SerialBreadcrumb("NORM_STEP_005_ENTER");
         SerialBreadcrumb(Program.Wallpaper == null ? "NORM_STEP_005_WALLPAPER=NULL" : "NORM_STEP_005_WALLPAPER=OK");
+        SerialBreadcrumb("NORM_STEP_005_CALLSITE=BackgroundRotationManager.DrawBackground()");
         BackgroundRotationManager.DrawBackground();
         SerialBreadcrumb("NORM_STEP_005_EXIT");
 
         SerialBreadcrumb("NORM_STEP_006_ENTER");
+        SerialBreadcrumb("NORM_STEP_006_CALLSITE=Framebuffer.Graphics.FillRectangle(0,0,Framebuffer.Width,Framebuffer.Height,0xFF1E1E1Eu)");
         Framebuffer.Graphics.FillRectangle(0, 0, Framebuffer.Width, Framebuffer.Height, 0xFF1E1E1Eu);
         SerialBreadcrumb("NORM_STEP_006_EXIT");
 
@@ -2283,6 +2372,7 @@ unsafe class Program {
             SerialBreadcrumb("NORM_STEP_011_WINDOWS_ZERO");
         }
         if (WindowManager.Windows != null) {
+            SerialBreadcrumb("NORM_STEP_011_CALLSITE=WindowManager.DrawAllExceptTaskManager()/DrawTaskManager()");
             WindowManager.DrawAllExceptTaskManager();
             WindowManager.DrawTaskManager();
         } else {
@@ -2342,16 +2432,19 @@ unsafe class Program {
 
         if (redIcon != null) {
             SerialBreadcrumb("NORM_STEP_010_RED_DRAW_ENTER");
+            SerialBreadcrumb("NORM_STEP_010_RED_DRAW_CALLSITE=Framebuffer.Graphics.DrawImage(80,80,redIcon)");
             Framebuffer.Graphics.DrawImage(80, 80, redIcon);
             SerialBreadcrumb("NORM_STEP_010_RED_DRAW_EXIT");
         }
         if (greenIcon != null) {
             SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_ENTER");
+            SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_CALLSITE=Framebuffer.Graphics.DrawImage(128,80,greenIcon)");
             Framebuffer.Graphics.DrawImage(128, 80, greenIcon);
             SerialBreadcrumb("NORM_STEP_010_GREEN_DRAW_EXIT");
         }
         if (whiteIcon != null) {
             SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_ENTER");
+            SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_CALLSITE=Framebuffer.Graphics.DrawImage(176,80,whiteIcon)");
             Framebuffer.Graphics.DrawImage(176, 80, whiteIcon);
             SerialBreadcrumb("NORM_STEP_010_WHITE_DRAW_EXIT");
         }

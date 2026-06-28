@@ -218,9 +218,11 @@ namespace guideXOS.GUI {
             ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_DRAW_ENTER");
             ProbeSerialBreadcrumb(Framebuffer.Graphics == null ? "NORM_STEP_007_GFX=NULL" : "NORM_STEP_007_GFX=OK");
             ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_RECT_ENTER");
+            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_RECT_CALLSITE=Framebuffer.Graphics.FillRectangle(0,yTop,Framebuffer.Width,_barHeight,0xFF1A1A1A)");
             Framebuffer.Graphics.FillRectangle(0, yTop, Framebuffer.Width, _barHeight, 0xFF1A1A1A);
             ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_RECT_EXIT");
             ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_LINE_ENTER");
+            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_LINE_CALLSITE=Framebuffer.Graphics.FillRectangle(0,yTop,Framebuffer.Width,1,0xFF333333)");
             Framebuffer.Graphics.FillRectangle(0, yTop, Framebuffer.Width, 1, 0xFF333333);
             ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_LINE_EXIT");
             ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_DRAW_EXIT");
@@ -239,9 +241,11 @@ namespace guideXOS.GUI {
             ProbeSerialBreadcrumb(_startIcon == null ? "NORM_STEP_008_START_ICON=NULL" : "NORM_STEP_008_START_ICON=OK");
             ProbeSerialBreadcrumb(WindowManager.font == null ? "NORM_STEP_008_FONT=NULL" : "NORM_STEP_008_FONT=OK");
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_ENTER");
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_CALLSITE=Framebuffer.Graphics.FillRectangle(startX,startY,startSize,startSize,0xFF2E2E2E)");
             Framebuffer.Graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2E);
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_EXIT");
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_ENTER");
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_CALLSITE=Framebuffer.Graphics.DrawRectangle(startX,startY,startSize,startSize,0xFF3E3E3E,1)");
             Framebuffer.Graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3E, 1);
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_EXIT");
 
@@ -252,6 +256,7 @@ namespace guideXOS.GUI {
 
             if (iconToShow != null) {
                 ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_ENTER");
+                ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_CALLSITE=Framebuffer.Graphics.DrawImage(startX,startY,iconToShow)");
                 Framebuffer.Graphics.DrawImage(startX, startY, iconToShow);
                 ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_EXIT");
             }
