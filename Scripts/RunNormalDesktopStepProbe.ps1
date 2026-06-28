@@ -89,8 +89,6 @@ try {
     [System.IO.File]::WriteAllText($programPath, $patched)
     $programPatched = $true
 
-    Set-Alias -Name 'cmd.exe' -Value "$env:SystemRoot\System32\cmd.exe" -Scope Global
-
     Write-Host "[probe] Run ID: $runId" -ForegroundColor Cyan
     Write-Host "[probe] Patched Program.cs for temporary step probe" -ForegroundColor Cyan
     Write-Host "[probe] Building via build.ps1..." -ForegroundColor Cyan
@@ -239,8 +237,6 @@ try {
     }
 }
 finally {
-    Remove-Item Alias:cmd.exe -ErrorAction SilentlyContinue
-
     if ($qemuProcess -and -not $qemuProcess.HasExited) {
         Stop-Process -Id $qemuProcess.Id -Force -ErrorAction SilentlyContinue
     }
