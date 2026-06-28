@@ -312,15 +312,18 @@ if (-not $SkipBootloader) {
         exit 1
     }
     
-    # Add NASM to PATH if it exists in Tools directory (required for assembly)
+    # NASM is resolved directly from the project or solution Tools path.
     $nasmPath = "$ToolsDir\nasm.exe"
     if (Test-Path $nasmPath) {
-        $env:PATH = "$ToolsDir;$env:PATH"
-        Write-Success "Added NASM to PATH from Tools directory"
+        Write-Success "NASM found in Tools directory"
     } elseif (-not (Test-Command nasm)) {
         Write-Warning "NASM not found - assembly files may fail to build"
         Write-Warning "Install NASM or place nasm.exe in the Tools directory"
     }
+
+    # MSBuild on this host can inherit both Path and PATH, which breaks VC tool startup.
+    # Keep the canonical Path entry and drop the duplicate PATH entry before launching it.
+    Remove-Item Env:PATH -ErrorAction SilentlyContinue
     
     Write-Info "Building with MSBuild..."
     & $msbuild $BootloaderProject `
@@ -368,11 +371,27 @@ if (-not $SkipKernel) {
 
     # Use dotnet publish to trigger NativeAOT compilation
     # 'dotnet build' only produces IL, 'dotnet publish' triggers native compilation
+    $kernelAssets = Join-Path (Split-Path -Parent $KernelProject) 'obj\project.assets.json'
+    $skipKernelRestore = Test-Path $kernelAssets
+    if ($skipKernelRestore) {
+        Write-Info "Using cached NuGet assets: $kernelAssets"
+    } else {
+        Write-Info "NuGet assets not found; restore will run for the kernel build"
+    }
+
     if ($vcvars64) {
         Write-Info "Using Visual C++ environment: $vcvars64"
-        & cmd.exe /d /s /c "call `"$vcvars64`" >nul && dotnet publish `"$KernelProject`" -c Release"
+        $publishArgs = "dotnet publish `"$KernelProject`" -c Release"
+        if ($skipKernelRestore) {
+            $publishArgs += " --no-restore"
+        }
+        & cmd.exe /d /s /c "call `"$vcvars64`" >nul && $publishArgs"
     } else {
-        dotnet publish $KernelProject -c Release
+        if ($skipKernelRestore) {
+            dotnet publish $KernelProject -c Release --no-restore
+        } else {
+            dotnet publish $KernelProject -c Release
+        }
     }
 
     if ($LASTEXITCODE -ne 0) {

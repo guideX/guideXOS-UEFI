@@ -231,22 +231,38 @@ namespace guideXOS.GUI {
         /// <summary>
         /// UEFI taskbar probe that isolates the start-button/icon draw.
         /// </summary>
-        public void DrawUefiStepProbeStartButton() {
+        public unsafe void DrawUefiStepProbeStartButton() {
             int yTop = Framebuffer.Height - _barHeight;
             int startX = 12;
             int startY = yTop + 4;
             int startSize = _barHeight - 8;
+            var graphics = Framebuffer.Graphics;
+
+            void LogButtonBorderDrawState(string phase, string callsite, string colorDescription) {
+                ProbeSerialBreadcrumb(phase + "_GFX_NULL=" + (graphics == null ? "YES" : "NO"));
+                ProbeSerialBreadcrumb(phase + "_GFX_WIDTH=" + (graphics != null ? graphics.Width.ToString() : "NULL"));
+                ProbeSerialBreadcrumb(phase + "_GFX_HEIGHT=" + (graphics != null ? graphics.Height.ToString() : "NULL"));
+                ProbeSerialBreadcrumb(phase + "_GFX_VIDEOMEMORY=" + (graphics != null && graphics.VideoMemory != null ? ((ulong)graphics.VideoMemory).ToString("x") : "NULL"));
+                ProbeSerialBreadcrumb(phase + "_COLOR=" + colorDescription);
+                ProbeSerialBreadcrumb(phase + "_CALLSITE=" + callsite);
+            }
 
             ProbeSerialBreadcrumb("NORM_STEP_008_START_BUTTON_ENTER");
             ProbeSerialBreadcrumb(_startIcon == null ? "NORM_STEP_008_START_ICON=NULL" : "NORM_STEP_008_START_ICON=OK");
             ProbeSerialBreadcrumb(WindowManager.font == null ? "NORM_STEP_008_FONT=NULL" : "NORM_STEP_008_FONT=OK");
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_ENTER");
-            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_CALLSITE=Framebuffer.Graphics.FillRectangle(startX,startY,startSize,startSize,0xFF2E2E2E)");
-            Framebuffer.Graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2E);
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_CALLSITE=cached local graphics.FillRectangle(startX,startY,startSize,startSize,0xFF2E2E2E)");
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_A_ENTER");
+            LogButtonBorderDrawState("NORM_STEP_008_BUTTON_BORDER_A", "cached local graphics.FillRectangle(startX,startY,startSize,startSize,0xFF2E2E2E)", "0xFF2E2E2E");
+            graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2E);
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_A_EXIT");
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_EXIT");
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_ENTER");
-            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_CALLSITE=Framebuffer.Graphics.DrawRectangle(startX,startY,startSize,startSize,0xFF3E3E3E,1)");
-            Framebuffer.Graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3E, 1);
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_CALLSITE=cached local graphics.DrawRectangle(startX,startY,startSize,startSize,0xFF3E3E3E,1)");
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_B_ENTER");
+            LogButtonBorderDrawState("NORM_STEP_008_BUTTON_BORDER_B", "cached local graphics.DrawRectangle(startX,startY,startSize,startSize,0xFF3E3E3E,1)", "0xFF3E3E3E");
+            graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3E, 1);
+            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_B_EXIT");
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_EXIT");
 
             ProbeSerialBreadcrumb("NORM_STEP_008_ICON_FACTORY_ENTER");
@@ -256,8 +272,11 @@ namespace guideXOS.GUI {
 
             if (iconToShow != null) {
                 ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_ENTER");
-                ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_CALLSITE=Framebuffer.Graphics.DrawImage(startX,startY,iconToShow)");
-                Framebuffer.Graphics.DrawImage(startX, startY, iconToShow);
+                ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_CALLSITE=cached local graphics.DrawImage(startX,startY,iconToShow)");
+                ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_C_ENTER");
+                LogButtonBorderDrawState("NORM_STEP_008_BUTTON_BORDER_C", "cached local graphics.DrawImage(startX,startY,iconToShow)", "N/A");
+                graphics.DrawImage(startX, startY, iconToShow);
+                ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_C_EXIT");
                 ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_EXIT");
             }
             ProbeSerialBreadcrumb("NORM_STEP_008_START_BUTTON_EXIT");
