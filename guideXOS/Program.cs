@@ -374,6 +374,7 @@ unsafe class Program {
     // When true, frame 2+ uses the allocation-free heartbeat visual path instead
     // of the full render loop.  UEFI_STEADY_STATE_SERIAL_ONLY must be false.
     private const bool UEFI_STEADY_STATE_MINIMAL_RENDER = true;
+    private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = false;
 
     // When true, DrawUefiSafeModeDiagnostics() is restricted to frame 1 only.
     // Default: true (safe).  Set false only for targeted diagnostics sessions.
@@ -385,6 +386,7 @@ unsafe class Program {
     private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;
     private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = false;
     private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
+    private const int UEFI_TINY_RENDER_HEARTBEAT_PERIOD_FRAMES = 30;
 
     private const bool SKIP_BACKGROUND_DRAW = false;
     private const bool SKIP_UI_DRAW = false;
@@ -860,11 +862,23 @@ unsafe class Program {
         SerialBreadcrumb("SMAIN_BEFORE_RENDERLOOP_DISPATCH");
 
         // Enter the main render loop (in a separate method to keep stack frames small)
-        if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI && UEFI_USE_TINY_RENDER_LOOP_BYPASS) {
+        bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
+        bool useTinyUefi = isUefi && UEFI_USE_TINY_RENDER_LOOP_BYPASS && !UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
+        bool useNormalUefiDesktop = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
+        LogUefiRenderDispatchDiagnostics(useTinyUefi, useNormalUefiDesktop);
+
+        if (useTinyUefi) {
             SerialBreadcrumb("SMAIN_DISPATCH_TINY_UEFI");
             RenderLoopUefiTinyBypass();
+        } else if (useNormalUefiDesktop) {
+            SerialBreadcrumb("SMAIN_DISPATCH_NORMAL_DESKTOP_UEFI");
+            RenderLoop();
         } else {
-            SerialBreadcrumb("SMAIN_DISPATCH_FULL_RENDERLOOP");
+            if (isUefi) {
+                SerialBreadcrumb("SMAIN_DISPATCH_FULL_RENDERLOOP_UEFI");
+            } else {
+                SerialBreadcrumb("SMAIN_DISPATCH_FULL_RENDERLOOP");
+            }
             RenderLoop();
         }
     }
@@ -1225,6 +1239,119 @@ unsafe class Program {
             SerialChar(breadcrumb[i]);
         }
         SerialChar('\n');
+    }
+
+    private static void SerialWriteUnsigned(ulong value) {
+        char* digits = stackalloc char[21];
+        int len = 0;
+        do {
+            digits[len++] = (char)('0' + (value % 10UL));
+            value /= 10UL;
+        } while (value != 0 && len < 21);
+        while (len-- > 0) {
+            SerialChar(digits[len]);
+        }
+    }
+
+    private static void SerialWriteHex(ulong value) {
+        SerialChar('0');
+        SerialChar('x');
+        bool started = false;
+        for (int shift = 60; shift >= 0; shift -= 4) {
+            int nibble = (int)((value >> shift) & 0xFUL);
+            if (nibble != 0 || started || shift == 0) {
+                started = true;
+                SerialChar((char)(nibble < 10 ? '0' + nibble : 'A' + (nibble - 10)));
+            }
+        }
+    }
+
+    private static uint GetFramebufferBitsPerPixel(UefiBootInfo* bootInfo) {
+        if (bootInfo == null) return 0;
+        switch (bootInfo->FramebufferFormat) {
+            case FramebufferFormat.R8G8B8A8:
+            case FramebufferFormat.B8G8R8A8:
+                return 32;
+            default:
+                return 0;
+        }
+    }
+
+    private static string GetFramebufferFormatLabel(UefiBootInfo* bootInfo) {
+        if (bootInfo == null) return "UNKNOWN";
+        switch (bootInfo->FramebufferFormat) {
+            case FramebufferFormat.R8G8B8A8:
+                return "R8G8B8A8";
+            case FramebufferFormat.B8G8R8A8:
+                return "B8G8R8A8";
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    private static void LogUefiRenderDispatchDiagnostics(bool useTinyUefi, bool useNormalUefiDesktop) {
+        bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
+        UefiBootInfo* bootInfo = Framebuffer.OriginalBootInfo;
+        uint fbW = bootInfo != null ? bootInfo->FramebufferWidth : Framebuffer.Width;
+        uint fbH = bootInfo != null ? bootInfo->FramebufferHeight : Framebuffer.Height;
+        uint pitchBytes = bootInfo != null ? bootInfo->FramebufferPitch : 0;
+        uint bpp = bootInfo != null && (bootInfo->FramebufferFormat == FramebufferFormat.R8G8B8A8 || bootInfo->FramebufferFormat == FramebufferFormat.B8G8R8A8) ? 32u : 0u;
+        uint pitchPixels = (pitchBytes != 0 && bpp != 0) ? (pitchBytes / (bpp / 8u)) : 0;
+
+        SerialBreadcrumb("SMAIN_DIAG_BEGIN");
+        SerialBreadcrumb(isUefi ? "SMAIN_DIAG_UEFI_MODE=1" : "SMAIN_DIAG_UEFI_MODE=0");
+        SerialBreadcrumb(UEFI_STEADY_STATE_SERIAL_ONLY ? "SMAIN_DIAG_SAFE_SERIAL_ONLY=1" : "SMAIN_DIAG_SAFE_SERIAL_ONLY=0");
+        SerialBreadcrumb(UEFI_STEADY_STATE_MINIMAL_RENDER ? "SMAIN_DIAG_SAFE_MINIMAL_RENDER=1" : "SMAIN_DIAG_SAFE_MINIMAL_RENDER=0");
+        SerialBreadcrumb(UEFI_USE_TINY_RENDER_LOOP_BYPASS ? "SMAIN_DIAG_TINY_BYPASS=1" : "SMAIN_DIAG_TINY_BYPASS=0");
+        SerialBreadcrumb(UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH ? "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=1" : "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=0");
+        SerialBreadcrumb(UEFI_TINY_RENDER_LOOP_ENTRY_ONLY ? "SMAIN_DIAG_TINY_ENTRY_ONLY=1" : "SMAIN_DIAG_TINY_ENTRY_ONLY=0");
+        SerialBreadcrumb(UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS ? "SMAIN_DIAG_TINY_MINIMAL_GRAPHICS=1" : "SMAIN_DIAG_TINY_MINIMAL_GRAPHICS=0");
+
+        SerialBreadcrumb("SMAIN_DIAG_FB_BEGIN");
+        SerialWriteUnsigned(fbW);
+        SerialChar('x');
+        SerialWriteUnsigned(fbH);
+        SerialChar(' ');
+        SerialWriteUnsigned(bpp);
+        SerialChar('b');
+        SerialChar('p');
+        SerialChar('p');
+        SerialChar(' ');
+        SerialWriteUnsigned(pitchBytes);
+        SerialChar('b');
+        SerialChar('y');
+        SerialChar('t');
+        SerialChar('e');
+        SerialChar('s');
+        SerialChar(' ');
+        SerialWriteUnsigned(pitchPixels);
+        SerialChar('p');
+        SerialChar('x');
+        SerialChar('\n');
+
+        SerialBreadcrumb("SMAIN_DIAG_GFX_BEGIN");
+        SerialBreadcrumb(Framebuffer.Graphics == null ? "SMAIN_DIAG_GFX=NULL" : "SMAIN_DIAG_GFX=OK");
+        if (Framebuffer.Graphics != null) {
+            SerialBreadcrumb("SMAIN_DIAG_GFX_W");
+            SerialWriteUnsigned((ulong)Framebuffer.Graphics.Width);
+            SerialChar('\n');
+            SerialBreadcrumb("SMAIN_DIAG_GFX_H");
+            SerialWriteUnsigned((ulong)Framebuffer.Graphics.Height);
+            SerialChar('\n');
+            SerialBreadcrumb(Framebuffer.Graphics.VideoMemory == null ? "SMAIN_DIAG_GFX_VM=NULL" : "SMAIN_DIAG_GFX_VM=SET");
+            SerialBreadcrumb("SMAIN_DIAG_GFX_VM");
+            SerialWriteHex((ulong)Framebuffer.Graphics.VideoMemory);
+            SerialChar('\n');
+        }
+        SerialBreadcrumb("SMAIN_DIAG_FB_VM");
+        SerialWriteHex((ulong)Framebuffer.VideoMemory);
+        SerialChar('\n');
+        SerialBreadcrumb("SMAIN_DIAG_ORIG_FB_VM");
+        SerialWriteHex((ulong)Framebuffer.OriginalVideoMemory);
+        SerialChar('\n');
+
+        SerialBreadcrumb(useTinyUefi ? "SMAIN_DIAG_REASON_TINY" : useNormalUefiDesktop ? "SMAIN_DIAG_REASON_NORMAL_UefiDesktop" : isUefi ? "SMAIN_DIAG_REASON_FULL_UEFI" : "SMAIN_DIAG_REASON_LEGACY");
+        SerialBreadcrumb("SMAIN_DIAG_END");
     }
 
     private static bool ShouldEmitExplicitFrameBreadcrumbs(int frameCounter) {
@@ -1948,6 +2075,10 @@ unsafe class Program {
             SerialBreadcrumb("UTINY_C6");
             bool hasDimensions = fbW > 0 && fbH > 0;
             SerialBreadcrumb("UTINY_C7");
+            if (hasGraphics) {
+                if (graphics.Width != fbW) graphics.Width = fbW;
+                if (graphics.Height != fbH) graphics.Height = fbH;
+            }
             if (hasGraphics && hasVideoMemory && hasDimensions) {
                 SerialBreadcrumb("UTINY_C8");
                 graphics.Clear(0xFF0D7D77u);
@@ -1972,6 +2103,19 @@ unsafe class Program {
                 SerialBreadcrumb("UTINY_C16");
                 graphics.FillRectangle(hbX, hbY, hbW, hbH, hbColor);
                 SerialBreadcrumb("UTINY_C17");
+                DrawUefiTinyProofPattern(graphics, fbW, fbH, 1);
+                SerialBreadcrumb("UTINY_PATTERN_FRAME1_DRAWN");
+                SerialBreadcrumb("UTINY_PATTERN_SAMPLE_BEGIN");
+                SerialBreadcrumb("UTINY_SAMPLE_TL");
+                SerialWriteHex((ulong)graphics.GetPoint(0, 0));
+                SerialChar('\n');
+                SerialBreadcrumb("UTINY_SAMPLE_CENTER");
+                SerialWriteHex((ulong)graphics.GetPoint(fbW / 2, fbH / 2));
+                SerialChar('\n');
+                SerialBreadcrumb("UTINY_SAMPLE_BR");
+                SerialWriteHex((ulong)graphics.GetPoint(fbW - 1, fbH - 1));
+                SerialChar('\n');
+                SerialBreadcrumb("UTINY_PATTERN_SAMPLE_END");
             }
             SerialBreadcrumb("UTINY_F1_END");
             for (int frame = 2; ; frame++) {
@@ -1990,10 +2134,56 @@ unsafe class Program {
                         SerialBreadcrumb("UTINY_C23");
                     }
                 }
-                Native.Out8(0x3F8, (byte)'.');
+                if (graphics != null && graphics.VideoMemory != null && fbW > 0 && fbH > 0) {
+                    DrawUefiTinyProofPattern(graphics, fbW, fbH, frame);
+                }
+                if ((frame % UEFI_TINY_RENDER_HEARTBEAT_PERIOD_FRAMES) == 0) {
+                    Native.Out8(0x3F8, (byte)'.');
+                }
                 for (int _t = 0; _t < 1000000; _t++) { }
             }
         }
+    }
+
+    private static void DrawUefiTinyProofPattern(guideXOS.Graph.Graphics graphics, int fbW, int fbH, int frameCounter) {
+        if (graphics == null || graphics.VideoMemory == null || fbW <= 0 || fbH <= 0) return;
+
+        graphics.Clear(0xFF0B3C4Cu);
+
+        int redW = fbW / 3;
+        int redH = fbH / 3;
+        if (redW < 80) redW = fbW < 80 ? fbW : 80;
+        if (redH < 80) redH = fbH < 80 ? fbH : 80;
+        graphics.FillRectangle(0, 0, redW, redH, 0xFFFF2020u);
+
+        int greenW = fbW / 3;
+        int greenH = fbH / 4;
+        if (greenW < 96) greenW = fbW < 96 ? fbW : 96;
+        if (greenH < 96) greenH = fbH < 96 ? fbH : 96;
+        int greenX = (fbW - greenW) / 2;
+        int greenY = (fbH - greenH) / 2;
+        graphics.FillRectangle(greenX, greenY, greenW, greenH, 0xFF00FF00u);
+
+        int whiteW = fbW / 4;
+        int whiteH = fbH / 4;
+        if (whiteW < 96) whiteW = fbW < 96 ? fbW : 96;
+        if (whiteH < 96) whiteH = fbH < 96 ? fbH : 96;
+        graphics.FillRectangle(fbW - whiteW, fbH - whiteH, whiteW, whiteH, 0xFFFFFFFFu);
+
+        int squareSize = fbW < fbH ? fbW / 12 : fbH / 12;
+        if (squareSize < 12) squareSize = 12;
+        if (squareSize > 32) squareSize = 32;
+        if (squareSize > fbW) squareSize = fbW;
+        if (squareSize > fbH) squareSize = fbH;
+
+        int xSpan = fbW - squareSize;
+        int ySpan = fbH - squareSize;
+        if (xSpan < 1) xSpan = 1;
+        if (ySpan < 1) ySpan = 1;
+
+        int squareX = (frameCounter * 13) % xSpan;
+        int squareY = (frameCounter * 7) % ySpan;
+        graphics.FillRectangle(squareX, squareY, squareSize, squareSize, 0xFFFFFFFFu);
     }
     /// <summary>
     /// One-time UEFI ready screen drawn directly to GOP memory.

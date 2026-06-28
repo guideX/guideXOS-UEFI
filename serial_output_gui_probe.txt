@@ -1,0 +1,394 @@
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01HBdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00003 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Secondary,Master,0x0)
+BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00003 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Secondary,Master,0x0)
+guideXOS UEFI Bootloader
+ACPI RSDP found at 0x000000003F77E000, rev 0
+Simple Pointer Protocol found at 0x000000003E720170
+Absolute Pointer Protocol found at 0x000000003E7201C8
+ELF: vaddr range 0x10001000 - 0x10451600 (size 0x450600)
+ELF: Allocated 1105 pages at 0x3d75f000
+ELF: Loading seg 0: vaddr=0x10001000 -> phys=0x3d75f000 (filesz=0x1a00)
+ELF: Loading seg 1: vaddr=0x10003000 -> phys=0x3d761000 (filesz=0x200)
+ELF: Loading seg 2: vaddr=0x10004000 -> phys=0x3d762000 (filesz=0x93c00)
+ELF: Loading seg 3: vaddr=0x10098000 -> phys=0x3d7f6000 (filesz=0x31200)
+ELF: Loading seg 4: vaddr=0x100ca000 -> phys=0x3d828000 (filesz=0x37ea00)
+ELF: Loading seg 5: vaddr=0x1044a000 -> phys=0x3dba8000 (filesz=0x5200)
+ELF: Loading seg 6: vaddr=0x10450000 -> phys=0x3dbae000 (filesz=0x200)
+ELF: Loading seg 7: vaddr=0x10451000 -> phys=0x3dbaf000 (filesz=0x600)
+ELF: Entry point in segment 2 (vaddr 0x10004000)
+ELF: Entry vaddr=0x10031324, offset=0x30324, physEntry=0x3d78f324
+Kernel entry phys: 0x000000003D78F324 virt: 0x0000000010031324
+Kernel loaded at: 0x000000003D75F000 - 0x000000003DBAF600
+Ramdisk size: 22473292 bytes
+Ramdisk loaded at 0x000000003C1F0000
+Stack allocated at 0x0000000000200000, top at 0x0000000000280000 (below kernel)
+Mapping stack: 0x0000000000200000 size 524288
+Mapping ramdisk: 0x000000003C1F0000 size 22473292
+Mapping ACPI RSDP region: 0x000000003F77E000
+Mapping bootloader: 0x000000003DBB0000 size 69632
+Mapping allocator region: 0x4000000 size 1GB
+Mapping low memory region: 0x100000 size 4MB
+Building identity page tables with 11 ranges...
+Page tables built at PML4: 0x000000003DBCB000
+Mapping framebuffer (uncached): 0x0000000080000000 size 4096000
+Mapping Local APIC MMIO (uncached): 0xFEE00000 size 4KB
+Mapping IOAPIC MMIO (uncached): 0xFEC00000 size 4KB
+About to exit boot services...
+Drawing boot splash screen...
+Boot splash complete!
+Exiting boot services...
+
+
+=== GuideXOS Boot (Post-ExitBootServices) ===
+
+=== CPU State Check ===
+CR0 = 0x0000000080010033
+CR3 = 0x000000003F801000
+CR4 = 0x0000000000000668
+EFER = 0x0000000000000D00
+  [OK] CR0.PG (Paging) enabled
+  [OK] CR0.PE (Protected Mode) enabled
+  [OK] CR4.PAE enabled
+  [OK] EFER.LME (Long Mode Enable) set
+  [OK] EFER.LMA (Long Mode Active) set
+
+=== BootInfo ===
+Magic: 0x49425847
+Framebuffer: 0x0000000080000000 (0x00000500x0x00000320)
+
+=== Kernel Entry Validation ===
+Entry point: 0x000000003D78F324
+First 16 bytes at entry:
+  55 41 57 41 56 41 55 41 54 57 56 53 48 83 EC 58 
+  [OK] Looks like valid x64 function prologue
+
+=== Jumping to Kernel (Trampoline) ===
+
+========================================
+=== PRE-HANDOFF VALIDATION ===
+========================================
+
+--- Parameters ---
+Kernel Entry: 0x000000003D78F324
+BootInfo:     0x000000003DE4E000
+Stack Top:    0x0000000000280000
+PML4 Phys:    0x000000003DBCB000
+
+--- Validating Mappings ---
+
+[1] Kernel Entry:
+Checking mapping for: 0x000000003D78F324
+  PML4[0x00000000] = 0x000000003DBCA003
+  PDPT[0x00000000] = 0x000000003DBC9003
+  PD[0x000001EB] = 0x000000003DBC7003
+  PT[0x0000018F] = 0x000000003D78F003
+  [OK] Maps to physical: 0x000000003D78F000
+
+[2] BootInfo:
+Checking mapping for: 0x000000003DE4E000
+  PML4[0x00000000] = 0x000000003DBCA003
+  PDPT[0x00000000] = 0x000000003DBC9003
+  PD[0x000001EF] = 0x000000003DBC3003
+  PT[0x0000004E] = 0x000000003DE4E003
+  [OK] Maps to physical: 0x000000003DE4E000
+
+[3] Stack (top - 0x1000):
+Checking mapping for: 0x000000000027F000
+  PML4[0x00000000] = 0x000000003DBCA003
+  PDPT[0x00000000] = 0x000000003DBC9003
+  PD[0x00000001] = 0x000000003DBC4003
+  PT[0x0000007F] = 0x000000000027F003
+  [OK] Maps to physical: 0x000000000027F000
+
+[4] PML4 self-mapping:
+Checking mapping for: 0x000000003DBCB000
+  PML4[0x00000000] = 0x000000003DBCA003
+  PDPT[0x00000000] = 0x000000003DBC9003
+  PD[0x000001ED] = 0x000000003DBC5003
+  PT[0x000001CB] = 0x000000003DBCB003
+  [OK] Maps to physical: 0x000000003DBCB000
+
+[5] Framebuffer:
+Checking mapping for: 0x0000000080000000
+  PML4[0x00000000] = 0x000000003DBCA003
+  PDPT[0x00000002] = 0x000000003BFB3003
+  PD[0x00000000] = 0x000000003BFB2003
+  PT[0x00000000] = 0x000000008000001B
+  [OK] Maps to physical: 0x0000000080000000
+
+========================================
+=== VALIDATION COMPLETE ===
+========================================
+
+
+[BOOT] Validating VIRTUAL kernel entry mapping:
+Checking mapping for: 0x0000000010031324
+  PML4[0x00000000] = 0x000000003DBCA003
+  PDPT[0x00000000] = 0x000000003DBC9003
+  PD[0x00000080] = 0x000000003C145003
+  PT[0x00000031] = 0x000000003D78F003
+  [OK] Maps to physical: 0x000000003D78F000
+[BOOT] About to handoff via trampoline...
+[BOOT] Trampoline at: 0x000000003DBCC000
+[BOOT] Kernel entry: 0x000000003D78F324
+[BOOT] BootInfo at: 0x000000003DE4E000
+[BOOT] Stack top: 0x0000000000280000
+[BOOT] PML4: 0x000000003DBCB000
+
+[BOOT] Validating trampoline mapping:
+Checking mapping for: 0x000000003DBCC000
+  PML4[0x00000000] = 0x000000003DBCA003
+  PDPT[0x00000000] = 0x000000003DBC9003
+  PD[0x000001ED] = 0x000000003DBC5003
+  PT[0x000001CC] = 0x000000003DBCC003
+  [OK] Maps to physical: 0x000000003DBCC000
+
+[BOOT] === CALLING TRAMPOLINE NOW ===
+[BOOT] Jumping to VIRTUAL entry point
+T3SJ10031324
+FG
+PRE000000003D78F023
+*+B000000000027FFE0
+!C00000668
+D@WIYZ>S0038T0000000010031324
+!K4155415641574155
+X#
+^
+K![KMAIN] INITIALIZE
+[FRAMEBUFFER] INITIALIZE
+[ALLOCATOR] INITIALIZE
+[MOD] INITIALIZE
+10450000[ASC] INIT
+[FBI] INIT
+[BS] INIT
+[RUNTIME] ALLOCATE TEST PASS
+[CONS] INITIALIZE
+[ARCH] INITIALIZE
+[ARCH] DETECT
+[ARCH] Pointer Size: 8 bytes (64-bit)
+[ARCH] Running in 64-bit mode (AMD64)
+[ARCH] Pointer integrity: PASS (64-bit pointers working)
+=== Architecture Detection Complete ===
+[IDT] INITIALIZE
+[GDT] INITIALIZE
+[KERNEL] SET STACK SPACE
+[IDT] INIT
+[INTERRUPTS] INIT
+[ACPI] RSDP address available
+[ACPI] ACPI Initialized (RSDP provided)
+[PIC] DISABLED
+[Local APIC] INIT
+APIC@00000000FEE00000
+[Local APIC] Initialized
+[Local APIC] INIT DONE
+[IO APIC] INIT
+[IO APIC] INIT DONE
+[TIMER] INIT
+[TIMER] INITIALIZE
+[ACPITIMER] SleepMicroseconds begin
+[ACPITIMER] ACPI PM Timer present
+[TIMER] Local APIC timer started (1000Hz)
+[SERIAL] INIT
+[VMWARE] INIT
+vm1vmSKIP[EBS] Marking ExitBootServices as occurred
+[EBS] ExitBootServices marked
+[INPUT] Initializing UEFI mouse input
+[MouseInputManager] Initialized
+[MouseInputManager] UEFI boot info received
+[MouseInputManager] BootInfo hex dump (input protocol region):
+[MouseInputManager] Bytes at offset 0x68-0x97 (Ramdisk + Input Protocols):
+  0x68: 00 00 1F 3C 00 00 00 00 4C EA 56 01 00 00 00 00 
+  0x78: 70 01 72 3E 00 00 00 00 C8 01 72 3E 00 00 00 00 
+  0x88: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+[MouseInputManager] Raw uint64 at offset 0x78 (SimplePointerProtocol): 0x000000003E720170
+[MouseInputManager] Raw uint64 at offset 0x80 (AbsolutePointerProtocol): 0x000000003E7201C8
+[MouseInputManager] Raw uint64 at offset 0x88 (SimpleTextInputEx): 0x0000000000000000
+[MouseInputManager] bootInfo->SimplePointerProtocol reads as: 0x000000003E720170
+[MouseInputManager] BootInfo.Flags = 0x0000001F
+[MouseInputManager]   Bit 0 (MemMap): SET
+[MouseInputManager]   Bit 1 (FB): SET
+[MouseInputManager]   Bit 2 (Ramdisk): SET
+[MouseInputManager]   Bit 3 (SimplePtr): SET
+[MouseInputManager]   Bit 4 (AbsPtr): SET
+[MouseInputManager]   Bit 5 (TextIn): clear
+[MouseInputManager] UEFI BootInfo: HasSimplePointer == true
+[MouseInputManager] UEFI BootInfo: SimplePointerProtocol = 0x000000003E720170
+[MouseInputManager] ExitBootServices already occurred; skipping UEFI pointer protocol
+[INPUT] MouseInputManager initialized
+[PCI] INIT
+[PCI] INIT
+[PCI] Devices enumerated
+[SCHED] ThreadPool.Initialize
+TP1
+TP2
+TP2A
+TP2B
+TP2C=6
+TP2D
+TP3
+TP4
+TP5
+TP6
+STI-
+OK
+RET
+TPRET
+[SCHED] ThreadPool.Initialize complete
+[APIC] STI (Local APIC timer active)
+[BOOT] Post-STI continue
+[BOOT] About to cleanup splash
+[Initrd] Initializing Ramdisk
+RD@000000003C1F0000
+DIR:5244534B01000000ED01000009005245
+[Initrd] RDSK magic found directly!
+[Ramdisk] Constructor called
+[Ramdisk] ptr field set
+[Ramdisk] First byte OK (non-zero)
+[Ramdisk] Disk.Instance set
+[Initrd] Ramdisk initialized
+[FS] Mounting RdskFS
+[RdskFS] Constructor called
+[RdskFS] Got raw pointer
+[RdskFS] Magic OK
+[RdskFS] Constructor completed
+[FS] RdskFS mounted
+POSTFS_A
+POSTFS_B
+KERNELMAIN_ENTRY_RAW
+[KERNELMAIN]
+
+[BOOT_MODE] UEFI
+[MOUSE_CAPABILITIES] INITIALIZE
+[MouseCapability] Starting capability detection
+[MouseCapability] Boot mode: UEFI
+[MouseCapability] UEFI pointer unavailable after ExitBootServices
+[MouseCapability] Checking VMware backdoor...
+[MouseCapability] VMware backdoor not available
+[MouseCapability] UEFI mode: no capability detected, leaving disabled
+[MouseCapability] ========================================
+[MouseCapability] Detection complete
+[MouseCapability] Primary: None
+[MouseCapability] Mouse enabled: False
+[MouseCapability] ----------------------------------------
+[MouseCapability] Capabilities detected:
+[MouseCapability] ========================================
+MCDOK
+[MOUSE_CAPABILITIES] DEVICE CHOSEN: None
+[INPUT] INITIALIZE
+[INPUT] Skipping PS/2 keyboard init (UEFI)
+[USB] INIT
+[USB] Skipping EHCI in UEFI mode (unmapped MMIO risk)
+[MouseCapability] Checking USB HID mouse...
+[MouseCapability] No USB HID mouse detected
+[USB] Initialization sequence complete
+[INPUT] Mouse detection complete
+[INPUT] Mouse enabled: False
+[FS] Re-mounting filesystem for UEFI
+[FS] RawBasePointer = 1008664576
+[FS] Reconstructing Ramdisk from RawBasePointer
+[Ramdisk] Constructor called
+[Ramdisk] ptr field set
+[Ramdisk] First byte OK (non-zero)
+[Ramdisk] Disk.Instance set
+[FS] Ramdisk reconstructed
+[RdskFS] Constructor called
+[RdskFS] Got raw pointer
+[RdskFS] Magic OK
+[RdskFS] Constructor completed
+[FS] Filesystem re-mounted OK
+[CURSOR] Creating cursor images
+[MODE=U]
+[CURSOR] About to call CreateFallbackCursor()
+[CURSOR] CreateFallbackCursor() returned, assigning to CursorMoving
+[CURSOR] CursorMoving assigned, assigning to CursorBusy
+[CURSOR] Cursors created (procedural fallback)
+[WM] INIT
+[FONT] UEFI mode - using placeholder font
+[WM] INIT complete
+[DESKTOP] INIT
+[DESKTOP] INIT complete
+[KMAIN] Calling SMain
+[SMAIN]
+[SMAIN] UEFI MODE
+[SMAIN] UEFI mode - disabling triple buffering
+[SMAIN] Framebuffer.Graphics is OK
+[SMAIN] Framebuffer.VideoMemory = 2147483648
+[SMAIN] Framebuffer.OriginalVideoMemory = 2147483648
+[SMAIN] After EnsureGraphics: OK
+[SMAIN] Graphics.VideoMemory = 2147483648
+[SMAIN] EnsureGraphics OK
+[SMAIN] Creating UEFI wallpaper
+[SMAIN] UEFI_WALLPAPER_ENTER
+[SMAIN] UEFI_WALLPAPER_VALIDATE_FB_ENTER
+[SMAIN] UEFI_WALLPAPER_VALIDATE_FB_EXIT
+[SMAIN] UEFI_WALLPAPER_MINIMAL_ENTER
+[SMAIN] UEFI_WALLPAPER_MINIMAL_EXIT
+[SMAIN] UEFI_WALLPAPER_EXIT
+[SMAIN] Wallpaper created
+[SAFE_MODE] UEFI minimal desktop initialized
+[SMAIN] Setting up icons
+[SMAIN] File.Instance = OK
+[SMAIN] Disk.Instance = OK
+[SMAIN] Initializing background manager and icons
+[SMAIN] UEFI mode - using fallback icons (no PNG)
+[SMAIN] Creating context menus
+[SMAIN] Context menus skipped (UEFI mode)
+[SMAIN] Creating widgets
+[SMAIN] Widgets skipped (UEFI mode)
+[SMAIN] Setup complete - entering main loop
+[SMAIN] Entering main render loop
+[DIAG] RENDER_LOOP_PROLOGUE_PATCH_ACTIVE
+SMAIN_BEFORE_RENDERLOOP_DISPATCH
+SMAIN_DIAG_BEGIN
+SMAIN_DIAG_UEFI_MODE=1
+SMAIN_DIAG_SAFE_SERIAL_ONLY=0
+SMAIN_DIAG_SAFE_MINIMAL_RENDER=1
+SMAIN_DIAG_TINY_BYPASS=1
+SMAIN_DIAG_NORMAL_DESKTOP_GUARD=0
+SMAIN_DIAG_TINY_ENTRY_ONLY=0
+SMAIN_DIAG_TINY_MINIMAL_GRAPHICS=1
+SMAIN_DIAG_FB_BEGIN
+1280x800 32bpp 5120bytes 1280px
+SMAIN_DIAG_GFX_BEGIN
+SMAIN_DIAG_GFX=OK
+SMAIN_DIAG_GFX_VM=SET
+SMAIN_DIAG_GFX_VM
+0x80000000
+SMAIN_DIAG_FB_VM
+0x80000000
+SMAIN_DIAG_ORIG_FB_VM
+0x80000000
+SMAIN_DIAG_REASON_TINY
+SMAIN_DIAG_END
+SMAIN_DISPATCH_TINY_UEFI
+UTINY_AFTER_ENTER
+UTINY_GRAPHICS_ENTER
+UTINY_F1_A
+UTINY_BEFORE_ENSURE_GRAPHICS
+UTINY_AFTER_ENSURE_GRAPHICS
+UTINY_B
+UTINY_C1
+UTINY_C2
+UTINY_C3
+UTINY_C4
+UTINY_C5
+UTINY_C6
+UTINY_C7
+UTINY_C8
+UTINY_C9
+UTINY_C10
+UTINY_C11
+UTINY_C12
+UTINY_C13
+UTINY_C14
+UTINY_C15
+UTINY_C16
+UTINY_C17
+UTINY_PATTERN_FRAME1_DRAWN
+UTINY_F1_END
+UTINY_C18
+UTINY_C19
+UTINY_C20
+UTINY_C21
+UTINY_C22
+UTINY_C23
+.....
