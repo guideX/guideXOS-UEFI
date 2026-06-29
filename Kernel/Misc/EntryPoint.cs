@@ -252,28 +252,37 @@ namespace guideXOS.Misc {
 
             // Initialize UEFI mouse input if available (before other subsystems)
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                bool skipEarlyUefiHardwareInit = Program.ShouldSkipEarlyUefiHardwareInitialization();
                 // The UEFI bootloader exits boot services before entering KMain.
                 // Mark this before touching any firmware protocol pointers from BootInfo.
                 BootConsole.WriteLine("[EBS] Marking ExitBootServices as occurred");
                 ExitBootServicesRules.MarkExitBootServices();
                 BootConsole.WriteLine("[EBS] ExitBootServices marked");
 
-                BootConsole.WriteLine("[INPUT] Initializing UEFI mouse input");
-                try {
-                    MouseInputManager.Initialize(bootInfo);
-                    if (MouseInputManager.IsInitialized) {
-                        BootConsole.WriteLine("[INPUT] MouseInputManager initialized");
+                if (skipEarlyUefiHardwareInit) {
+                    BootConsole.WriteLine("[INPUT] Skipping early UEFI mouse input and PCI init (safe/step probe)");
+                } else {
+                    BootConsole.WriteLine("[INPUT] Initializing UEFI mouse input");
+                    try {
+                        MouseInputManager.Initialize(bootInfo);
+                        if (MouseInputManager.IsInitialized) {
+                            BootConsole.WriteLine("[INPUT] MouseInputManager initialized");
+                        }
+                    } catch {
+                        BootConsole.WriteLine("[INPUT] MouseInputManager initialization failed");
                     }
-                } catch {
-                    BootConsole.WriteLine("[INPUT] MouseInputManager initialization failed");
                 }
 
             }
 
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy)
                  SMBIOS.Initialize();
-            BootConsole.WriteLine("[PCI] INIT");
-            PCI.Initialize();
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI && Program.ShouldSkipEarlyUefiHardwareInitialization()) {
+                BootConsole.WriteLine("[PCI] SKIPPED (safe/step probe)");
+            } else {
+                BootConsole.WriteLine("[PCI] INIT");
+                PCI.Initialize();
+            }
 
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy) {
                 IDE.Initialize();

@@ -296,6 +296,11 @@ $programPath = Join-Path $root 'guideXOS\Program.cs'
 $buildScript = Join-Path $root 'build.ps1'
 $qemuExe = 'C:\Program Files\qemu\qemu-system-x86_64.exe'
 $logRoot = Join-Path $root 'bin\uefi-run-logs'
+$qemuFirmwareRoot = Join-Path $root 'bin\qemu-firmware'
+$qemuFirmwareCode = Join-Path $qemuFirmwareRoot 'edk2-x86_64-code.fd'
+$qemuFirmwareVars = Join-Path $qemuFirmwareRoot 'edk2-vars.fd'
+$qemuFirmwareCodeSource = 'C:\Program Files\qemu\share\edk2-x86_64-code.fd'
+$qemuFirmwareVarsSource = 'C:\Program Files\qemu\share\edk2-i386-vars.fd'
 $runStamp = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
 $runId = "UEFI_RUN_ID_${runStamp}_PID$PID"
 $modeLabel = if ($Mode -eq 'SafeNormalDesktop') { 'SAFE_NORMAL_DESKTOP_UEFI' } else { 'TINY_UEFI' }
@@ -311,6 +316,7 @@ if ($CaptureScreenshot) {
 }
 
 New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $qemuFirmwareRoot -Force | Out-Null
 
 if (-not (Test-Path $qemuExe)) {
     throw "QEMU executable not found: $qemuExe"
@@ -328,6 +334,14 @@ try {
         -Label 'SMAIN_BEFORE_RENDERLOOP_DISPATCH'
 
     if ($Mode -eq 'SafeNormalDesktop') {
+        $patched = Assert-SingleReplacement -Text $patched `
+            -Old 'private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = false;' `
+            -New 'private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = true;' `
+            -Label 'UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH'
+        $patched = Assert-SingleReplacement -Text $patched `
+            -Old 'private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;' `
+            -New 'private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = false;' `
+            -Label 'UEFI_USE_TINY_RENDER_LOOP_BYPASS'
         $patched = Assert-SingleReplacement -Text $patched `
             -Old 'private const bool UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME = false;' `
             -New 'private const bool UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME = true;' `
@@ -372,15 +386,22 @@ try {
         Remove-Item -LiteralPath $ScreenshotPath -Force
     }
 
+    Copy-Item -LiteralPath $qemuFirmwareCodeSource -Destination $qemuFirmwareCode -Force
+    Copy-Item -LiteralPath $qemuFirmwareVarsSource -Destination $qemuFirmwareVars -Force
+
     Remove-Item Env:PATH -ErrorAction SilentlyContinue
 
     $serialRelative = $serialLog.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/'
     $qemuArgs = @(
-        '-drive', 'if=pflash,format=raw,readonly=on,file=OVMF.fd'
-        '-drive', 'file=fat:rw:ESP,format=raw'
+        '-machine', 'pc-q35-8.2'
+        '-drive', ('if=pflash,format=raw,readonly=on,file=' + $qemuFirmwareCode)
+        '-drive', ('if=pflash,format=raw,file=' + $qemuFirmwareVars)
+        '-drive', 'if=none,id=esp,format=raw,file=fat:rw:ESP'
+        '-device', 'ide-hd,drive=esp'
         '-m', '1024M'
         '-serial', ('file:' + $serialRelative)
         '-no-reboot'
+        '-boot', 'menu=off,splash-time=0'
         '-name', 'guideXOS'
     )
     if ($qmpPort) {

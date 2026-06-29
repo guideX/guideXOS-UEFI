@@ -120,6 +120,7 @@ unsafe class Program {
     private static bool _uefiAnyInputByteSeen = false;
     private static bool _uefiSerialSeen = false;
     private static bool _uefiUnknownKeySeen = false;
+    private static bool _cursorImageDrawProbeActive = false;
 
     private sealed class SafeModeDiagnostics {
         public ulong FrameCounter;
@@ -437,6 +438,12 @@ unsafe class Program {
     private static bool UseSafeNormalDesktopUefiMode() {
         return BootConsole.CurrentMode == guideXOS.BootMode.UEFI &&
                UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME;
+    }
+
+    internal static bool ShouldSkipEarlyUefiHardwareInitialization() {
+        return BootConsole.CurrentMode == guideXOS.BootMode.UEFI &&
+               (UseSafeNormalDesktopUefiMode() ||
+                (UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && NORMAL_DESKTOP_UEFI_STEP_PROBE));
     }
 
     private static bool SafeModeKeyboardEnabled =>
@@ -1314,6 +1321,18 @@ unsafe class Program {
         }
     }
 
+    internal static void CursorImageProbeBreadcrumb(string breadcrumb) {
+        SerialBreadcrumb(breadcrumb);
+    }
+
+    internal static bool IsCursorImageDrawProbeActive() {
+        return _cursorImageDrawProbeActive;
+    }
+
+    internal static void SetCursorImageDrawProbeActive(bool active) {
+        _cursorImageDrawProbeActive = active;
+    }
+
     private static void LogNormalDesktopStepProbeState(string phase, guideXOS.Graph.Graphics graphics, uint color) {
         UefiBootInfo* bootInfo = Framebuffer.OriginalBootInfo;
         uint fbW = bootInfo != null ? bootInfo->FramebufferWidth : Framebuffer.Width;
@@ -1392,26 +1411,22 @@ unsafe class Program {
 
     private static void ProbeNormalDesktopCursorImageRendering() {
         SerialBreadcrumb("CURSOR_IMG_PROBE_ENTER");
+        SetCursorImageDrawProbeActive(true);
+        SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_ENTER");
+        ProbeNormalDesktopCursorImageRenderingBody();
+        SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_EXIT");
+        SetCursorImageDrawProbeActive(false);
+        SerialBreadcrumb("CURSOR_IMG_PROBE_EXIT");
+    }
 
-        SerialBreadcrumb("CURSOR_IMG_GRAPHICS_ENTER");
+    private static void ProbeNormalDesktopCursorImageRenderingBody() {
         var graphics = Framebuffer.Graphics;
-        SerialBreadcrumb(graphics == null ? "CURSOR_IMG_GFX=NULL" : "CURSOR_IMG_GFX=OK");
-        SerialBreadcrumb("CURSOR_IMG_GRAPHICS_EXIT");
-
-        SerialBreadcrumb("CURSOR_IMG_SOURCE_IMAGE_ENTER");
         Image cursorImage = LoadPngSafe("Images/Cursor.png");
-        Image cursorMovingImage = LoadPngSafe("Images/Grab.png");
-        Image cursorBusyImage = null;
-        SerialBreadcrumb(cursorImage == null ? "CURSOR_IMG_IMAGE=NULL" : "CURSOR_IMG_IMAGE=OK");
-        SerialBreadcrumb("CURSOR_IMG_SOURCE_IMAGE_EXIT");
-
         int cursorX = 80;
         int cursorY = 80;
 
         SerialBreadcrumb("CURSOR_IMG_OBJECT_CHECK_ENTER");
         SerialBreadcrumb(cursorImage == null ? "CURSOR_IMG_CURSOR=NULL" : "CURSOR_IMG_CURSOR=OK");
-        SerialBreadcrumb(cursorMovingImage == null ? "CURSOR_IMG_CURSOR_MOVING=NULL" : "CURSOR_IMG_CURSOR_MOVING=OK");
-        SerialBreadcrumb(cursorBusyImage == null ? "CURSOR_IMG_CURSOR_BUSY=NULL" : "CURSOR_IMG_CURSOR_BUSY=OK");
         if (cursorImage != null) {
             SerialBreadcrumb("CURSOR_IMG_WIDTH");
             SerialWriteUnsigned((ulong)cursorImage.Width);
@@ -1420,15 +1435,6 @@ unsafe class Program {
             SerialWriteUnsigned((ulong)cursorImage.Height);
             SerialChar('\n');
             SerialBreadcrumb(cursorImage.RawData == null ? "CURSOR_IMG_RAWDATA=NULL" : "CURSOR_IMG_RAWDATA=OK");
-            if (cursorImage.RawData != null && cursorImage.RawData.Length > 0) {
-                uint firstSourcePixel = (uint)cursorImage.RawData[0];
-                SerialBreadcrumb("CURSOR_IMG_FIRST_SOURCE_PIXEL");
-                SerialWriteHex(firstSourcePixel);
-                SerialChar('\n');
-                SerialBreadcrumb("CURSOR_IMG_FIRST_SOURCE_ALPHA");
-                SerialWriteUnsigned((ulong)((firstSourcePixel >> 24) & 0xFFu));
-                SerialChar('\n');
-            }
         }
         SerialBreadcrumb("CURSOR_IMG_OBJECT_CHECK_EXIT");
 
@@ -1451,46 +1457,25 @@ unsafe class Program {
 
         if (graphics == null || graphics.VideoMemory == null || cursorImage == null || cursorImage.RawData == null) {
             SerialBreadcrumb("CURSOR_IMG_BOUNDS_CHECK_EXIT");
-            SerialBreadcrumb("CURSOR_IMG_PROBE_EXIT");
+            SetCursorImageDrawProbeActive(false);
             return;
         }
 
-        if (!TryGetClippedRect(graphics.Width, graphics.Height, cursorX, cursorY, cursorImage.Width, cursorImage.Height, 0, 0, graphics.Width, graphics.Height, out int drawX0, out int drawY0, out int drawX1, out int drawY1)) {
+        if (!TryGetClippedRect(graphics.Width, graphics.Height, cursorX, cursorY, cursorImage.Width, cursorImage.Height, 0, 0, graphics.Width, graphics.Height, out _, out _, out _, out _)) {
             SerialBreadcrumb("CURSOR_IMG_CLIP=OUT");
             SerialBreadcrumb("CURSOR_IMG_BOUNDS_CHECK_EXIT");
-            SerialBreadcrumb("CURSOR_IMG_PROBE_EXIT");
+            SetCursorImageDrawProbeActive(false);
             return;
         }
 
         SerialBreadcrumb("CURSOR_IMG_CLIP=IN");
-        SerialBreadcrumb("CURSOR_IMG_DRAW_X0");
-        SerialWriteUnsigned((ulong)(uint)drawX0);
-        SerialChar('\n');
-        SerialBreadcrumb("CURSOR_IMG_DRAW_Y0");
-        SerialWriteUnsigned((ulong)(uint)drawY0);
-        SerialChar('\n');
-        SerialBreadcrumb("CURSOR_IMG_DRAW_X1");
-        SerialWriteUnsigned((ulong)(uint)drawX1);
-        SerialChar('\n');
-        SerialBreadcrumb("CURSOR_IMG_DRAW_Y1");
-        SerialWriteUnsigned((ulong)(uint)drawY1);
-        SerialChar('\n');
         SerialBreadcrumb("CURSOR_IMG_BOUNDS_CHECK_EXIT");
 
         SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_ENTER");
         SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_OVERLOAD=DrawImage(int,int,Image,bool-default:true)");
         SerialBreadcrumb("CURSOR_IMG_ALPHA_BLEND=1");
-        SerialBreadcrumb("CURSOR_IMG_DEST_PIXEL_READ_ENTER");
-        uint firstDestPixel = graphics.GetPoint(cursorX, cursorY);
-        SerialBreadcrumb("CURSOR_IMG_DEST_PIXEL_READ_EXIT");
-        SerialBreadcrumb("CURSOR_IMG_FIRST_DEST_PIXEL");
-        SerialWriteHex(firstDestPixel);
-        SerialChar('\n');
-        SerialBreadcrumb("CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_ENTER");
         graphics.DrawImage(cursorX, cursorY, cursorImage);
-        SerialBreadcrumb("CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_EXIT");
         SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_EXIT");
-        SerialBreadcrumb("CURSOR_IMG_PROBE_EXIT");
     }
 
     private static void ReportNormalDesktopStepProbeGraphicsCallsites() {
@@ -2664,7 +2649,9 @@ unsafe class Program {
             SerialBreadcrumb("NORM_STEP_013_CURSOR_DRAW_SKIPPED");
         } else if (UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING) {
             SerialBreadcrumb("NORM_STEP_013_CURSOR_IMG_ENTER");
+            SerialBreadcrumb("NORM_STEP_013_CURSOR_IMG_CALL_ENTER");
             ProbeNormalDesktopCursorImageRendering();
+            SerialBreadcrumb("NORM_STEP_013_CURSOR_IMG_CALL_EXIT");
             SerialBreadcrumb("NORM_STEP_013_CURSOR_IMG_EXIT");
         } else if (NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER) {
             SerialBreadcrumb("NORM_STEP_013_CURSOR_PLACEHOLDER_ENTER");

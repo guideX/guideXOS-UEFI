@@ -1,5 +1,5 @@
 # Boot guideXOS in QEMU (PowerShell version)
-# More reliable than batch file for OVMF paths
+# Uses the validated bundled QEMU UEFI firmware path.
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "   Booting guideXOS in QEMU" -ForegroundColor Cyan
@@ -21,11 +21,26 @@ Write-Host "Checking files..." -ForegroundColor Yellow
 
 $filesOK = $true
 
-if (-not (Test-Path "OVMF.fd")) {
-    Write-Host "  ? OVMF.fd not found!" -ForegroundColor Red
+$qemuFirmwareRoot = Join-Path $PSScriptRoot 'bin\qemu-firmware'
+$qemuFirmwareCode = Join-Path $qemuFirmwareRoot 'edk2-x86_64-code.fd'
+$qemuFirmwareVars = Join-Path $qemuFirmwareRoot 'edk2-vars.fd'
+$qemuFirmwareCodeSource = 'C:\Program Files\qemu\share\edk2-x86_64-code.fd'
+$qemuFirmwareVarsSource = 'C:\Program Files\qemu\share\edk2-i386-vars.fd'
+
+New-Item -ItemType Directory -Path $qemuFirmwareRoot -Force | Out-Null
+
+if (-not (Test-Path $qemuFirmwareCodeSource)) {
+    Write-Host "  ? Bundled UEFI code firmware not found: $qemuFirmwareCodeSource" -ForegroundColor Red
     $filesOK = $false
 } else {
-    Write-Host "  ? OVMF.fd found" -ForegroundColor Green
+    Write-Host "  ? Bundled UEFI code firmware found" -ForegroundColor Green
+}
+
+if (-not (Test-Path $qemuFirmwareVarsSource)) {
+    Write-Host "  ? Bundled UEFI vars template not found: $qemuFirmwareVarsSource" -ForegroundColor Red
+    $filesOK = $false
+} else {
+    Write-Host "  ? Bundled UEFI vars template found" -ForegroundColor Green
 }
 
 if (-not (Test-Path "ESP\EFI\BOOT\BOOTX64.EFI")) {
@@ -76,21 +91,26 @@ if (-not $filesOK) {
     exit 1
 }
 
+Copy-Item -LiteralPath $qemuFirmwareCodeSource -Destination $qemuFirmwareCode -Force
+Copy-Item -LiteralPath $qemuFirmwareVarsSource -Destination $qemuFirmwareVars -Force
+
 Write-Host "Starting QEMU..." -ForegroundColor Green
 Write-Host "Press Ctrl+C in this window to exit QEMU" -ForegroundColor Yellow
 Write-Host ""
 
-# Launch QEMU with pflash (most reliable method)
+# Launch QEMU with pflash (validated method)
 try {
     & "C:\Program Files\qemu\qemu-system-x86_64.exe" `
-        -drive if=pflash,format=raw,readonly=on,file=OVMF.fd `
+        -machine pc-q35-8.2 `
+        -drive if=pflash,format=raw,readonly=on,file=$qemuFirmwareCode `
+        -drive if=pflash,format=raw,file=$qemuFirmwareVars `
         -drive if=none,id=esp,format=raw,file=fat:rw:ESP `
         -device ide-hd,drive=esp `
         -m 1024M `
         -serial stdio `
-        -name "guideXOS" -no-reboot `
-        -boot menu=off,splash-time=0 `
-        -display sdl
+        -name "guideXOS" `
+        -no-reboot `
+        -boot menu=off,splash-time=0
 } catch {
     Write-Host ""
     Write-Host "? QEMU failed to start!" -ForegroundColor Red
