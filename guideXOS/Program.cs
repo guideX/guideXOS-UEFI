@@ -384,6 +384,7 @@ unsafe class Program {
     // because the diagnostics method allocates managed strings every call.
     private const bool UEFI_DRAW_DIAGNOSTICS_EACH_FRAME = false;
     private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;
+    private const bool UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME = false;
     private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = false;
     private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
     private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = false;
@@ -431,6 +432,11 @@ unsafe class Program {
     private const bool UEFI_RENDER_LOOP_PROLOGUE_HALT = false;
     private const bool UEFI_RENDER_LOOP_PROLOGUE_ONLY = false;
     private const bool UEFI_RENDER_LOOP_SAFE_PROLOGUE = true;
+
+    private static bool UseSafeNormalDesktopUefiMode() {
+        return BootConsole.CurrentMode == guideXOS.BootMode.UEFI &&
+               UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME;
+    }
 
     private static bool SafeModeKeyboardEnabled =>
         ActiveSafeModeInputBackend == SafeModeInputBackend.SAFE_INPUT_PS2_KEYBOARD ||
@@ -581,54 +587,59 @@ unsafe class Program {
     public static void KMain() {
         string customCharset = null;
         if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+            bool useSafeNormalDesktopUefi = UseSafeNormalDesktopUefiMode();
             // In UEFI mode, disable debug lines to prevent graphical corruption
             BootConsole.DrawDebugLines = false;
             BootConsole.WriteLine("[BOOT_MODE] UEFI");
-            BootConsole.WriteLine("[MOUSE_CAPABILITIES] INITIALIZE");
-            // UEFI mode: mark uefi=true and disable PS/2 fallback.
-            MouseCapabilityDetector.DetectAndInitialize(null, true, false);
-            // Raw serial marker to confirm we returned from DetectAndInitialize
-            Native.Out8(0x3F8, (byte)'M');
-            Native.Out8(0x3F8, (byte)'C');
-            Native.Out8(0x3F8, (byte)'D');
-            Native.Out8(0x3F8, (byte)'O');
-            Native.Out8(0x3F8, (byte)'K');
-            Native.Out8(0x3F8, (byte)'\n');
-            BootConsole.WriteLine("[MOUSE_CAPABILITIES] DEVICE CHOSEN: " + MouseCapabilityDetector.GetCapabilityName(MouseCapabilityDetector.PrimaryCapability));
-            //try {
-            BootConsole.WriteLine("[INPUT] INITIALIZE");
-            Keyboard.Initialize();
-            //BootConsole.WriteLine("[INPUT] Subscribing Kbd2Mouse");
-            //Keyboard.OnKeyChanged += (sender, key) => Kbd2Mouse.OnKeyChanged(key);
-            //} catch {
-                //BootConsole.WriteLine("[INPUT] Keyboard Dispatcher Init Failed");
-            //}
+            if (!useSafeNormalDesktopUefi) {
+                BootConsole.WriteLine("[MOUSE_CAPABILITIES] INITIALIZE");
+                // UEFI mode: mark uefi=true and disable PS/2 fallback.
+                MouseCapabilityDetector.DetectAndInitialize(null, true, false);
+                // Raw serial marker to confirm we returned from DetectAndInitialize
+                Native.Out8(0x3F8, (byte)'M');
+                Native.Out8(0x3F8, (byte)'C');
+                Native.Out8(0x3F8, (byte)'D');
+                Native.Out8(0x3F8, (byte)'O');
+                Native.Out8(0x3F8, (byte)'K');
+                Native.Out8(0x3F8, (byte)'\n');
+                BootConsole.WriteLine("[MOUSE_CAPABILITIES] DEVICE CHOSEN: " + MouseCapabilityDetector.GetCapabilityName(MouseCapabilityDetector.PrimaryCapability));
+                //try {
+                BootConsole.WriteLine("[INPUT] INITIALIZE");
+                Keyboard.Initialize();
+                //BootConsole.WriteLine("[INPUT] Subscribing Kbd2Mouse");
+                //Keyboard.OnKeyChanged += (sender, key) => Kbd2Mouse.OnKeyChanged(key);
+                //} catch {
+                    //BootConsole.WriteLine("[INPUT] Keyboard Dispatcher Init Failed");
+                //}
 
-            // UEFI: do not attempt to initialize PS/2 keyboard hardware.
-            // PS/2 controller/IRQ code is legacy-oriented and can stall in UEFI-only environments.
-            BootConsole.WriteLine("[INPUT] Skipping PS/2 keyboard init (UEFI)");
+                // UEFI: do not attempt to initialize PS/2 keyboard hardware.
+                // PS/2 controller/IRQ code is legacy-oriented and can stall in UEFI-only environments.
+                BootConsole.WriteLine("[INPUT] Skipping PS/2 keyboard init (UEFI)");
 
-            BootConsole.WriteLine("[USB] INIT");
-            // USB stack is optional in UEFI mode - EHCI may panic if BAR0 is unmapped
-            // Skip EHCI entirely in UEFI mode to avoid accessing unmapped MMIO addresses
-            // that would cause page faults (uncatchable as C# exceptions)
-            try {
-                Hub.Initialize();
-                HID.Initialize();
-                // EHCI accesses PCI BAR0 MMIO which may not be identity-mapped in UEFI mode.
-                // A page fault here is fatal (not catchable). Skip EHCI in UEFI.
-                BootConsole.WriteLine("[USB] Skipping EHCI in UEFI mode (unmapped MMIO risk)");
-                // USB.StartPolling(); // Skip polling without EHCI
+                BootConsole.WriteLine("[USB] INIT");
+                // USB stack is optional in UEFI mode - EHCI may panic if BAR0 is unmapped
+                // Skip EHCI entirely in UEFI mode to avoid accessing unmapped MMIO addresses
+                // that would cause page faults (uncatchable as C# exceptions)
+                try {
+                    Hub.Initialize();
+                    HID.Initialize();
+                    // EHCI accesses PCI BAR0 MMIO which may not be identity-mapped in UEFI mode.
+                    // A page fault here is fatal (not catchable). Skip EHCI in UEFI.
+                    BootConsole.WriteLine("[USB] Skipping EHCI in UEFI mode (unmapped MMIO risk)");
+                    // USB.StartPolling(); // Skip polling without EHCI
 
-                // After USB init, check if USB HID mouse is available
-                MouseCapabilityDetector.CheckUsbHidMouse();
-                BootConsole.WriteLine("[USB] Initialization sequence complete");
-            } catch {
-                BootConsole.WriteLine("[USB] Init failed (non-fatal, continuing)");
+                    // After USB init, check if USB HID mouse is available
+                    MouseCapabilityDetector.CheckUsbHidMouse();
+                    BootConsole.WriteLine("[USB] Initialization sequence complete");
+                } catch {
+                    BootConsole.WriteLine("[USB] Init failed (non-fatal, continuing)");
+                }
+                // Log final mouse detection result
+                BootConsole.WriteLine("[INPUT] Mouse detection complete");
+                BootConsole.WriteLine("[INPUT] Mouse enabled: " + MouseCapabilityDetector.MouseEnabled);
+            } else {
+                BootConsole.WriteLine("[SMAIN] SAFE normal desktop mode - skipping mouse, keyboard, and USB initialization");
             }
-            // Log final mouse detection result
-            BootConsole.WriteLine("[INPUT] Mouse detection complete");
-            BootConsole.WriteLine("[INPUT] Mouse enabled: " + MouseCapabilityDetector.MouseEnabled);
 
             // CRITICAL: Re-mount filesystem early.
             // In UEFI mode, ALL managed static references (File.Instance, Disk.Instance,
@@ -655,43 +666,47 @@ unsafe class Program {
                 BootConsole.WriteLine("[FS] FATAL: RawBasePointer is NULL - no ramdisk!");
             }
 
-            BootConsole.WriteLine("[CURSOR] Creating cursor images");
-            // Debug: Verify we're still in UEFI mode
-            Native.Out8(0x3F8, (byte)'[');
-            Native.Out8(0x3F8, (byte)'M');
-            Native.Out8(0x3F8, (byte)'O');
-            Native.Out8(0x3F8, (byte)'D');
-            Native.Out8(0x3F8, (byte)'E');
-            Native.Out8(0x3F8, (byte)'=');
-            byte modeVal = (byte)(BootConsole.CurrentMode == guideXOS.BootMode.UEFI ? 'U' : 'L');
-            Native.Out8(0x3F8, modeVal);
-            Native.Out8(0x3F8, (byte)']');
-            Native.Out8(0x3F8, (byte)'\n');
-            // UEFI: Skip all PNG decoding for cursors.
-            // Both LodePNG (managed port) and PngLoader hang during DEFLATE
-            // decompression in the post-ExitBootServices environment, blocking
-            // the entire GUI from initialising. Use procedural cursors instead.
-            BootConsole.WriteLine("[CURSOR] About to call CreateFallbackCursor()");
-            Cursor = CreateFallbackCursor();
-            BootConsole.WriteLine("[CURSOR] CreateFallbackCursor() returned, assigning to CursorMoving");
-            CursorMoving = Cursor;
-            BootConsole.WriteLine("[CURSOR] CursorMoving assigned, assigning to CursorBusy");
-            CursorBusy = Cursor;
-            BootConsole.WriteLine("[CURSOR] Cursors created (procedural fallback)");
-            BootConsole.WriteLine("[WM] INIT");
-            try {
-                WindowManager.Initialize();
-                BootConsole.WriteLine("[WM] INIT complete");
-            } catch {
-                BootConsole.WriteLine("[WM] INIT FAILED!");
-            }
-            
-            BootConsole.WriteLine("[DESKTOP] INIT");
-            try {
-                Desktop.Initialize();
-                BootConsole.WriteLine("[DESKTOP] INIT complete");
-            } catch {
-                BootConsole.WriteLine("[DESKTOP] INIT FAILED!");
+            if (!useSafeNormalDesktopUefi) {
+                BootConsole.WriteLine("[CURSOR] Creating cursor images");
+                // Debug: Verify we're still in UEFI mode
+                Native.Out8(0x3F8, (byte)'[');
+                Native.Out8(0x3F8, (byte)'M');
+                Native.Out8(0x3F8, (byte)'O');
+                Native.Out8(0x3F8, (byte)'D');
+                Native.Out8(0x3F8, (byte)'E');
+                Native.Out8(0x3F8, (byte)'=');
+                byte modeVal = (byte)(BootConsole.CurrentMode == guideXOS.BootMode.UEFI ? 'U' : 'L');
+                Native.Out8(0x3F8, modeVal);
+                Native.Out8(0x3F8, (byte)']');
+                Native.Out8(0x3F8, (byte)'\n');
+                // UEFI: Skip all PNG decoding for cursors.
+                // Both LodePNG (managed port) and PngLoader hang during DEFLATE
+                // decompression in the post-ExitBootServices environment, blocking
+                // the entire GUI from initialising. Use procedural cursors instead.
+                BootConsole.WriteLine("[CURSOR] About to call CreateFallbackCursor()");
+                Cursor = CreateFallbackCursor();
+                BootConsole.WriteLine("[CURSOR] CreateFallbackCursor() returned, assigning to CursorMoving");
+                CursorMoving = Cursor;
+                BootConsole.WriteLine("[CURSOR] CursorMoving assigned, assigning to CursorBusy");
+                CursorBusy = Cursor;
+                BootConsole.WriteLine("[CURSOR] Cursors created (procedural fallback)");
+                BootConsole.WriteLine("[WM] INIT");
+                try {
+                    WindowManager.Initialize();
+                    BootConsole.WriteLine("[WM] INIT complete");
+                } catch {
+                    BootConsole.WriteLine("[WM] INIT FAILED!");
+                }
+                
+                BootConsole.WriteLine("[DESKTOP] INIT");
+                try {
+                    Desktop.Initialize();
+                    BootConsole.WriteLine("[DESKTOP] INIT complete");
+                } catch {
+                    BootConsole.WriteLine("[DESKTOP] INIT FAILED!");
+                }
+            } else {
+                BootConsole.WriteLine("[SMAIN] SAFE normal desktop mode - skipping cursor, window manager, and desktop initialization");
             }
             
             BootConsole.WriteLine("[KMAIN] Calling SMain");
@@ -876,17 +891,22 @@ unsafe class Program {
 
         // Enter the main render loop (in a separate method to keep stack frames small)
         bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
-        bool useTinyUefi = isUefi && UEFI_USE_TINY_RENDER_LOOP_BYPASS && !UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
+        bool useSafeNormalUefiDesktop = isUefi && UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME;
+        bool useTinyUefi = isUefi && UEFI_USE_TINY_RENDER_LOOP_BYPASS && !useSafeNormalUefiDesktop && !UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
         bool useNormalUefiDesktopStepProbe = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && NORMAL_DESKTOP_UEFI_STEP_PROBE;
-        bool useNormalUefiDesktop = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
-        LogUefiRenderDispatchDiagnostics(useTinyUefi, useNormalUefiDesktop);
-        SerialBreadcrumb(useTinyUefi ? "SMAIN_DISPATCH_REASON=TINY_UEFI" :
+        bool useNormalUefiDesktop = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && !NORMAL_DESKTOP_UEFI_STEP_PROBE;
+        LogUefiRenderDispatchDiagnostics(useNormalUefiDesktopStepProbe, useTinyUefi, useSafeNormalUefiDesktop, useNormalUefiDesktop);
+        SerialBreadcrumb(useSafeNormalUefiDesktop ? "SMAIN_DISPATCH_REASON=SAFE_NORMAL_DESKTOP_UEFI" :
+                         useTinyUefi ? "SMAIN_DISPATCH_REASON=TINY_UEFI" :
                          useNormalUefiDesktopStepProbe ? "SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI_STEP_PROBE" :
                          useNormalUefiDesktop ? "SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI" :
                          isUefi ? "SMAIN_DISPATCH_REASON=FULL_UEFI" :
                          "SMAIN_DISPATCH_REASON=LEGACY");
 
-        if (useTinyUefi) {
+        if (useSafeNormalUefiDesktop) {
+            SerialBreadcrumb("SMAIN_DISPATCH_SAFE_NORMAL_DESKTOP_UEFI");
+            RenderLoopSafeNormalDesktopFirstFrame();
+        } else if (useTinyUefi) {
             SerialBreadcrumb("SMAIN_DISPATCH_TINY_UEFI");
             RenderLoopUefiTinyBypass();
         } else if (useNormalUefiDesktopStepProbe) {
@@ -919,6 +939,11 @@ unsafe class Program {
         }
 
         FConsole = null; // Don't create console here - let it be created on-demand
+
+        if (UseSafeNormalDesktopUefiMode()) {
+            BootConsole.WriteLine("[SMAIN] SAFE normal desktop mode - skipping icons, context menus, and widgets");
+            return;
+        }
 
         // Initialize icons
         SetupIcons();
@@ -1436,7 +1461,7 @@ unsafe class Program {
         SerialChar('\n');
     }
 
-    private static void LogUefiRenderDispatchDiagnostics(bool useTinyUefi, bool useNormalUefiDesktop) {
+    private static void LogUefiRenderDispatchDiagnostics(bool emitVerbose, bool useTinyUefi, bool useSafeNormalDesktopUefi, bool useNormalUefiDesktop) {
         bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
         UefiBootInfo* bootInfo = Framebuffer.OriginalBootInfo;
         uint fbW = bootInfo != null ? bootInfo->FramebufferWidth : Framebuffer.Width;
@@ -1452,6 +1477,13 @@ unsafe class Program {
         SerialBreadcrumb(UEFI_USE_TINY_RENDER_LOOP_BYPASS ? "SMAIN_DIAG_TINY_BYPASS=1" : "SMAIN_DIAG_TINY_BYPASS=0");
         SerialBreadcrumb(UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH ? "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=1" : "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_STEP_PROBE ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=0");
+        SerialBreadcrumb(useSafeNormalDesktopUefi ? "SMAIN_DIAG_SAFE_NORMAL_DESKTOP_FIRST_FRAME=1" : "SMAIN_DIAG_SAFE_NORMAL_DESKTOP_FIRST_FRAME=0");
+        SerialBreadcrumb(emitVerbose ? "SMAIN_DIAG_VERBOSE=1" : "SMAIN_DIAG_VERBOSE=0");
+        if (!emitVerbose) {
+            SerialBreadcrumb(useTinyUefi ? "SMAIN_DIAG_REASON_TINY" : useSafeNormalDesktopUefi ? "SMAIN_DIAG_REASON_SAFE_NORMAL_DESKTOP" : useNormalUefiDesktop ? "SMAIN_DIAG_REASON_NORMAL_UefiDesktop" : isUefi ? "SMAIN_DIAG_REASON_FULL_UEFI" : "SMAIN_DIAG_REASON_LEGACY");
+            SerialBreadcrumb("SMAIN_DIAG_END");
+            return;
+        }
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SAFE_FONT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_FONT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SAFE_FONT_PLACEHOLDER=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_WINDOW_TRAVERSAL=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_WINDOW_TRAVERSAL=0");
@@ -1506,7 +1538,11 @@ unsafe class Program {
         SerialWriteHex((ulong)Framebuffer.OriginalVideoMemory);
         SerialChar('\n');
 
-        SerialBreadcrumb(useTinyUefi ? "SMAIN_DIAG_REASON_TINY" : useNormalUefiDesktop ? "SMAIN_DIAG_REASON_NORMAL_UefiDesktop" : isUefi ? "SMAIN_DIAG_REASON_FULL_UEFI" : "SMAIN_DIAG_REASON_LEGACY");
+        SerialBreadcrumb(useTinyUefi ? "SMAIN_DIAG_REASON_TINY" :
+                         useSafeNormalDesktopUefi ? "SMAIN_DIAG_REASON_SAFE_NORMAL_DESKTOP" :
+                         useNormalUefiDesktop ? "SMAIN_DIAG_REASON_NORMAL_DESKTOP_UEFI" :
+                         isUefi ? "SMAIN_DIAG_REASON_FULL_UEFI" :
+                         "SMAIN_DIAG_REASON_LEGACY");
         SerialBreadcrumb("SMAIN_DIAG_END");
     }
 
@@ -2729,6 +2765,82 @@ unsafe class Program {
         int squareY = (frameCounter * 7) % ySpan;
         graphics.FillRectangle(squareX, squareY, squareSize, squareSize, 0xFFFFFFFFu);
     }
+
+    private static bool DrawSafeNormalDesktopFirstFrame(bool emitVerbose = false) {
+        SerialBreadcrumb("SAFE_NORMAL_DESKTOP_FRAME_ENTER");
+        var graphics = Framebuffer.Graphics;
+        if (graphics == null || graphics.VideoMemory == null || Framebuffer.Width == 0 || Framebuffer.Height == 0) {
+            SerialBreadcrumb("SAFE_NORMAL_DESKTOP_FRAME_FB_INVALID");
+            return false;
+        }
+
+        uint* fb = graphics.VideoMemory;
+        int fbW = Framebuffer.Width;
+        int fbH = Framebuffer.Height;
+        int pitchPixels = graphics.Width > 0 ? graphics.Width : fbW;
+        ulong maxPixels = (ulong)(uint)pitchPixels * (ulong)(uint)fbH;
+        SerialBreadcrumb("SAFE_NORMAL_DESKTOP_FRAME_FB_READY");
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 0, 0, fbW, fbH, 0xFF0B3C4Cu);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 0, 0, fbW, 58, 0xFF182836u);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 0, 58, fbW, 2, 0xFF36C2B4u);
+
+        int taskbarY = fbH > 44 ? fbH - 44 : 0;
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 0, taskbarY, fbW, 44, 0xFF151A22u);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 0, taskbarY - 2, fbW, 2, 0xFF36C2B4u);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 18, taskbarY + 10, 92, 24, 0xFF263241u);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 18, taskbarY + 10, 92, 1, 0xFF3E3E3Eu);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 18, taskbarY + 10, 1, 24, 0xFF3E3E3Eu);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 109, taskbarY + 10, 1, 24, 0xFF3E3E3Eu);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 18, taskbarY + 33, 92, 1, 0xFF3E3E3Eu);
+
+        int textWidth = fbW > 300 ? 240 : (fbW > 48 ? fbW - 48 : fbW);
+        if (textWidth > 0) {
+            if (emitVerbose) SerialBreadcrumb("SAFE_NORMAL_DESKTOP_TEXT_PLACEHOLDER_ENTER");
+            DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 24, 18, textWidth, 20, 0xFF263241u);
+            DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, 24, 18, textWidth, 2, 0xFF36C2B4u);
+            if (emitVerbose) SerialBreadcrumb("SAFE_NORMAL_DESKTOP_TEXT_PLACEHOLDER_EXIT");
+        }
+
+        int cursorX = fbW > 48 ? fbW - 36 : 4;
+        int cursorY = fbH > 48 ? fbH - 52 : 4;
+        if (emitVerbose) SerialBreadcrumb("SAFE_NORMAL_DESKTOP_CURSOR_PLACEHOLDER_ENTER");
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, cursorX, cursorY, 12, 12, 0xFFFFFFFFu);
+        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, cursorX + 3, cursorY + 3, 6, 6, 0xFF0B3C4Cu);
+        if (emitVerbose) SerialBreadcrumb("SAFE_NORMAL_DESKTOP_CURSOR_PLACEHOLDER_EXIT");
+
+        Framebuffer.Update();
+        SerialBreadcrumb("SAFE_NORMAL_DESKTOP_FRAME_COMPLETE");
+        return true;
+    }
+
+    private static void RenderLoopSafeNormalDesktopFirstFrame(bool emitVerbose = false) {
+        try {
+            if (!DrawSafeNormalDesktopFirstFrame(emitVerbose)) {
+                SerialBreadcrumb("SAFE_NORMAL_DESKTOP_FAULT=FRAMEBUFFER_INVALID");
+                for (; ; ) {
+                    Native.Out8(0x3F8, (byte)'!');
+                    Thread.Sleep(1000);
+                }
+            }
+
+            SerialBreadcrumb("SAFE_NORMAL_DESKTOP_LOOP_ENTER");
+            ulong heartbeatCounter = 0;
+            for (; ; ) {
+                if ((heartbeatCounter % 60UL) == 0UL) {
+                    Native.Out8(0x3F8, (byte)'.');
+                }
+                heartbeatCounter++;
+                Thread.Sleep(16);
+            }
+        } catch {
+            SerialBreadcrumb("SAFE_NORMAL_DESKTOP_FAULT=EXCEPTION");
+            for (; ; ) {
+                Native.Out8(0x3F8, (byte)'!');
+                Thread.Sleep(1000);
+            }
+        }
+    }
+
     /// <summary>
     /// One-time UEFI ready screen drawn directly to GOP memory.
     /// </summary>
