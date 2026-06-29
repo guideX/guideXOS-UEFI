@@ -1338,6 +1338,36 @@ unsafe class Program {
         SerialBreadcrumb(gfxVideoMemory == fbVideoMemory ? "NORM_STEP_003_VM_MATCH=1" : "NORM_STEP_003_VM_MATCH=0");
     }
 
+    private static int ProbeNormalDesktopStep12MeasureString(IFont probeFont, string probeText) {
+        SerialBreadcrumb("NORM_STEP_012_MEASURE_HELPER_ENTER");
+
+        if (probeFont == null || probeText == null) {
+            SerialBreadcrumb("NORM_STEP_012_MEASURE_HELPER_EXIT");
+            return 0;
+        }
+
+        int width = 0;
+        for (int i = 0; i < probeText.Length; i++) {
+            if (i == 0) {
+                SerialBreadcrumb("NORM_STEP_012_FIRST_CHAR_ACCESS_ENTER");
+                char firstChar = probeText[0];
+                _ = firstChar;
+                SerialBreadcrumb("NORM_STEP_012_FIRST_CHAR_ACCESS_EXIT");
+            }
+
+            SerialBreadcrumb("NORM_STEP_012_GLYPH_LOOKUP_ENTER");
+            int glyphWidth = probeFont.DrawChar(Framebuffer.Graphics, -1, -1, probeText[i]);
+            SerialBreadcrumb("NORM_STEP_012_GLYPH_LOOKUP_EXIT");
+
+            SerialBreadcrumb("NORM_STEP_012_WIDTH_ACCUMULATION_ENTER");
+            width += glyphWidth + probeFont.Padding;
+            SerialBreadcrumb("NORM_STEP_012_WIDTH_ACCUMULATION_EXIT");
+        }
+
+        SerialBreadcrumb("NORM_STEP_012_MEASURE_HELPER_EXIT");
+        return width;
+    }
+
     private static void ReportNormalDesktopStepProbeGraphicsCallsites() {
         SerialBreadcrumb("NORM_GFX_CALLSITE_REPORT_BEGIN");
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_003 graphics.Clear(0xFF0B3C4Cu) via cached receiver guard");
@@ -1348,7 +1378,7 @@ unsafe class Program {
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_008 Framebuffer.Graphics.FillRectangle/DrawRectangle/DrawImage in taskbar probe");
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_010 Framebuffer.Graphics.DrawImage x3 in icon probe");
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_011 WindowManager.DrawAllExceptTaskManager()/DrawTaskManager() [direct Framebuffer.Graphics calls in subpaths]");
-        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_012 WindowManager.font.MeasureString()/DrawString() [probe-only safe font placeholder available]");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_012 WindowManager.font.MeasureString()/DrawString() [split probe with A/B/C markers]");
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_013 DrawUefiCursor() [no direct Framebuffer.Graphics receiver call]");
         SerialBreadcrumb("NORM_GFX_CALLSITE_REPORT_END");
     }
@@ -2435,7 +2465,29 @@ unsafe class Program {
         }
 
         SerialBreadcrumb("NORM_STEP_012_ENTER");
-        SerialBreadcrumb(WindowManager.font == null ? "NORM_STEP_012_FONT=NULL" : "NORM_STEP_012_FONT=OK");
+        var probeFont = WindowManager.font;
+        const string probeText = "NORM STEP FONT";
+
+        SerialBreadcrumb("NORM_STEP_012_A_ENTER");
+        SerialBreadcrumb(probeFont == null ? "NORM_STEP_012_FONT=NULL" : "NORM_STEP_012_FONT=OK");
+        SerialBreadcrumb(probeFont == null ? "NORM_STEP_012_TEXT_RENDERER=NULL" : "NORM_STEP_012_TEXT_RENDERER=OK");
+        SerialBreadcrumb("NORM_STEP_012_A_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_012_B_ENTER");
+        SerialBreadcrumb(probeText == null ? "NORM_STEP_012_TEXT=NULL" : "NORM_STEP_012_TEXT=OK");
+        if (probeText != null) {
+            SerialBreadcrumb("NORM_STEP_012_TEXT_LENGTH");
+            SerialWriteUnsigned((ulong)probeText.Length);
+            SerialChar('\n');
+            if (probeText.Length > 0) {
+                SerialBreadcrumb("NORM_STEP_012_TEXT_FIRST_CHAR_CODE");
+                SerialWriteUnsigned((ulong)probeText[0]);
+                SerialChar('\n');
+            }
+        }
+        SerialBreadcrumb("NORM_STEP_012_B_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_012_C_ENTER");
         if (NORMAL_DESKTOP_UEFI_PROBE_SAFE_FONT_PLACEHOLDER) {
             SerialBreadcrumb("NORM_STEP_012_SAFE_FONT_PLACEHOLDER=1");
             var probeGraphics = Framebuffer.Graphics;
@@ -2443,14 +2495,13 @@ unsafe class Program {
                 probeGraphics.FillRectangle(24, 24, 160, 24, 0xFF263238u);
             }
             SerialBreadcrumb("NORM_STEP_012_SAFE_FONT_PLACEHOLDER_EXIT");
-        } else if (WindowManager.font != null) {
-            SerialBreadcrumb("NORM_STEP_012_MEASURE_ENTER");
-            int probeTextW = WindowManager.font.MeasureString("NORM STEP FONT");
-            SerialBreadcrumb("NORM_STEP_012_MEASURE_EXIT");
+        } else if (probeFont != null) {
+            int probeTextW = ProbeNormalDesktopStep12MeasureString(probeFont, probeText);
             SerialBreadcrumb("NORM_STEP_012_DRAW_ENTER");
-            WindowManager.font.DrawString(24, 24, "NORM STEP FONT", probeTextW > 0 ? probeTextW : 240, WindowManager.font.FontSize);
+            probeFont.DrawString(24, 24, probeText, probeTextW > 0 ? probeTextW : 240, probeFont.FontSize);
             SerialBreadcrumb("NORM_STEP_012_DRAW_EXIT");
         }
+        SerialBreadcrumb("NORM_STEP_012_C_EXIT");
         SerialBreadcrumb("NORM_STEP_012_EXIT");
 
         SerialBreadcrumb("NORM_STEP_013_ENTER");
