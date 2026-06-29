@@ -10,6 +10,7 @@ param(
     [switch]$SkipWindowTraversal,
     [switch]$SkipCursorDraw,
     [switch]$CursorPlaceholder,
+    [switch]$ProbeRealCursorImageRendering,
     [switch]$GuiVisible,
     [string]$GuiScreenshotPath
 )
@@ -337,6 +338,11 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;' `
         -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = $step13CursorPlaceholder;" `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER'
+    $step13RealCursorImageRendering = if ($ProbeRealCursorImageRendering) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;' `
+        -New "private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = $step13RealCursorImageRendering;" `
+        -Label 'UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING'
     $step10RedPlaceholder = if ($Step10RedMode -eq 'FillRectangle') { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;' `
@@ -378,6 +384,7 @@ try {
     Write-Host "[probe] Step 12 safe font placeholder: $SafeFontPlaceholder" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 skip cursor draw: $SkipCursorDraw" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 cursor placeholder: $CursorPlaceholder" -ForegroundColor Cyan
+    Write-Host "[probe] Step 13 real cursor image rendering: $ProbeRealCursorImageRendering" -ForegroundColor Cyan
     Write-Host "[probe] GUI visible mode: $GuiVisible" -ForegroundColor Cyan
     Write-Host "[probe] GUI screenshot path: $GuiScreenshotPath" -ForegroundColor Cyan
     Write-Host "[probe] Safe placeholders until step 10: enabled" -ForegroundColor Cyan
@@ -554,6 +561,7 @@ try {
     $step14ExitPresent = $serialText.Contains('NORM_STEP_014_EXIT')
     $step13SkipCursorDrawEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_CURSOR_DRAW=1')
     $step13CursorPlaceholderEnabled = $serialText.Contains('SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_CURSOR_PLACEHOLDER=1')
+    $step13RealCursorImageRenderingEnabled = $serialText.Contains('SMAIN_DIAG_UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING=1')
     $step13AEnterPresent = $serialText.Contains('NORM_STEP_013_A_ENTER')
     $step13AExitPresent = $serialText.Contains('NORM_STEP_013_A_EXIT')
     $step13BEnterPresent = $serialText.Contains('NORM_STEP_013_B_ENTER')
@@ -566,8 +574,27 @@ try {
     $step13CursorPlaceholderStatePresent = $serialText.Contains('NORM_STEP_013_CURSOR_PLACEHOLDER=1') -or $serialText.Contains('NORM_STEP_013_CURSOR_PLACEHOLDER=0')
     $step13CursorPlaceholderOnPresent = $serialText.Contains('NORM_STEP_013_CURSOR_PLACEHOLDER=1')
     $step13CursorPlaceholderOffPresent = $serialText.Contains('NORM_STEP_013_CURSOR_PLACEHOLDER=0')
+    $step13RealCursorImageRenderingStatePresent = $serialText.Contains('NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING=1') -or $serialText.Contains('NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING=0')
+    $step13RealCursorImageRenderingOnPresent = $serialText.Contains('NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING=1')
+    $step13RealCursorImageRenderingOffPresent = $serialText.Contains('NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING=0')
     $step13CursorPlaceholderEnterPresent = $serialText.Contains('NORM_STEP_013_CURSOR_PLACEHOLDER_ENTER')
     $step13CursorPlaceholderExitPresent = $serialText.Contains('NORM_STEP_013_CURSOR_PLACEHOLDER_EXIT')
+    $step13CursorImageEnterPresent = $serialText.Contains('NORM_STEP_013_CURSOR_IMG_ENTER')
+    $step13CursorImageExitPresent = $serialText.Contains('NORM_STEP_013_CURSOR_IMG_EXIT')
+    $cursorImgProbeEnterPresent = $serialText.Contains('CURSOR_IMG_PROBE_ENTER')
+    $cursorImgGraphicsEnterPresent = $serialText.Contains('CURSOR_IMG_GRAPHICS_ENTER')
+    $cursorImgGraphicsExitPresent = $serialText.Contains('CURSOR_IMG_GRAPHICS_EXIT')
+    $cursorImgSourceImageEnterPresent = $serialText.Contains('CURSOR_IMG_SOURCE_IMAGE_ENTER')
+    $cursorImgSourceImageExitPresent = $serialText.Contains('CURSOR_IMG_SOURCE_IMAGE_EXIT')
+    $cursorImgObjectCheckEnterPresent = $serialText.Contains('CURSOR_IMG_OBJECT_CHECK_ENTER')
+    $cursorImgObjectCheckExitPresent = $serialText.Contains('CURSOR_IMG_OBJECT_CHECK_EXIT')
+    $cursorImgBoundsCheckEnterPresent = $serialText.Contains('CURSOR_IMG_BOUNDS_CHECK_ENTER')
+    $cursorImgBoundsCheckExitPresent = $serialText.Contains('CURSOR_IMG_BOUNDS_CHECK_EXIT')
+    $cursorImgDrawImageEnterPresent = $serialText.Contains('CURSOR_IMG_DRAWIMAGE_ENTER')
+    $cursorImgDrawImageExitPresent = $serialText.Contains('CURSOR_IMG_DRAWIMAGE_EXIT')
+    $cursorImgFirstDestPixelWriteEnterPresent = $serialText.Contains('CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_ENTER')
+    $cursorImgFirstDestPixelWriteExitPresent = $serialText.Contains('CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_EXIT')
+    $cursorImgProbeExitPresent = $serialText.Contains('CURSOR_IMG_PROBE_EXIT')
     $step13CursorDrawEnterPresent = $serialText.Contains('NORM_STEP_013_CURSOR_DRAW_ENTER')
     $step13CursorDrawPrimitiveEnterPresent = $serialText.Contains('NORM_STEP_013_CURSOR_DRAW_PRIMITIVE_ENTER')
     $step13CursorDrawPrimitiveExitPresent = $serialText.Contains('NORM_STEP_013_CURSOR_DRAW_PRIMITIVE_EXIT')
@@ -672,6 +699,8 @@ try {
         'NORM_STEP_013_GLOBAL_SKIP_CURSOR_DRAW=0'
         'NORM_STEP_013_CURSOR_PLACEHOLDER=1'
         'NORM_STEP_013_CURSOR_PLACEHOLDER=0'
+        'NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING=1'
+        'NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING=0'
         'NORM_STEP_013_CURSOR_IMAGE=NULL'
         'NORM_STEP_013_CURSOR_IMAGE=OK'
         'NORM_STEP_013_CURSOR_MOVING=NULL'
@@ -693,6 +722,8 @@ try {
         'NORM_STEP_013_CURSOR_PLACEHOLDER_ENTER'
         'NORM_STEP_013_CURSOR_PLACEHOLDER_EXIT'
         'NORM_STEP_013_CURSOR_DRAW_SKIPPED'
+        'NORM_STEP_013_CURSOR_IMG_ENTER'
+        'NORM_STEP_013_CURSOR_IMG_EXIT'
         'NORM_STEP_013_CURSOR_DRAW_ENTER'
         'NORM_STEP_013_CURSOR_DRAW_PRIMITIVE_ENTER'
         'NORM_STEP_013_CURSOR_DRAW_PRIMITIVE_EXIT'
@@ -704,6 +735,60 @@ try {
     foreach ($marker in $step13MarkerSequence) {
         if ($serialText.Contains($marker)) {
             $step13DeepestMarker = $marker
+        }
+    }
+    $cursorImgMarkerSequence = @(
+        'CURSOR_IMG_PROBE_ENTER'
+        'CURSOR_IMG_GRAPHICS_ENTER'
+        'CURSOR_IMG_GRAPHICS_EXIT'
+        'CURSOR_IMG_SOURCE_IMAGE_ENTER'
+        'CURSOR_IMG_SOURCE_IMAGE_EXIT'
+        'CURSOR_IMG_OBJECT_CHECK_ENTER'
+        'CURSOR_IMG_GFX=OK'
+        'CURSOR_IMG_GFX=NULL'
+        'CURSOR_IMG_IMAGE=OK'
+        'CURSOR_IMG_IMAGE=NULL'
+        'CURSOR_IMG_CURSOR=OK'
+        'CURSOR_IMG_CURSOR=NULL'
+        'CURSOR_IMG_CURSOR_MOVING=OK'
+        'CURSOR_IMG_CURSOR_MOVING=NULL'
+        'CURSOR_IMG_CURSOR_BUSY=OK'
+        'CURSOR_IMG_CURSOR_BUSY=NULL'
+        'CURSOR_IMG_WIDTH'
+        'CURSOR_IMG_HEIGHT'
+        'CURSOR_IMG_RAWDATA=OK'
+        'CURSOR_IMG_RAWDATA=NULL'
+        'CURSOR_IMG_FIRST_SOURCE_PIXEL'
+        'CURSOR_IMG_FIRST_SOURCE_ALPHA'
+        'CURSOR_IMG_OBJECT_CHECK_EXIT'
+        'CURSOR_IMG_BOUNDS_CHECK_ENTER'
+        'CURSOR_IMG_CURSOR_X'
+        'CURSOR_IMG_CURSOR_Y'
+        'CURSOR_IMG_GFX_W'
+        'CURSOR_IMG_GFX_H'
+        'CURSOR_IMG_GFX_VM'
+        'CURSOR_IMG_CLIP=OUT'
+        'CURSOR_IMG_CLIP=IN'
+        'CURSOR_IMG_DRAW_X0'
+        'CURSOR_IMG_DRAW_Y0'
+        'CURSOR_IMG_DRAW_X1'
+        'CURSOR_IMG_DRAW_Y1'
+        'CURSOR_IMG_BOUNDS_CHECK_EXIT'
+        'CURSOR_IMG_DRAWIMAGE_ENTER'
+        'CURSOR_IMG_DRAWIMAGE_OVERLOAD=DrawImage(int,int,Image,bool-default:true)'
+        'CURSOR_IMG_ALPHA_BLEND=1'
+        'CURSOR_IMG_DEST_PIXEL_READ_ENTER'
+        'CURSOR_IMG_DEST_PIXEL_READ_EXIT'
+        'CURSOR_IMG_FIRST_DEST_PIXEL'
+        'CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_ENTER'
+        'CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_EXIT'
+        'CURSOR_IMG_DRAWIMAGE_EXIT'
+        'CURSOR_IMG_PROBE_EXIT'
+    )
+    $cursorImgDeepestMarker = $null
+    foreach ($marker in $cursorImgMarkerSequence) {
+        if ($serialText.Contains($marker)) {
+            $cursorImgDeepestMarker = $marker
         }
     }
     $step14MarkerSequence = @(
@@ -812,6 +897,7 @@ try {
         Write-Host "[probe] NORM_STEP_012_SAFE_FONT_PLACEHOLDER_EXIT present: $step12SafeFontPlaceholderExitPresent" -ForegroundColor Green
         Write-Host "[probe] Step 13 skip cursor draw enabled: $step13SkipCursorDrawEnabled" -ForegroundColor Green
         Write-Host "[probe] Step 13 cursor placeholder enabled: $step13CursorPlaceholderEnabled" -ForegroundColor Green
+        Write-Host "[probe] Step 13 real cursor image rendering enabled: $step13RealCursorImageRenderingEnabled" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_A_ENTER present: $step13AEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_A_EXIT present: $step13AExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_B_ENTER present: $step13BEnterPresent" -ForegroundColor Green
@@ -824,8 +910,17 @@ try {
         Write-Host "[probe] NORM_STEP_013_CURSOR_PLACEHOLDER present: $step13CursorPlaceholderStatePresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_PLACEHOLDER=1 present: $step13CursorPlaceholderOnPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_PLACEHOLDER=0 present: $step13CursorPlaceholderOffPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING present: $step13RealCursorImageRenderingStatePresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING=1 present: $step13RealCursorImageRenderingOnPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING=0 present: $step13RealCursorImageRenderingOffPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_PLACEHOLDER_ENTER present: $step13CursorPlaceholderEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_PLACEHOLDER_EXIT present: $step13CursorPlaceholderExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_013_CURSOR_IMG_ENTER present: $step13CursorImageEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_013_CURSOR_IMG_EXIT present: $step13CursorImageExitPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_GRAPHICS_ENTER present: $cursorImgGraphicsEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_GRAPHICS_EXIT present: $cursorImgGraphicsExitPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_SOURCE_IMAGE_ENTER present: $cursorImgSourceImageEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_SOURCE_IMAGE_EXIT present: $cursorImgSourceImageExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_DRAW_ENTER present: $step13CursorDrawEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_DRAW_PRIMITIVE_ENTER present: $step13CursorDrawPrimitiveEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_DRAW_PRIMITIVE_EXIT present: $step13CursorDrawPrimitiveExitPresent" -ForegroundColor Green
@@ -842,6 +937,9 @@ try {
         Write-Host "[probe] NORM_STEP_013_CURSOR_Y_BOUNDS=OK present: $step13CursorYBoundsOkPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_Y_BOUNDS=OUT present: $step13CursorYBoundsOutPresent" -ForegroundColor Green
         Write-Host "[probe] Deepest step 13 marker reached: $step13DeepestMarker" -ForegroundColor Green
+        Write-Host "[probe] Deepest cursor-image marker reached: $cursorImgDeepestMarker" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_ENTER present: $cursorImgFirstDestPixelWriteEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_EXIT present: $cursorImgFirstDestPixelWriteExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_014_A_ENTER present: $step14AEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_014_A_EXIT present: $step14AExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_014_B_ENTER present: $step14BEnterPresent" -ForegroundColor Green
@@ -892,6 +990,7 @@ try {
             "STEP12_SAFE_FONT_PLACEHOLDER_ENABLED=$step12SafeFontPlaceholderEnabled"
             "STEP13_SKIP_CURSOR_DRAW_ENABLED=$step13SkipCursorDrawEnabled"
             "STEP13_CURSOR_PLACEHOLDER_ENABLED=$step13CursorPlaceholderEnabled"
+            "STEP13_REAL_CURSOR_IMAGE_RENDERING_ENABLED=$step13RealCursorImageRenderingEnabled"
             "GUI_VISIBLE_ENABLED=$GuiVisible"
             "GUI_SCREENSHOT_PATH=$GuiScreenshotPath"
             "GUI_SCREENSHOT_CAPTURED=$guiScreenshotCaptured"
@@ -905,6 +1004,7 @@ try {
             "MATCHING_EXIT_PRESENT=$matchingExitPresent"
             "STEP11_DEEPEST_MARKER=$step11DeepestMarker"
             "STEP13_DEEPEST_MARKER=$step13DeepestMarker"
+            "CURSOR_IMG_DEEPEST_MARKER=$cursorImgDeepestMarker"
             "NORM_STEP_011_ENTER_PRESENT=$step11EnterPresent"
             "NORM_STEP_011_SKIP_ZERO_WINDOWS_PRESENT=$step11SkipPresent"
             "NORM_STEP_011_A_ENTER_PRESENT=$step11AEnterPresent"
@@ -930,13 +1030,32 @@ try {
             "NORM_STEP_013_CURSOR_PLACEHOLDER_PRESENT=$step13CursorPlaceholderStatePresent"
             "NORM_STEP_013_CURSOR_PLACEHOLDER_ON_PRESENT=$step13CursorPlaceholderOnPresent"
             "NORM_STEP_013_CURSOR_PLACEHOLDER_OFF_PRESENT=$step13CursorPlaceholderOffPresent"
+            "NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING_PRESENT=$step13RealCursorImageRenderingStatePresent"
+            "NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING_ON_PRESENT=$step13RealCursorImageRenderingOnPresent"
+            "NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING_OFF_PRESENT=$step13RealCursorImageRenderingOffPresent"
             "NORM_STEP_013_CURSOR_PLACEHOLDER_ENTER_PRESENT=$step13CursorPlaceholderEnterPresent"
             "NORM_STEP_013_CURSOR_PLACEHOLDER_EXIT_PRESENT=$step13CursorPlaceholderExitPresent"
+            "NORM_STEP_013_CURSOR_IMG_ENTER_PRESENT=$step13CursorImageEnterPresent"
+            "NORM_STEP_013_CURSOR_IMG_EXIT_PRESENT=$step13CursorImageExitPresent"
+            "CURSOR_IMG_GRAPHICS_ENTER_PRESENT=$cursorImgGraphicsEnterPresent"
+            "CURSOR_IMG_GRAPHICS_EXIT_PRESENT=$cursorImgGraphicsExitPresent"
+            "CURSOR_IMG_SOURCE_IMAGE_ENTER_PRESENT=$cursorImgSourceImageEnterPresent"
+            "CURSOR_IMG_SOURCE_IMAGE_EXIT_PRESENT=$cursorImgSourceImageExitPresent"
             "NORM_STEP_013_CURSOR_DRAW_ENTER_PRESENT=$step13CursorDrawEnterPresent"
             "NORM_STEP_013_CURSOR_DRAW_PRIMITIVE_ENTER_PRESENT=$step13CursorDrawPrimitiveEnterPresent"
             "NORM_STEP_013_CURSOR_DRAW_PRIMITIVE_EXIT_PRESENT=$step13CursorDrawPrimitiveExitPresent"
             "NORM_STEP_013_CURSOR_DRAW_EXIT_PRESENT=$step13CursorDrawExitPresent"
             "NORM_STEP_013_CURSOR_DRAW_SKIPPED_PRESENT=$step13CursorDrawSkippedPresent"
+            "CURSOR_IMG_PROBE_ENTER_PRESENT=$cursorImgProbeEnterPresent"
+            "CURSOR_IMG_OBJECT_CHECK_ENTER_PRESENT=$cursorImgObjectCheckEnterPresent"
+            "CURSOR_IMG_OBJECT_CHECK_EXIT_PRESENT=$cursorImgObjectCheckExitPresent"
+            "CURSOR_IMG_BOUNDS_CHECK_ENTER_PRESENT=$cursorImgBoundsCheckEnterPresent"
+            "CURSOR_IMG_BOUNDS_CHECK_EXIT_PRESENT=$cursorImgBoundsCheckExitPresent"
+            "CURSOR_IMG_DRAWIMAGE_ENTER_PRESENT=$cursorImgDrawImageEnterPresent"
+            "CURSOR_IMG_DRAWIMAGE_EXIT_PRESENT=$cursorImgDrawImageExitPresent"
+            "CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_ENTER_PRESENT=$cursorImgFirstDestPixelWriteEnterPresent"
+            "CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_EXIT_PRESENT=$cursorImgFirstDestPixelWriteExitPresent"
+            "CURSOR_IMG_PROBE_EXIT_PRESENT=$cursorImgProbeExitPresent"
             "NORM_STEP_013_CURSOR_IMAGE_NULL_PRESENT=$step13CursorImageNullPresent"
             "NORM_STEP_013_CURSOR_IMAGE_OK_PRESENT=$step13CursorImageOkPresent"
             "NORM_STEP_013_CURSOR_MOVING_NULL_PRESENT=$step13CursorMovingNullPresent"

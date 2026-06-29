@@ -393,6 +393,7 @@ unsafe class Program {
     private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_CURSOR_DRAW = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;
+    private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER = false;
@@ -679,10 +680,6 @@ unsafe class Program {
                 Native.Out8(0x3F8, modeVal);
                 Native.Out8(0x3F8, (byte)']');
                 Native.Out8(0x3F8, (byte)'\n');
-                // UEFI: Skip all PNG decoding for cursors.
-                // Both LodePNG (managed port) and PngLoader hang during DEFLATE
-                // decompression in the post-ExitBootServices environment, blocking
-                // the entire GUI from initialising. Use procedural cursors instead.
                 BootConsole.WriteLine("[CURSOR] About to call CreateFallbackCursor()");
                 Cursor = CreateFallbackCursor();
                 BootConsole.WriteLine("[CURSOR] CreateFallbackCursor() returned, assigning to CursorMoving");
@@ -1393,6 +1390,109 @@ unsafe class Program {
         return width;
     }
 
+    private static void ProbeNormalDesktopCursorImageRendering() {
+        SerialBreadcrumb("CURSOR_IMG_PROBE_ENTER");
+
+        SerialBreadcrumb("CURSOR_IMG_GRAPHICS_ENTER");
+        var graphics = Framebuffer.Graphics;
+        SerialBreadcrumb(graphics == null ? "CURSOR_IMG_GFX=NULL" : "CURSOR_IMG_GFX=OK");
+        SerialBreadcrumb("CURSOR_IMG_GRAPHICS_EXIT");
+
+        SerialBreadcrumb("CURSOR_IMG_SOURCE_IMAGE_ENTER");
+        Image cursorImage = LoadPngSafe("Images/Cursor.png");
+        Image cursorMovingImage = LoadPngSafe("Images/Grab.png");
+        Image cursorBusyImage = null;
+        SerialBreadcrumb(cursorImage == null ? "CURSOR_IMG_IMAGE=NULL" : "CURSOR_IMG_IMAGE=OK");
+        SerialBreadcrumb("CURSOR_IMG_SOURCE_IMAGE_EXIT");
+
+        int cursorX = 80;
+        int cursorY = 80;
+
+        SerialBreadcrumb("CURSOR_IMG_OBJECT_CHECK_ENTER");
+        SerialBreadcrumb(cursorImage == null ? "CURSOR_IMG_CURSOR=NULL" : "CURSOR_IMG_CURSOR=OK");
+        SerialBreadcrumb(cursorMovingImage == null ? "CURSOR_IMG_CURSOR_MOVING=NULL" : "CURSOR_IMG_CURSOR_MOVING=OK");
+        SerialBreadcrumb(cursorBusyImage == null ? "CURSOR_IMG_CURSOR_BUSY=NULL" : "CURSOR_IMG_CURSOR_BUSY=OK");
+        if (cursorImage != null) {
+            SerialBreadcrumb("CURSOR_IMG_WIDTH");
+            SerialWriteUnsigned((ulong)cursorImage.Width);
+            SerialChar('\n');
+            SerialBreadcrumb("CURSOR_IMG_HEIGHT");
+            SerialWriteUnsigned((ulong)cursorImage.Height);
+            SerialChar('\n');
+            SerialBreadcrumb(cursorImage.RawData == null ? "CURSOR_IMG_RAWDATA=NULL" : "CURSOR_IMG_RAWDATA=OK");
+            if (cursorImage.RawData != null && cursorImage.RawData.Length > 0) {
+                uint firstSourcePixel = (uint)cursorImage.RawData[0];
+                SerialBreadcrumb("CURSOR_IMG_FIRST_SOURCE_PIXEL");
+                SerialWriteHex(firstSourcePixel);
+                SerialChar('\n');
+                SerialBreadcrumb("CURSOR_IMG_FIRST_SOURCE_ALPHA");
+                SerialWriteUnsigned((ulong)((firstSourcePixel >> 24) & 0xFFu));
+                SerialChar('\n');
+            }
+        }
+        SerialBreadcrumb("CURSOR_IMG_OBJECT_CHECK_EXIT");
+
+        SerialBreadcrumb("CURSOR_IMG_BOUNDS_CHECK_ENTER");
+        SerialBreadcrumb("CURSOR_IMG_CURSOR_X");
+        SerialWriteUnsigned((ulong)(uint)cursorX);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_IMG_CURSOR_Y");
+        SerialWriteUnsigned((ulong)(uint)cursorY);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_IMG_GFX_W");
+        SerialWriteUnsigned(graphics != null ? (ulong)graphics.Width : 0UL);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_IMG_GFX_H");
+        SerialWriteUnsigned(graphics != null ? (ulong)graphics.Height : 0UL);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_IMG_GFX_VM");
+        SerialWriteHex(graphics != null ? (ulong)graphics.VideoMemory : 0UL);
+        SerialChar('\n');
+
+        if (graphics == null || graphics.VideoMemory == null || cursorImage == null || cursorImage.RawData == null) {
+            SerialBreadcrumb("CURSOR_IMG_BOUNDS_CHECK_EXIT");
+            SerialBreadcrumb("CURSOR_IMG_PROBE_EXIT");
+            return;
+        }
+
+        if (!TryGetClippedRect(graphics.Width, graphics.Height, cursorX, cursorY, cursorImage.Width, cursorImage.Height, 0, 0, graphics.Width, graphics.Height, out int drawX0, out int drawY0, out int drawX1, out int drawY1)) {
+            SerialBreadcrumb("CURSOR_IMG_CLIP=OUT");
+            SerialBreadcrumb("CURSOR_IMG_BOUNDS_CHECK_EXIT");
+            SerialBreadcrumb("CURSOR_IMG_PROBE_EXIT");
+            return;
+        }
+
+        SerialBreadcrumb("CURSOR_IMG_CLIP=IN");
+        SerialBreadcrumb("CURSOR_IMG_DRAW_X0");
+        SerialWriteUnsigned((ulong)(uint)drawX0);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_IMG_DRAW_Y0");
+        SerialWriteUnsigned((ulong)(uint)drawY0);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_IMG_DRAW_X1");
+        SerialWriteUnsigned((ulong)(uint)drawX1);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_IMG_DRAW_Y1");
+        SerialWriteUnsigned((ulong)(uint)drawY1);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_IMG_BOUNDS_CHECK_EXIT");
+
+        SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_ENTER");
+        SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_OVERLOAD=DrawImage(int,int,Image,bool-default:true)");
+        SerialBreadcrumb("CURSOR_IMG_ALPHA_BLEND=1");
+        SerialBreadcrumb("CURSOR_IMG_DEST_PIXEL_READ_ENTER");
+        uint firstDestPixel = graphics.GetPoint(cursorX, cursorY);
+        SerialBreadcrumb("CURSOR_IMG_DEST_PIXEL_READ_EXIT");
+        SerialBreadcrumb("CURSOR_IMG_FIRST_DEST_PIXEL");
+        SerialWriteHex(firstDestPixel);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_ENTER");
+        graphics.DrawImage(cursorX, cursorY, cursorImage);
+        SerialBreadcrumb("CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_EXIT");
+        SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_EXIT");
+        SerialBreadcrumb("CURSOR_IMG_PROBE_EXIT");
+    }
+
     private static void ReportNormalDesktopStepProbeGraphicsCallsites() {
         SerialBreadcrumb("NORM_GFX_CALLSITE_REPORT_BEGIN");
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_003 graphics.Clear(0xFF0B3C4Cu) via cached receiver guard");
@@ -1404,7 +1504,7 @@ unsafe class Program {
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_010 Framebuffer.Graphics.DrawImage x3 in icon probe");
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_011 WindowManager.DrawAllExceptTaskManager()/DrawTaskManager() [direct Framebuffer.Graphics calls in subpaths]");
         SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_012 WindowManager.font.MeasureString()/DrawString() [split probe with A/B/C markers]");
-        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_013 DrawUefiCursor() [no direct Framebuffer.Graphics receiver call]");
+        SerialBreadcrumb("NORM_GFX_CALLSITE=STEP_013 Cursor probe helper [cached Framebuffer.Graphics.DrawImage path when real image probe is enabled]");
         SerialBreadcrumb("NORM_GFX_CALLSITE_REPORT_END");
     }
 
@@ -1489,6 +1589,7 @@ unsafe class Program {
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_WINDOW_TRAVERSAL=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_WINDOW_TRAVERSAL=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SKIP_CURSOR_DRAW ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_CURSOR_DRAW=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_SKIP_CURSOR_DRAW=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_CURSOR_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE_CURSOR_PLACEHOLDER=0");
+        SerialBreadcrumb(UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING ? "SMAIN_DIAG_UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING=1" : "SMAIN_DIAG_UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_RED_FILLRECT_PLACEHOLDER=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_GREEN_FILLRECT_PLACEHOLDER=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_WHITE_FILLRECT_PLACEHOLDER=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP10_WHITE_FILLRECT_PLACEHOLDER=0");
@@ -2546,6 +2647,7 @@ unsafe class Program {
         SerialBreadcrumb(SKIP_CURSOR_DRAW ? "NORM_STEP_013_GLOBAL_SKIP_CURSOR_DRAW=1" : "NORM_STEP_013_GLOBAL_SKIP_CURSOR_DRAW=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_SKIP_CURSOR_DRAW ? "NORM_STEP_013_CURSOR_ENABLED=0" : "NORM_STEP_013_CURSOR_ENABLED=1");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER ? "NORM_STEP_013_CURSOR_PLACEHOLDER=1" : "NORM_STEP_013_CURSOR_PLACEHOLDER=0");
+        SerialBreadcrumb(UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING ? "NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING=1" : "NORM_STEP_013_REAL_CURSOR_IMAGE_RENDERING=0");
         SerialBreadcrumb(Cursor == null ? "NORM_STEP_013_CURSOR_IMAGE=NULL" : "NORM_STEP_013_CURSOR_IMAGE=OK");
         SerialBreadcrumb(CursorMoving == null ? "NORM_STEP_013_CURSOR_MOVING=NULL" : "NORM_STEP_013_CURSOR_MOVING=OK");
         SerialBreadcrumb(CursorBusy == null ? "NORM_STEP_013_CURSOR_BUSY=NULL" : "NORM_STEP_013_CURSOR_BUSY=OK");
@@ -2560,6 +2662,10 @@ unsafe class Program {
         SerialBreadcrumb("NORM_STEP_013_C_ENTER");
         if (NORMAL_DESKTOP_UEFI_PROBE_SKIP_CURSOR_DRAW) {
             SerialBreadcrumb("NORM_STEP_013_CURSOR_DRAW_SKIPPED");
+        } else if (UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING) {
+            SerialBreadcrumb("NORM_STEP_013_CURSOR_IMG_ENTER");
+            ProbeNormalDesktopCursorImageRendering();
+            SerialBreadcrumb("NORM_STEP_013_CURSOR_IMG_EXIT");
         } else if (NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER) {
             SerialBreadcrumb("NORM_STEP_013_CURSOR_PLACEHOLDER_ENTER");
             DrawUefiCursorPlaceholder();
