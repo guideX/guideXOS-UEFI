@@ -594,6 +594,16 @@ try {
     $step13CursorPlaceholderExitPresent = $serialText.Contains('NORM_STEP_013_CURSOR_PLACEHOLDER_EXIT')
     $step13CursorImageEnterPresent = $serialText.Contains('NORM_STEP_013_CURSOR_IMG_ENTER')
     $step13CursorImageExitPresent = $serialText.Contains('NORM_STEP_013_CURSOR_IMG_EXIT')
+    $cursorImgWrapperEnterPresent = $serialText.Contains('CURSOR_IMG_WRAPPER_ENTER')
+    $cursorImgBeforeBodyCallPresent = $serialText.Contains('CURSOR_IMG_BEFORE_BODY_CALL')
+    $cursorImgBodyEnterPresent = $serialText.Contains('CURSOR_IMG_BODY_ENTER')
+    $cursorImgBeforeFramebufferGraphicsPresent = $serialText.Contains('CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS')
+    $cursorImgAfterFramebufferGraphicsPresent = $serialText.Contains('CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS')
+    $cursorImgBeforeImageObjectPresent = $serialText.Contains('CURSOR_IMG_BEFORE_IMAGE_OBJECT')
+    $cursorImgAfterImageObjectPresent = $serialText.Contains('CURSOR_IMG_AFTER_IMAGE_OBJECT')
+    $cursorImgBeforeDrawImagePresent = $serialText.Contains('CURSOR_IMG_BEFORE_DRAWIMAGE')
+    $cursorImgAfterDrawImagePresent = $serialText.Contains('CURSOR_IMG_AFTER_DRAWIMAGE')
+    $cursorImgWrapperExitPresent = $serialText.Contains('CURSOR_IMG_WRAPPER_EXIT')
     $cursorImgProbeEnterPresent = $serialText.Contains('CURSOR_IMG_PROBE_ENTER')
     $cursorImgGraphicsEnterPresent = $serialText.Contains('CURSOR_IMG_GRAPHICS_ENTER')
     $cursorImgGraphicsExitPresent = $serialText.Contains('CURSOR_IMG_GRAPHICS_EXIT')
@@ -751,7 +761,16 @@ try {
         }
     }
     $cursorImgMarkerSequence = @(
+        'CURSOR_IMG_WRAPPER_ENTER'
         'CURSOR_IMG_PROBE_ENTER'
+        'CURSOR_IMG_BEFORE_BODY_CALL'
+        'CURSOR_IMG_BODY_ENTER'
+        'CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS'
+        'CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS'
+        'CURSOR_IMG_BEFORE_IMAGE_OBJECT'
+        'CURSOR_IMG_AFTER_IMAGE_OBJECT'
+        'CURSOR_IMG_BEFORE_DRAWIMAGE'
+        'CURSOR_IMG_AFTER_DRAWIMAGE'
         'CURSOR_IMG_GRAPHICS_ENTER'
         'CURSOR_IMG_GRAPHICS_EXIT'
         'CURSOR_IMG_SOURCE_IMAGE_ENTER'
@@ -796,6 +815,7 @@ try {
         'CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_ENTER'
         'CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_EXIT'
         'CURSOR_IMG_DRAWIMAGE_EXIT'
+        'CURSOR_IMG_WRAPPER_EXIT'
         'CURSOR_IMG_PROBE_EXIT'
     )
     $cursorImgDeepestMarker = $null
@@ -930,6 +950,15 @@ try {
         Write-Host "[probe] NORM_STEP_013_CURSOR_PLACEHOLDER_EXIT present: $step13CursorPlaceholderExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_IMG_ENTER present: $step13CursorImageEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_IMG_EXIT present: $step13CursorImageExitPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_WRAPPER_ENTER present: $cursorImgWrapperEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_BEFORE_BODY_CALL present: $cursorImgBeforeBodyCallPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_BODY_ENTER present: $cursorImgBodyEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS present: $cursorImgBeforeFramebufferGraphicsPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS present: $cursorImgAfterFramebufferGraphicsPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_BEFORE_IMAGE_OBJECT present: $cursorImgBeforeImageObjectPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_AFTER_IMAGE_OBJECT present: $cursorImgAfterImageObjectPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_BEFORE_DRAWIMAGE present: $cursorImgBeforeDrawImagePresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_IMG_AFTER_DRAWIMAGE present: $cursorImgAfterDrawImagePresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_IMG_GRAPHICS_ENTER present: $cursorImgGraphicsEnterPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_IMG_GRAPHICS_EXIT present: $cursorImgGraphicsExitPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_IMG_SOURCE_IMAGE_ENTER present: $cursorImgSourceImageEnterPresent" -ForegroundColor Green
@@ -1050,6 +1079,15 @@ try {
             "NORM_STEP_013_CURSOR_PLACEHOLDER_EXIT_PRESENT=$step13CursorPlaceholderExitPresent"
             "NORM_STEP_013_CURSOR_IMG_ENTER_PRESENT=$step13CursorImageEnterPresent"
             "NORM_STEP_013_CURSOR_IMG_EXIT_PRESENT=$step13CursorImageExitPresent"
+            "CURSOR_IMG_WRAPPER_ENTER_PRESENT=$cursorImgWrapperEnterPresent"
+            "CURSOR_IMG_BEFORE_BODY_CALL_PRESENT=$cursorImgBeforeBodyCallPresent"
+            "CURSOR_IMG_BODY_ENTER_PRESENT=$cursorImgBodyEnterPresent"
+            "CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS_PRESENT=$cursorImgBeforeFramebufferGraphicsPresent"
+            "CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS_PRESENT=$cursorImgAfterFramebufferGraphicsPresent"
+            "CURSOR_IMG_BEFORE_IMAGE_OBJECT_PRESENT=$cursorImgBeforeImageObjectPresent"
+            "CURSOR_IMG_AFTER_IMAGE_OBJECT_PRESENT=$cursorImgAfterImageObjectPresent"
+            "CURSOR_IMG_BEFORE_DRAWIMAGE_PRESENT=$cursorImgBeforeDrawImagePresent"
+            "CURSOR_IMG_AFTER_DRAWIMAGE_PRESENT=$cursorImgAfterDrawImagePresent"
             "CURSOR_IMG_GRAPHICS_ENTER_PRESENT=$cursorImgGraphicsEnterPresent"
             "CURSOR_IMG_GRAPHICS_EXIT_PRESENT=$cursorImgGraphicsExitPresent"
             "CURSOR_IMG_SOURCE_IMAGE_ENTER_PRESENT=$cursorImgSourceImageEnterPresent"
@@ -1068,6 +1106,7 @@ try {
             "CURSOR_IMG_DRAWIMAGE_EXIT_PRESENT=$cursorImgDrawImageExitPresent"
             "CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_ENTER_PRESENT=$cursorImgFirstDestPixelWriteEnterPresent"
             "CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_EXIT_PRESENT=$cursorImgFirstDestPixelWriteExitPresent"
+            "CURSOR_IMG_WRAPPER_EXIT_PRESENT=$cursorImgWrapperExitPresent"
             "CURSOR_IMG_PROBE_EXIT_PRESENT=$cursorImgProbeExitPresent"
             "NORM_STEP_013_CURSOR_IMAGE_NULL_PRESENT=$step13CursorImageNullPresent"
             "NORM_STEP_013_CURSOR_IMAGE_OK_PRESENT=$step13CursorImageOkPresent"

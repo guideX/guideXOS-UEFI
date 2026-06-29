@@ -1410,18 +1410,26 @@ unsafe class Program {
     }
 
     private static void ProbeNormalDesktopCursorImageRendering() {
+        SerialBreadcrumb("CURSOR_IMG_WRAPPER_ENTER");
         SerialBreadcrumb("CURSOR_IMG_PROBE_ENTER");
         SetCursorImageDrawProbeActive(true);
+        SerialBreadcrumb("CURSOR_IMG_BEFORE_BODY_CALL");
         SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_ENTER");
         ProbeNormalDesktopCursorImageRenderingBody();
         SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_EXIT");
         SetCursorImageDrawProbeActive(false);
+        SerialBreadcrumb("CURSOR_IMG_WRAPPER_EXIT");
         SerialBreadcrumb("CURSOR_IMG_PROBE_EXIT");
     }
 
     private static void ProbeNormalDesktopCursorImageRenderingBody() {
+        SerialBreadcrumb("CURSOR_IMG_BODY_ENTER");
+        SerialBreadcrumb("CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS");
         var graphics = Framebuffer.Graphics;
+        SerialBreadcrumb("CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS");
+        SerialBreadcrumb("CURSOR_IMG_BEFORE_IMAGE_OBJECT");
         Image cursorImage = LoadPngSafe("Images/Cursor.png");
+        SerialBreadcrumb("CURSOR_IMG_AFTER_IMAGE_OBJECT");
         int cursorX = 80;
         int cursorY = 80;
 
@@ -1471,10 +1479,12 @@ unsafe class Program {
         SerialBreadcrumb("CURSOR_IMG_CLIP=IN");
         SerialBreadcrumb("CURSOR_IMG_BOUNDS_CHECK_EXIT");
 
+        SerialBreadcrumb("CURSOR_IMG_BEFORE_DRAWIMAGE");
         SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_ENTER");
         SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_OVERLOAD=DrawImage(int,int,Image,bool-default:true)");
         SerialBreadcrumb("CURSOR_IMG_ALPHA_BLEND=1");
         graphics.DrawImage(cursorX, cursorY, cursorImage);
+        SerialBreadcrumb("CURSOR_IMG_AFTER_DRAWIMAGE");
         SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_EXIT");
     }
 
