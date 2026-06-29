@@ -2539,13 +2539,36 @@ unsafe class Program {
         SerialBreadcrumb("NORM_STEP_013_EXIT");
 
         SerialBreadcrumb("NORM_STEP_014_ENTER");
+
+        SerialBreadcrumb("NORM_STEP_014_A_ENTER");
+        SerialBreadcrumb("NORM_STEP_014_FRAMEBUFFER_ACQUIRE_ENTER");
+        var step14Graphics = Framebuffer.Graphics;
+        SerialBreadcrumb(step14Graphics == null ? "NORM_STEP_014_FRAMEBUFFER_ACQUIRE=NULL" : "NORM_STEP_014_FRAMEBUFFER_ACQUIRE=OK");
+        SerialBreadcrumb(step14Graphics != null && step14Graphics.VideoMemory != null ? "NORM_STEP_014_FRAMEBUFFER_READY=OK" : "NORM_STEP_014_FRAMEBUFFER_READY=INVALID");
+        SerialBreadcrumb("NORM_STEP_014_FRAMEBUFFER_ACQUIRE_EXIT");
+        SerialBreadcrumb("NORM_STEP_014_A_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_014_B_ENTER");
+        SerialBreadcrumb(step14Graphics != null ? "NORM_STEP_014_PRESENT_TARGET=GRAPHICS" : "NORM_STEP_014_PRESENT_TARGET=NULL");
+        SerialBreadcrumb("NORM_STEP_014_B_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_014_C_ENTER");
+        SerialBreadcrumb("NORM_STEP_014_FLUSH_INVALIDATE_ENTER");
+        SerialBreadcrumb("NORM_STEP_014_FLUSH_INVALIDATE_EXIT");
+        SerialBreadcrumb("NORM_STEP_014_C_EXIT");
+
+        SerialBreadcrumb("NORM_STEP_014_PRESENT_ENTER");
+        SerialBreadcrumb("NORM_STEP_014_PRESENT_CALLSITE=Framebuffer.Update()");
         Framebuffer.Update();
+        SerialBreadcrumb("NORM_STEP_014_PRESENT_EXIT");
+        SerialBreadcrumb("NORM_STEP_014_FRAME_COMPLETE");
         SerialBreadcrumb("NORM_STEP_014_EXIT");
 
         if (graphicsReady) {
             SerialBreadcrumb("NORM_PROBE_FRAME1_DONE");
         }
 
+        SerialBreadcrumb("NORM_STEP_014_LOOP_ENTER");
         for (;; ) {
             Native.Out8(0x3F8, (byte)'.');
             Thread.Sleep(16);

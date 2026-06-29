@@ -9,7 +9,9 @@ param(
     [switch]$SafeFontPlaceholder,
     [switch]$SkipWindowTraversal,
     [switch]$SkipCursorDraw,
-    [switch]$CursorPlaceholder
+    [switch]$CursorPlaceholder,
+    [switch]$GuiVisible,
+    [string]$GuiScreenshotPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -70,6 +72,209 @@ function Get-LastMatchingLine {
     return $null
 }
 
+function Ensure-NativeScreenshotHelpers {
+    if (-not ("QemuProbeNativeMethods" -as [type])) {
+        Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class QemuProbeNativeMethods
+{
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextLength(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    public static IntPtr FindWindowHandleByTitleSubstring(string[] titleHints)
+    {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((hWnd, lParam) =>
+        {
+            if (!IsWindowVisible(hWnd))
+            {
+                return true;
+            }
+
+            int length = GetWindowTextLength(hWnd);
+            if (length <= 0)
+            {
+                return true;
+            }
+
+            var builder = new System.Text.StringBuilder(length + 1);
+            GetWindowText(hWnd, builder, builder.Capacity);
+            string title = builder.ToString();
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                return true;
+            }
+
+            if (titleHints != null)
+            {
+                foreach (string hint in titleHints)
+                {
+                    if (!string.IsNullOrWhiteSpace(hint) && title.IndexOf(hint, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        found = hWnd;
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }, IntPtr.Zero);
+
+        return found;
+    }
+}
+"@
+    }
+}
+
+function Get-QemuWindowHandle {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Diagnostics.Process]$Process,
+
+        [int]$TimeoutSeconds = 20
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $Process.Refresh()
+            if ($Process.MainWindowHandle -ne 0) {
+                return [IntPtr]$Process.MainWindowHandle
+            }
+        } catch {
+        }
+
+        Start-Sleep -Milliseconds 250
+    }
+
+    try {
+        Ensure-NativeScreenshotHelpers
+        $fallbackHandle = [QemuProbeNativeMethods]::FindWindowHandleByTitleSubstring(@('guideXOS', 'QEMU', 'OVMF'))
+        if ($fallbackHandle -ne [IntPtr]::Zero) {
+            return $fallbackHandle
+        }
+    } catch {
+    }
+
+    return [IntPtr]::Zero
+}
+
+function Get-FreeTcpPort {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    try {
+        $listener.Start()
+        return ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+    } finally {
+        $listener.Stop()
+    }
+}
+
+function Save-QmpScreenshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $client.Connect([System.Net.IPAddress]::Loopback, $Port)
+        $stream = $client.GetStream()
+        $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::ASCII)
+        $writer = [System.IO.StreamWriter]::new($stream, [System.Text.Encoding]::ASCII)
+        $writer.AutoFlush = $true
+        $writer.NewLine = "`n"
+
+        [void]$reader.ReadLine()
+        $writer.WriteLine('{"execute":"qmp_capabilities"}')
+        [void]$reader.ReadLine()
+
+        $qmpPath = $Path -replace '\\', '/'
+        $command = '{"execute":"screendump","arguments":{"filename":"' + $qmpPath + '","format":"png"}}'
+        $writer.WriteLine($command)
+        $response = $reader.ReadLine()
+        if (-not $response -or $response -notmatch '"return"') {
+            throw "QMP screendump did not return success. Response: $response"
+        }
+    } finally {
+        $client.Close()
+    }
+}
+
+function Save-WindowScreenshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$WindowHandle,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    Ensure-NativeScreenshotHelpers
+
+    if ($WindowHandle -eq [IntPtr]::Zero) {
+        throw "Cannot capture screenshot because the window handle is zero."
+    }
+
+    $rect = New-Object QemuProbeNativeMethods+RECT
+    if (-not [QemuProbeNativeMethods]::GetWindowRect($WindowHandle, [ref]$rect)) {
+        throw "GetWindowRect failed for QEMU window."
+    }
+
+    $width = $rect.Right - $rect.Left
+    $height = $rect.Bottom - $rect.Top
+    if ($width -le 0 -or $height -le 0) {
+        throw "Invalid QEMU window size: ${width}x${height}."
+    }
+
+    [QemuProbeNativeMethods]::ShowWindow($WindowHandle, 9) | Out-Null
+    [QemuProbeNativeMethods]::SetForegroundWindow($WindowHandle) | Out-Null
+    Start-Sleep -Milliseconds 500
+
+    $bitmap = New-Object System.Drawing.Bitmap($width, $height)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+        $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+    } finally {
+        $graphics.Dispose()
+        $bitmap.Dispose()
+    }
+}
+
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $programPath = Join-Path $root 'guideXOS\Program.cs'
 $buildScript = Join-Path $root 'build.ps1'
@@ -80,6 +285,13 @@ $runId = "STEP_PROBE_RUN_ID_$runStamp"
 $serialLog = Join-Path $probeRoot "serial_output_step_probe_$runId.txt"
 $stderrLog = Join-Path $probeRoot "qemu_stderr_step_probe_$runId.txt"
 $summaryLog = Join-Path $probeRoot "step_probe_summary_$runId.txt"
+if (-not $GuiScreenshotPath) {
+    $GuiScreenshotPath = Join-Path $probeRoot "qemu_gui_probe_$runId.png"
+}
+$qmpPort = $null
+if ($GuiVisible) {
+    $qmpPort = Get-FreeTcpPort
+}
 
 New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
 
@@ -156,6 +368,8 @@ try {
     [System.IO.File]::WriteAllText($programPath, $patched)
     $programPatched = $true
 
+    $windowStyle = if ($GuiVisible) { 'Normal' } else { 'Hidden' }
+
     Write-Host "[probe] Run ID: $runId" -ForegroundColor Cyan
     Write-Host "[probe] Step 10 red mode: $Step10RedMode" -ForegroundColor Cyan
     Write-Host "[probe] Step 10 green mode: $Step10GreenMode" -ForegroundColor Cyan
@@ -164,6 +378,8 @@ try {
     Write-Host "[probe] Step 12 safe font placeholder: $SafeFontPlaceholder" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 skip cursor draw: $SkipCursorDraw" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 cursor placeholder: $CursorPlaceholder" -ForegroundColor Cyan
+    Write-Host "[probe] GUI visible mode: $GuiVisible" -ForegroundColor Cyan
+    Write-Host "[probe] GUI screenshot path: $GuiScreenshotPath" -ForegroundColor Cyan
     Write-Host "[probe] Safe placeholders until step 10: enabled" -ForegroundColor Cyan
     Write-Host "[probe] Patched Program.cs for temporary step probe" -ForegroundColor Cyan
     Write-Host "[probe] Building via build.ps1..." -ForegroundColor Cyan
@@ -210,11 +426,14 @@ try {
         '-no-reboot'
         '-name', 'guideXOS'
     )
+    if ($GuiVisible -and $qmpPort) {
+        $qemuArgs += @('-qmp', "tcp:127.0.0.1:$qmpPort,server,nowait")
+    }
 
     $qemuProcess = Start-Process -FilePath $qemuExe `
         -ArgumentList $qemuArgs `
         -WorkingDirectory $root `
-        -WindowStyle Hidden `
+        -WindowStyle $windowStyle `
         -PassThru `
         -RedirectStandardError $stderrLog
 
@@ -225,6 +444,28 @@ try {
         }
 
         Start-Sleep -Milliseconds 500
+    }
+
+    $guiScreenshotCaptured = $false
+    if ($GuiVisible -and $qemuProcess -and -not $qemuProcess.HasExited) {
+        try {
+            if ($qmpPort) {
+                Save-QmpScreenshot -Port $qmpPort -Path $GuiScreenshotPath
+                $guiScreenshotCaptured = $true
+                Write-Host "[probe] GUI screenshot captured: $GuiScreenshotPath" -ForegroundColor Cyan
+            } else {
+                $qemuWindowHandle = Get-QemuWindowHandle -Process $qemuProcess
+                if ($qemuWindowHandle -ne [IntPtr]::Zero) {
+                    Save-WindowScreenshot -WindowHandle $qemuWindowHandle -Path $GuiScreenshotPath
+                    $guiScreenshotCaptured = $true
+                    Write-Host "[probe] GUI screenshot captured: $GuiScreenshotPath" -ForegroundColor Cyan
+                } else {
+                    Write-Host "[probe] GUI screenshot skipped: QEMU window handle was not available." -ForegroundColor Yellow
+                }
+            }
+        } catch {
+            Write-Host "[probe] GUI screenshot capture failed: $_" -ForegroundColor Yellow
+        }
     }
 
     if ($qemuProcess -and -not $qemuProcess.HasExited) {
@@ -342,6 +583,25 @@ try {
     $step13CursorXBoundsOutPresent = $serialText.Contains('NORM_STEP_013_CURSOR_X_BOUNDS=OUT')
     $step13CursorYBoundsOkPresent = $serialText.Contains('NORM_STEP_013_CURSOR_Y_BOUNDS=OK')
     $step13CursorYBoundsOutPresent = $serialText.Contains('NORM_STEP_013_CURSOR_Y_BOUNDS=OUT')
+    $step14AEnterPresent = $serialText.Contains('NORM_STEP_014_A_ENTER')
+    $step14AExitPresent = $serialText.Contains('NORM_STEP_014_A_EXIT')
+    $step14BEnterPresent = $serialText.Contains('NORM_STEP_014_B_ENTER')
+    $step14BExitPresent = $serialText.Contains('NORM_STEP_014_B_EXIT')
+    $step14CEnterPresent = $serialText.Contains('NORM_STEP_014_C_ENTER')
+    $step14CExitPresent = $serialText.Contains('NORM_STEP_014_C_EXIT')
+    $step14PresentEnterPresent = $serialText.Contains('NORM_STEP_014_PRESENT_ENTER')
+    $step14PresentExitPresent = $serialText.Contains('NORM_STEP_014_PRESENT_EXIT')
+    $step14FrameBufferAcquireEnterPresent = $serialText.Contains('NORM_STEP_014_FRAMEBUFFER_ACQUIRE_ENTER')
+    $step14FrameBufferAcquireOkPresent = $serialText.Contains('NORM_STEP_014_FRAMEBUFFER_ACQUIRE=OK')
+    $step14FrameBufferAcquireNullPresent = $serialText.Contains('NORM_STEP_014_FRAMEBUFFER_ACQUIRE=NULL')
+    $step14FrameBufferReadyOkPresent = $serialText.Contains('NORM_STEP_014_FRAMEBUFFER_READY=OK')
+    $step14FrameBufferReadyInvalidPresent = $serialText.Contains('NORM_STEP_014_FRAMEBUFFER_READY=INVALID')
+    $step14PresentTargetGraphicsPresent = $serialText.Contains('NORM_STEP_014_PRESENT_TARGET=GRAPHICS')
+    $step14PresentTargetNullPresent = $serialText.Contains('NORM_STEP_014_PRESENT_TARGET=NULL')
+    $step14FlushInvalidateEnterPresent = $serialText.Contains('NORM_STEP_014_FLUSH_INVALIDATE_ENTER')
+    $step14FlushInvalidateExitPresent = $serialText.Contains('NORM_STEP_014_FLUSH_INVALIDATE_EXIT')
+    $step14FrameCompletePresent = $serialText.Contains('NORM_STEP_014_FRAME_COMPLETE')
+    $step14LoopEnterPresent = $serialText.Contains('NORM_STEP_014_LOOP_ENTER')
     $step11MarkerSequence = @(
         'NORM_STEP_011_ENTER'
         'NORM_STEP_011_SKIP_ZERO_WINDOWS'
@@ -444,6 +704,37 @@ try {
     foreach ($marker in $step13MarkerSequence) {
         if ($serialText.Contains($marker)) {
             $step13DeepestMarker = $marker
+        }
+    }
+    $step14MarkerSequence = @(
+        'NORM_STEP_014_ENTER'
+        'NORM_STEP_014_A_ENTER'
+        'NORM_STEP_014_FRAMEBUFFER_ACQUIRE_ENTER'
+        'NORM_STEP_014_FRAMEBUFFER_ACQUIRE=OK'
+        'NORM_STEP_014_FRAMEBUFFER_ACQUIRE=NULL'
+        'NORM_STEP_014_FRAMEBUFFER_READY=OK'
+        'NORM_STEP_014_FRAMEBUFFER_READY=INVALID'
+        'NORM_STEP_014_FRAMEBUFFER_ACQUIRE_EXIT'
+        'NORM_STEP_014_A_EXIT'
+        'NORM_STEP_014_B_ENTER'
+        'NORM_STEP_014_PRESENT_TARGET=GRAPHICS'
+        'NORM_STEP_014_PRESENT_TARGET=NULL'
+        'NORM_STEP_014_B_EXIT'
+        'NORM_STEP_014_C_ENTER'
+        'NORM_STEP_014_FLUSH_INVALIDATE_ENTER'
+        'NORM_STEP_014_FLUSH_INVALIDATE_EXIT'
+        'NORM_STEP_014_C_EXIT'
+        'NORM_STEP_014_PRESENT_ENTER'
+        'NORM_STEP_014_PRESENT_CALLSITE=Framebuffer.Update()'
+        'NORM_STEP_014_PRESENT_EXIT'
+        'NORM_STEP_014_FRAME_COMPLETE'
+        'NORM_STEP_014_EXIT'
+        'NORM_STEP_014_LOOP_ENTER'
+    )
+    $step14DeepestMarker = $null
+    foreach ($marker in $step14MarkerSequence) {
+        if ($serialText.Contains($marker)) {
+            $step14DeepestMarker = $marker
         }
     }
     $whiteMarkerSequence = @(
@@ -551,6 +842,27 @@ try {
         Write-Host "[probe] NORM_STEP_013_CURSOR_Y_BOUNDS=OK present: $step13CursorYBoundsOkPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_Y_BOUNDS=OUT present: $step13CursorYBoundsOutPresent" -ForegroundColor Green
         Write-Host "[probe] Deepest step 13 marker reached: $step13DeepestMarker" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_A_ENTER present: $step14AEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_A_EXIT present: $step14AExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_B_ENTER present: $step14BEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_B_EXIT present: $step14BExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_C_ENTER present: $step14CEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_C_EXIT present: $step14CExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_FRAMEBUFFER_ACQUIRE_ENTER present: $step14FrameBufferAcquireEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_FRAMEBUFFER_ACQUIRE=OK present: $step14FrameBufferAcquireOkPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_FRAMEBUFFER_ACQUIRE=NULL present: $step14FrameBufferAcquireNullPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_FRAMEBUFFER_READY=OK present: $step14FrameBufferReadyOkPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_FRAMEBUFFER_READY=INVALID present: $step14FrameBufferReadyInvalidPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_PRESENT_TARGET=GRAPHICS present: $step14PresentTargetGraphicsPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_PRESENT_TARGET=NULL present: $step14PresentTargetNullPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_FLUSH_INVALIDATE_ENTER present: $step14FlushInvalidateEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_FLUSH_INVALIDATE_EXIT present: $step14FlushInvalidateExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_PRESENT_ENTER present: $step14PresentEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_PRESENT_EXIT present: $step14PresentExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_FRAME_COMPLETE present: $step14FrameCompletePresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_014_LOOP_ENTER present: $step14LoopEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] Deepest step 14 marker reached: $step14DeepestMarker" -ForegroundColor Green
+        Write-Host "[probe] GUI screenshot captured: $guiScreenshotCaptured" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_014_ENTER present: $step14EnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_014_EXIT present: $step14ExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_003_EXIT present: $($serialText.Contains('NORM_STEP_003_EXIT'))" -ForegroundColor Green
@@ -580,6 +892,9 @@ try {
             "STEP12_SAFE_FONT_PLACEHOLDER_ENABLED=$step12SafeFontPlaceholderEnabled"
             "STEP13_SKIP_CURSOR_DRAW_ENABLED=$step13SkipCursorDrawEnabled"
             "STEP13_CURSOR_PLACEHOLDER_ENABLED=$step13CursorPlaceholderEnabled"
+            "GUI_VISIBLE_ENABLED=$GuiVisible"
+            "GUI_SCREENSHOT_PATH=$GuiScreenshotPath"
+            "GUI_SCREENSHOT_CAPTURED=$guiScreenshotCaptured"
             "STEP10_RED_PLACEHOLDER_ENABLED=$step10RedPlaceholderEnabled"
             "STEP10_GREEN_PLACEHOLDER_ENABLED=$step10GreenPlaceholderEnabled"
             "STEP10_WHITE_PLACEHOLDER_ENABLED=$step10WhitePlaceholderEnabled"
@@ -632,6 +947,26 @@ try {
             "NORM_STEP_013_CURSOR_X_BOUNDS_OUT_PRESENT=$step13CursorXBoundsOutPresent"
             "NORM_STEP_013_CURSOR_Y_BOUNDS_OK_PRESENT=$step13CursorYBoundsOkPresent"
             "NORM_STEP_013_CURSOR_Y_BOUNDS_OUT_PRESENT=$step13CursorYBoundsOutPresent"
+            "STEP14_DEEPEST_MARKER=$step14DeepestMarker"
+            "NORM_STEP_014_A_ENTER_PRESENT=$step14AEnterPresent"
+            "NORM_STEP_014_A_EXIT_PRESENT=$step14AExitPresent"
+            "NORM_STEP_014_B_ENTER_PRESENT=$step14BEnterPresent"
+            "NORM_STEP_014_B_EXIT_PRESENT=$step14BExitPresent"
+            "NORM_STEP_014_C_ENTER_PRESENT=$step14CEnterPresent"
+            "NORM_STEP_014_C_EXIT_PRESENT=$step14CExitPresent"
+            "NORM_STEP_014_FRAMEBUFFER_ACQUIRE_ENTER_PRESENT=$step14FrameBufferAcquireEnterPresent"
+            "NORM_STEP_014_FRAMEBUFFER_ACQUIRE_OK_PRESENT=$step14FrameBufferAcquireOkPresent"
+            "NORM_STEP_014_FRAMEBUFFER_ACQUIRE_NULL_PRESENT=$step14FrameBufferAcquireNullPresent"
+            "NORM_STEP_014_FRAMEBUFFER_READY_OK_PRESENT=$step14FrameBufferReadyOkPresent"
+            "NORM_STEP_014_FRAMEBUFFER_READY_INVALID_PRESENT=$step14FrameBufferReadyInvalidPresent"
+            "NORM_STEP_014_PRESENT_TARGET_GRAPHICS_PRESENT=$step14PresentTargetGraphicsPresent"
+            "NORM_STEP_014_PRESENT_TARGET_NULL_PRESENT=$step14PresentTargetNullPresent"
+            "NORM_STEP_014_FLUSH_INVALIDATE_ENTER_PRESENT=$step14FlushInvalidateEnterPresent"
+            "NORM_STEP_014_FLUSH_INVALIDATE_EXIT_PRESENT=$step14FlushInvalidateExitPresent"
+            "NORM_STEP_014_PRESENT_ENTER_PRESENT=$step14PresentEnterPresent"
+            "NORM_STEP_014_PRESENT_EXIT_PRESENT=$step14PresentExitPresent"
+            "NORM_STEP_014_FRAME_COMPLETE_PRESENT=$step14FrameCompletePresent"
+            "NORM_STEP_014_LOOP_ENTER_PRESENT=$step14LoopEnterPresent"
             "NORM_STEP_008_BUTTON_BORDER_EXIT_PRESENT=$step8BorderExitPresent"
             "NORM_STEP_009_ENTER_PRESENT=$step9EnterPresent"
             "NORM_STEP_010_RED_DRAW_ENTER_PRESENT=$step10RedDrawEnterPresent"
