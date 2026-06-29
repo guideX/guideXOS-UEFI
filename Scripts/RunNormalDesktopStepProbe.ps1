@@ -11,6 +11,9 @@ param(
     [switch]$SkipCursorDraw,
     [switch]$CursorPlaceholder,
     [switch]$ProbeRealCursorImageRendering,
+    [switch]$CursorEmptyBodyProbe,
+    [switch]$CursorInlineBodyProbe,
+    [switch]$CursorStaticBodyProbe,
     [switch]$GuiVisible,
     [string]$GuiScreenshotPath
 )
@@ -299,6 +302,24 @@ if ($GuiVisible) {
     $qmpPort = Get-FreeTcpPort
 }
 
+$cursorVariantCount = 0
+if ($CursorEmptyBodyProbe) { $cursorVariantCount++ }
+if ($CursorInlineBodyProbe) { $cursorVariantCount++ }
+if ($CursorStaticBodyProbe) { $cursorVariantCount++ }
+if ($cursorVariantCount -gt 1) {
+    throw "Only one cursor probe variant can be enabled per run."
+}
+
+$cursorBodyVariant = if ($CursorEmptyBodyProbe) {
+    'EmptyBodyCall'
+} elseif ($CursorInlineBodyProbe) {
+    'InlineBody'
+} elseif ($CursorStaticBodyProbe) {
+    'StaticBody'
+} else {
+    'OriginalBodyCall'
+}
+
 New-Item -ItemType Directory -Path $probeRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $qemuFirmwareRoot -Force | Out-Null
 
@@ -344,11 +365,27 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;' `
         -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = $step13CursorPlaceholder;" `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER'
-    $step13RealCursorImageRendering = if ($ProbeRealCursorImageRendering) { 'true' } else { 'false' }
+    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe
+    $step13RealCursorImageRendering = if ($step13RealCursorImageRenderingEnabled) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;' `
         -New "private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = $step13RealCursorImageRendering;" `
         -Label 'UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING'
+    $cursorEmptyBodyCallProbeValue = if ($CursorEmptyBodyProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_EMPTY_BODY_CALL = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_EMPTY_BODY_CALL = $cursorEmptyBodyCallProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_EMPTY_BODY_CALL'
+    $cursorInlineBodyProbeValue = if ($CursorInlineBodyProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_INLINE_BODY = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_INLINE_BODY = $cursorInlineBodyProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_INLINE_BODY'
+    $cursorStaticBodyProbeValue = if ($CursorStaticBodyProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_STATIC_BODY = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_STATIC_BODY = $cursorStaticBodyProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_STATIC_BODY'
     $step10RedPlaceholder = if ($Step10RedMode -eq 'FillRectangle') { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;' `
@@ -390,7 +427,8 @@ try {
     Write-Host "[probe] Step 12 safe font placeholder: $SafeFontPlaceholder" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 skip cursor draw: $SkipCursorDraw" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 cursor placeholder: $CursorPlaceholder" -ForegroundColor Cyan
-    Write-Host "[probe] Step 13 real cursor image rendering: $ProbeRealCursorImageRendering" -ForegroundColor Cyan
+    Write-Host "[probe] Step 13 real cursor image rendering (effective): $step13RealCursorImageRenderingEnabled" -ForegroundColor Cyan
+    Write-Host "[probe] Step 13 cursor body variant: $cursorBodyVariant" -ForegroundColor Cyan
     Write-Host "[probe] GUI visible mode: $GuiVisible" -ForegroundColor Cyan
     Write-Host "[probe] GUI screenshot path: $GuiScreenshotPath" -ForegroundColor Cyan
     Write-Host "[probe] Safe placeholders until step 10: enabled" -ForegroundColor Cyan
@@ -596,6 +634,15 @@ try {
     $step13CursorImageExitPresent = $serialText.Contains('NORM_STEP_013_CURSOR_IMG_EXIT')
     $cursorImgWrapperEnterPresent = $serialText.Contains('CURSOR_IMG_WRAPPER_ENTER')
     $cursorImgBeforeBodyCallPresent = $serialText.Contains('CURSOR_IMG_BEFORE_BODY_CALL')
+    $cursorImgEmptyBodyEnterPresent = $serialText.Contains('CURSOR_IMG_EMPTY_BODY_ENTER')
+    $cursorImgEmptyBodyExitPresent = $serialText.Contains('CURSOR_IMG_EMPTY_BODY_EXIT')
+    $cursorImgInlineBodyEnterPresent = $serialText.Contains('CURSOR_IMG_INLINE_BODY_ENTER')
+    $cursorImgInlineBeforeFramebufferGraphicsPresent = $serialText.Contains('CURSOR_IMG_INLINE_BEFORE_FRAMEBUFFER_GRAPHICS')
+    $cursorImgInlineAfterFramebufferGraphicsPresent = $serialText.Contains('CURSOR_IMG_INLINE_AFTER_FRAMEBUFFER_GRAPHICS')
+    $cursorImgInlineExitPresent = $serialText.Contains('CURSOR_IMG_INLINE_EXIT')
+    $cursorImgStaticBodyEnterPresent = $serialText.Contains('CURSOR_IMG_STATIC_BODY_ENTER')
+    $cursorImgStaticAfterFramebufferGraphicsPresent = $serialText.Contains('CURSOR_IMG_STATIC_AFTER_FRAMEBUFFER_GRAPHICS')
+    $cursorImgStaticBodyExitPresent = $serialText.Contains('CURSOR_IMG_STATIC_BODY_EXIT')
     $cursorImgBodyEnterPresent = $serialText.Contains('CURSOR_IMG_BODY_ENTER')
     $cursorImgBeforeFramebufferGraphicsPresent = $serialText.Contains('CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS')
     $cursorImgAfterFramebufferGraphicsPresent = $serialText.Contains('CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS')
@@ -764,6 +811,15 @@ try {
         'CURSOR_IMG_WRAPPER_ENTER'
         'CURSOR_IMG_PROBE_ENTER'
         'CURSOR_IMG_BEFORE_BODY_CALL'
+        'CURSOR_IMG_EMPTY_BODY_ENTER'
+        'CURSOR_IMG_EMPTY_BODY_EXIT'
+        'CURSOR_IMG_INLINE_BODY_ENTER'
+        'CURSOR_IMG_INLINE_BEFORE_FRAMEBUFFER_GRAPHICS'
+        'CURSOR_IMG_INLINE_AFTER_FRAMEBUFFER_GRAPHICS'
+        'CURSOR_IMG_INLINE_EXIT'
+        'CURSOR_IMG_STATIC_BODY_ENTER'
+        'CURSOR_IMG_STATIC_AFTER_FRAMEBUFFER_GRAPHICS'
+        'CURSOR_IMG_STATIC_BODY_EXIT'
         'CURSOR_IMG_BODY_ENTER'
         'CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS'
         'CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS'
@@ -1033,6 +1089,7 @@ try {
             "STEP13_SKIP_CURSOR_DRAW_ENABLED=$step13SkipCursorDrawEnabled"
             "STEP13_CURSOR_PLACEHOLDER_ENABLED=$step13CursorPlaceholderEnabled"
             "STEP13_REAL_CURSOR_IMAGE_RENDERING_ENABLED=$step13RealCursorImageRenderingEnabled"
+            "CURSOR_BODY_VARIANT=$cursorBodyVariant"
             "GUI_VISIBLE_ENABLED=$GuiVisible"
             "GUI_SCREENSHOT_PATH=$GuiScreenshotPath"
             "GUI_SCREENSHOT_CAPTURED=$guiScreenshotCaptured"
@@ -1081,6 +1138,15 @@ try {
             "NORM_STEP_013_CURSOR_IMG_EXIT_PRESENT=$step13CursorImageExitPresent"
             "CURSOR_IMG_WRAPPER_ENTER_PRESENT=$cursorImgWrapperEnterPresent"
             "CURSOR_IMG_BEFORE_BODY_CALL_PRESENT=$cursorImgBeforeBodyCallPresent"
+            "CURSOR_IMG_EMPTY_BODY_ENTER_PRESENT=$cursorImgEmptyBodyEnterPresent"
+            "CURSOR_IMG_EMPTY_BODY_EXIT_PRESENT=$cursorImgEmptyBodyExitPresent"
+            "CURSOR_IMG_INLINE_BODY_ENTER_PRESENT=$cursorImgInlineBodyEnterPresent"
+            "CURSOR_IMG_INLINE_BEFORE_FRAMEBUFFER_GRAPHICS_PRESENT=$cursorImgInlineBeforeFramebufferGraphicsPresent"
+            "CURSOR_IMG_INLINE_AFTER_FRAMEBUFFER_GRAPHICS_PRESENT=$cursorImgInlineAfterFramebufferGraphicsPresent"
+            "CURSOR_IMG_INLINE_EXIT_PRESENT=$cursorImgInlineExitPresent"
+            "CURSOR_IMG_STATIC_BODY_ENTER_PRESENT=$cursorImgStaticBodyEnterPresent"
+            "CURSOR_IMG_STATIC_AFTER_FRAMEBUFFER_GRAPHICS_PRESENT=$cursorImgStaticAfterFramebufferGraphicsPresent"
+            "CURSOR_IMG_STATIC_BODY_EXIT_PRESENT=$cursorImgStaticBodyExitPresent"
             "CURSOR_IMG_BODY_ENTER_PRESENT=$cursorImgBodyEnterPresent"
             "CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS_PRESENT=$cursorImgBeforeFramebufferGraphicsPresent"
             "CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS_PRESENT=$cursorImgAfterFramebufferGraphicsPresent"

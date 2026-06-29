@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using guideXOS;
@@ -395,6 +396,9 @@ unsafe class Program {
     private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_CURSOR_DRAW = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;
     private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;
+    private const bool UEFI_PROBE_CURSOR_EMPTY_BODY_CALL = false;
+    private const bool UEFI_PROBE_CURSOR_INLINE_BODY = false;
+    private const bool UEFI_PROBE_CURSOR_STATIC_BODY = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER = false;
@@ -1414,12 +1418,40 @@ unsafe class Program {
         SerialBreadcrumb("CURSOR_IMG_PROBE_ENTER");
         SetCursorImageDrawProbeActive(true);
         SerialBreadcrumb("CURSOR_IMG_BEFORE_BODY_CALL");
-        SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_ENTER");
-        ProbeNormalDesktopCursorImageRenderingBody();
-        SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_EXIT");
+        if (UEFI_PROBE_CURSOR_EMPTY_BODY_CALL) {
+            ProbeNormalDesktopCursorImageRenderingEmptyBody();
+        } else if (UEFI_PROBE_CURSOR_INLINE_BODY) {
+            SerialBreadcrumb("CURSOR_IMG_INLINE_BODY_ENTER");
+            SerialBreadcrumb("CURSOR_IMG_INLINE_BEFORE_FRAMEBUFFER_GRAPHICS");
+            var graphics = Framebuffer.Graphics;
+            SerialBreadcrumb("CURSOR_IMG_INLINE_AFTER_FRAMEBUFFER_GRAPHICS");
+            _ = graphics;
+            SerialBreadcrumb("CURSOR_IMG_INLINE_EXIT");
+        } else if (UEFI_PROBE_CURSOR_STATIC_BODY) {
+            ProbeNormalDesktopCursorImageRenderingStaticBody();
+        } else {
+            SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_ENTER");
+            ProbeNormalDesktopCursorImageRenderingBody();
+            SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_EXIT");
+        }
         SetCursorImageDrawProbeActive(false);
         SerialBreadcrumb("CURSOR_IMG_WRAPPER_EXIT");
         SerialBreadcrumb("CURSOR_IMG_PROBE_EXIT");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorImageRenderingEmptyBody() {
+        SerialBreadcrumb("CURSOR_IMG_EMPTY_BODY_ENTER");
+        SerialBreadcrumb("CURSOR_IMG_EMPTY_BODY_EXIT");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorImageRenderingStaticBody() {
+        SerialBreadcrumb("CURSOR_IMG_STATIC_BODY_ENTER");
+        var graphics = Framebuffer.Graphics;
+        SerialBreadcrumb("CURSOR_IMG_STATIC_AFTER_FRAMEBUFFER_GRAPHICS");
+        _ = graphics;
+        SerialBreadcrumb("CURSOR_IMG_STATIC_BODY_EXIT");
     }
 
     private static void ProbeNormalDesktopCursorImageRenderingBody() {
