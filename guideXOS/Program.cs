@@ -403,6 +403,9 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_STATIC_DIMS = false;
     private const bool UEFI_PROBE_CURSOR_STATIC_RAWDATA_REF = false;
     private const bool UEFI_PROBE_CURSOR_STATIC_FIRST_PIXEL = false;
+    private const bool UEFI_PROBE_CURSOR_SOURCE_EXISTING_REFS = false;
+    private const bool UEFI_PROBE_CURSOR_SOURCE_FALLBACK = false;
+    private const bool UEFI_PROBE_CURSOR_SOURCE_PNG = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER = false;
@@ -1423,7 +1426,13 @@ unsafe class Program {
         SetCursorImageDrawProbeActive(true);
         try {
             SerialBreadcrumb("CURSOR_IMG_BEFORE_BODY_CALL");
-            if (UEFI_PROBE_CURSOR_EMPTY_BODY_CALL) {
+            if (UEFI_PROBE_CURSOR_SOURCE_EXISTING_REFS) {
+                ProbeNormalDesktopCursorSourceExistingRefs();
+            } else if (UEFI_PROBE_CURSOR_SOURCE_FALLBACK) {
+                ProbeNormalDesktopCursorSourceFallback();
+            } else if (UEFI_PROBE_CURSOR_SOURCE_PNG) {
+                ProbeNormalDesktopCursorSourcePng();
+            } else if (UEFI_PROBE_CURSOR_EMPTY_BODY_CALL) {
                 ProbeNormalDesktopCursorImageRenderingEmptyBody();
             } else if (UEFI_PROBE_CURSOR_INLINE_BODY) {
                 SerialBreadcrumb("CURSOR_IMG_INLINE_BODY_ENTER");
@@ -1452,6 +1461,52 @@ unsafe class Program {
         }
         SerialBreadcrumb("CURSOR_IMG_WRAPPER_EXIT");
         SerialBreadcrumb("CURSOR_IMG_PROBE_EXIT");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorSourceExistingRefs() {
+        SerialBreadcrumb("CURSOR_SRC_CHECK_ENTER");
+        SerialBreadcrumb(CursorMoving == null ? "CURSOR_SRC_CURSOR_MOVING_NULL" : "CURSOR_SRC_CURSOR_MOVING_OK");
+        SerialBreadcrumb(CursorBusy == null ? "CURSOR_SRC_CURSOR_BUSY_NULL" : "CURSOR_SRC_CURSOR_BUSY_OK");
+        SerialBreadcrumb("CURSOR_SRC_CHECK_EXIT");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorSourceFallback() {
+        SerialBreadcrumb("CURSOR_SRC_CHECK_ENTER");
+        SerialBreadcrumb(CursorMoving == null ? "CURSOR_SRC_CURSOR_MOVING_NULL" : "CURSOR_SRC_CURSOR_MOVING_OK");
+        SerialBreadcrumb(CursorBusy == null ? "CURSOR_SRC_CURSOR_BUSY_NULL" : "CURSOR_SRC_CURSOR_BUSY_OK");
+        Image fallbackCursor = CreateFallbackCursor();
+        SerialBreadcrumb(fallbackCursor == null ? "CURSOR_SRC_FALLBACK_NULL" : "CURSOR_SRC_FALLBACK_AVAILABLE");
+        if (fallbackCursor != null) {
+            SerialBreadcrumb("CURSOR_SRC_FALLBACK_DIMS_ENTER");
+            SerialWriteUnsigned((ulong)fallbackCursor.Width);
+            SerialChar('\n');
+            SerialWriteUnsigned((ulong)fallbackCursor.Height);
+            SerialChar('\n');
+            SerialBreadcrumb("CURSOR_SRC_FALLBACK_DIMS_EXIT");
+        }
+        SerialBreadcrumb("CURSOR_SRC_CHECK_EXIT");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorSourcePng() {
+        SerialBreadcrumb("CURSOR_SRC_CHECK_ENTER");
+        SerialBreadcrumb(CursorMoving == null ? "CURSOR_SRC_CURSOR_MOVING_NULL" : "CURSOR_SRC_CURSOR_MOVING_OK");
+        SerialBreadcrumb(CursorBusy == null ? "CURSOR_SRC_CURSOR_BUSY_NULL" : "CURSOR_SRC_CURSOR_BUSY_OK");
+        SerialBreadcrumb("CURSOR_SRC_LOADPNG_ENTER");
+        Image cursorImage = LoadPngSafe("Images/Cursor.png");
+        SerialBreadcrumb(cursorImage == null ? "CURSOR_SRC_LOADPNG_NULL" : "CURSOR_SRC_LOADPNG_OK");
+        if (cursorImage != null) {
+            SerialBreadcrumb("CURSOR_SRC_LOADPNG_DIMS_ENTER");
+            SerialWriteUnsigned((ulong)cursorImage.Width);
+            SerialChar('\n');
+            SerialWriteUnsigned((ulong)cursorImage.Height);
+            SerialChar('\n');
+            SerialBreadcrumb("CURSOR_SRC_LOADPNG_DIMS_EXIT");
+        }
+        SerialBreadcrumb("CURSOR_SRC_LOADPNG_EXIT");
+        SerialBreadcrumb("CURSOR_SRC_CHECK_EXIT");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1549,16 +1604,22 @@ unsafe class Program {
         int cursorY = 80;
 
         SerialBreadcrumb("CURSOR_IMG_OBJECT_CHECK_ENTER");
-        SerialBreadcrumb(cursorImage == null ? "CURSOR_IMG_CURSOR=NULL" : "CURSOR_IMG_CURSOR=OK");
-        if (cursorImage != null) {
-            SerialBreadcrumb("CURSOR_IMG_WIDTH");
-            SerialWriteUnsigned((ulong)cursorImage.Width);
-            SerialChar('\n');
-            SerialBreadcrumb("CURSOR_IMG_HEIGHT");
-            SerialWriteUnsigned((ulong)cursorImage.Height);
-            SerialChar('\n');
-            SerialBreadcrumb(cursorImage.RawData == null ? "CURSOR_IMG_RAWDATA=NULL" : "CURSOR_IMG_RAWDATA=OK");
+        if (cursorImage == null) {
+            SerialBreadcrumb("CURSOR_IMG_SOURCE_NULL");
+            SerialBreadcrumb("CURSOR_IMG_CURSOR=NULL");
+            SerialBreadcrumb("CURSOR_IMG_OBJECT_CHECK_EXIT");
+            DrawUefiCursorPlaceholder();
+            SerialBreadcrumb("CURSOR_IMG_BODY_EXIT");
+            return;
         }
+        SerialBreadcrumb("CURSOR_IMG_CURSOR=OK");
+        SerialBreadcrumb("CURSOR_IMG_WIDTH");
+        SerialWriteUnsigned((ulong)cursorImage.Width);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_IMG_HEIGHT");
+        SerialWriteUnsigned((ulong)cursorImage.Height);
+        SerialChar('\n');
+        SerialBreadcrumb(cursorImage.RawData == null ? "CURSOR_IMG_RAWDATA=NULL" : "CURSOR_IMG_RAWDATA=OK");
         SerialBreadcrumb("CURSOR_IMG_OBJECT_CHECK_EXIT");
 
         SerialBreadcrumb("CURSOR_IMG_BOUNDS_CHECK_ENTER");
