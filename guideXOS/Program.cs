@@ -399,6 +399,10 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_EMPTY_BODY_CALL = false;
     private const bool UEFI_PROBE_CURSOR_INLINE_BODY = false;
     private const bool UEFI_PROBE_CURSOR_STATIC_BODY = false;
+    private const bool UEFI_PROBE_CURSOR_STATIC_IMAGE_REF = false;
+    private const bool UEFI_PROBE_CURSOR_STATIC_DIMS = false;
+    private const bool UEFI_PROBE_CURSOR_STATIC_RAWDATA_REF = false;
+    private const bool UEFI_PROBE_CURSOR_STATIC_FIRST_PIXEL = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER = false;
@@ -1417,24 +1421,35 @@ unsafe class Program {
         SerialBreadcrumb("CURSOR_IMG_WRAPPER_ENTER");
         SerialBreadcrumb("CURSOR_IMG_PROBE_ENTER");
         SetCursorImageDrawProbeActive(true);
-        SerialBreadcrumb("CURSOR_IMG_BEFORE_BODY_CALL");
-        if (UEFI_PROBE_CURSOR_EMPTY_BODY_CALL) {
-            ProbeNormalDesktopCursorImageRenderingEmptyBody();
-        } else if (UEFI_PROBE_CURSOR_INLINE_BODY) {
-            SerialBreadcrumb("CURSOR_IMG_INLINE_BODY_ENTER");
-            SerialBreadcrumb("CURSOR_IMG_INLINE_BEFORE_FRAMEBUFFER_GRAPHICS");
-            var graphics = Framebuffer.Graphics;
-            SerialBreadcrumb("CURSOR_IMG_INLINE_AFTER_FRAMEBUFFER_GRAPHICS");
-            _ = graphics;
-            SerialBreadcrumb("CURSOR_IMG_INLINE_EXIT");
-        } else if (UEFI_PROBE_CURSOR_STATIC_BODY) {
-            ProbeNormalDesktopCursorImageRenderingStaticBody();
-        } else {
-            SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_ENTER");
-            ProbeNormalDesktopCursorImageRenderingBody();
-            SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_EXIT");
+        try {
+            SerialBreadcrumb("CURSOR_IMG_BEFORE_BODY_CALL");
+            if (UEFI_PROBE_CURSOR_EMPTY_BODY_CALL) {
+                ProbeNormalDesktopCursorImageRenderingEmptyBody();
+            } else if (UEFI_PROBE_CURSOR_INLINE_BODY) {
+                SerialBreadcrumb("CURSOR_IMG_INLINE_BODY_ENTER");
+                SerialBreadcrumb("CURSOR_IMG_INLINE_BEFORE_FRAMEBUFFER_GRAPHICS");
+                var graphics = Framebuffer.Graphics;
+                SerialBreadcrumb("CURSOR_IMG_INLINE_AFTER_FRAMEBUFFER_GRAPHICS");
+                _ = graphics;
+                SerialBreadcrumb("CURSOR_IMG_INLINE_EXIT");
+            } else if (UEFI_PROBE_CURSOR_STATIC_BODY) {
+                ProbeNormalDesktopCursorImageRenderingStaticBody();
+            } else if (UEFI_PROBE_CURSOR_STATIC_IMAGE_REF) {
+                ProbeNormalDesktopCursorImageRenderingStaticImageRef();
+            } else if (UEFI_PROBE_CURSOR_STATIC_DIMS) {
+                ProbeNormalDesktopCursorImageRenderingStaticDims();
+            } else if (UEFI_PROBE_CURSOR_STATIC_RAWDATA_REF) {
+                ProbeNormalDesktopCursorImageRenderingStaticRawDataRef();
+            } else if (UEFI_PROBE_CURSOR_STATIC_FIRST_PIXEL) {
+                ProbeNormalDesktopCursorImageRenderingStaticFirstPixel();
+            } else {
+                SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_ENTER");
+                ProbeNormalDesktopCursorImageRenderingBody();
+                SerialBreadcrumb("CURSOR_IMG_PROBE_BODY_CALL_EXIT");
+            }
+        } finally {
+            SetCursorImageDrawProbeActive(false);
         }
-        SetCursorImageDrawProbeActive(false);
         SerialBreadcrumb("CURSOR_IMG_WRAPPER_EXIT");
         SerialBreadcrumb("CURSOR_IMG_PROBE_EXIT");
     }
@@ -1451,6 +1466,74 @@ unsafe class Program {
         var graphics = Framebuffer.Graphics;
         SerialBreadcrumb("CURSOR_IMG_STATIC_AFTER_FRAMEBUFFER_GRAPHICS");
         _ = graphics;
+        SerialBreadcrumb("CURSOR_IMG_STATIC_BODY_EXIT");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorImageRenderingStaticImageRef() {
+        ProbeNormalDesktopCursorImageRenderingStaticImageProbe(includeDims: false, includeRawDataRef: false, includeFirstPixel: false);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorImageRenderingStaticDims() {
+        ProbeNormalDesktopCursorImageRenderingStaticImageProbe(includeDims: true, includeRawDataRef: false, includeFirstPixel: false);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorImageRenderingStaticRawDataRef() {
+        ProbeNormalDesktopCursorImageRenderingStaticImageProbe(includeDims: true, includeRawDataRef: true, includeFirstPixel: false);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorImageRenderingStaticFirstPixel() {
+        ProbeNormalDesktopCursorImageRenderingStaticImageProbe(includeDims: true, includeRawDataRef: true, includeFirstPixel: true);
+    }
+
+    private static void ProbeNormalDesktopCursorImageRenderingStaticImageProbe(bool includeDims, bool includeRawDataRef, bool includeFirstPixel) {
+        SerialBreadcrumb("CURSOR_IMG_STATIC_BODY_ENTER");
+        var graphics = Framebuffer.Graphics;
+        SerialBreadcrumb("CURSOR_IMG_STATIC_AFTER_FRAMEBUFFER_GRAPHICS");
+        _ = graphics;
+
+        SerialBreadcrumb("CURSOR_IMG_STATIC_IMAGE_REF_ENTER");
+        Image cursorImage = LoadPngSafe("Images/Cursor.png");
+        SerialBreadcrumb("CURSOR_IMG_STATIC_IMAGE_REF_EXIT");
+
+        SerialBreadcrumb("CURSOR_IMG_STATIC_IMAGE_NULL_CHECK_ENTER");
+        SerialBreadcrumb(cursorImage == null ? "CURSOR_IMG_STATIC_IMAGE_REF=NULL" : "CURSOR_IMG_STATIC_IMAGE_REF=OK");
+        SerialBreadcrumb("CURSOR_IMG_STATIC_IMAGE_NULL_CHECK_EXIT");
+
+        if (cursorImage == null) {
+            SerialBreadcrumb("CURSOR_IMG_STATIC_BODY_EXIT");
+            return;
+        }
+
+        if (includeDims) {
+            SerialBreadcrumb("CURSOR_IMG_STATIC_DIMS_ENTER");
+            SerialWriteUnsigned((ulong)cursorImage.Width);
+            SerialChar('\n');
+            SerialWriteUnsigned((ulong)cursorImage.Height);
+            SerialChar('\n');
+            SerialBreadcrumb("CURSOR_IMG_STATIC_DIMS_EXIT");
+        }
+
+        if (includeRawDataRef) {
+            SerialBreadcrumb("CURSOR_IMG_STATIC_RAWDATA_REF_ENTER");
+            SerialBreadcrumb(cursorImage.RawData == null ? "CURSOR_IMG_STATIC_RAWDATA_REF=NULL" : "CURSOR_IMG_STATIC_RAWDATA_REF=OK");
+            SerialBreadcrumb("CURSOR_IMG_STATIC_RAWDATA_REF_EXIT");
+        }
+
+        if (includeFirstPixel) {
+            SerialBreadcrumb("CURSOR_IMG_STATIC_FIRST_PIXEL_ENTER");
+            ulong firstPixel = 0UL;
+            if (cursorImage.RawData != null && cursorImage.RawData.Length > 0) {
+                firstPixel = unchecked((uint)cursorImage.RawData[0]);
+            }
+            SerialWriteHex(firstPixel);
+            SerialChar('\n');
+            SerialBreadcrumb("CURSOR_IMG_STATIC_FIRST_PIXEL_EXIT");
+        }
+
         SerialBreadcrumb("CURSOR_IMG_STATIC_BODY_EXIT");
     }
 

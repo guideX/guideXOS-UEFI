@@ -14,6 +14,10 @@ param(
     [switch]$CursorEmptyBodyProbe,
     [switch]$CursorInlineBodyProbe,
     [switch]$CursorStaticBodyProbe,
+    [switch]$CursorStaticImageRefProbe,
+    [switch]$CursorStaticDimsProbe,
+    [switch]$CursorStaticRawDataRefProbe,
+    [switch]$CursorStaticFirstPixelProbe,
     [switch]$GuiVisible,
     [string]$GuiScreenshotPath
 )
@@ -306,6 +310,10 @@ $cursorVariantCount = 0
 if ($CursorEmptyBodyProbe) { $cursorVariantCount++ }
 if ($CursorInlineBodyProbe) { $cursorVariantCount++ }
 if ($CursorStaticBodyProbe) { $cursorVariantCount++ }
+if ($CursorStaticImageRefProbe) { $cursorVariantCount++ }
+if ($CursorStaticDimsProbe) { $cursorVariantCount++ }
+if ($CursorStaticRawDataRefProbe) { $cursorVariantCount++ }
+if ($CursorStaticFirstPixelProbe) { $cursorVariantCount++ }
 if ($cursorVariantCount -gt 1) {
     throw "Only one cursor probe variant can be enabled per run."
 }
@@ -316,6 +324,14 @@ $cursorBodyVariant = if ($CursorEmptyBodyProbe) {
     'InlineBody'
 } elseif ($CursorStaticBodyProbe) {
     'StaticBody'
+} elseif ($CursorStaticImageRefProbe) {
+    'StaticImageRef'
+} elseif ($CursorStaticDimsProbe) {
+    'StaticDims'
+} elseif ($CursorStaticRawDataRefProbe) {
+    'StaticRawDataRef'
+} elseif ($CursorStaticFirstPixelProbe) {
+    'StaticFirstPixel'
 } else {
     'OriginalBodyCall'
 }
@@ -365,7 +381,7 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;' `
         -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = $step13CursorPlaceholder;" `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER'
-    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe
+    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe
     $step13RealCursorImageRendering = if ($step13RealCursorImageRenderingEnabled) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;' `
@@ -386,6 +402,26 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_STATIC_BODY = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_STATIC_BODY = $cursorStaticBodyProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_STATIC_BODY'
+    $cursorStaticImageRefProbeValue = if ($CursorStaticImageRefProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_STATIC_IMAGE_REF = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_STATIC_IMAGE_REF = $cursorStaticImageRefProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_STATIC_IMAGE_REF'
+    $cursorStaticDimsProbeValue = if ($CursorStaticDimsProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_STATIC_DIMS = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_STATIC_DIMS = $cursorStaticDimsProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_STATIC_DIMS'
+    $cursorStaticRawDataRefProbeValue = if ($CursorStaticRawDataRefProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_STATIC_RAWDATA_REF = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_STATIC_RAWDATA_REF = $cursorStaticRawDataRefProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_STATIC_RAWDATA_REF'
+    $cursorStaticFirstPixelProbeValue = if ($CursorStaticFirstPixelProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_STATIC_FIRST_PIXEL = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_STATIC_FIRST_PIXEL = $cursorStaticFirstPixelProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_STATIC_FIRST_PIXEL'
     $step10RedPlaceholder = if ($Step10RedMode -eq 'FillRectangle') { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;' `
@@ -619,6 +655,7 @@ try {
     $step13BExitPresent = $serialText.Contains('NORM_STEP_013_B_EXIT')
     $step13CEnterPresent = $serialText.Contains('NORM_STEP_013_C_ENTER')
     $step13CExitPresent = $serialText.Contains('NORM_STEP_013_C_EXIT')
+    $step13ExitPresent = $serialText.Contains('NORM_STEP_013_EXIT')
     $step13CursorEnabledPresent = $serialText.Contains('NORM_STEP_013_CURSOR_ENABLED=1') -or $serialText.Contains('NORM_STEP_013_CURSOR_ENABLED=0')
     $step13CursorEnabledOnPresent = $serialText.Contains('NORM_STEP_013_CURSOR_ENABLED=1')
     $step13CursorEnabledOffPresent = $serialText.Contains('NORM_STEP_013_CURSOR_ENABLED=0')
@@ -820,6 +857,18 @@ try {
         'CURSOR_IMG_STATIC_BODY_ENTER'
         'CURSOR_IMG_STATIC_AFTER_FRAMEBUFFER_GRAPHICS'
         'CURSOR_IMG_STATIC_BODY_EXIT'
+        'CURSOR_IMG_STATIC_IMAGE_REF_ENTER'
+        'CURSOR_IMG_STATIC_IMAGE_REF_EXIT'
+        'CURSOR_IMG_STATIC_IMAGE_NULL_CHECK_ENTER'
+        'CURSOR_IMG_STATIC_IMAGE_REF=NULL'
+        'CURSOR_IMG_STATIC_IMAGE_REF=OK'
+        'CURSOR_IMG_STATIC_IMAGE_NULL_CHECK_EXIT'
+        'CURSOR_IMG_STATIC_DIMS_ENTER'
+        'CURSOR_IMG_STATIC_DIMS_EXIT'
+        'CURSOR_IMG_STATIC_RAWDATA_REF_ENTER'
+        'CURSOR_IMG_STATIC_RAWDATA_REF_EXIT'
+        'CURSOR_IMG_STATIC_FIRST_PIXEL_ENTER'
+        'CURSOR_IMG_STATIC_FIRST_PIXEL_EXIT'
         'CURSOR_IMG_BODY_ENTER'
         'CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS'
         'CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS'
@@ -1006,6 +1055,7 @@ try {
         Write-Host "[probe] NORM_STEP_013_CURSOR_PLACEHOLDER_EXIT present: $step13CursorPlaceholderExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_IMG_ENTER present: $step13CursorImageEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_IMG_EXIT present: $step13CursorImageExitPresent" -ForegroundColor Green
+        Write-Host "[probe] NORM_STEP_013_EXIT present: $step13ExitPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_IMG_WRAPPER_ENTER present: $cursorImgWrapperEnterPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_IMG_BEFORE_BODY_CALL present: $cursorImgBeforeBodyCallPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_IMG_BODY_ENTER present: $cursorImgBodyEnterPresent" -ForegroundColor Green
@@ -1123,6 +1173,7 @@ try {
             "NORM_STEP_013_B_EXIT_PRESENT=$step13BExitPresent"
             "NORM_STEP_013_C_ENTER_PRESENT=$step13CEnterPresent"
             "NORM_STEP_013_C_EXIT_PRESENT=$step13CExitPresent"
+            "NORM_STEP_013_EXIT_PRESENT=$step13ExitPresent"
             "NORM_STEP_013_CURSOR_ENABLED_PRESENT=$step13CursorEnabledPresent"
             "NORM_STEP_013_CURSOR_ENABLED_ON_PRESENT=$step13CursorEnabledOnPresent"
             "NORM_STEP_013_CURSOR_ENABLED_OFF_PRESENT=$step13CursorEnabledOffPresent"
@@ -1147,6 +1198,18 @@ try {
             "CURSOR_IMG_STATIC_BODY_ENTER_PRESENT=$cursorImgStaticBodyEnterPresent"
             "CURSOR_IMG_STATIC_AFTER_FRAMEBUFFER_GRAPHICS_PRESENT=$cursorImgStaticAfterFramebufferGraphicsPresent"
             "CURSOR_IMG_STATIC_BODY_EXIT_PRESENT=$cursorImgStaticBodyExitPresent"
+            "CURSOR_IMG_STATIC_IMAGE_REF_ENTER_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_IMAGE_REF_ENTER'))"
+            "CURSOR_IMG_STATIC_IMAGE_REF_EXIT_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_IMAGE_REF_EXIT'))"
+            "CURSOR_IMG_STATIC_IMAGE_NULL_CHECK_ENTER_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_IMAGE_NULL_CHECK_ENTER'))"
+            "CURSOR_IMG_STATIC_IMAGE_REF_NULL_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_IMAGE_REF=NULL'))"
+            "CURSOR_IMG_STATIC_IMAGE_REF_OK_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_IMAGE_REF=OK'))"
+            "CURSOR_IMG_STATIC_IMAGE_NULL_CHECK_EXIT_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_IMAGE_NULL_CHECK_EXIT'))"
+            "CURSOR_IMG_STATIC_DIMS_ENTER_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_DIMS_ENTER'))"
+            "CURSOR_IMG_STATIC_DIMS_EXIT_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_DIMS_EXIT'))"
+            "CURSOR_IMG_STATIC_RAWDATA_REF_ENTER_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_RAWDATA_REF_ENTER'))"
+            "CURSOR_IMG_STATIC_RAWDATA_REF_EXIT_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_RAWDATA_REF_EXIT'))"
+            "CURSOR_IMG_STATIC_FIRST_PIXEL_ENTER_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_FIRST_PIXEL_ENTER'))"
+            "CURSOR_IMG_STATIC_FIRST_PIXEL_EXIT_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_FIRST_PIXEL_EXIT'))"
             "CURSOR_IMG_BODY_ENTER_PRESENT=$cursorImgBodyEnterPresent"
             "CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS_PRESENT=$cursorImgBeforeFramebufferGraphicsPresent"
             "CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS_PRESENT=$cursorImgAfterFramebufferGraphicsPresent"
