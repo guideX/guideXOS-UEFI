@@ -396,6 +396,12 @@ unsafe class Program {
     private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_CURSOR_DRAW = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;
     private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;
+    // Probe-safe rule: when CursorMoving is null, real cursor rendering may
+    // use CursorBusy or a fresh procedural fallback image before any PNG path.
+    // Keep PNG loading disabled in this pass and preserve the placeholder
+    // cursor as the safe default.
+    private const bool UEFI_PROBE_CURSOR_DRAW_BUSY = false;
+    private const bool UEFI_PROBE_CURSOR_DRAW_FALLBACK = false;
     private const bool UEFI_PROBE_CURSOR_EMPTY_BODY_CALL = false;
     private const bool UEFI_PROBE_CURSOR_INLINE_BODY = false;
     private const bool UEFI_PROBE_CURSOR_STATIC_BODY = false;
@@ -1426,7 +1432,11 @@ unsafe class Program {
         SetCursorImageDrawProbeActive(true);
         try {
             SerialBreadcrumb("CURSOR_IMG_BEFORE_BODY_CALL");
-            if (UEFI_PROBE_CURSOR_SOURCE_EXISTING_REFS) {
+            if (UEFI_PROBE_CURSOR_DRAW_BUSY) {
+                ProbeNormalDesktopCursorDrawBusy();
+            } else if (UEFI_PROBE_CURSOR_DRAW_FALLBACK) {
+                ProbeNormalDesktopCursorDrawFallback();
+            } else if (UEFI_PROBE_CURSOR_SOURCE_EXISTING_REFS) {
                 ProbeNormalDesktopCursorSourceExistingRefs();
             } else if (UEFI_PROBE_CURSOR_SOURCE_FALLBACK) {
                 ProbeNormalDesktopCursorSourceFallback();
@@ -1507,6 +1517,62 @@ unsafe class Program {
         }
         SerialBreadcrumb("CURSOR_SRC_LOADPNG_EXIT");
         SerialBreadcrumb("CURSOR_SRC_CHECK_EXIT");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorDrawBusy() {
+        SerialBreadcrumb("CURSOR_DRAW_BUSY_ENTER");
+        var graphics = Framebuffer.Graphics;
+        Image cursorBusy = CursorBusy;
+        if (cursorBusy == null) {
+            SerialBreadcrumb("CURSOR_DRAW_BUSY_IMAGE_NULL");
+            SerialBreadcrumb("CURSOR_DRAW_BUSY_EXIT");
+            return;
+        }
+
+        SerialBreadcrumb("CURSOR_DRAW_BUSY_IMAGE_OK");
+        SerialBreadcrumb("CURSOR_DRAW_BUSY_DIMS_ENTER");
+        SerialWriteUnsigned((ulong)cursorBusy.Width);
+        SerialChar('\n');
+        SerialWriteUnsigned((ulong)cursorBusy.Height);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_DRAW_BUSY_DIMS_EXIT");
+
+        if (graphics != null && graphics.VideoMemory != null) {
+            SerialBreadcrumb("CURSOR_DRAW_BUSY_DRAWIMAGE_ENTER");
+            graphics.DrawImage(80, 80, cursorBusy);
+            SerialBreadcrumb("CURSOR_DRAW_BUSY_DRAWIMAGE_EXIT");
+        }
+
+        SerialBreadcrumb("CURSOR_DRAW_BUSY_EXIT");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorDrawFallback() {
+        SerialBreadcrumb("CURSOR_DRAW_FALLBACK_ENTER");
+        var graphics = Framebuffer.Graphics;
+        Image fallbackCursor = CreateFallbackCursor();
+        if (fallbackCursor == null) {
+            SerialBreadcrumb("CURSOR_DRAW_FALLBACK_IMAGE_NULL");
+            SerialBreadcrumb("CURSOR_DRAW_FALLBACK_EXIT");
+            return;
+        }
+
+        SerialBreadcrumb("CURSOR_DRAW_FALLBACK_IMAGE_OK");
+        SerialBreadcrumb("CURSOR_DRAW_FALLBACK_DIMS_ENTER");
+        SerialWriteUnsigned((ulong)fallbackCursor.Width);
+        SerialChar('\n');
+        SerialWriteUnsigned((ulong)fallbackCursor.Height);
+        SerialChar('\n');
+        SerialBreadcrumb("CURSOR_DRAW_FALLBACK_DIMS_EXIT");
+
+        if (graphics != null && graphics.VideoMemory != null) {
+            SerialBreadcrumb("CURSOR_DRAW_FALLBACK_DRAWIMAGE_ENTER");
+            graphics.DrawImage(80, 80, fallbackCursor);
+            SerialBreadcrumb("CURSOR_DRAW_FALLBACK_DRAWIMAGE_EXIT");
+        }
+
+        SerialBreadcrumb("CURSOR_DRAW_FALLBACK_EXIT");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

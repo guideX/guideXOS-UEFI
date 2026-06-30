@@ -21,6 +21,8 @@ param(
     [switch]$CursorSourceExistingRefsProbe,
     [switch]$CursorSourceFallbackProbe,
     [switch]$CursorSourcePngProbe,
+    [switch]$CursorDrawBusyProbe,
+    [switch]$CursorDrawFallbackProbe,
     [switch]$GuiVisible,
     [string]$GuiScreenshotPath
 )
@@ -78,6 +80,54 @@ function Get-LastMatchingLine {
     $matches = [regex]::Matches($Text, "(?m)^.*$escapedPattern.*$")
     if ($matches.Count -gt 0) {
         return $matches[$matches.Count - 1].Value
+    }
+
+    return $null
+}
+
+function Get-CursorProbeDims {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Lines,
+
+        [Parameter(Mandatory = $true)]
+        [string]$EnterMarker,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExitMarker
+    )
+
+    $enterIndex = -1
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i].Contains($EnterMarker)) {
+            $enterIndex = $i
+        }
+    }
+
+    if ($enterIndex -lt 0) {
+        return $null
+    }
+
+    $values = @()
+    for ($i = $enterIndex + 1; $i -lt $Lines.Count; $i++) {
+        $line = $Lines[$i]
+        if ($line.Contains($ExitMarker)) {
+            break
+        }
+
+        if ($line -match '^\d+$') {
+            $values += [uint64]$line
+            if ($values.Count -ge 2) {
+                break
+            }
+        }
+    }
+
+    if ($values.Count -ge 2) {
+        return [pscustomobject]@{
+            Width = $values[0]
+            Height = $values[1]
+        }
     }
 
     return $null
@@ -320,6 +370,8 @@ if ($CursorStaticFirstPixelProbe) { $cursorVariantCount++ }
 if ($CursorSourceExistingRefsProbe) { $cursorVariantCount++ }
 if ($CursorSourceFallbackProbe) { $cursorVariantCount++ }
 if ($CursorSourcePngProbe) { $cursorVariantCount++ }
+if ($CursorDrawBusyProbe) { $cursorVariantCount++ }
+if ($CursorDrawFallbackProbe) { $cursorVariantCount++ }
 if ($cursorVariantCount -gt 1) {
     throw "Only one cursor probe variant can be enabled per run."
 }
@@ -344,6 +396,10 @@ $cursorBodyVariant = if ($CursorEmptyBodyProbe) {
     'SourceFallback'
 } elseif ($CursorSourcePngProbe) {
     'SourcePng'
+} elseif ($CursorDrawBusyProbe) {
+    'DrawBusy'
+} elseif ($CursorDrawFallbackProbe) {
+    'DrawFallback'
 } else {
     'OriginalBodyCall'
 }
@@ -393,12 +449,22 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;' `
         -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = $step13CursorPlaceholder;" `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER'
-    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe
+    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe -or $CursorDrawBusyProbe -or $CursorDrawFallbackProbe
     $step13RealCursorImageRendering = if ($step13RealCursorImageRenderingEnabled) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;' `
         -New "private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = $step13RealCursorImageRendering;" `
         -Label 'UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING'
+    $cursorDrawBusyProbeValue = if ($CursorDrawBusyProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_DRAW_BUSY = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_DRAW_BUSY = $cursorDrawBusyProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_DRAW_BUSY'
+    $cursorDrawFallbackProbeValue = if ($CursorDrawFallbackProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_DRAW_FALLBACK = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_DRAW_FALLBACK = $cursorDrawFallbackProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_DRAW_FALLBACK'
     $cursorEmptyBodyCallProbeValue = if ($CursorEmptyBodyProbe) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_CURSOR_EMPTY_BODY_CALL = false;' `
@@ -696,6 +762,20 @@ try {
     $step13CursorPlaceholderExitPresent = $serialText.Contains('NORM_STEP_013_CURSOR_PLACEHOLDER_EXIT')
     $step13CursorImageEnterPresent = $serialText.Contains('NORM_STEP_013_CURSOR_IMG_ENTER')
     $step13CursorImageExitPresent = $serialText.Contains('NORM_STEP_013_CURSOR_IMG_EXIT')
+    $cursorDrawBusyEnterPresent = $serialText.Contains('CURSOR_DRAW_BUSY_ENTER')
+    $cursorDrawBusyImageOkPresent = $serialText.Contains('CURSOR_DRAW_BUSY_IMAGE_OK')
+    $cursorDrawBusyDimsEnterPresent = $serialText.Contains('CURSOR_DRAW_BUSY_DIMS_ENTER')
+    $cursorDrawBusyDimsExitPresent = $serialText.Contains('CURSOR_DRAW_BUSY_DIMS_EXIT')
+    $cursorDrawBusyDrawImageEnterPresent = $serialText.Contains('CURSOR_DRAW_BUSY_DRAWIMAGE_ENTER')
+    $cursorDrawBusyDrawImageExitPresent = $serialText.Contains('CURSOR_DRAW_BUSY_DRAWIMAGE_EXIT')
+    $cursorDrawBusyExitPresent = $serialText.Contains('CURSOR_DRAW_BUSY_EXIT')
+    $cursorDrawFallbackEnterPresent = $serialText.Contains('CURSOR_DRAW_FALLBACK_ENTER')
+    $cursorDrawFallbackImageOkPresent = $serialText.Contains('CURSOR_DRAW_FALLBACK_IMAGE_OK')
+    $cursorDrawFallbackDimsEnterPresent = $serialText.Contains('CURSOR_DRAW_FALLBACK_DIMS_ENTER')
+    $cursorDrawFallbackDimsExitPresent = $serialText.Contains('CURSOR_DRAW_FALLBACK_DIMS_EXIT')
+    $cursorDrawFallbackDrawImageEnterPresent = $serialText.Contains('CURSOR_DRAW_FALLBACK_DRAWIMAGE_ENTER')
+    $cursorDrawFallbackDrawImageExitPresent = $serialText.Contains('CURSOR_DRAW_FALLBACK_DRAWIMAGE_EXIT')
+    $cursorDrawFallbackExitPresent = $serialText.Contains('CURSOR_DRAW_FALLBACK_EXIT')
     $cursorImgWrapperEnterPresent = $serialText.Contains('CURSOR_IMG_WRAPPER_ENTER')
     $cursorImgBeforeBodyCallPresent = $serialText.Contains('CURSOR_IMG_BEFORE_BODY_CALL')
     $cursorImgEmptyBodyEnterPresent = $serialText.Contains('CURSOR_IMG_EMPTY_BODY_ENTER')
@@ -886,6 +966,22 @@ try {
         }
     }
     $cursorImgMarkerSequence = @(
+        'CURSOR_DRAW_BUSY_ENTER'
+        'CURSOR_DRAW_BUSY_IMAGE_NULL'
+        'CURSOR_DRAW_BUSY_IMAGE_OK'
+        'CURSOR_DRAW_BUSY_DIMS_ENTER'
+        'CURSOR_DRAW_BUSY_DIMS_EXIT'
+        'CURSOR_DRAW_BUSY_DRAWIMAGE_ENTER'
+        'CURSOR_DRAW_BUSY_DRAWIMAGE_EXIT'
+        'CURSOR_DRAW_BUSY_EXIT'
+        'CURSOR_DRAW_FALLBACK_ENTER'
+        'CURSOR_DRAW_FALLBACK_IMAGE_NULL'
+        'CURSOR_DRAW_FALLBACK_IMAGE_OK'
+        'CURSOR_DRAW_FALLBACK_DIMS_ENTER'
+        'CURSOR_DRAW_FALLBACK_DIMS_EXIT'
+        'CURSOR_DRAW_FALLBACK_DRAWIMAGE_ENTER'
+        'CURSOR_DRAW_FALLBACK_DRAWIMAGE_EXIT'
+        'CURSOR_DRAW_FALLBACK_EXIT'
         'CURSOR_IMG_WRAPPER_ENTER'
         'CURSOR_IMG_PROBE_ENTER'
         'CURSOR_IMG_BEFORE_BODY_CALL'
