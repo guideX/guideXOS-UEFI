@@ -4,6 +4,7 @@ param(
     [switch]$CaptureScreenshot,
     [switch]$GuiVisible,
     [int]$CaptureSeconds = 120,
+    [switch]$SafeCursorImageFallback,
     [string]$ScreenshotPath
 )
 
@@ -347,12 +348,18 @@ try {
             -New 'private const bool UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME = true;' `
             -Label 'UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME'
     }
+    $safeCursorImageFallbackValue = if ($SafeCursorImageFallback) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_SAFE_CURSOR_IMAGE_FALLBACK = false;' `
+        -New "private const bool UEFI_SAFE_CURSOR_IMAGE_FALLBACK = $safeCursorImageFallbackValue;" `
+        -Label 'UEFI_SAFE_CURSOR_IMAGE_FALLBACK'
 
     [System.IO.File]::WriteAllText($programPath, $patched)
     $programPatched = $true
 
     Write-Host "[uefi-run] Run ID: $runId" -ForegroundColor Cyan
     Write-Host "[uefi-run] Mode: $Mode" -ForegroundColor Cyan
+    Write-Host "[uefi-run] Safe cursor image fallback: $SafeCursorImageFallback" -ForegroundColor Cyan
     Write-Host "[uefi-run] Expected dispatch reason: $modeLabel" -ForegroundColor Cyan
     Write-Host "[uefi-run] Screenshot capture requested: $CaptureScreenshot" -ForegroundColor Cyan
     Write-Host "[uefi-run] Screenshot path: $ScreenshotPath" -ForegroundColor Cyan

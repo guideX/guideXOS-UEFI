@@ -23,6 +23,7 @@ param(
     [switch]$CursorSourcePngProbe,
     [switch]$CursorDrawBusyProbe,
     [switch]$CursorDrawFallbackProbe,
+    [switch]$SafeCursorImageFallback,
     [switch]$GuiVisible,
     [string]$GuiScreenshotPath
 )
@@ -515,6 +516,11 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_SOURCE_PNG = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_SOURCE_PNG = $cursorSourcePngProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_SOURCE_PNG'
+    $safeCursorImageFallbackValue = if ($SafeCursorImageFallback) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_SAFE_CURSOR_IMAGE_FALLBACK = false;' `
+        -New "private const bool UEFI_SAFE_CURSOR_IMAGE_FALLBACK = $safeCursorImageFallbackValue;" `
+        -Label 'UEFI_SAFE_CURSOR_IMAGE_FALLBACK'
     $step10RedPlaceholder = if ($Step10RedMode -eq 'FillRectangle') { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;' `
@@ -557,6 +563,7 @@ try {
     Write-Host "[probe] Step 13 skip cursor draw: $SkipCursorDraw" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 cursor placeholder: $CursorPlaceholder" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 real cursor image rendering (effective): $step13RealCursorImageRenderingEnabled" -ForegroundColor Cyan
+    Write-Host "[probe] Safe cursor image fallback: $SafeCursorImageFallback" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 cursor body variant: $cursorBodyVariant" -ForegroundColor Cyan
     Write-Host "[probe] GUI visible mode: $GuiVisible" -ForegroundColor Cyan
     Write-Host "[probe] GUI screenshot path: $GuiScreenshotPath" -ForegroundColor Cyan

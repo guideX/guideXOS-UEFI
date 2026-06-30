@@ -376,7 +376,7 @@ unsafe class Program {
     // When true, frame 2+ uses the allocation-free heartbeat visual path instead
     // of the full render loop.  UEFI_STEADY_STATE_SERIAL_ONLY must be false.
     private const bool UEFI_STEADY_STATE_MINIMAL_RENDER = true;
-    private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = false;
+    private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = true;
 
     // When true, DrawUefiSafeModeDiagnostics() is restricted to frame 1 only.
     // Default: true (safe).  Set false only for targeted diagnostics sessions.
@@ -385,8 +385,8 @@ unsafe class Program {
     // path.  MUST be false whenever UEFI_STEADY_STATE_SERIAL_ONLY is true,
     // because the diagnostics method allocates managed strings every call.
     private const bool UEFI_DRAW_DIAGNOSTICS_EACH_FRAME = false;
-    private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;
-    private const bool UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME = false;
+    private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = false;
+    private const bool UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME = true;
     private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = false;
     private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
     private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = false;
@@ -412,6 +412,9 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_SOURCE_EXISTING_REFS = false;
     private const bool UEFI_PROBE_CURSOR_SOURCE_FALLBACK = false;
     private const bool UEFI_PROBE_CURSOR_SOURCE_PNG = false;
+    // Opt-in only: when true, safe/probe cursor paths may draw a validated
+    // procedural cursor image through DrawImage instead of the rectangle cursor.
+    private const bool UEFI_SAFE_CURSOR_IMAGE_FALLBACK = true;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER = false;
@@ -604,6 +607,86 @@ unsafe class Program {
             }
         }
         return img;
+    }
+
+    private static bool TryValidateUefiCursorImage(Image image) {
+        SerialBreadcrumb("CURSOR_VALIDATE_ENTER");
+        if (image == null) {
+            SerialBreadcrumb("CURSOR_VALIDATE_NULL");
+            SerialBreadcrumb("CURSOR_VALIDATE_EXIT");
+            return false;
+        }
+
+        int width = image.Width;
+        int height = image.Height;
+        if (width <= 0 || height <= 0 || width > 64 || height > 64) {
+            SerialBreadcrumb("CURSOR_VALIDATE_BAD_DIMS");
+            SerialBreadcrumb("CURSOR_VALIDATE_EXIT");
+            return false;
+        }
+
+        int[] rawData = image.RawData;
+        if (rawData == null) {
+            SerialBreadcrumb("CURSOR_VALIDATE_BAD_RAWDATA");
+            SerialBreadcrumb("CURSOR_VALIDATE_EXIT");
+            return false;
+        }
+
+        long requiredPixels = (long)width * (long)height;
+        if (requiredPixels <= 0 || requiredPixels > int.MaxValue || rawData.Length < requiredPixels) {
+            SerialBreadcrumb("CURSOR_VALIDATE_BAD_RAWDATA");
+            SerialBreadcrumb("CURSOR_VALIDATE_EXIT");
+            return false;
+        }
+
+        SerialBreadcrumb("CURSOR_VALIDATE_OK");
+        SerialBreadcrumb("CURSOR_VALIDATE_EXIT");
+        return true;
+    }
+
+    private static Image SelectValidatedUefiCursorImageSource(bool tryMoving, bool tryBusy, bool tryFallback) {
+        SerialBreadcrumb("CURSOR_SRC_SELECT_ENTER");
+
+        if (tryMoving) {
+            Image movingCursor = CursorMoving;
+            if (TryValidateUefiCursorImage(movingCursor)) {
+                SerialBreadcrumb("CURSOR_SRC_SELECTED_MOVING");
+                SerialBreadcrumb("CURSOR_SRC_SELECT_EXIT");
+                return movingCursor;
+            }
+        }
+
+        if (tryBusy) {
+            Image busyCursor = CursorBusy;
+            if (TryValidateUefiCursorImage(busyCursor)) {
+                SerialBreadcrumb("CURSOR_SRC_SELECTED_BUSY");
+                SerialBreadcrumb("CURSOR_SRC_SELECT_EXIT");
+                return busyCursor;
+            }
+        }
+
+        if (tryFallback) {
+            Image fallbackCursor = CreateFallbackCursor();
+            if (TryValidateUefiCursorImage(fallbackCursor)) {
+                SerialBreadcrumb("CURSOR_SRC_SELECTED_FALLBACK");
+                SerialBreadcrumb("CURSOR_SRC_SELECT_EXIT");
+                return fallbackCursor;
+            }
+        }
+
+        SerialBreadcrumb("CURSOR_SRC_SELECTED_PLACEHOLDER");
+        SerialBreadcrumb("CURSOR_SRC_SELECT_EXIT");
+        return null;
+    }
+
+    private static void DrawValidatedUefiCursorImage(int x, int y, Image cursorImage) {
+        var graphics = Framebuffer.Graphics;
+        if (graphics == null || graphics.VideoMemory == null || cursorImage == null) return;
+
+        SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_ENTER");
+        SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_OVERLOAD=DrawImage(int,int,Image,bool-default:true)");
+        graphics.DrawImage(x, y, cursorImage);
+        SerialBreadcrumb("CURSOR_IMG_DRAWIMAGE_EXIT");
     }
 
     /// <summary>
@@ -909,6 +992,7 @@ unsafe class Program {
         // a stale/wrong kernel image is being booted.
         SerialBreadcrumb("[DIAG] RENDER_LOOP_PROLOGUE_PATCH_ACTIVE");
         SerialBreadcrumb("SMAIN_BEFORE_RENDERLOOP_DISPATCH");
+        SerialBreadcrumb("UEFI_RUN_ID_20260629_211510_237_PID17136");
 
         // Enter the main render loop (in a separate method to keep stack frames small)
         bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
@@ -1524,23 +1608,26 @@ unsafe class Program {
         SerialBreadcrumb("CURSOR_DRAW_BUSY_ENTER");
         var graphics = Framebuffer.Graphics;
         Image cursorBusy = CursorBusy;
-        if (cursorBusy == null) {
-            SerialBreadcrumb("CURSOR_DRAW_BUSY_IMAGE_NULL");
+        if (!TryValidateUefiCursorImage(cursorBusy)) {
+            SerialBreadcrumb("CURSOR_DRAW_BUSY_IMAGE_INVALID");
+            Image fallbackCursor = SelectValidatedUefiCursorImageSource(false, false, true);
+            if (fallbackCursor != null) {
+                SerialBreadcrumb("CURSOR_DRAW_BUSY_FALLBACK_ENTER");
+                DrawValidatedUefiCursorImage(80, 80, fallbackCursor);
+                SerialBreadcrumb("CURSOR_DRAW_BUSY_FALLBACK_EXIT");
+            } else {
+                SerialBreadcrumb("CURSOR_DRAW_BUSY_PLACEHOLDER_ENTER");
+                DrawUefiCursorPlaceholder();
+                SerialBreadcrumb("CURSOR_DRAW_BUSY_PLACEHOLDER_EXIT");
+            }
             SerialBreadcrumb("CURSOR_DRAW_BUSY_EXIT");
             return;
         }
 
         SerialBreadcrumb("CURSOR_DRAW_BUSY_IMAGE_OK");
-        SerialBreadcrumb("CURSOR_DRAW_BUSY_DIMS_ENTER");
-        SerialWriteUnsigned((ulong)cursorBusy.Width);
-        SerialChar('\n');
-        SerialWriteUnsigned((ulong)cursorBusy.Height);
-        SerialChar('\n');
-        SerialBreadcrumb("CURSOR_DRAW_BUSY_DIMS_EXIT");
-
         if (graphics != null && graphics.VideoMemory != null) {
             SerialBreadcrumb("CURSOR_DRAW_BUSY_DRAWIMAGE_ENTER");
-            graphics.DrawImage(80, 80, cursorBusy);
+            DrawValidatedUefiCursorImage(80, 80, cursorBusy);
             SerialBreadcrumb("CURSOR_DRAW_BUSY_DRAWIMAGE_EXIT");
         }
 
@@ -2899,6 +2986,19 @@ unsafe class Program {
         SerialBreadcrumb("NORM_STEP_013_C_ENTER");
         if (NORMAL_DESKTOP_UEFI_PROBE_SKIP_CURSOR_DRAW) {
             SerialBreadcrumb("NORM_STEP_013_CURSOR_DRAW_SKIPPED");
+        } else if (UEFI_SAFE_CURSOR_IMAGE_FALLBACK) {
+            SerialBreadcrumb("NORM_STEP_013_CURSOR_IMAGE_FALLBACK_ENTER");
+            Image safeCursorImage = SelectValidatedUefiCursorImageSource(true, true, true);
+            if (safeCursorImage != null) {
+                SerialBreadcrumb("NORM_STEP_013_CURSOR_IMAGE_FALLBACK_DRAWIMAGE_ENTER");
+                DrawValidatedUefiCursorImage(80, 80, safeCursorImage);
+                SerialBreadcrumb("NORM_STEP_013_CURSOR_IMAGE_FALLBACK_DRAWIMAGE_EXIT");
+            } else {
+                SerialBreadcrumb("NORM_STEP_013_CURSOR_IMAGE_FALLBACK_PLACEHOLDER_ENTER");
+                DrawUefiCursorPlaceholder();
+                SerialBreadcrumb("NORM_STEP_013_CURSOR_IMAGE_FALLBACK_PLACEHOLDER_EXIT");
+            }
+            SerialBreadcrumb("NORM_STEP_013_CURSOR_IMAGE_FALLBACK_EXIT");
         } else if (UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING) {
             SerialBreadcrumb("NORM_STEP_013_CURSOR_IMG_ENTER");
             SerialBreadcrumb("NORM_STEP_013_CURSOR_IMG_CALL_ENTER");
@@ -3148,10 +3248,22 @@ unsafe class Program {
 
         int cursorX = fbW > 48 ? fbW - 36 : 4;
         int cursorY = fbH > 48 ? fbH - 52 : 4;
-        if (emitVerbose) SerialBreadcrumb("SAFE_NORMAL_DESKTOP_CURSOR_PLACEHOLDER_ENTER");
-        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, cursorX, cursorY, 12, 12, 0xFFFFFFFFu);
-        DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, cursorX + 3, cursorY + 3, 6, 6, 0xFF0B3C4Cu);
-        if (emitVerbose) SerialBreadcrumb("SAFE_NORMAL_DESKTOP_CURSOR_PLACEHOLDER_EXIT");
+        if (UEFI_SAFE_CURSOR_IMAGE_FALLBACK) {
+            if (emitVerbose) SerialBreadcrumb("SAFE_NORMAL_DESKTOP_CURSOR_IMAGE_FALLBACK_ENTER");
+            Image safeCursorImage = SelectValidatedUefiCursorImageSource(true, true, true);
+            if (safeCursorImage != null) {
+                DrawValidatedUefiCursorImage(cursorX, cursorY, safeCursorImage);
+            } else {
+                DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, cursorX, cursorY, 12, 12, 0xFFFFFFFFu);
+                DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, cursorX + 3, cursorY + 3, 6, 6, 0xFF0B3C4Cu);
+            }
+            if (emitVerbose) SerialBreadcrumb("SAFE_NORMAL_DESKTOP_CURSOR_IMAGE_FALLBACK_EXIT");
+        } else {
+            if (emitVerbose) SerialBreadcrumb("SAFE_NORMAL_DESKTOP_CURSOR_PLACEHOLDER_ENTER");
+            DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, cursorX, cursorY, 12, 12, 0xFFFFFFFFu);
+            DrawUefiFillRect(fb, fbW, fbH, pitchPixels, maxPixels, cursorX + 3, cursorY + 3, 6, 6, 0xFF0B3C4Cu);
+            if (emitVerbose) SerialBreadcrumb("SAFE_NORMAL_DESKTOP_CURSOR_PLACEHOLDER_EXIT");
+        }
 
         Framebuffer.Update();
         SerialBreadcrumb("SAFE_NORMAL_DESKTOP_FRAME_COMPLETE");
