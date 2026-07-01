@@ -376,7 +376,7 @@ unsafe class Program {
     // When true, frame 2+ uses the allocation-free heartbeat visual path instead
     // of the full render loop.  UEFI_STEADY_STATE_SERIAL_ONLY must be false.
     private const bool UEFI_STEADY_STATE_MINIMAL_RENDER = true;
-    private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = true;
+    private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = false;
 
     // When true, DrawUefiSafeModeDiagnostics() is restricted to frame 1 only.
     // Default: true (safe).  Set false only for targeted diagnostics sessions.
@@ -385,11 +385,12 @@ unsafe class Program {
     // path.  MUST be false whenever UEFI_STEADY_STATE_SERIAL_ONLY is true,
     // because the diagnostics method allocates managed strings every call.
     private const bool UEFI_DRAW_DIAGNOSTICS_EACH_FRAME = false;
-    private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = false;
-    private const bool UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME = true;
+    private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;
+    private const bool UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME = false;
     private const bool UEFI_TINY_RENDER_LOOP_ENTRY_ONLY = false;
     private const bool UEFI_TINY_RENDER_LOOP_MINIMAL_GRAPHICS = true;
     private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = false;
+    private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_DRAW_BUSY_DIRECT = false;
     internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 = false;
     internal const bool NORMAL_DESKTOP_UEFI_PROBE_SAFE_FONT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_WINDOW_TRAVERSAL = false;
@@ -414,7 +415,7 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_SOURCE_PNG = false;
     // Opt-in only: when true, safe/probe cursor paths may draw a validated
     // procedural cursor image through DrawImage instead of the rectangle cursor.
-    private const bool UEFI_SAFE_CURSOR_IMAGE_FALLBACK = true;
+    private const bool UEFI_SAFE_CURSOR_IMAGE_FALLBACK = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_RED_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_GREEN_FILLRECT_PLACEHOLDER = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_STEP10_WHITE_FILLRECT_PLACEHOLDER = false;
@@ -992,7 +993,6 @@ unsafe class Program {
         // a stale/wrong kernel image is being booted.
         SerialBreadcrumb("[DIAG] RENDER_LOOP_PROLOGUE_PATCH_ACTIVE");
         SerialBreadcrumb("SMAIN_BEFORE_RENDERLOOP_DISPATCH");
-        SerialBreadcrumb("UEFI_RUN_ID_20260629_211510_237_PID17136");
 
         // Enter the main render loop (in a separate method to keep stack frames small)
         bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
@@ -2803,6 +2803,17 @@ unsafe class Program {
         LogNormalDesktopStepProbeState("NORM_STEP_002_STATE", Framebuffer.Graphics, 0xFF0D7D77u);
         ReportNormalDesktopStepProbeGraphicsCallsites();
 
+        if (NORMAL_DESKTOP_UEFI_PROBE_CURSOR_DRAW_BUSY_DIRECT) {
+            SerialBreadcrumb("NORM_CURSOR_BUSY_DIRECT_ENTER");
+            ProbeNormalDesktopCursorDrawBusy();
+            SerialBreadcrumb("NORM_CURSOR_BUSY_DIRECT_EXIT");
+            SerialBreadcrumb("NORM_CURSOR_BUSY_DIRECT_LOOP_ENTER");
+            for (;; ) {
+                Native.Out8(0x3F8, (byte)'.');
+                Thread.Sleep(16);
+            }
+        }
+
         SerialBreadcrumb("NORM_STEP_003_ENTER");
         SerialBreadcrumb("NORM_STEP_003_A_ENTER");
         guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
@@ -2988,7 +2999,7 @@ unsafe class Program {
             SerialBreadcrumb("NORM_STEP_013_CURSOR_DRAW_SKIPPED");
         } else if (UEFI_SAFE_CURSOR_IMAGE_FALLBACK) {
             SerialBreadcrumb("NORM_STEP_013_CURSOR_IMAGE_FALLBACK_ENTER");
-            Image safeCursorImage = SelectValidatedUefiCursorImageSource(true, true, true);
+            Image safeCursorImage = SelectValidatedUefiCursorImageSource(false, false, true);
             if (safeCursorImage != null) {
                 SerialBreadcrumb("NORM_STEP_013_CURSOR_IMAGE_FALLBACK_DRAWIMAGE_ENTER");
                 DrawValidatedUefiCursorImage(80, 80, safeCursorImage);
@@ -3250,7 +3261,7 @@ unsafe class Program {
         int cursorY = fbH > 48 ? fbH - 52 : 4;
         if (UEFI_SAFE_CURSOR_IMAGE_FALLBACK) {
             if (emitVerbose) SerialBreadcrumb("SAFE_NORMAL_DESKTOP_CURSOR_IMAGE_FALLBACK_ENTER");
-            Image safeCursorImage = SelectValidatedUefiCursorImageSource(true, true, true);
+            Image safeCursorImage = SelectValidatedUefiCursorImageSource(false, false, true);
             if (safeCursorImage != null) {
                 DrawValidatedUefiCursorImage(cursorX, cursorY, safeCursorImage);
             } else {

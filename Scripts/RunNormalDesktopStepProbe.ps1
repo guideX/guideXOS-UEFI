@@ -22,6 +22,7 @@ param(
     [switch]$CursorSourceFallbackProbe,
     [switch]$CursorSourcePngProbe,
     [switch]$CursorDrawBusyProbe,
+    [switch]$CursorDrawBusyDirectProbe,
     [switch]$CursorDrawFallbackProbe,
     [switch]$SafeCursorImageFallback,
     [switch]$GuiVisible,
@@ -372,6 +373,7 @@ if ($CursorSourceExistingRefsProbe) { $cursorVariantCount++ }
 if ($CursorSourceFallbackProbe) { $cursorVariantCount++ }
 if ($CursorSourcePngProbe) { $cursorVariantCount++ }
 if ($CursorDrawBusyProbe) { $cursorVariantCount++ }
+if ($CursorDrawBusyDirectProbe) { $cursorVariantCount++ }
 if ($CursorDrawFallbackProbe) { $cursorVariantCount++ }
 if ($cursorVariantCount -gt 1) {
     throw "Only one cursor probe variant can be enabled per run."
@@ -399,6 +401,8 @@ $cursorBodyVariant = if ($CursorEmptyBodyProbe) {
     'SourcePng'
 } elseif ($CursorDrawBusyProbe) {
     'DrawBusy'
+} elseif ($CursorDrawBusyDirectProbe) {
+    'DrawBusyDirect'
 } elseif ($CursorDrawFallbackProbe) {
     'DrawFallback'
 } else {
@@ -450,7 +454,7 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;' `
         -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = $step13CursorPlaceholder;" `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER'
-    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe -or $CursorDrawBusyProbe -or $CursorDrawFallbackProbe
+    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe -or $CursorDrawBusyProbe -or $CursorDrawBusyDirectProbe -or $CursorDrawFallbackProbe
     $step13RealCursorImageRendering = if ($step13RealCursorImageRenderingEnabled) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;' `
@@ -461,6 +465,11 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_DRAW_BUSY = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_DRAW_BUSY = $cursorDrawBusyProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_DRAW_BUSY'
+    $cursorDrawBusyDirectProbeValue = if ($CursorDrawBusyDirectProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_DRAW_BUSY_DIRECT = false;' `
+        -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_DRAW_BUSY_DIRECT = $cursorDrawBusyDirectProbeValue;" `
+        -Label 'NORMAL_DESKTOP_UEFI_PROBE_CURSOR_DRAW_BUSY_DIRECT'
     $cursorDrawFallbackProbeValue = if ($CursorDrawFallbackProbe) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_CURSOR_DRAW_FALLBACK = false;' `
@@ -563,6 +572,7 @@ try {
     Write-Host "[probe] Step 13 skip cursor draw: $SkipCursorDraw" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 cursor placeholder: $CursorPlaceholder" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 real cursor image rendering (effective): $step13RealCursorImageRenderingEnabled" -ForegroundColor Cyan
+    Write-Host "[probe] Cursor draw busy direct probe: $CursorDrawBusyDirectProbe" -ForegroundColor Cyan
     Write-Host "[probe] Safe cursor image fallback: $SafeCursorImageFallback" -ForegroundColor Cyan
     Write-Host "[probe] Step 13 cursor body variant: $cursorBodyVariant" -ForegroundColor Cyan
     Write-Host "[probe] GUI visible mode: $GuiVisible" -ForegroundColor Cyan
