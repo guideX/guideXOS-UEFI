@@ -1585,22 +1585,39 @@ unsafe class Program {
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void ProbeNormalDesktopCursorSourcePng() {
-        SerialBreadcrumb("CURSOR_SRC_CHECK_ENTER");
-        SerialBreadcrumb(CursorMoving == null ? "CURSOR_SRC_CURSOR_MOVING_NULL" : "CURSOR_SRC_CURSOR_MOVING_OK");
-        SerialBreadcrumb(CursorBusy == null ? "CURSOR_SRC_CURSOR_BUSY_NULL" : "CURSOR_SRC_CURSOR_BUSY_OK");
-        SerialBreadcrumb("CURSOR_SRC_LOADPNG_ENTER");
-        Image cursorImage = LoadPngSafe("Images/Cursor.png");
-        SerialBreadcrumb(cursorImage == null ? "CURSOR_SRC_LOADPNG_NULL" : "CURSOR_SRC_LOADPNG_OK");
-        if (cursorImage != null) {
-            SerialBreadcrumb("CURSOR_SRC_LOADPNG_DIMS_ENTER");
+        const string cursorPngPath = "Images/Cursor.png";
+
+        SerialBreadcrumb("CURSOR_PNG_PROBE_ENTER");
+
+        SerialBreadcrumb("CURSOR_PNG_BEFORE_DISK_CHECK");
+        bool diskExists = false;
+        try { diskExists = File.Exists(cursorPngPath); } catch { }
+        SerialBreadcrumb("CURSOR_PNG_AFTER_DISK_CHECK");
+
+        SerialBreadcrumb("CURSOR_PNG_BEFORE_FILE_LOOKUP");
+        byte[] pngBytes = null;
+        try { pngBytes = File.ReadAllBytes(cursorPngPath); } catch { }
+        SerialBreadcrumb("CURSOR_PNG_AFTER_FILE_LOOKUP");
+
+        SerialBreadcrumb("CURSOR_PNG_BEFORE_LOADPNGSAFE");
+        Image cursorImage = LoadPngSafe(cursorPngPath);
+        SerialBreadcrumb("CURSOR_PNG_AFTER_LOADPNGSAFE");
+
+        if (cursorImage == null) {
+            SerialBreadcrumb("CURSOR_PNG_NULL");
+        } else {
+            SerialBreadcrumb("CURSOR_PNG_OK");
+            SerialBreadcrumb("CURSOR_PNG_DIMS_ENTER");
             SerialWriteUnsigned((ulong)cursorImage.Width);
             SerialChar('\n');
             SerialWriteUnsigned((ulong)cursorImage.Height);
             SerialChar('\n');
-            SerialBreadcrumb("CURSOR_SRC_LOADPNG_DIMS_EXIT");
+            SerialBreadcrumb("CURSOR_PNG_DIMS_EXIT");
         }
-        SerialBreadcrumb("CURSOR_SRC_LOADPNG_EXIT");
-        SerialBreadcrumb("CURSOR_SRC_CHECK_EXIT");
+
+        _ = diskExists;
+        _ = pngBytes;
+        SerialBreadcrumb("CURSOR_PNG_PROBE_EXIT");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

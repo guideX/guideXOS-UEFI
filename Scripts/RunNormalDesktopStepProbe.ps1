@@ -89,7 +89,6 @@ function Get-LastMatchingLine {
 
 function Get-CursorProbeDims {
     param(
-        [Parameter(Mandatory = $true)]
         [string[]]$Lines,
 
         [Parameter(Mandatory = $true)]
@@ -98,6 +97,10 @@ function Get-CursorProbeDims {
         [Parameter(Mandatory = $true)]
         [string]$ExitMarker
     )
+
+    if (-not $Lines -or $Lines.Count -eq 0) {
+        return $null
+    }
 
     $enterIndex = -1
     for ($i = 0; $i -lt $Lines.Count; $i++) {
@@ -818,6 +821,18 @@ try {
     $cursorSrcLoadPngOkPresent = $serialText.Contains('CURSOR_SRC_LOADPNG_OK')
     $cursorSrcLoadPngDimsEnterPresent = $serialText.Contains('CURSOR_SRC_LOADPNG_DIMS_ENTER')
     $cursorSrcLoadPngDimsExitPresent = $serialText.Contains('CURSOR_SRC_LOADPNG_DIMS_EXIT')
+    $cursorPngProbeEnterPresent = $serialText.Contains('CURSOR_PNG_PROBE_ENTER')
+    $cursorPngBeforeDiskCheckPresent = $serialText.Contains('CURSOR_PNG_BEFORE_DISK_CHECK')
+    $cursorPngAfterDiskCheckPresent = $serialText.Contains('CURSOR_PNG_AFTER_DISK_CHECK')
+    $cursorPngBeforeFileLookupPresent = $serialText.Contains('CURSOR_PNG_BEFORE_FILE_LOOKUP')
+    $cursorPngAfterFileLookupPresent = $serialText.Contains('CURSOR_PNG_AFTER_FILE_LOOKUP')
+    $cursorPngBeforeLoadPngSafePresent = $serialText.Contains('CURSOR_PNG_BEFORE_LOADPNGSAFE')
+    $cursorPngAfterLoadPngSafePresent = $serialText.Contains('CURSOR_PNG_AFTER_LOADPNGSAFE')
+    $cursorPngNullPresent = $serialText.Contains('CURSOR_PNG_NULL')
+    $cursorPngOkPresent = $serialText.Contains('CURSOR_PNG_OK')
+    $cursorPngDimsEnterPresent = $serialText.Contains('CURSOR_PNG_DIMS_ENTER')
+    $cursorPngDimsExitPresent = $serialText.Contains('CURSOR_PNG_DIMS_EXIT')
+    $cursorPngProbeExitPresent = $serialText.Contains('CURSOR_PNG_PROBE_EXIT')
     $cursorImgBodyEnterPresent = $serialText.Contains('CURSOR_IMG_BODY_ENTER')
     $cursorImgBeforeFramebufferGraphicsPresent = $serialText.Contains('CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS')
     $cursorImgAfterFramebufferGraphicsPresent = $serialText.Contains('CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS')
@@ -840,6 +855,9 @@ try {
     $cursorImgFirstDestPixelWriteEnterPresent = $serialText.Contains('CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_ENTER')
     $cursorImgFirstDestPixelWriteExitPresent = $serialText.Contains('CURSOR_IMG_FIRST_DEST_PIXEL_WRITE_EXIT')
     $cursorImgProbeExitPresent = $serialText.Contains('CURSOR_IMG_PROBE_EXIT')
+    $cursorPngDims = Get-CursorProbeDims -Lines $serialLines -EnterMarker 'CURSOR_PNG_DIMS_ENTER' -ExitMarker 'CURSOR_PNG_DIMS_EXIT'
+    $cursorPngWidth = if ($cursorPngDims) { $cursorPngDims.Width } else { $null }
+    $cursorPngHeight = if ($cursorPngDims) { $cursorPngDims.Height } else { $null }
     $step13CursorDrawEnterPresent = $serialText.Contains('NORM_STEP_013_CURSOR_DRAW_ENTER')
     $step13CursorDrawPrimitiveEnterPresent = $serialText.Contains('NORM_STEP_013_CURSOR_DRAW_PRIMITIVE_ENTER')
     $step13CursorDrawPrimitiveExitPresent = $serialText.Contains('NORM_STEP_013_CURSOR_DRAW_PRIMITIVE_EXIT')
@@ -980,6 +998,26 @@ try {
     foreach ($marker in $step13MarkerSequence) {
         if ($serialText.Contains($marker)) {
             $step13DeepestMarker = $marker
+        }
+    }
+    $cursorPngMarkerSequence = @(
+        'CURSOR_PNG_PROBE_ENTER'
+        'CURSOR_PNG_BEFORE_DISK_CHECK'
+        'CURSOR_PNG_AFTER_DISK_CHECK'
+        'CURSOR_PNG_BEFORE_FILE_LOOKUP'
+        'CURSOR_PNG_AFTER_FILE_LOOKUP'
+        'CURSOR_PNG_BEFORE_LOADPNGSAFE'
+        'CURSOR_PNG_AFTER_LOADPNGSAFE'
+        'CURSOR_PNG_NULL'
+        'CURSOR_PNG_OK'
+        'CURSOR_PNG_DIMS_ENTER'
+        'CURSOR_PNG_DIMS_EXIT'
+        'CURSOR_PNG_PROBE_EXIT'
+    )
+    $cursorPngDeepestMarker = $null
+    foreach ($marker in $cursorPngMarkerSequence) {
+        if ($serialText.Contains($marker)) {
+            $cursorPngDeepestMarker = $marker
         }
     }
     $cursorImgMarkerSequence = @(
@@ -1210,6 +1248,26 @@ try {
         Write-Host "[probe] NORM_STEP_013_CURSOR_IMG_ENTER present: $step13CursorImageEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_IMG_EXIT present: $step13CursorImageExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_EXIT present: $step13ExitPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_PROBE_ENTER present: $cursorPngProbeEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_BEFORE_DISK_CHECK present: $cursorPngBeforeDiskCheckPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_AFTER_DISK_CHECK present: $cursorPngAfterDiskCheckPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_BEFORE_FILE_LOOKUP present: $cursorPngBeforeFileLookupPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_AFTER_FILE_LOOKUP present: $cursorPngAfterFileLookupPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_BEFORE_LOADPNGSAFE present: $cursorPngBeforeLoadPngSafePresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_AFTER_LOADPNGSAFE present: $cursorPngAfterLoadPngSafePresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_NULL present: $cursorPngNullPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_OK present: $cursorPngOkPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_DIMS_ENTER present: $cursorPngDimsEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_DIMS_EXIT present: $cursorPngDimsExitPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_PROBE_EXIT present: $cursorPngProbeExitPresent" -ForegroundColor Green
+        Write-Host "[probe] Deepest PNG marker reached: $cursorPngDeepestMarker" -ForegroundColor Green
+        if ($cursorPngDims) {
+            Write-Host "[probe] CURSOR_PNG width: $($cursorPngDims.Width)" -ForegroundColor Green
+            Write-Host "[probe] CURSOR_PNG height: $($cursorPngDims.Height)" -ForegroundColor Green
+        } else {
+            Write-Host "[probe] CURSOR_PNG width: n/a" -ForegroundColor Green
+            Write-Host "[probe] CURSOR_PNG height: n/a" -ForegroundColor Green
+        }
         Write-Host "[probe] CURSOR_IMG_WRAPPER_ENTER present: $cursorImgWrapperEnterPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_IMG_BEFORE_BODY_CALL present: $cursorImgBeforeBodyCallPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_IMG_BODY_ENTER present: $cursorImgBodyEnterPresent" -ForegroundColor Green
@@ -1366,6 +1424,21 @@ try {
             "CURSOR_SRC_LOADPNG_OK_PRESENT=$cursorSrcLoadPngOkPresent"
             "CURSOR_SRC_LOADPNG_DIMS_ENTER_PRESENT=$cursorSrcLoadPngDimsEnterPresent"
             "CURSOR_SRC_LOADPNG_DIMS_EXIT_PRESENT=$cursorSrcLoadPngDimsExitPresent"
+            "CURSOR_PNG_PROBE_ENTER_PRESENT=$cursorPngProbeEnterPresent"
+            "CURSOR_PNG_BEFORE_DISK_CHECK_PRESENT=$cursorPngBeforeDiskCheckPresent"
+            "CURSOR_PNG_AFTER_DISK_CHECK_PRESENT=$cursorPngAfterDiskCheckPresent"
+            "CURSOR_PNG_BEFORE_FILE_LOOKUP_PRESENT=$cursorPngBeforeFileLookupPresent"
+            "CURSOR_PNG_AFTER_FILE_LOOKUP_PRESENT=$cursorPngAfterFileLookupPresent"
+            "CURSOR_PNG_BEFORE_LOADPNGSAFE_PRESENT=$cursorPngBeforeLoadPngSafePresent"
+            "CURSOR_PNG_AFTER_LOADPNGSAFE_PRESENT=$cursorPngAfterLoadPngSafePresent"
+            "CURSOR_PNG_NULL_PRESENT=$cursorPngNullPresent"
+            "CURSOR_PNG_OK_PRESENT=$cursorPngOkPresent"
+            "CURSOR_PNG_DIMS_ENTER_PRESENT=$cursorPngDimsEnterPresent"
+            "CURSOR_PNG_DIMS_EXIT_PRESENT=$cursorPngDimsExitPresent"
+            "CURSOR_PNG_PROBE_EXIT_PRESENT=$cursorPngProbeExitPresent"
+            "CURSOR_PNG_DEEPEST_MARKER=$cursorPngDeepestMarker"
+            "CURSOR_PNG_WIDTH=$cursorPngWidth"
+            "CURSOR_PNG_HEIGHT=$cursorPngHeight"
             "CURSOR_IMG_STATIC_IMAGE_REF_ENTER_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_IMAGE_REF_ENTER'))"
             "CURSOR_IMG_STATIC_IMAGE_REF_EXIT_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_IMAGE_REF_EXIT'))"
             "CURSOR_IMG_STATIC_IMAGE_NULL_CHECK_ENTER_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_IMAGE_NULL_CHECK_ENTER'))"
