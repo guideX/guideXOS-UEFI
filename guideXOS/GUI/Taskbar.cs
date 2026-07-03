@@ -237,6 +237,8 @@ namespace guideXOS.GUI {
             int startY = yTop + 4;
             int startSize = _barHeight - 8;
             var graphics = Framebuffer.Graphics;
+            bool useStep8SafeBypass = Program.NORMAL_DESKTOP_UEFI_PROBE_BYPASS_STEP8_DRAWIMAGE;
+            bool useStep8SafeFillOnly = Program.NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 || useStep8SafeBypass;
 
             void LogButtonBorderDrawState(string phase, string callsite, string colorDescription) {
                 ProbeSerialBreadcrumb(phase + "_GFX_NULL=" + (graphics == null ? "YES" : "NO"));
@@ -250,10 +252,13 @@ namespace guideXOS.GUI {
             ProbeSerialBreadcrumb("NORM_STEP_008_START_BUTTON_ENTER");
             ProbeSerialBreadcrumb(_startIcon == null ? "NORM_STEP_008_START_ICON=NULL" : "NORM_STEP_008_START_ICON=OK");
             ProbeSerialBreadcrumb(WindowManager.font == null ? "NORM_STEP_008_FONT=NULL" : "NORM_STEP_008_FONT=OK");
+            if (useStep8SafeBypass) {
+                ProbeSerialBreadcrumb("NORM_STEP_008_SAFE_BYPASS_ENTER");
+            }
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_ENTER");
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_CALLSITE=cached local graphics.FillRectangle(startX,startY,startSize,startSize,0xFF2E2E2E)");
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_A_ENTER");
-            if (Program.NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10) {
+            if (useStep8SafeFillOnly) {
                 ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_CALLSITE=cached local graphics.FillRectangle four-side placeholder");
                 graphics.FillRectangle(startX, startY, startSize, 1, 0xFF3E3E3E);
                 graphics.FillRectangle(startX, startY, 1, startSize, 0xFF3E3E3E);
@@ -267,7 +272,7 @@ namespace guideXOS.GUI {
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_EXIT");
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_ENTER");
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_B_ENTER");
-            if (Program.NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10) {
+            if (useStep8SafeFillOnly) {
                 ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_CALLSITE=cached local graphics.FillRectangle four-side placeholder (already rendered)");
             } else {
                 ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_CALLSITE=cached local graphics.DrawRectangle(startX,startY,startSize,startSize,0xFF3E3E3E,1)");
@@ -276,6 +281,12 @@ namespace guideXOS.GUI {
             }
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_B_EXIT");
             ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_EXIT");
+
+            if (useStep8SafeBypass) {
+                ProbeSerialBreadcrumb("NORM_STEP_008_SAFE_BYPASS_EXIT");
+                ProbeSerialBreadcrumb("NORM_STEP_008_START_BUTTON_EXIT");
+                return;
+            }
 
             ProbeSerialBreadcrumb("NORM_STEP_008_ICON_FACTORY_ENTER");
             Image iconToShow = Icons.TaskbarIcon(32);
