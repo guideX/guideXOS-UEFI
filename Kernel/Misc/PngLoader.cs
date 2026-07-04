@@ -47,6 +47,8 @@ namespace guideXOS.Misc {
         private const int LITLEN_TABLE_SIZE = 288;
         private const int DIST_TABLE_SIZE = 32;
         private const int CODELENGTH_TABLE_SIZE = 19;
+        private const int FIRST_LENGTH_CODE_INDEX = 257;
+        private const int LAST_LENGTH_CODE_INDEX = 285;
         
         // Preallocated work buffers - sizes based on DEFLATE maximum requirements
         // Assumption: These sizes cover all valid DEFLATE streams
@@ -2449,14 +2451,7 @@ namespace guideXOS.Misc {
                 return false;
             }
 
-            bool cursorInflateSplitProbe = probeMode == LoadProbeMode.DecompressInflateBoundary ||
-                                           probeMode == LoadProbeMode.DecompressInflateBitReader ||
-                                           probeMode == LoadProbeMode.DecompressInflateFirstSymbolDecode ||
-                                           probeMode == LoadProbeMode.DecompressInflateLiteralWrite ||
-                                           probeMode == LoadProbeMode.DecompressInflateLengthDistance ||
-                                           probeMode == LoadProbeMode.DecompressInflateOneStep;
-
-            if (probeMode == LoadProbeMode.DecompressInflateSmoke || cursorInflateSplitProbe) {
+            if (probeMode == LoadProbeMode.DecompressInflateSmoke) {
                 if (!HasValidCursorPngInputGate(data, width, height, bitDepth, colorType, idatChunkCount, idatTotalSize, expectedSize)) {
                     compressedData.Dispose();
                     return false;
@@ -2490,42 +2485,27 @@ namespace guideXOS.Misc {
                     ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
                     return false;
                 }
+            }
 
-                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
-                if (!TryPrepareCursorInflateContext(compressedData, compressedPos, out CursorInflateContext inflateContext)) {
-                    if (probeMode == LoadProbeMode.DecompressInflateBitReader) {
-                        ProbeBreadcrumb("PNGDECOMP_BITREADER_BAD");
-                        ProbeBreadcrumb("PNGDECOMP_BITREADER_EXIT");
-                    }
-                    compressedData.Dispose();
-                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
-                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
-                    return false;
-                }
-
-                if (probeMode == LoadProbeMode.DecompressInflateBoundary) {
-                    PngDecompressInflateBoundaryProbe();
-                } else if (probeMode == LoadProbeMode.DecompressInflateBitReader) {
-                    _ = PngDecompressInflateBitReaderProbe(ref inflateContext);
-                } else if (probeMode == LoadProbeMode.DecompressInflateFirstSymbolDecode) {
-                    _ = PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int firstSymbol);
-                    _ = firstSymbol;
-                } else if (probeMode == LoadProbeMode.DecompressInflateLiteralWrite) {
-                    if (PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int literalSymbol) && literalSymbol < 256) {
-                        _ = PngDecompressInflateLiteralWriteProbe(literalSymbol, expectedSize);
-                    }
-                } else if (probeMode == LoadProbeMode.DecompressInflateLengthDistance) {
-                    if (PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int lengthSymbol) && lengthSymbol > 255) {
-                        _ = PngDecompressInflateLengthDistanceProbe(ref inflateContext, lengthSymbol);
-                    }
-                } else if (probeMode == LoadProbeMode.DecompressInflateOneStep) {
-                    _ = PngDecompressInflateOneStepProbe(ref inflateContext, expectedSize, out int oneStepSymbol);
-                    _ = oneStepSymbol;
-                }
-
-                compressedData.Dispose();
-                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
-                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+            if (probeMode == LoadProbeMode.DecompressInflateBoundary ||
+                probeMode == LoadProbeMode.DecompressInflateBitReader ||
+                probeMode == LoadProbeMode.DecompressInflateFirstSymbolDecode ||
+                probeMode == LoadProbeMode.DecompressInflateLiteralWrite ||
+                probeMode == LoadProbeMode.DecompressInflateLengthDistance ||
+                probeMode == LoadProbeMode.DecompressInflateOneStep) {
+                bool splitProbeOk = RunCursorInflateSplitProbe(
+                    probeMode,
+                    data,
+                    compressedData,
+                    compressedPos,
+                    width,
+                    height,
+                    bitDepth,
+                    colorType,
+                    idatChunkCount,
+                    idatTotalSize,
+                    expectedSize);
+                _ = splitProbeOk;
                 return false;
             }
 
@@ -2769,6 +2749,64 @@ namespace guideXOS.Misc {
             ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_OK");
             ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_EXIT");
             return true;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool RunCursorInflateSplitProbe(
+            LoadProbeMode probeMode,
+            byte[] data,
+            byte[] compressedData,
+            int compressedPos,
+            int width,
+            int height,
+            byte bitDepth,
+            byte colorType,
+            int idatChunkCount,
+            int idatTotalSize,
+            int expectedSize) {
+            ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
+            if (!HasValidCursorPngInputGate(data, width, height, bitDepth, colorType, idatChunkCount, idatTotalSize, expectedSize)) {
+                compressedData.Dispose();
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+                return false;
+            }
+
+            if (!TryPrepareCursorInflateContext(compressedData, compressedPos, out CursorInflateContext inflateContext)) {
+                if (probeMode == LoadProbeMode.DecompressInflateBitReader) {
+                    ProbeBreadcrumb("PNGDECOMP_BITREADER_BAD");
+                    ProbeBreadcrumb("PNGDECOMP_BITREADER_EXIT");
+                }
+                compressedData.Dispose();
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressInflateBoundary) {
+                PngDecompressInflateBoundaryProbe();
+            } else if (probeMode == LoadProbeMode.DecompressInflateBitReader) {
+                _ = PngDecompressInflateBitReaderProbe(ref inflateContext);
+            } else if (probeMode == LoadProbeMode.DecompressInflateFirstSymbolDecode) {
+                _ = PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int firstSymbol);
+                _ = firstSymbol;
+            } else if (probeMode == LoadProbeMode.DecompressInflateLiteralWrite) {
+                if (PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int literalSymbol) && literalSymbol < 256) {
+                    _ = PngDecompressInflateLiteralWriteProbe(literalSymbol, expectedSize);
+                }
+            } else if (probeMode == LoadProbeMode.DecompressInflateLengthDistance) {
+                if (PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int lengthSymbol) && lengthSymbol > 255) {
+                    _ = PngDecompressInflateLengthDistanceProbe(ref inflateContext, lengthSymbol);
+                }
+            } else if (probeMode == LoadProbeMode.DecompressInflateOneStep) {
+                _ = PngDecompressInflateOneStepProbe(ref inflateContext, expectedSize, out int oneStepSymbol);
+                _ = oneStepSymbol;
+            }
+
+            compressedData.Dispose();
+            ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+            ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+            return false;
         }
 
         private static bool TryPrepareCursorInflateContext(byte[] input, int inputLen, out CursorInflateContext context) {
@@ -3131,11 +3169,13 @@ namespace guideXOS.Misc {
 
             if (firstSymbol > 255) {
                 ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BACKREF");
-                if (!TryDecodeCursorLengthDistance(ref context, firstSymbol, out int length, out _, out int distance)) {
+                if (!TryDecodeCursorLengthDistance(ref context, firstSymbol, out int length, out int distanceSymbol, out int distance)) {
                     ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BOUNDS_ABORT");
                     ProbeBreadcrumb("PNGDECOMP_ONE_STEP_EXIT");
                     return false;
                 }
+
+                _ = distanceSymbol;
 
                 if (distance <= 0) {
                     ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BOUNDS_ABORT");
