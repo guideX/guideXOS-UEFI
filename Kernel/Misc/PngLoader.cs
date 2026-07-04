@@ -2493,6 +2493,7 @@ namespace guideXOS.Misc {
                 probeMode == LoadProbeMode.DecompressInflateLiteralWrite ||
                 probeMode == LoadProbeMode.DecompressInflateLengthDistance ||
                 probeMode == LoadProbeMode.DecompressInflateOneStep) {
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
                 bool splitProbeOk = RunCursorInflateSplitProbe(
                     probeMode,
                     data,
@@ -2764,7 +2765,6 @@ namespace guideXOS.Misc {
             int idatChunkCount,
             int idatTotalSize,
             int expectedSize) {
-            ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
             if (!HasValidCursorPngInputGate(data, width, height, bitDepth, colorType, idatChunkCount, idatTotalSize, expectedSize)) {
                 compressedData.Dispose();
                 ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
@@ -2772,34 +2772,62 @@ namespace guideXOS.Misc {
                 return false;
             }
 
-            if (!TryPrepareCursorInflateContext(compressedData, compressedPos, out CursorInflateContext inflateContext)) {
-                if (probeMode == LoadProbeMode.DecompressInflateBitReader) {
-                    ProbeBreadcrumb("PNGDECOMP_BITREADER_BAD");
-                    ProbeBreadcrumb("PNGDECOMP_BITREADER_EXIT");
+            return RunCursorInflateSplitProbeAfterGate(probeMode, compressedData, compressedPos, expectedSize);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool RunCursorInflateSplitProbeAfterGate(
+            LoadProbeMode probeMode,
+            byte[] compressedData,
+            int compressedPos,
+            int expectedSize) {
+            if (probeMode == LoadProbeMode.DecompressInflateBoundary || probeMode == LoadProbeMode.DecompressInflateBitReader) {
+                if (!TryPrepareCursorInflateBoundaryContext(compressedData, compressedPos, out CursorInflateContext boundaryContext)) {
+                    if (probeMode == LoadProbeMode.DecompressInflateBitReader) {
+                        ProbeBreadcrumb("PNGDECOMP_BITREADER_BAD");
+                        ProbeBreadcrumb("PNGDECOMP_BITREADER_EXIT");
+                    }
+                    compressedData.Dispose();
+                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+                    return false;
                 }
+
+                if (probeMode == LoadProbeMode.DecompressInflateBoundary) {
+                    PngDecompressInflateBoundaryProbe();
+                    compressedData.Dispose();
+                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+                    return false;
+                }
+
+                _ = PngDecompressInflateBitReaderProbe(ref boundaryContext);
                 compressedData.Dispose();
                 ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
                 ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
                 return false;
             }
 
-            if (probeMode == LoadProbeMode.DecompressInflateBoundary) {
-                PngDecompressInflateBoundaryProbe();
-            } else if (probeMode == LoadProbeMode.DecompressInflateBitReader) {
-                _ = PngDecompressInflateBitReaderProbe(ref inflateContext);
-            } else if (probeMode == LoadProbeMode.DecompressInflateFirstSymbolDecode) {
-                _ = PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int firstSymbol);
+            if (!TryPrepareCursorInflateContext(compressedData, compressedPos, out CursorInflateContext fullInflateContext)) {
+                compressedData.Dispose();
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressInflateFirstSymbolDecode) {
+                _ = PngDecompressInflateFirstSymbolDecodeProbe(ref fullInflateContext, out int firstSymbol);
                 _ = firstSymbol;
             } else if (probeMode == LoadProbeMode.DecompressInflateLiteralWrite) {
-                if (PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int literalSymbol) && literalSymbol < 256) {
+                if (PngDecompressInflateFirstSymbolDecodeProbe(ref fullInflateContext, out int literalSymbol) && literalSymbol < 256) {
                     _ = PngDecompressInflateLiteralWriteProbe(literalSymbol, expectedSize);
                 }
             } else if (probeMode == LoadProbeMode.DecompressInflateLengthDistance) {
-                if (PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int lengthSymbol) && lengthSymbol > 255) {
-                    _ = PngDecompressInflateLengthDistanceProbe(ref inflateContext, lengthSymbol);
+                if (PngDecompressInflateFirstSymbolDecodeProbe(ref fullInflateContext, out int lengthSymbol) && lengthSymbol > 255) {
+                    _ = PngDecompressInflateLengthDistanceProbe(ref fullInflateContext, lengthSymbol);
                 }
             } else if (probeMode == LoadProbeMode.DecompressInflateOneStep) {
-                _ = PngDecompressInflateOneStepProbe(ref inflateContext, expectedSize, out int oneStepSymbol);
+                _ = PngDecompressInflateOneStepProbe(ref fullInflateContext, expectedSize, out int oneStepSymbol);
                 _ = oneStepSymbol;
             }
 
@@ -2989,6 +3017,50 @@ namespace guideXOS.Misc {
             } else {
                 return false;
             }
+
+            context.Input = input;
+            context.InputLen = inputLen;
+            context.InPos = inPos;
+            context.BitBuf = bitBuf;
+            context.BitCount = bitCount;
+            context.BlockType = blockType;
+            return true;
+        }
+
+        private static bool TryPrepareCursorInflateBoundaryContext(byte[] input, int inputLen, out CursorInflateContext context) {
+            context = new CursorInflateContext();
+
+            if (input == null || inputLen < 2) return false;
+
+            byte cmf = input[0];
+            byte flg = input[1];
+            if ((cmf & 0x0F) != 8 || (flg & 0x20) != 0 || ((cmf * 256 + flg) % 31) != 0) {
+                return false;
+            }
+
+            int inPos = 2;
+            int bitBuf = 0;
+            int bitCount = 0;
+
+            if (bitCount < 1) {
+                if (inPos >= inputLen) return false;
+                bitBuf |= input[inPos++] << bitCount;
+                bitCount += 8;
+            }
+            bool lastBlock = (bitBuf & 1) == 1;
+            _ = lastBlock;
+            bitBuf >>= 1;
+            bitCount--;
+
+            if (bitCount < 2) {
+                if (inPos >= inputLen) return false;
+                bitBuf |= input[inPos++] << bitCount;
+                bitCount += 8;
+            }
+
+            int blockType = bitBuf & 3;
+            bitBuf >>= 2;
+            bitCount -= 2;
 
             context.Input = input;
             context.InputLen = inputLen;
