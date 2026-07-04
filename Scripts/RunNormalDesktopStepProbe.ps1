@@ -21,6 +21,16 @@ param(
     [switch]$CursorSourceExistingRefsProbe,
     [switch]$CursorSourceFallbackProbe,
     [switch]$CursorSourcePngProbe,
+    [switch]$CursorPngNoopLoaderProbe,
+    [switch]$CursorPngBytesNoopProbe,
+    [switch]$CursorPngHeaderHelperProbe,
+    [switch]$CursorPngIhdrHelperProbe,
+    [switch]$CursorPngLoadWrapperProbe,
+    [switch]$CursorPngLoadAfterIhdrProbe,
+    [switch]$CursorPngLoadAfterChunkScanProbe,
+    [switch]$CursorPngLoadAfterIdatAggregationProbe,
+    [switch]$CursorPngLoadAfterDecompressProbe,
+    [switch]$CursorPngLoadAfterImageCreateProbe,
     [switch]$CursorDrawBusyProbe,
     [switch]$CursorDrawBusyDirectProbe,
     [switch]$CursorDrawFallbackProbe,
@@ -82,6 +92,24 @@ function Get-LastMatchingLine {
     $matches = [regex]::Matches($Text, "(?m)^.*$escapedPattern.*$")
     if ($matches.Count -gt 0) {
         return $matches[$matches.Count - 1].Value
+    }
+
+    return $null
+}
+
+function Get-SerialMarkerValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text,
+
+        [Parameter(Mandatory = $true)]
+        [string]$MarkerPrefix
+    )
+
+    $pattern = "(?m)^" + [regex]::Escape($MarkerPrefix) + "=(\d+)$"
+    $match = [regex]::Match($Text, $pattern)
+    if ($match.Success) {
+        return [uint64]$match.Groups[1].Value
     }
 
     return $null
@@ -375,6 +403,16 @@ if ($CursorStaticFirstPixelProbe) { $cursorVariantCount++ }
 if ($CursorSourceExistingRefsProbe) { $cursorVariantCount++ }
 if ($CursorSourceFallbackProbe) { $cursorVariantCount++ }
 if ($CursorSourcePngProbe) { $cursorVariantCount++ }
+if ($CursorPngNoopLoaderProbe) { $cursorVariantCount++ }
+if ($CursorPngBytesNoopProbe) { $cursorVariantCount++ }
+if ($CursorPngHeaderHelperProbe) { $cursorVariantCount++ }
+if ($CursorPngIhdrHelperProbe) { $cursorVariantCount++ }
+if ($CursorPngLoadWrapperProbe) { $cursorVariantCount++ }
+if ($CursorPngLoadAfterIhdrProbe) { $cursorVariantCount++ }
+if ($CursorPngLoadAfterChunkScanProbe) { $cursorVariantCount++ }
+if ($CursorPngLoadAfterIdatAggregationProbe) { $cursorVariantCount++ }
+if ($CursorPngLoadAfterDecompressProbe) { $cursorVariantCount++ }
+if ($CursorPngLoadAfterImageCreateProbe) { $cursorVariantCount++ }
 if ($CursorDrawBusyProbe) { $cursorVariantCount++ }
 if ($CursorDrawBusyDirectProbe) { $cursorVariantCount++ }
 if ($CursorDrawFallbackProbe) { $cursorVariantCount++ }
@@ -402,6 +440,26 @@ $cursorBodyVariant = if ($CursorEmptyBodyProbe) {
     'SourceFallback'
 } elseif ($CursorSourcePngProbe) {
     'SourcePng'
+} elseif ($CursorPngNoopLoaderProbe) {
+    'PngNoopLoader'
+} elseif ($CursorPngBytesNoopProbe) {
+    'PngBytesNoop'
+} elseif ($CursorPngHeaderHelperProbe) {
+    'PngHeaderHelper'
+} elseif ($CursorPngIhdrHelperProbe) {
+    'PngIhdrHelper'
+} elseif ($CursorPngLoadWrapperProbe) {
+    'PngLoadWrapper'
+} elseif ($CursorPngLoadAfterIhdrProbe) {
+    'PngLoadAfterIhdr'
+} elseif ($CursorPngLoadAfterChunkScanProbe) {
+    'PngLoadAfterChunkScan'
+} elseif ($CursorPngLoadAfterIdatAggregationProbe) {
+    'PngLoadAfterIdatAggregation'
+} elseif ($CursorPngLoadAfterDecompressProbe) {
+    'PngLoadAfterDecompress'
+} elseif ($CursorPngLoadAfterImageCreateProbe) {
+    'PngLoadAfterImageCreate'
 } elseif ($CursorDrawBusyProbe) {
     'DrawBusy'
 } elseif ($CursorDrawBusyDirectProbe) {
@@ -457,7 +515,7 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;' `
         -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = $step13CursorPlaceholder;" `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER'
-    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe -or $CursorDrawBusyProbe -or $CursorDrawBusyDirectProbe -or $CursorDrawFallbackProbe
+    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe -or $CursorDrawBusyProbe -or $CursorDrawBusyDirectProbe -or $CursorDrawFallbackProbe
     $step13RealCursorImageRendering = if ($step13RealCursorImageRenderingEnabled) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;' `
@@ -528,6 +586,85 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_SOURCE_PNG = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_SOURCE_PNG = $cursorSourcePngProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_SOURCE_PNG'
+    $cursorPngNoopLoaderProbeValue = if ($CursorPngNoopLoaderProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_NOOP_LOADER = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_NOOP_LOADER = $cursorPngNoopLoaderProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_NOOP_LOADER'
+    $cursorPngBytesNoopProbeValue = if ($CursorPngBytesNoopProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_BYTES_NOOP = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_BYTES_NOOP = $cursorPngBytesNoopProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_BYTES_NOOP'
+    $cursorPngHeaderHelperProbeValue = if ($CursorPngHeaderHelperProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_HEADER_HELPER = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_HEADER_HELPER = $cursorPngHeaderHelperProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_HEADER_HELPER'
+    $cursorPngIhdrHelperProbeValue = if ($CursorPngIhdrHelperProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_IHDR_HELPER = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_IHDR_HELPER = $cursorPngIhdrHelperProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_IHDR_HELPER'
+    $cursorPngLoadWrapperProbeValue = if ($CursorPngLoadWrapperProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER = $cursorPngLoadWrapperProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER'
+    $cursorPngLoadAfterIhdrProbeValue = if ($CursorPngLoadAfterIhdrProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR = $cursorPngLoadAfterIhdrProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR'
+    $cursorPngLoadAfterChunkScanProbeValue = if ($CursorPngLoadAfterChunkScanProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN = $cursorPngLoadAfterChunkScanProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN'
+    $cursorPngLoadAfterIdatAggregationProbeValue = if ($CursorPngLoadAfterIdatAggregationProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION = $cursorPngLoadAfterIdatAggregationProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION'
+    $cursorPngLoadAfterDecompressProbeValue = if ($CursorPngLoadAfterDecompressProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS = $cursorPngLoadAfterDecompressProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS'
+    $cursorPngLoadAfterImageCreateProbeValue = if ($CursorPngLoadAfterImageCreateProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE = $cursorPngLoadAfterImageCreateProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE'
+    $pngProbeEnabled = $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe
+    $pngLoaderVariantLabel = if ($CursorPngLoadAfterIhdrProbe) {
+        'PNG-F'
+    } elseif ($CursorPngLoadAfterChunkScanProbe) {
+        'PNG-G'
+    } elseif ($CursorPngLoadAfterIdatAggregationProbe) {
+        'PNG-H'
+    } elseif ($CursorPngLoadAfterDecompressProbe) {
+        'PNG-I'
+    } elseif ($CursorPngLoadAfterImageCreateProbe) {
+        'PNG-J'
+    } elseif ($CursorPngLoadWrapperProbe -or $CursorSourcePngProbe) {
+        'PNG-LOAD-WRAPPER'
+    } elseif ($CursorPngNoopLoaderProbe) {
+        'PNG-NOOP'
+    } elseif ($CursorPngBytesNoopProbe) {
+        'PNG-BYTES-NOOP'
+    } elseif ($CursorPngHeaderHelperProbe) {
+        'PNG-HEADER'
+    } elseif ($CursorPngIhdrHelperProbe) {
+        'PNG-IHDR'
+    } else {
+        'NONE'
+    }
+    $pngStep8BypassValue = if ($pngProbeEnabled) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'internal const bool NORMAL_DESKTOP_UEFI_PROBE_BYPASS_STEP8_DRAWIMAGE = false;' `
+        -New "internal const bool NORMAL_DESKTOP_UEFI_PROBE_BYPASS_STEP8_DRAWIMAGE = $pngStep8BypassValue;" `
+        -Label 'NORMAL_DESKTOP_UEFI_PROBE_BYPASS_STEP8_DRAWIMAGE'
     $safeCursorImageFallbackValue = if ($SafeCursorImageFallback) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_SAFE_CURSOR_IMAGE_FALLBACK = false;' `
@@ -826,13 +963,86 @@ try {
     $cursorPngAfterDiskCheckPresent = $serialText.Contains('CURSOR_PNG_AFTER_DISK_CHECK')
     $cursorPngBeforeFileLookupPresent = $serialText.Contains('CURSOR_PNG_BEFORE_FILE_LOOKUP')
     $cursorPngAfterFileLookupPresent = $serialText.Contains('CURSOR_PNG_AFTER_FILE_LOOKUP')
-    $cursorPngBeforeLoadPngSafePresent = $serialText.Contains('CURSOR_PNG_BEFORE_LOADPNGSAFE')
-    $cursorPngAfterLoadPngSafePresent = $serialText.Contains('CURSOR_PNG_AFTER_LOADPNGSAFE')
+    $cursorPngBytesLength = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'CURSOR_PNG_BYTES_LENGTH'
+    $cursorPngHeaderHelperEnterPresent = $serialText.Contains('CURSOR_PNG_HEADER_HELPER_ENTER')
+    $cursorPngHeaderHelperBadPresent = $serialText.Contains('CURSOR_PNG_HEADER_HELPER_BAD')
+    $cursorPngHeaderHelperOkPresent = $serialText.Contains('CURSOR_PNG_HEADER_HELPER_OK')
+    $cursorPngHeaderHelperExitPresent = $serialText.Contains('CURSOR_PNG_HEADER_HELPER_EXIT')
+    $cursorPngNoopLoaderEnterPresent = $serialText.Contains('CURSOR_PNG_NOOP_LOADER_ENTER')
+    $cursorPngNoopLoaderExitPresent = $serialText.Contains('CURSOR_PNG_NOOP_LOADER_EXIT')
+    $cursorPngBytesNoopEnterPresent = $serialText.Contains('CURSOR_PNG_BYTES_NOOP_ENTER')
+    $cursorPngBytesNoopNullPresent = $serialText.Contains('CURSOR_PNG_BYTES_NOOP_NULL')
+    $cursorPngBytesNoopOkPresent = $serialText.Contains('CURSOR_PNG_BYTES_NOOP_OK')
+    $cursorPngBytesNoopExitPresent = $serialText.Contains('CURSOR_PNG_BYTES_NOOP_EXIT')
+    $cursorPngIhdrHelperEnterPresent = $serialText.Contains('CURSOR_PNG_IHDR_HELPER_ENTER')
+    $cursorPngIhdrHelperBadPresent = $serialText.Contains('CURSOR_PNG_IHDR_HELPER_BAD')
+    $cursorPngIhdrHelperOkPresent = $serialText.Contains('CURSOR_PNG_IHDR_HELPER_OK')
+    $cursorPngIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'CURSOR_PNG_IHDR_WIDTH'
+    $cursorPngIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'CURSOR_PNG_IHDR_HEIGHT'
+    $cursorPngIhdrHelperExitPresent = $serialText.Contains('CURSOR_PNG_IHDR_HELPER_EXIT')
+    $cursorPngLoadWrapperEnterPresent = $serialText.Contains('CURSOR_PNG_LOAD_WRAPPER_ENTER')
+    $cursorPngLoadWrapperBeforeCallPresent = $serialText.Contains('CURSOR_PNG_LOAD_WRAPPER_BEFORE_CALL')
+    $cursorPngLoadWrapperAfterCallPresent = $serialText.Contains('CURSOR_PNG_LOAD_WRAPPER_AFTER_CALL')
+    $cursorPngLoadWrapperExitPresent = $serialText.Contains('CURSOR_PNG_LOAD_WRAPPER_EXIT')
+    $cursorPngLoadAfterIhdrPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR=1')
+    $cursorPngLoadAfterChunkScanPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN=1')
+    $cursorPngLoadAfterIdatAggregationPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION=1')
+    $cursorPngLoadAfterDecompressPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS=1')
+    $cursorPngLoadAfterImageCreatePresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE=1')
     $cursorPngNullPresent = $serialText.Contains('CURSOR_PNG_NULL')
     $cursorPngOkPresent = $serialText.Contains('CURSOR_PNG_OK')
     $cursorPngDimsEnterPresent = $serialText.Contains('CURSOR_PNG_DIMS_ENTER')
     $cursorPngDimsExitPresent = $serialText.Contains('CURSOR_PNG_DIMS_EXIT')
     $cursorPngProbeExitPresent = $serialText.Contains('CURSOR_PNG_PROBE_EXIT')
+    $loadPngSafeEnterPresent = $serialText.Contains('LOADPNGSAFE_ENTER')
+    $loadPngSafeReadFailPresent = $serialText.Contains('LOADPNGSAFE_READ_FAIL')
+    $loadPngSafeReadNullPresent = $serialText.Contains('LOADPNGSAFE_READ_NULL')
+    $loadPngSafeReadOkPresent = $serialText.Contains('LOADPNGSAFE_READ_OK')
+    $loadPngSafeDataTooSmallPresent = $serialText.Contains('LOADPNGSAFE_DATA_TOO_SMALL')
+    $loadPngSafeBeforePngLoaderLoadPresent = $serialText.Contains('LOADPNGSAFE_BEFORE_PNGLOADER_LOAD')
+    $loadPngSafeOkPresent = $serialText.Contains('LOADPNGSAFE_OK')
+    $loadPngSafeNullPresent = $serialText.Contains('LOADPNGSAFE_NULL')
+    $loadPngSafeExitPresent = $serialText.Contains('LOADPNGSAFE_EXIT')
+    $pngLoaderEnterPresent = $serialText.Contains('PNGLOADER_ENTER')
+    $pngLoaderBytesNullPresent = $serialText.Contains('PNGLOADER_BYTES_NULL')
+    $pngLoaderBytesOkPresent = $serialText.Contains('PNGLOADER_BYTES_OK')
+    $pngLoaderHeaderEnterPresent = $serialText.Contains('PNGLOADER_HEADER_ENTER')
+    $pngLoaderHeaderOkPresent = $serialText.Contains('PNGLOADER_HEADER_OK')
+    $pngLoaderHeaderBadPresent = $serialText.Contains('PNGLOADER_HEADER_BAD')
+    $pngLoaderIhdrEnterPresent = $serialText.Contains('PNGLOADER_IHDR_ENTER')
+    $pngLoaderIhdrOkPresent = $serialText.Contains('PNGLOADER_IHDR_OK')
+    $pngLoaderIhdrBadPresent = $serialText.Contains('PNGLOADER_IHDR_BAD')
+    $pngLoaderIhdrDimsPresent = $serialText.Contains('PNGLOADER_IHDR_DIMS')
+    $pngLoaderIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IHDR_WIDTH'
+    $pngLoaderIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IHDR_HEIGHT'
+    $pngLoaderIhdrBitDepth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IHDR_BIT_DEPTH'
+    $pngLoaderIhdrColorType = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IHDR_COLOR_TYPE'
+    $pngLoaderChunkScanEnterPresent = $serialText.Contains('PNGLOADER_CHUNK_SCAN_ENTER')
+    $pngLoaderChunkTypeIhdrPresent = $serialText.Contains('PNGLOADER_CHUNK_TYPE_IHDR')
+    $pngLoaderChunkTypeIdatPresent = $serialText.Contains('PNGLOADER_CHUNK_TYPE_IDAT')
+    $pngLoaderChunkTypeIendPresent = $serialText.Contains('PNGLOADER_CHUNK_TYPE_IEND')
+    $pngLoaderChunkScanExitPresent = $serialText.Contains('PNGLOADER_CHUNK_SCAN_EXIT')
+    $pngLoaderIdatChunkCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IDAT_CHUNK_COUNT'
+    $pngLoaderIdatCompressedBytes = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IDAT_COMPRESSED_BYTES'
+    $pngLoaderIdatBytesEnterPresent = $serialText.Contains('PNGLOADER_IDAT_BYTES_ENTER')
+    $pngLoaderIdatBytesOkPresent = $serialText.Contains('PNGLOADER_IDAT_BYTES_OK')
+    $pngLoaderIdatBytesEmptyPresent = $serialText.Contains('PNGLOADER_IDAT_BYTES_EMPTY')
+    $pngLoaderDecompressEnterPresent = $serialText.Contains('PNGLOADER_DECOMPRESS_ENTER')
+    $pngLoaderDecompressExitPresent = $serialText.Contains('PNGLOADER_DECOMPRESS_EXIT')
+    $pngLoaderDecompressNullPresent = $serialText.Contains('PNGLOADER_DECOMPRESS_NULL')
+    $pngLoaderDecompressOkPresent = $serialText.Contains('PNGLOADER_DECOMPRESS_OK')
+    $pngLoaderDecompressedBytes = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_DECOMPRESSED_BYTES'
+    $pngLoaderImageCreateEnterPresent = $serialText.Contains('PNGLOADER_IMAGE_CREATE_ENTER')
+    $pngLoaderImageCreateExitPresent = $serialText.Contains('PNGLOADER_IMAGE_CREATE_EXIT')
+    $pngLoaderImageNullPresent = $serialText.Contains('PNGLOADER_IMAGE_NULL')
+    $pngLoaderImageOkPresent = $serialText.Contains('PNGLOADER_IMAGE_OK')
+    $pngLoaderExitPresent = $serialText.Contains('PNGLOADER_EXIT')
+    $cursorValidateEnterPresent = $serialText.Contains('CURSOR_VALIDATE_ENTER')
+    $cursorValidateExitPresent = $serialText.Contains('CURSOR_VALIDATE_EXIT')
+    $cursorValidateNullPresent = $serialText.Contains('CURSOR_VALIDATE_NULL')
+    $cursorValidateBadDimsPresent = $serialText.Contains('CURSOR_VALIDATE_BAD_DIMS')
+    $cursorValidateBadRawDataPresent = $serialText.Contains('CURSOR_VALIDATE_BAD_RAWDATA')
+    $cursorValidateOkPresent = $serialText.Contains('CURSOR_VALIDATE_OK')
     $cursorImgBodyEnterPresent = $serialText.Contains('CURSOR_IMG_BODY_ENTER')
     $cursorImgBeforeFramebufferGraphicsPresent = $serialText.Contains('CURSOR_IMG_BEFORE_FRAMEBUFFER_GRAPHICS')
     $cursorImgAfterFramebufferGraphicsPresent = $serialText.Contains('CURSOR_IMG_AFTER_FRAMEBUFFER_GRAPHICS')
@@ -1006,8 +1216,27 @@ try {
         'CURSOR_PNG_AFTER_DISK_CHECK'
         'CURSOR_PNG_BEFORE_FILE_LOOKUP'
         'CURSOR_PNG_AFTER_FILE_LOOKUP'
-        'CURSOR_PNG_BEFORE_LOADPNGSAFE'
-        'CURSOR_PNG_AFTER_LOADPNGSAFE'
+        'CURSOR_PNG_BYTES_LENGTH='
+        'CURSOR_PNG_HEADER_HELPER_ENTER'
+        'CURSOR_PNG_HEADER_HELPER_BAD'
+        'CURSOR_PNG_HEADER_HELPER_OK'
+        'CURSOR_PNG_HEADER_HELPER_EXIT'
+        'CURSOR_PNG_NOOP_LOADER_ENTER'
+        'CURSOR_PNG_NOOP_LOADER_EXIT'
+        'CURSOR_PNG_BYTES_NOOP_ENTER'
+        'CURSOR_PNG_BYTES_NOOP_NULL'
+        'CURSOR_PNG_BYTES_NOOP_OK'
+        'CURSOR_PNG_BYTES_NOOP_EXIT'
+        'CURSOR_PNG_IHDR_HELPER_ENTER'
+        'CURSOR_PNG_IHDR_HELPER_BAD'
+        'CURSOR_PNG_IHDR_HELPER_OK'
+        'CURSOR_PNG_IHDR_WIDTH='
+        'CURSOR_PNG_IHDR_HEIGHT='
+        'CURSOR_PNG_IHDR_HELPER_EXIT'
+        'CURSOR_PNG_LOAD_WRAPPER_ENTER'
+        'CURSOR_PNG_LOAD_WRAPPER_BEFORE_CALL'
+        'CURSOR_PNG_LOAD_WRAPPER_AFTER_CALL'
+        'CURSOR_PNG_LOAD_WRAPPER_EXIT'
         'CURSOR_PNG_NULL'
         'CURSOR_PNG_OK'
         'CURSOR_PNG_DIMS_ENTER'
@@ -1018,6 +1247,58 @@ try {
     foreach ($marker in $cursorPngMarkerSequence) {
         if ($serialText.Contains($marker)) {
             $cursorPngDeepestMarker = $marker
+        }
+    }
+    $pngLoaderMarkerSequence = @(
+        'PNGLOADER_ENTER'
+        'PNGLOADER_BYTES_NULL'
+        'PNGLOADER_BYTES_OK'
+        'PNGLOADER_HEADER_ENTER'
+        'PNGLOADER_HEADER_BAD'
+        'PNGLOADER_HEADER_OK'
+        'PNGLOADER_IHDR_ENTER'
+        'PNGLOADER_IHDR_BAD'
+        'PNGLOADER_IHDR_OK'
+        'PNGLOADER_IHDR_DIMS'
+        'PNGLOADER_CHUNK_SCAN_ENTER'
+        'PNGLOADER_CHUNK_TYPE_IHDR'
+        'PNGLOADER_CHUNK_TYPE_IDAT'
+        'PNGLOADER_CHUNK_TYPE_IEND'
+        'PNGLOADER_CHUNK_SCAN_EXIT'
+        'PNGLOADER_IDAT_BYTES_ENTER'
+        'PNGLOADER_IDAT_BYTES_EMPTY'
+        'PNGLOADER_IDAT_BYTES_OK'
+        'PNGLOADER_DECOMPRESS_ENTER'
+        'PNGLOADER_DECOMPRESS_NULL'
+        'PNGLOADER_DECOMPRESS_OK'
+        'PNGLOADER_DECOMPRESS_EXIT'
+        'PNGLOADER_IMAGE_CREATE_ENTER'
+        'PNGLOADER_IMAGE_NULL'
+        'PNGLOADER_IMAGE_OK'
+        'PNGLOADER_IMAGE_CREATE_EXIT'
+        'PNGLOADER_EXIT'
+    )
+    $pngLoaderDeepestMarker = $null
+    foreach ($marker in $pngLoaderMarkerSequence) {
+        if ($serialText.Contains($marker)) {
+            $pngLoaderDeepestMarker = $marker
+        }
+    }
+    $loadPngSafeMarkerSequence = @(
+        'LOADPNGSAFE_ENTER'
+        'LOADPNGSAFE_READ_FAIL'
+        'LOADPNGSAFE_READ_NULL'
+        'LOADPNGSAFE_READ_OK'
+        'LOADPNGSAFE_DATA_TOO_SMALL'
+        'LOADPNGSAFE_BEFORE_PNGLOADER_LOAD'
+        'LOADPNGSAFE_OK'
+        'LOADPNGSAFE_NULL'
+        'LOADPNGSAFE_EXIT'
+    )
+    $loadPngSafeDeepestMarker = $null
+    foreach ($marker in $loadPngSafeMarkerSequence) {
+        if ($serialText.Contains($marker)) {
+            $loadPngSafeDeepestMarker = $marker
         }
     }
     $cursorImgMarkerSequence = @(
@@ -1179,6 +1460,7 @@ try {
         Write-Host "[probe] Last step enter: $lastEnter" -ForegroundColor Green
         Write-Host "[probe] Matching exit present: $matchingExitPresent" -ForegroundColor Green
         Write-Host "[probe] Step 8 safe placeholders enabled: $step8SafePlaceholdersEnabled" -ForegroundColor Green
+        Write-Host "[probe] Step 8 PNG bypass enabled: $pngProbeEnabled" -ForegroundColor Green
         Write-Host "[probe] Step 10 red placeholder enabled: $step10RedPlaceholderEnabled" -ForegroundColor Green
         Write-Host "[probe] Step 10 green placeholder enabled: $step10GreenPlaceholderEnabled" -ForegroundColor Green
         Write-Host "[probe] Step 10 white placeholder enabled: $step10WhitePlaceholderEnabled" -ForegroundColor Green
@@ -1248,19 +1530,89 @@ try {
         Write-Host "[probe] NORM_STEP_013_CURSOR_IMG_ENTER present: $step13CursorImageEnterPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_CURSOR_IMG_EXIT present: $step13CursorImageExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_EXIT present: $step13ExitPresent" -ForegroundColor Green
+        Write-Host "[probe] Enabled PNG variant: $pngLoaderVariantLabel" -ForegroundColor Green
         Write-Host "[probe] CURSOR_PNG_PROBE_ENTER present: $cursorPngProbeEnterPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_PNG_BEFORE_DISK_CHECK present: $cursorPngBeforeDiskCheckPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_PNG_AFTER_DISK_CHECK present: $cursorPngAfterDiskCheckPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_PNG_BEFORE_FILE_LOOKUP present: $cursorPngBeforeFileLookupPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_PNG_AFTER_FILE_LOOKUP present: $cursorPngAfterFileLookupPresent" -ForegroundColor Green
-        Write-Host "[probe] CURSOR_PNG_BEFORE_LOADPNGSAFE present: $cursorPngBeforeLoadPngSafePresent" -ForegroundColor Green
-        Write-Host "[probe] CURSOR_PNG_AFTER_LOADPNGSAFE present: $cursorPngAfterLoadPngSafePresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_BYTES_LENGTH: $cursorPngBytesLength" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_HEADER_HELPER_ENTER present: $cursorPngHeaderHelperEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_HEADER_HELPER_OK present: $cursorPngHeaderHelperOkPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_HEADER_HELPER_BAD present: $cursorPngHeaderHelperBadPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_HEADER_HELPER_EXIT present: $cursorPngHeaderHelperExitPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_NOOP_LOADER_ENTER present: $cursorPngNoopLoaderEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_NOOP_LOADER_EXIT present: $cursorPngNoopLoaderExitPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_BYTES_NOOP_ENTER present: $cursorPngBytesNoopEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_BYTES_NOOP_NULL present: $cursorPngBytesNoopNullPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_BYTES_NOOP_OK present: $cursorPngBytesNoopOkPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_BYTES_NOOP_EXIT present: $cursorPngBytesNoopExitPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_IHDR_HELPER_ENTER present: $cursorPngIhdrHelperEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_IHDR_HELPER_OK present: $cursorPngIhdrHelperOkPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_IHDR_HELPER_BAD present: $cursorPngIhdrHelperBadPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_IHDR_WIDTH: $cursorPngIhdrWidth" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_IHDR_HEIGHT: $cursorPngIhdrHeight" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_IHDR_HELPER_EXIT present: $cursorPngIhdrHelperExitPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_LOAD_WRAPPER_ENTER present: $cursorPngLoadWrapperEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_LOAD_WRAPPER_BEFORE_CALL present: $cursorPngLoadWrapperBeforeCallPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_LOAD_WRAPPER_AFTER_CALL present: $cursorPngLoadWrapperAfterCallPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_PNG_LOAD_WRAPPER_EXIT present: $cursorPngLoadWrapperExitPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_PNG_NULL present: $cursorPngNullPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_PNG_OK present: $cursorPngOkPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_PNG_DIMS_ENTER present: $cursorPngDimsEnterPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_PNG_DIMS_EXIT present: $cursorPngDimsExitPresent" -ForegroundColor Green
         Write-Host "[probe] CURSOR_PNG_PROBE_EXIT present: $cursorPngProbeExitPresent" -ForegroundColor Green
         Write-Host "[probe] Deepest PNG marker reached: $cursorPngDeepestMarker" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_ENTER present: $pngLoaderEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_BYTES_NULL present: $pngLoaderBytesNullPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_BYTES_OK present: $pngLoaderBytesOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_HEADER_ENTER present: $pngLoaderHeaderEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_HEADER_OK present: $pngLoaderHeaderOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_HEADER_BAD present: $pngLoaderHeaderBadPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IHDR_ENTER present: $pngLoaderIhdrEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IHDR_OK present: $pngLoaderIhdrOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IHDR_BAD present: $pngLoaderIhdrBadPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IHDR_DIMS present: $pngLoaderIhdrDimsPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IHDR_WIDTH: $pngLoaderIhdrWidth" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IHDR_HEIGHT: $pngLoaderIhdrHeight" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IHDR_BIT_DEPTH: $pngLoaderIhdrBitDepth" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IHDR_COLOR_TYPE: $pngLoaderIhdrColorType" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_CHUNK_SCAN_ENTER present: $pngLoaderChunkScanEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_CHUNK_TYPE_IHDR present: $pngLoaderChunkTypeIhdrPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_CHUNK_TYPE_IDAT present: $pngLoaderChunkTypeIdatPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_CHUNK_TYPE_IEND present: $pngLoaderChunkTypeIendPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_CHUNK_SCAN_EXIT present: $pngLoaderChunkScanExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IDAT_CHUNK_COUNT: $pngLoaderIdatChunkCount" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IDAT_COMPRESSED_BYTES: $pngLoaderIdatCompressedBytes" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IDAT_BYTES_ENTER present: $pngLoaderIdatBytesEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IDAT_BYTES_OK present: $pngLoaderIdatBytesOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IDAT_BYTES_EMPTY present: $pngLoaderIdatBytesEmptyPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_DECOMPRESS_ENTER present: $pngLoaderDecompressEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_DECOMPRESS_OK present: $pngLoaderDecompressOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_DECOMPRESS_NULL present: $pngLoaderDecompressNullPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_DECOMPRESS_EXIT present: $pngLoaderDecompressExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_DECOMPRESSED_BYTES: $pngLoaderDecompressedBytes" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IMAGE_CREATE_ENTER present: $pngLoaderImageCreateEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IMAGE_OK present: $pngLoaderImageOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IMAGE_NULL present: $pngLoaderImageNullPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_IMAGE_CREATE_EXIT present: $pngLoaderImageCreateExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_EXIT present: $pngLoaderExitPresent" -ForegroundColor Green
+        Write-Host "[probe] Deepest LOADPNGSAFE marker reached: $loadPngSafeDeepestMarker" -ForegroundColor Green
+        Write-Host "[probe] LOADPNGSAFE_ENTER present: $loadPngSafeEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] LOADPNGSAFE_READ_FAIL present: $loadPngSafeReadFailPresent" -ForegroundColor Green
+        Write-Host "[probe] LOADPNGSAFE_READ_NULL present: $loadPngSafeReadNullPresent" -ForegroundColor Green
+        Write-Host "[probe] LOADPNGSAFE_READ_OK present: $loadPngSafeReadOkPresent" -ForegroundColor Green
+        Write-Host "[probe] LOADPNGSAFE_DATA_TOO_SMALL present: $loadPngSafeDataTooSmallPresent" -ForegroundColor Green
+        Write-Host "[probe] LOADPNGSAFE_BEFORE_PNGLOADER_LOAD present: $loadPngSafeBeforePngLoaderLoadPresent" -ForegroundColor Green
+        Write-Host "[probe] LOADPNGSAFE_OK present: $loadPngSafeOkPresent" -ForegroundColor Green
+        Write-Host "[probe] LOADPNGSAFE_NULL present: $loadPngSafeNullPresent" -ForegroundColor Green
+        Write-Host "[probe] LOADPNGSAFE_EXIT present: $loadPngSafeExitPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_VALIDATE_ENTER present: $cursorValidateEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_VALIDATE_OK present: $cursorValidateOkPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_VALIDATE_NULL present: $cursorValidateNullPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_VALIDATE_BAD_DIMS present: $cursorValidateBadDimsPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_VALIDATE_BAD_RAWDATA present: $cursorValidateBadRawDataPresent" -ForegroundColor Green
+        Write-Host "[probe] CURSOR_VALIDATE_EXIT present: $cursorValidateExitPresent" -ForegroundColor Green
         if ($cursorPngDims) {
             Write-Host "[probe] CURSOR_PNG width: $($cursorPngDims.Width)" -ForegroundColor Green
             Write-Host "[probe] CURSOR_PNG height: $($cursorPngDims.Height)" -ForegroundColor Green
@@ -1346,12 +1698,14 @@ try {
             "STEP10_GREEN_MODE=$Step10GreenMode"
             "SERIAL_LOG=$serialLog"
             "STEP8_SAFE_PLACEHOLDERS_ENABLED=$step8SafePlaceholdersEnabled"
+            "STEP8_PNG_BYPASS_ENABLED=$pngProbeEnabled"
             "STEP11_SKIP_WINDOW_TRAVERSAL_ENABLED=$step11SkipWindowTraversalEnabled"
             "STEP12_SAFE_FONT_PLACEHOLDER_ENABLED=$step12SafeFontPlaceholderEnabled"
             "STEP13_SKIP_CURSOR_DRAW_ENABLED=$step13SkipCursorDrawEnabled"
             "STEP13_CURSOR_PLACEHOLDER_ENABLED=$step13CursorPlaceholderEnabled"
             "STEP13_REAL_CURSOR_IMAGE_RENDERING_ENABLED=$step13RealCursorImageRenderingEnabled"
             "CURSOR_BODY_VARIANT=$cursorBodyVariant"
+            "PNG_VARIANT=$pngLoaderVariantLabel"
             "GUI_VISIBLE_ENABLED=$GuiVisible"
             "GUI_SCREENSHOT_PATH=$GuiScreenshotPath"
             "GUI_SCREENSHOT_CAPTURED=$guiScreenshotCaptured"
@@ -1429,14 +1783,84 @@ try {
             "CURSOR_PNG_AFTER_DISK_CHECK_PRESENT=$cursorPngAfterDiskCheckPresent"
             "CURSOR_PNG_BEFORE_FILE_LOOKUP_PRESENT=$cursorPngBeforeFileLookupPresent"
             "CURSOR_PNG_AFTER_FILE_LOOKUP_PRESENT=$cursorPngAfterFileLookupPresent"
-            "CURSOR_PNG_BEFORE_LOADPNGSAFE_PRESENT=$cursorPngBeforeLoadPngSafePresent"
-            "CURSOR_PNG_AFTER_LOADPNGSAFE_PRESENT=$cursorPngAfterLoadPngSafePresent"
+            "CURSOR_PNG_BYTES_LENGTH=$cursorPngBytesLength"
+            "CURSOR_PNG_HEADER_HELPER_ENTER_PRESENT=$cursorPngHeaderHelperEnterPresent"
+            "CURSOR_PNG_HEADER_HELPER_BAD_PRESENT=$cursorPngHeaderHelperBadPresent"
+            "CURSOR_PNG_HEADER_HELPER_OK_PRESENT=$cursorPngHeaderHelperOkPresent"
+            "CURSOR_PNG_HEADER_HELPER_EXIT_PRESENT=$cursorPngHeaderHelperExitPresent"
+            "CURSOR_PNG_NOOP_LOADER_ENTER_PRESENT=$cursorPngNoopLoaderEnterPresent"
+            "CURSOR_PNG_NOOP_LOADER_EXIT_PRESENT=$cursorPngNoopLoaderExitPresent"
+            "CURSOR_PNG_BYTES_NOOP_ENTER_PRESENT=$cursorPngBytesNoopEnterPresent"
+            "CURSOR_PNG_BYTES_NOOP_NULL_PRESENT=$cursorPngBytesNoopNullPresent"
+            "CURSOR_PNG_BYTES_NOOP_OK_PRESENT=$cursorPngBytesNoopOkPresent"
+            "CURSOR_PNG_BYTES_NOOP_EXIT_PRESENT=$cursorPngBytesNoopExitPresent"
+            "CURSOR_PNG_IHDR_HELPER_ENTER_PRESENT=$cursorPngIhdrHelperEnterPresent"
+            "CURSOR_PNG_IHDR_HELPER_BAD_PRESENT=$cursorPngIhdrHelperBadPresent"
+            "CURSOR_PNG_IHDR_HELPER_OK_PRESENT=$cursorPngIhdrHelperOkPresent"
+            "CURSOR_PNG_IHDR_WIDTH=$cursorPngIhdrWidth"
+            "CURSOR_PNG_IHDR_HEIGHT=$cursorPngIhdrHeight"
+            "CURSOR_PNG_IHDR_HELPER_EXIT_PRESENT=$cursorPngIhdrHelperExitPresent"
+            "CURSOR_PNG_LOAD_WRAPPER_ENTER_PRESENT=$cursorPngLoadWrapperEnterPresent"
+            "CURSOR_PNG_LOAD_WRAPPER_BEFORE_CALL_PRESENT=$cursorPngLoadWrapperBeforeCallPresent"
+            "CURSOR_PNG_LOAD_WRAPPER_AFTER_CALL_PRESENT=$cursorPngLoadWrapperAfterCallPresent"
+            "CURSOR_PNG_LOAD_WRAPPER_EXIT_PRESENT=$cursorPngLoadWrapperExitPresent"
             "CURSOR_PNG_NULL_PRESENT=$cursorPngNullPresent"
             "CURSOR_PNG_OK_PRESENT=$cursorPngOkPresent"
             "CURSOR_PNG_DIMS_ENTER_PRESENT=$cursorPngDimsEnterPresent"
             "CURSOR_PNG_DIMS_EXIT_PRESENT=$cursorPngDimsExitPresent"
             "CURSOR_PNG_PROBE_EXIT_PRESENT=$cursorPngProbeExitPresent"
             "CURSOR_PNG_DEEPEST_MARKER=$cursorPngDeepestMarker"
+            "ENABLED_PNG_VARIANT=$pngLoaderVariantLabel"
+            "PNGLOADER_ENTER_PRESENT=$pngLoaderEnterPresent"
+            "PNGLOADER_BYTES_NULL_PRESENT=$pngLoaderBytesNullPresent"
+            "PNGLOADER_BYTES_OK_PRESENT=$pngLoaderBytesOkPresent"
+            "PNGLOADER_HEADER_ENTER_PRESENT=$pngLoaderHeaderEnterPresent"
+            "PNGLOADER_HEADER_OK_PRESENT=$pngLoaderHeaderOkPresent"
+            "PNGLOADER_HEADER_BAD_PRESENT=$pngLoaderHeaderBadPresent"
+            "PNGLOADER_IHDR_ENTER_PRESENT=$pngLoaderIhdrEnterPresent"
+            "PNGLOADER_IHDR_OK_PRESENT=$pngLoaderIhdrOkPresent"
+            "PNGLOADER_IHDR_BAD_PRESENT=$pngLoaderIhdrBadPresent"
+            "PNGLOADER_IHDR_DIMS_PRESENT=$pngLoaderIhdrDimsPresent"
+            "PNGLOADER_IHDR_WIDTH=$pngLoaderIhdrWidth"
+            "PNGLOADER_IHDR_HEIGHT=$pngLoaderIhdrHeight"
+            "PNGLOADER_IHDR_BIT_DEPTH=$pngLoaderIhdrBitDepth"
+            "PNGLOADER_IHDR_COLOR_TYPE=$pngLoaderIhdrColorType"
+            "PNGLOADER_CHUNK_SCAN_ENTER_PRESENT=$pngLoaderChunkScanEnterPresent"
+            "PNGLOADER_CHUNK_TYPE_IHDR_PRESENT=$pngLoaderChunkTypeIhdrPresent"
+            "PNGLOADER_CHUNK_TYPE_IDAT_PRESENT=$pngLoaderChunkTypeIdatPresent"
+            "PNGLOADER_CHUNK_TYPE_IEND_PRESENT=$pngLoaderChunkTypeIendPresent"
+            "PNGLOADER_CHUNK_SCAN_EXIT_PRESENT=$pngLoaderChunkScanExitPresent"
+            "PNGLOADER_IDAT_CHUNK_COUNT=$pngLoaderIdatChunkCount"
+            "PNGLOADER_IDAT_COMPRESSED_BYTES=$pngLoaderIdatCompressedBytes"
+            "PNGLOADER_IDAT_BYTES_ENTER_PRESENT=$pngLoaderIdatBytesEnterPresent"
+            "PNGLOADER_IDAT_BYTES_OK_PRESENT=$pngLoaderIdatBytesOkPresent"
+            "PNGLOADER_IDAT_BYTES_EMPTY_PRESENT=$pngLoaderIdatBytesEmptyPresent"
+            "PNGLOADER_DECOMPRESS_ENTER_PRESENT=$pngLoaderDecompressEnterPresent"
+            "PNGLOADER_DECOMPRESS_OK_PRESENT=$pngLoaderDecompressOkPresent"
+            "PNGLOADER_DECOMPRESS_NULL_PRESENT=$pngLoaderDecompressNullPresent"
+            "PNGLOADER_DECOMPRESS_EXIT_PRESENT=$pngLoaderDecompressExitPresent"
+            "PNGLOADER_DECOMPRESSED_BYTES=$pngLoaderDecompressedBytes"
+            "PNGLOADER_IMAGE_CREATE_ENTER_PRESENT=$pngLoaderImageCreateEnterPresent"
+            "PNGLOADER_IMAGE_OK_PRESENT=$pngLoaderImageOkPresent"
+            "PNGLOADER_IMAGE_NULL_PRESENT=$pngLoaderImageNullPresent"
+            "PNGLOADER_IMAGE_CREATE_EXIT_PRESENT=$pngLoaderImageCreateExitPresent"
+            "PNGLOADER_EXIT_PRESENT=$pngLoaderExitPresent"
+            "LOADPNGSAFE_ENTER_PRESENT=$loadPngSafeEnterPresent"
+            "LOADPNGSAFE_READ_FAIL_PRESENT=$loadPngSafeReadFailPresent"
+            "LOADPNGSAFE_READ_NULL_PRESENT=$loadPngSafeReadNullPresent"
+            "LOADPNGSAFE_READ_OK_PRESENT=$loadPngSafeReadOkPresent"
+            "LOADPNGSAFE_DATA_TOO_SMALL_PRESENT=$loadPngSafeDataTooSmallPresent"
+            "LOADPNGSAFE_BEFORE_PNGLOADER_LOAD_PRESENT=$loadPngSafeBeforePngLoaderLoadPresent"
+            "LOADPNGSAFE_OK_PRESENT=$loadPngSafeOkPresent"
+            "LOADPNGSAFE_NULL_PRESENT=$loadPngSafeNullPresent"
+            "LOADPNGSAFE_EXIT_PRESENT=$loadPngSafeExitPresent"
+            "LOADPNGSAFE_DEEPEST_MARKER=$loadPngSafeDeepestMarker"
+            "CURSOR_VALIDATE_ENTER_PRESENT=$cursorValidateEnterPresent"
+            "CURSOR_VALIDATE_OK_PRESENT=$cursorValidateOkPresent"
+            "CURSOR_VALIDATE_NULL_PRESENT=$cursorValidateNullPresent"
+            "CURSOR_VALIDATE_BAD_DIMS_PRESENT=$cursorValidateBadDimsPresent"
+            "CURSOR_VALIDATE_BAD_RAWDATA_PRESENT=$cursorValidateBadRawDataPresent"
+            "CURSOR_VALIDATE_EXIT_PRESENT=$cursorValidateExitPresent"
             "CURSOR_PNG_WIDTH=$cursorPngWidth"
             "CURSOR_PNG_HEIGHT=$cursorPngHeight"
             "CURSOR_IMG_STATIC_IMAGE_REF_ENTER_PRESENT=$($serialText.Contains('CURSOR_IMG_STATIC_IMAGE_REF_ENTER'))"

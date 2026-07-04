@@ -60,6 +60,28 @@ namespace guideXOS.Misc {
         
         // Static initialization flag
         private static bool _initialized = false;
+
+        /// <summary>
+        /// Probe stages used by the UEFI cursor PNG investigation.
+        /// </summary>
+        public enum LoadProbeMode {
+            None,
+            AfterIhdr,
+            AfterChunkScan,
+            AfterIdatAggregation,
+            AfterDecompress,
+            AfterImageCreate
+        }
+
+        private static void ProbeBreadcrumb(string marker) {
+            if (BootConsole.CurrentMode != guideXOS.BootMode.UEFI) return;
+            Program.CursorImageProbeBreadcrumb(marker);
+        }
+
+        private static void ProbeValue(string marker, ulong value) {
+            if (BootConsole.CurrentMode != guideXOS.BootMode.UEFI) return;
+            Program.CursorImageProbeValue(marker, value);
+        }
         
         /// <summary>
         /// Validate PNG signature and parse IHDR chunk.
@@ -2099,208 +2121,317 @@ namespace guideXOS.Misc {
         
         /// <summary>
         /// Load a PNG image into an Image object.
-        /// 
-        /// Parameters:
-        ///   data   - Raw PNG file bytes
-        ///   result - Output Image object (caller must dispose)
-        /// 
-        /// Returns:
-        ///   true  - Success, result is valid
-        ///   false - Failure, result is null
-        /// 
-        /// Assumptions:
-        /// - data is non-null and contains valid PNG bytes
-        /// - Initialize() has been called
-        /// - PNG is color type 6, bit depth 8, non-interlaced
         /// </summary>
         public static bool Load(byte[] data, out Image result) {
+            return Load(data, out result, LoadProbeMode.None);
+        }
+
+        public static bool Load(byte[] data, out Image result, LoadProbeMode probeMode) {
             result = null;
-            
-            // Validate initialization
+            ProbeBreadcrumb("PNGLOADER_ENTER");
+            try {
+                return LoadCore(data, out result, probeMode);
+            } finally {
+                ProbeBreadcrumb("PNGLOADER_EXIT");
+            }
+        }
+
+        private static bool LoadCore(byte[] data, out Image result, LoadProbeMode probeMode) {
+            result = null;
+
             if (!_initialized) return false;
-            
-            // Validate input
-            if (data == null) return false;
-            if (data.Length < 33) return false; // Minimum: 8 sig + 25 IHDR chunk minimum
-            
-            // Check PNG signature
-            // Signature: 0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A
-            if (data[0] != 0x89) return false;
-            if (data[1] != 0x50) return false;  // 'P'
-            if (data[2] != 0x4E) return false;  // 'N'
-            if (data[3] != 0x47) return false;  // 'G'
-            if (data[4] != 0x0D) return false;  // CR
-            if (data[5] != 0x0A) return false;  // LF
-            if (data[6] != 0x1A) return false;  // SUB
-            if (data[7] != 0x0A) return false;  // LF
-            
+
+            if (data == null) {
+                ProbeBreadcrumb("PNGLOADER_BYTES_NULL");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGLOADER_BYTES_OK");
+            ProbeValue("PNGLOADER_BYTES_LENGTH", (ulong)data.Length);
+
+            ProbeBreadcrumb("PNGLOADER_HEADER_ENTER");
+            if (data.Length < 33) {
+                ProbeBreadcrumb("PNGLOADER_HEADER_BAD");
+                return false;
+            }
+            if (data[0] != 0x89 || data[1] != 0x50 || data[2] != 0x4E || data[3] != 0x47 ||
+                data[4] != 0x0D || data[5] != 0x0A || data[6] != 0x1A || data[7] != 0x0A) {
+                ProbeBreadcrumb("PNGLOADER_HEADER_BAD");
+                return false;
+            }
+            ProbeBreadcrumb("PNGLOADER_HEADER_OK");
+
             int pos = 8;
             int width = 0;
             int height = 0;
             int idatTotalSize = 0;
+            int idatChunkCount = 0;
             bool foundIHDR = false;
             bool foundIEND = false;
-            
-            // First pass: Parse chunks, validate header, count IDAT size
-            // Assumption: Chunks appear in order with IHDR first (per PNG spec)
+
+            ProbeBreadcrumb("PNGLOADER_IHDR_ENTER");
+            if (pos + 12 > data.Length) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+
+            uint chunkLen = ReadBE32(data, pos);
+            if (chunkLen != 13) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+
+            uint chunkType = ReadBE32(data, pos + 4);
+            if (chunkType != 0x49484452) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+
+            width = (int)ReadBE32(data, pos + 8);
+            height = (int)ReadBE32(data, pos + 12);
+            byte bitDepth = data[pos + 16];
+            byte colorType = data[pos + 17];
+            byte compressionMethod = data[pos + 18];
+            byte filterMethod = data[pos + 19];
+            byte interlaceMethod = data[pos + 20];
+
+            if (width <= 0 || width > MAX_WIDTH) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (height <= 0 || height > MAX_HEIGHT) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (bitDepth != 8) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (colorType != 6) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (compressionMethod != 0) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (filterMethod != 0) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (interlaceMethod != 0) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGLOADER_IHDR_OK");
+            ProbeBreadcrumb("PNGLOADER_IHDR_DIMS");
+            ProbeValue("PNGLOADER_IHDR_WIDTH", (ulong)(uint)width);
+            ProbeValue("PNGLOADER_IHDR_HEIGHT", (ulong)(uint)height);
+            ProbeValue("PNGLOADER_IHDR_BIT_DEPTH", (ulong)bitDepth);
+            ProbeValue("PNGLOADER_IHDR_COLOR_TYPE", (ulong)colorType);
+
+            if (probeMode == LoadProbeMode.AfterIhdr) {
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_ENTER");
+            pos = 8;
             while (pos + 12 <= data.Length) {
-                // Read chunk length (big-endian 32-bit)
-                uint chunkLen = ReadBE32(data, pos);
-                
-                // Sanity check chunk length
-                if (chunkLen > 0x7FFFFFFF) return false;
-                if (pos + 12 + (int)chunkLen > data.Length) return false;
-                
-                // Read chunk type (big-endian 32-bit, but we compare as-is)
-                uint chunkType = ReadBE32(data, pos + 4);
-                
-                // IHDR chunk: 0x49484452
-                if (chunkType == 0x49484452) {
-                    if (chunkLen != 13) return false; // IHDR is always 13 bytes
-                    
-                    width = (int)ReadBE32(data, pos + 8);
-                    height = (int)ReadBE32(data, pos + 12);
-                    byte bitDepth = data[pos + 16];
-                    byte colorType = data[pos + 17];
-                    byte compressionMethod = data[pos + 18];
-                    byte filterMethod = data[pos + 19];
-                    byte interlaceMethod = data[pos + 20];
-                    
-                    // Validate: Only support RGBA (color type 6)
-                    if (colorType != 6) return false;
-                    
-                    // Validate: Only support 8-bit depth
-                    if (bitDepth != 8) return false;
-                    
-                    // Validate: Only support non-interlaced
-                    if (interlaceMethod != 0) return false;
-                    
-                    // Validate: Compression must be 0 (deflate)
-                    if (compressionMethod != 0) return false;
-                    
-                    // Validate: Filter method must be 0
-                    if (filterMethod != 0) return false;
-                    
-                    // Validate dimensions
-                    if (width <= 0 || width > MAX_WIDTH) return false;
-                    if (height <= 0 || height > MAX_HEIGHT) return false;
-                    
+                uint scanChunkLen = ReadBE32(data, pos);
+                if (scanChunkLen > 0x7FFFFFFF) {
+                    ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+                    return false;
+                }
+
+                int totalChunkSize = 12 + (int)scanChunkLen;
+                if (totalChunkSize < 12 || pos + totalChunkSize > data.Length) {
+                    ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+                    return false;
+                }
+
+                uint scanChunkType = ReadBE32(data, pos + 4);
+                if (scanChunkType == 0x49484452) {
+                    ProbeBreadcrumb("PNGLOADER_CHUNK_TYPE_IHDR");
+                    if (foundIHDR) {
+                        ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+                        return false;
+                    }
+                    if (idatChunkCount > 0) {
+                        ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+                        return false;
+                    }
+                    if (scanChunkLen != 13) {
+                        ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+                        return false;
+                    }
                     foundIHDR = true;
+                    pos += totalChunkSize;
+                    continue;
                 }
-                // IDAT chunk: 0x49444154
-                else if (chunkType == 0x49444154) {
-                    // Must have IHDR first
-                    if (!foundIHDR) return false;
-                    
-                    idatTotalSize += (int)chunkLen;
-                    if (idatTotalSize > MAX_COMPRESSED_SIZE) return false;
+
+                if (scanChunkType == 0x49444154) {
+                    ProbeBreadcrumb("PNGLOADER_CHUNK_TYPE_IDAT");
+                    if (!foundIHDR) {
+                        ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+                        return false;
+                    }
+                    idatChunkCount++;
+                    if (idatTotalSize + (int)scanChunkLen < idatTotalSize) {
+                        ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+                        return false;
+                    }
+                    idatTotalSize += (int)scanChunkLen;
+                    if (idatTotalSize > MAX_COMPRESSED_SIZE) {
+                        ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+                        return false;
+                    }
+                    pos += totalChunkSize;
+                    continue;
                 }
-                // IEND chunk: 0x49454E44
-                else if (chunkType == 0x49454E44) {
+
+                if (scanChunkType == 0x49454E44) {
+                    ProbeBreadcrumb("PNGLOADER_CHUNK_TYPE_IEND");
+                    if (!foundIHDR || idatChunkCount == 0) {
+                        ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+                        return false;
+                    }
+                    if (scanChunkLen != 0) {
+                        ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+                        return false;
+                    }
                     foundIEND = true;
                     break;
                 }
-                // All other chunks (ancillary): skip
-                // This includes PLTE, tRNS, cHRM, gAMA, iCCP, sBIT, sRGB, etc.
-                
-                // Move to next chunk (length + type + data + CRC)
-                pos += 12 + (int)chunkLen;
+
+                pos += totalChunkSize;
             }
-            
-            // Validate we found required chunks
+            ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+
             if (!foundIHDR) return false;
             if (!foundIEND) return false;
-            if (idatTotalSize <= 0) return false;
-            
-            // Allocate compressed data buffer
+            if (idatTotalSize <= 0) {
+                ProbeBreadcrumb("PNGLOADER_IDAT_BYTES_EMPTY");
+                return false;
+            }
+
+            ProbeValue("PNGLOADER_IDAT_CHUNK_COUNT", (ulong)(uint)idatChunkCount);
+            ProbeValue("PNGLOADER_IDAT_COMPRESSED_BYTES", (ulong)(uint)idatTotalSize);
+
+            if (probeMode == LoadProbeMode.AfterChunkScan) {
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGLOADER_IDAT_BYTES_ENTER");
             byte[] compressedData = new byte[idatTotalSize];
-            if (compressedData == null) return false;
-            
-            // Second pass: Collect all IDAT data
+            if (compressedData == null) {
+                ProbeBreadcrumb("PNGLOADER_IDAT_BYTES_EMPTY");
+                return false;
+            }
+
             pos = 8;
             int compressedPos = 0;
-            
             while (pos + 12 <= data.Length && compressedPos < idatTotalSize) {
-                uint chunkLen = ReadBE32(data, pos);
-                uint chunkType = ReadBE32(data, pos + 4);
-                
-                if (chunkType == 0x49444154) { // IDAT
-                    int copyLen = (int)chunkLen;
+                uint copyChunkLen = ReadBE32(data, pos);
+                uint copyChunkType = ReadBE32(data, pos + 4);
+
+                if (copyChunkType == 0x49444154) {
+                    int copyLen = (int)copyChunkLen;
                     if (compressedPos + copyLen > idatTotalSize) {
                         copyLen = idatTotalSize - compressedPos;
                     }
-                    
-                    // Copy IDAT data
+
                     for (int i = 0; i < copyLen; i++) {
                         compressedData[compressedPos++] = data[pos + 8 + i];
                     }
-                } else if (chunkType == 0x49454E44) { // IEND
+                } else if (copyChunkType == 0x49454E44) {
                     break;
                 }
-                
-                pos += 12 + (int)chunkLen;
+
+                pos += 12 + (int)copyChunkLen;
             }
-            
-            // Calculate expected decompressed size
-            // For RGBA (4 bytes per pixel) + 1 filter byte per scanline
-            int bytesPerPixel = 4;
-            int scanlineBytes = width * bytesPerPixel;
-            int expectedSize = height * (scanlineBytes + 1);
-            
-            // Allocate decompressed data buffer
-            byte[] rawPixels = new byte[expectedSize];
-            if (rawPixels == null) {
+
+            if (compressedPos != idatTotalSize || compressedPos <= 0) {
+                compressedData.Dispose();
+                ProbeBreadcrumb("PNGLOADER_IDAT_BYTES_EMPTY");
+                return false;
+            }
+            ProbeBreadcrumb("PNGLOADER_IDAT_BYTES_OK");
+
+            if (probeMode == LoadProbeMode.AfterIdatAggregation) {
                 compressedData.Dispose();
                 return false;
             }
-            
-            // Decompress zlib/deflate data
+
+            int bytesPerPixel = 4;
+            int scanlineBytes = width * bytesPerPixel;
+            int expectedSize = height * (scanlineBytes + 1);
+
+            byte[] rawPixels = new byte[expectedSize];
+            if (rawPixels == null) {
+                compressedData.Dispose();
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
             bool decompressOk = DecompressZlib(compressedData, compressedPos, rawPixels, expectedSize, out int actualSize);
             compressedData.Dispose();
-            
+
             if (!decompressOk) {
+                rawPixels.Dispose();
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGLOADER_DECOMPRESS_OK");
+            ProbeValue("PNGLOADER_DECOMPRESSED_BYTES", (ulong)(uint)actualSize);
+            ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+
+            if (probeMode == LoadProbeMode.AfterDecompress) {
                 rawPixels.Dispose();
                 return false;
             }
-            
-            // Allocate output image
+
+            ProbeBreadcrumb("PNGLOADER_IMAGE_CREATE_ENTER");
             Image img = new Image(width, height);
             if (img == null || img.RawData == null) {
                 rawPixels.Dispose();
+                ProbeBreadcrumb("PNGLOADER_IMAGE_NULL");
+                ProbeBreadcrumb("PNGLOADER_IMAGE_CREATE_EXIT");
                 return false;
             }
-            
-            // Allocate scanline buffers for filtering
+            ProbeBreadcrumb("PNGLOADER_IMAGE_OK");
+
             byte[] prevScanline = new byte[scanlineBytes];
             byte[] currScanline = new byte[scanlineBytes];
             if (prevScanline == null || currScanline == null) {
                 rawPixels.Dispose();
                 img.Dispose();
+                ProbeBreadcrumb("PNGLOADER_IMAGE_NULL");
+                ProbeBreadcrumb("PNGLOADER_IMAGE_CREATE_EXIT");
                 return false;
             }
-            
-            // Clear previous scanline (first row has no previous)
+
             for (int i = 0; i < scanlineBytes; i++) {
                 prevScanline[i] = 0;
             }
-            
-            // Process scanlines
+
             int rawPos = 0;
-            
             for (int y = 0; y < height; y++) {
-                // Check bounds
                 if (rawPos >= actualSize) {
                     prevScanline.Dispose();
                     currScanline.Dispose();
                     rawPixels.Dispose();
                     img.Dispose();
+                    ProbeBreadcrumb("PNGLOADER_IMAGE_NULL");
+                    ProbeBreadcrumb("PNGLOADER_IMAGE_CREATE_EXIT");
                     return false;
                 }
-                
-                // Read filter type for this scanline
+
                 byte filterType = rawPixels[rawPos++];
-                
-                // Read scanline data
+
                 for (int i = 0; i < scanlineBytes; i++) {
                     if (rawPos < actualSize) {
                         currScanline[i] = rawPixels[rawPos++];
@@ -2308,20 +2439,18 @@ namespace guideXOS.Misc {
                         currScanline[i] = 0;
                     }
                 }
-                
-                // Apply filter (unfilter the scanline)
-                // Assumption: Filter type is 0-4 per PNG spec
+
                 bool filterOk = ApplyFilter(filterType, currScanline, prevScanline, scanlineBytes, bytesPerPixel);
                 if (!filterOk) {
                     prevScanline.Dispose();
                     currScanline.Dispose();
                     rawPixels.Dispose();
                     img.Dispose();
+                    ProbeBreadcrumb("PNGLOADER_IMAGE_NULL");
+                    ProbeBreadcrumb("PNGLOADER_IMAGE_CREATE_EXIT");
                     return false;
                 }
-                
-                // Convert RGBA to ARGB and write to image
-                // PNG stores RGBA, our Image expects ARGB (0xAARRGGBB)
+
                 int imgRowStart = y * width;
                 for (int x = 0; x < width; x++) {
                     int pixelOffset = x * 4;
@@ -2329,23 +2458,20 @@ namespace guideXOS.Misc {
                     byte g = currScanline[pixelOffset + 1];
                     byte b = currScanline[pixelOffset + 2];
                     byte a = currScanline[pixelOffset + 3];
-                    
-                    // Pack as ARGB: 0xAARRGGBB
                     img.RawData[imgRowStart + x] = (int)(((uint)a << 24) | ((uint)r << 16) | ((uint)g << 8) | b);
                 }
-                
-                // Swap scanline buffers (current becomes previous for next row)
+
                 byte[] temp = prevScanline;
                 prevScanline = currScanline;
                 currScanline = temp;
             }
-            
-            // Cleanup
+
             prevScanline.Dispose();
             currScanline.Dispose();
             rawPixels.Dispose();
-            
+
             result = img;
+            ProbeBreadcrumb("PNGLOADER_IMAGE_CREATE_EXIT");
             return true;
         }
         

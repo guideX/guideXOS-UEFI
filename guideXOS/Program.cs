@@ -413,6 +413,17 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_SOURCE_EXISTING_REFS = false;
     private const bool UEFI_PROBE_CURSOR_SOURCE_FALLBACK = false;
     private const bool UEFI_PROBE_CURSOR_SOURCE_PNG = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_NOOP_LOADER = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_BYTES_NOOP = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_HEADER_HELPER = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_IHDR_HELPER = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE = false;
+    internal const bool NORMAL_DESKTOP_UEFI_PROBE_BYPASS_STEP8_DRAWIMAGE = false;
     // Opt-in only: when true, safe/probe cursor paths may draw a validated
     // procedural cursor image through DrawImage instead of the rectangle cursor.
     private const bool UEFI_SAFE_CURSOR_IMAGE_FALLBACK = false;
@@ -579,13 +590,135 @@ unsafe class Program {
     /// Returns null on any failure (no exceptions, no hangs).
     /// </summary>
     private static Image LoadPngSafe(string path) {
+        return LoadPngSafe(path, PngLoader.LoadProbeMode.None);
+    }
+
+    private static Image LoadPngSafe(string path, PngLoader.LoadProbeMode probeMode) {
+        SerialBreadcrumb("LOADPNGSAFE_ENTER");
         byte[] data = null;
-        try { data = File.ReadAllBytes(path); } catch { return null; }
-        if (data == null || data.Length < 33) return null;
+        try {
+            data = File.ReadAllBytes(path);
+        } catch {
+            SerialBreadcrumb("LOADPNGSAFE_READ_FAIL");
+            SerialBreadcrumb("LOADPNGSAFE_EXIT");
+            return null;
+        }
+
+        SerialBreadcrumb(data == null ? "LOADPNGSAFE_READ_NULL" : "LOADPNGSAFE_READ_OK");
+        if (data == null || data.Length < 33) {
+            SerialBreadcrumb("LOADPNGSAFE_DATA_TOO_SMALL");
+            SerialBreadcrumb("LOADPNGSAFE_EXIT");
+            return null;
+        }
+
+        SerialBreadcrumb("LOADPNGSAFE_BEFORE_PNGLOADER_LOAD");
         Image result;
-        if (PngLoader.Load(data, out result) && result != null)
+        if (PngLoader.Load(data, out result, probeMode) && result != null) {
+            SerialBreadcrumb("LOADPNGSAFE_OK");
+            SerialBreadcrumb("LOADPNGSAFE_EXIT");
             return result;
+        }
+
+        SerialBreadcrumb("LOADPNGSAFE_NULL");
+        SerialBreadcrumb("LOADPNGSAFE_EXIT");
         return null;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void CursorPngNoopLoaderProbe() {
+        SerialBreadcrumb("CURSOR_PNG_NOOP_LOADER_ENTER");
+        SerialBreadcrumb("CURSOR_PNG_NOOP_LOADER_EXIT");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void CursorPngBytesNoopProbe(byte[] bytes) {
+        SerialBreadcrumb("CURSOR_PNG_BYTES_NOOP_ENTER");
+        SerialBreadcrumb(bytes == null ? "CURSOR_PNG_BYTES_NOOP_NULL" : "CURSOR_PNG_BYTES_NOOP_OK");
+        SerialBreadcrumb("CURSOR_PNG_BYTES_NOOP_EXIT");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool CursorPngHeaderHelperProbe(byte[] bytes) {
+        SerialBreadcrumb("CURSOR_PNG_HEADER_HELPER_ENTER");
+        bool ok = bytes != null &&
+                  bytes.Length >= 8 &&
+                  bytes[0] == 0x89 &&
+                  bytes[1] == 0x50 &&
+                  bytes[2] == 0x4E &&
+                  bytes[3] == 0x47 &&
+                  bytes[4] == 0x0D &&
+                  bytes[5] == 0x0A &&
+                  bytes[6] == 0x1A &&
+                  bytes[7] == 0x0A;
+        SerialBreadcrumb(ok ? "CURSOR_PNG_HEADER_HELPER_OK" : "CURSOR_PNG_HEADER_HELPER_BAD");
+        SerialBreadcrumb("CURSOR_PNG_HEADER_HELPER_EXIT");
+        return ok;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool CursorPngIhdrHelperProbe(byte[] bytes) {
+        SerialBreadcrumb("CURSOR_PNG_IHDR_HELPER_ENTER");
+        if (bytes == null || bytes.Length < 33) {
+            SerialBreadcrumb("CURSOR_PNG_IHDR_HELPER_BAD");
+            SerialBreadcrumb("CURSOR_PNG_IHDR_HELPER_EXIT");
+            return false;
+        }
+
+        uint width = ReadPngUInt32BE(bytes, 16);
+        uint height = ReadPngUInt32BE(bytes, 20);
+        SerialBreadcrumb("CURSOR_PNG_IHDR_HELPER_OK");
+        SerialBreadcrumb("CURSOR_PNG_IHDR_WIDTH=" + width.ToString());
+        SerialBreadcrumb("CURSOR_PNG_IHDR_HEIGHT=" + height.ToString());
+        SerialBreadcrumb("CURSOR_PNG_IHDR_HELPER_EXIT");
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void CursorPngLoadWrapperProbe() {
+        const string cursorPngPath = "Images/Cursor.png";
+        SerialBreadcrumb("CURSOR_PNG_LOAD_WRAPPER_ENTER");
+        SerialBreadcrumb("CURSOR_PNG_LOAD_WRAPPER_BEFORE_CALL");
+        PngLoader.LoadProbeMode probeMode = PngLoader.LoadProbeMode.None;
+        if (UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR) {
+            probeMode = PngLoader.LoadProbeMode.AfterIhdr;
+        } else if (UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN) {
+            probeMode = PngLoader.LoadProbeMode.AfterChunkScan;
+        } else if (UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION) {
+            probeMode = PngLoader.LoadProbeMode.AfterIdatAggregation;
+        } else if (UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS) {
+            probeMode = PngLoader.LoadProbeMode.AfterDecompress;
+        } else if (UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE) {
+            probeMode = PngLoader.LoadProbeMode.AfterImageCreate;
+        }
+
+        if (probeMode != PngLoader.LoadProbeMode.None) {
+            _ = PngLoader.Initialize();
+        }
+
+        Image cursorImage = LoadPngSafe(cursorPngPath, probeMode);
+        SerialBreadcrumb("CURSOR_PNG_LOAD_WRAPPER_AFTER_CALL");
+        if (cursorImage == null) {
+            SerialBreadcrumb("CURSOR_PNG_NULL");
+        } else {
+            SerialBreadcrumb("CURSOR_PNG_OK");
+            if (probeMode == PngLoader.LoadProbeMode.AfterImageCreate) {
+                _ = TryValidateUefiCursorImage(cursorImage);
+            }
+            SerialBreadcrumb("CURSOR_PNG_DIMS_ENTER");
+            SerialWriteUnsigned((ulong)cursorImage.Width);
+            SerialChar('\n');
+            SerialWriteUnsigned((ulong)cursorImage.Height);
+            SerialChar('\n');
+            SerialBreadcrumb("CURSOR_PNG_DIMS_EXIT");
+        }
+        SerialBreadcrumb("CURSOR_PNG_LOAD_WRAPPER_EXIT");
+    }
+
+    private static uint ReadPngUInt32BE(byte[] bytes, int offset) {
+        return ((uint)bytes[offset] << 24) |
+               ((uint)bytes[offset + 1] << 16) |
+               ((uint)bytes[offset + 2] << 8) |
+               bytes[offset + 3];
     }
 
     /// <summary>
@@ -1426,6 +1559,16 @@ unsafe class Program {
         SerialBreadcrumb(breadcrumb);
     }
 
+    internal static void CursorImageProbeValue(string marker, ulong value) {
+        if (marker == null) return;
+        for (int i = 0; i < marker.Length; i++) {
+            SerialChar(marker[i]);
+        }
+        SerialChar('=');
+        SerialWriteUnsigned(value);
+        SerialChar('\n');
+    }
+
     internal static bool IsCursorImageDrawProbeActive() {
         return _cursorImageDrawProbeActive;
     }
@@ -1516,7 +1659,22 @@ unsafe class Program {
         SetCursorImageDrawProbeActive(true);
         try {
             SerialBreadcrumb("CURSOR_IMG_BEFORE_BODY_CALL");
-            if (UEFI_PROBE_CURSOR_DRAW_BUSY) {
+            if (UEFI_PROBE_CURSOR_PNG_NOOP_LOADER) {
+                ProbeNormalDesktopCursorSourcePng();
+            } else if (UEFI_PROBE_CURSOR_PNG_BYTES_NOOP) {
+                ProbeNormalDesktopCursorSourcePng();
+            } else if (UEFI_PROBE_CURSOR_PNG_HEADER_HELPER) {
+                ProbeNormalDesktopCursorSourcePng();
+            } else if (UEFI_PROBE_CURSOR_PNG_IHDR_HELPER) {
+                ProbeNormalDesktopCursorSourcePng();
+            } else if (UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER ||
+                       UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR ||
+                       UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN ||
+                       UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION ||
+                       UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS ||
+                       UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE) {
+                ProbeNormalDesktopCursorSourcePng();
+            } else if (UEFI_PROBE_CURSOR_DRAW_BUSY) {
                 ProbeNormalDesktopCursorDrawBusy();
             } else if (UEFI_PROBE_CURSOR_DRAW_FALLBACK) {
                 ProbeNormalDesktopCursorDrawFallback();
@@ -1586,6 +1744,13 @@ unsafe class Program {
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void ProbeNormalDesktopCursorSourcePng() {
         const string cursorPngPath = "Images/Cursor.png";
+        bool loaderStageProbe = UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER ||
+                                UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR ||
+                                UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN ||
+                                UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION ||
+                                UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS ||
+                                UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE ||
+                                UEFI_PROBE_CURSOR_SOURCE_PNG;
 
         SerialBreadcrumb("CURSOR_PNG_PROBE_ENTER");
 
@@ -1598,21 +1763,36 @@ unsafe class Program {
         byte[] pngBytes = null;
         try { pngBytes = File.ReadAllBytes(cursorPngPath); } catch { }
         SerialBreadcrumb("CURSOR_PNG_AFTER_FILE_LOOKUP");
+        if (pngBytes != null) {
+            SerialBreadcrumb("CURSOR_PNG_BYTES_LENGTH=" + pngBytes.Length.ToString());
+        }
 
-        SerialBreadcrumb("CURSOR_PNG_BEFORE_LOADPNGSAFE");
-        Image cursorImage = LoadPngSafe(cursorPngPath);
-        SerialBreadcrumb("CURSOR_PNG_AFTER_LOADPNGSAFE");
+        bool headerOk = CursorPngHeaderHelperProbe(pngBytes);
+        if (!headerOk && !loaderStageProbe) {
+            _ = diskExists;
+            _ = pngBytes;
+            SerialBreadcrumb("CURSOR_PNG_PROBE_EXIT");
+            return;
+        }
 
-        if (cursorImage == null) {
-            SerialBreadcrumb("CURSOR_PNG_NULL");
+        if (UEFI_PROBE_CURSOR_PNG_NOOP_LOADER) {
+            CursorPngNoopLoaderProbe();
+        } else if (UEFI_PROBE_CURSOR_PNG_BYTES_NOOP) {
+            CursorPngBytesNoopProbe(pngBytes);
+        } else if (UEFI_PROBE_CURSOR_PNG_HEADER_HELPER) {
+            // Header helper already ran as the shared preflight for this probe.
+        } else if (UEFI_PROBE_CURSOR_PNG_IHDR_HELPER) {
+            CursorPngIhdrHelperProbe(pngBytes);
+        } else if (UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER ||
+                   UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR ||
+                   UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN ||
+                   UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION ||
+                   UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS ||
+                   UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE ||
+                   UEFI_PROBE_CURSOR_SOURCE_PNG) {
+            CursorPngLoadWrapperProbe();
         } else {
-            SerialBreadcrumb("CURSOR_PNG_OK");
-            SerialBreadcrumb("CURSOR_PNG_DIMS_ENTER");
-            SerialWriteUnsigned((ulong)cursorImage.Width);
-            SerialChar('\n');
-            SerialWriteUnsigned((ulong)cursorImage.Height);
-            SerialChar('\n');
-            SerialBreadcrumb("CURSOR_PNG_DIMS_EXIT");
+            SerialBreadcrumb("CURSOR_PNG_PROBE_VARIANT_UNSET");
         }
 
         _ = diskExists;
