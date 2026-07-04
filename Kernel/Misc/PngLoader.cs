@@ -1,6 +1,7 @@
 using guideXOS;
 using System;
 using System.Drawing;
+using System.Runtime.CompilerServices;
 
 namespace guideXOS.Misc {
     /// <summary>
@@ -39,6 +40,7 @@ namespace guideXOS.Misc {
         // Maximum iterations for DEFLATE decode loop to prevent infinite loops
         // Assumption: This should be enough for any valid PNG within our size limits
         private const int MAX_DECODE_ITERATIONS = 50000000;
+        private const int MAX_INFLATE_SMOKE_SYMBOL_ITERATIONS = 8192;
         
         // Fixed Huffman table sizes
         // These are defined by DEFLATE spec and never change
@@ -69,6 +71,14 @@ namespace guideXOS.Misc {
             AfterIhdr,
             AfterChunkScan,
             AfterIdatAggregation,
+            DecompressPreMeta,
+            DecompressNoop,
+            DecompressBytesNoop,
+            DecompressZlibHeader,
+            DecompressOutputAlloc,
+            DecompressDeflateHeader,
+            DecompressHuffmanSetup,
+            DecompressInflateSmoke,
             AfterDecompress,
             AfterImageCreate
         }
@@ -2367,6 +2377,92 @@ namespace guideXOS.Misc {
             int scanlineBytes = width * bytesPerPixel;
             int expectedSize = height * (scanlineBytes + 1);
 
+            if (probeMode == LoadProbeMode.DecompressPreMeta) {
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_PREMETA_ENTER");
+                ProbeValue("PNGLOADER_DECOMPRESS_PREMETA_LEN", (ulong)(uint)compressedPos);
+                ProbeValue("PNGLOADER_DECOMPRESS_PREMETA_EXPECTED_OUT_LEN", (ulong)(uint)expectedSize);
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_PREMETA_EXIT");
+                compressedData.Dispose();
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressNoop) {
+                compressedData.Dispose();
+                PngDecompressNoopProbe();
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressBytesNoop) {
+                PngDecompressBytesNoopProbe(compressedData);
+                compressedData.Dispose();
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressZlibHeader) {
+                PngDecompressZlibHeaderProbe(compressedData, compressedPos);
+                compressedData.Dispose();
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressDeflateHeader) {
+                PngDecompressDeflateHeaderProbe(compressedData, compressedPos);
+                compressedData.Dispose();
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressHuffmanSetup) {
+                PngDecompressHuffmanSetupProbe(compressedData, compressedPos);
+                compressedData.Dispose();
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressOutputAlloc) {
+                ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_ENTER");
+                ProbeValue("PNGDECOMP_OUTPUT_ALLOC_SIZE", (ulong)(uint)expectedSize);
+                byte[] outputProbe = new byte[expectedSize];
+                if (outputProbe == null) {
+                    compressedData.Dispose();
+                    ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_NULL");
+                    ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_EXIT");
+                    return false;
+                }
+
+                ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_OK");
+                outputProbe.Dispose();
+                compressedData.Dispose();
+                ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_EXIT");
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressInflateSmoke) {
+                ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_ENTER");
+                ProbeValue("PNGDECOMP_OUTPUT_ALLOC_SIZE", (ulong)(uint)expectedSize);
+                byte[] smokePixels = new byte[expectedSize];
+                if (smokePixels == null) {
+                    compressedData.Dispose();
+                    ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_NULL");
+                    ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_EXIT");
+                    return false;
+                }
+
+                ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_OK");
+                ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_EXIT");
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
+                bool smokeOk = PngDecompressInflateSmokeProbe(compressedData, compressedPos, smokePixels, expectedSize, out int smokeSize);
+                compressedData.Dispose();
+                smokePixels.Dispose();
+                if (!smokeOk) {
+                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+                    return false;
+                }
+
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_OK");
+                ProbeValue("PNGLOADER_DECOMPRESSED_BYTES", (ulong)(uint)smokeSize);
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+                return false;
+            }
+
             byte[] rawPixels = new byte[expectedSize];
             if (rawPixels == null) {
                 compressedData.Dispose();
@@ -2557,6 +2653,415 @@ namespace guideXOS.Misc {
                     // Invalid filter type
                     return false;
             }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void PngDecompressNoopProbe() {
+            ProbeBreadcrumb("PNGDECOMP_NOOP_ENTER");
+            ProbeBreadcrumb("PNGDECOMP_NOOP_EXIT");
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void PngDecompressBytesNoopProbe(byte[] compressedBytes) {
+            ProbeBreadcrumb("PNGDECOMP_BYTES_NOOP_ENTER");
+            if (compressedBytes == null) {
+                ProbeBreadcrumb("PNGDECOMP_BYTES_NOOP_NULL");
+                ProbeBreadcrumb("PNGDECOMP_BYTES_NOOP_EXIT");
+                return;
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_BYTES_NOOP_OK");
+            ProbeValue("PNGDECOMP_BYTES_NOOP_LEN", (ulong)(uint)compressedBytes.Length);
+            ProbeBreadcrumb("PNGDECOMP_BYTES_NOOP_EXIT");
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressZlibHeaderProbe(byte[] input, int inputLen) {
+            ProbeBreadcrumb("PNGDECOMP_ZLIB_HEADER_ENTER");
+            if (input == null || inputLen < 2) {
+                ProbeBreadcrumb("PNGDECOMP_ZLIB_LEN_BAD");
+                ProbeBreadcrumb("PNGDECOMP_ZLIB_HEADER_EXIT");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_ZLIB_LEN_OK");
+
+            byte cmf = input[0];
+            byte flg = input[1];
+            ProbeValue("PNGDECOMP_ZLIB_CMF", (ulong)cmf);
+            ProbeValue("PNGDECOMP_ZLIB_FLG", (ulong)flg);
+
+            if ((cmf & 0x0F) == 8) {
+                ProbeBreadcrumb("PNGDECOMP_ZLIB_METHOD_OK");
+            } else {
+                ProbeBreadcrumb("PNGDECOMP_ZLIB_METHOD_BAD");
+            }
+
+            if (((cmf * 256 + flg) % 31) == 0) {
+                ProbeBreadcrumb("PNGDECOMP_ZLIB_FCHECK_OK");
+            } else {
+                ProbeBreadcrumb("PNGDECOMP_ZLIB_FCHECK_BAD");
+            }
+
+            if ((flg & 0x20) != 0) {
+                ProbeBreadcrumb("PNGDECOMP_ZLIB_FDICT_SET");
+            } else {
+                ProbeBreadcrumb("PNGDECOMP_ZLIB_FDICT_CLEAR");
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_ZLIB_HEADER_EXIT");
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressDeflateHeaderProbe(byte[] input, int inputLen) {
+            ProbeBreadcrumb("PNGDECOMP_DEFLATE_ENTER");
+            ProbeBreadcrumb("PNGDECOMP_DEFLATE_FIRST_BLOCK_ENTER");
+
+            if (input == null || inputLen < 2) {
+                ProbeBreadcrumb("PNGDECOMP_DEFLATE_FIRST_BLOCK_EXIT");
+                ProbeBreadcrumb("PNGDECOMP_DEFLATE_EXIT");
+                return false;
+            }
+
+            byte cmf = input[0];
+            byte flg = input[1];
+            if ((cmf & 0x0F) != 8 || (flg & 0x20) != 0 || ((cmf * 256 + flg) % 31) != 0) {
+                ProbeBreadcrumb("PNGDECOMP_DEFLATE_FIRST_BLOCK_EXIT");
+                ProbeBreadcrumb("PNGDECOMP_DEFLATE_EXIT");
+                return false;
+            }
+
+            int inPos = 2;
+            int bitBuf = 0;
+            int bitCount = 0;
+
+            if (bitCount < 1) {
+                if (inPos >= inputLen) {
+                    ProbeBreadcrumb("PNGDECOMP_DEFLATE_FIRST_BLOCK_EXIT");
+                    ProbeBreadcrumb("PNGDECOMP_DEFLATE_EXIT");
+                    return false;
+                }
+                bitBuf |= input[inPos++] << bitCount;
+                bitCount += 8;
+            }
+            int bfinal = bitBuf & 1;
+            ProbeValue("PNGDECOMP_DEFLATE_BFINAL", (ulong)(uint)bfinal);
+            bitBuf >>= 1;
+            bitCount--;
+
+            if (bitCount < 2) {
+                if (inPos >= inputLen) {
+                    ProbeBreadcrumb("PNGDECOMP_DEFLATE_FIRST_BLOCK_EXIT");
+                    ProbeBreadcrumb("PNGDECOMP_DEFLATE_EXIT");
+                    return false;
+                }
+                bitBuf |= input[inPos++] << bitCount;
+                bitCount += 8;
+            }
+            int btype = bitBuf & 3;
+            ProbeValue("PNGDECOMP_DEFLATE_BTYPE", (ulong)(uint)btype);
+            bitBuf >>= 2;
+            bitCount -= 2;
+
+            ProbeBreadcrumb("PNGDECOMP_DEFLATE_FIRST_BLOCK_EXIT");
+            ProbeBreadcrumb("PNGDECOMP_DEFLATE_EXIT");
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressHuffmanSetupProbe(byte[] input, int inputLen) {
+            ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_ENTER");
+
+            if (input == null || inputLen < 2) {
+                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                return false;
+            }
+
+            byte cmf = input[0];
+            byte flg = input[1];
+            if ((cmf & 0x0F) != 8 || (flg & 0x20) != 0 || ((cmf * 256 + flg) % 31) != 0) {
+                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                return false;
+            }
+
+            int inPos = 2;
+            int bitBuf = 0;
+            int bitCount = 0;
+
+            if (bitCount < 1) {
+                if (inPos >= inputLen) {
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                    return false;
+                }
+                bitBuf |= input[inPos++] << bitCount;
+                bitCount += 8;
+            }
+            bool lastBlock = (bitBuf & 1) == 1;
+            _ = lastBlock;
+            bitBuf >>= 1;
+            bitCount--;
+
+            if (bitCount < 2) {
+                if (inPos >= inputLen) {
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                    return false;
+                }
+                bitBuf |= input[inPos++] << bitCount;
+                bitCount += 8;
+            }
+
+            int blockType = bitBuf & 3;
+            bitBuf >>= 2;
+            bitCount -= 2;
+
+            if (blockType == 1) {
+                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_FIXED");
+                for (int i = 0; i < LITLEN_TABLE_SIZE; i++) {
+                    if (i < 144) _litLenLengths[i] = 8;
+                    else if (i < 256) _litLenLengths[i] = 9;
+                    else if (i < 280) _litLenLengths[i] = 7;
+                    else _litLenLengths[i] = 8;
+                }
+
+                for (int i = 0; i < DIST_TABLE_SIZE; i++) {
+                    _distLengths[i] = 5;
+                }
+
+                if (!BuildDecodeTable(_litLenLengths, LITLEN_TABLE_SIZE, 15, _litLenTable, 1 << 15)) {
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                    return false;
+                }
+                if (!BuildDecodeTable(_distLengths, DIST_TABLE_SIZE, 15, _distTable, 1 << 15)) {
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                    return false;
+                }
+
+                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_OK");
+                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                return false;
+            }
+
+            if (blockType == 2) {
+                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_DYNAMIC");
+
+                while (bitCount < 14) {
+                    if (inPos >= inputLen) {
+                        ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                        ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                        return false;
+                    }
+                    bitBuf |= input[inPos++] << bitCount;
+                    bitCount += 8;
+                }
+
+                int hlit = (bitBuf & 0x1F) + 257;
+                bitBuf >>= 5;
+                bitCount -= 5;
+
+                int hdist = (bitBuf & 0x1F) + 1;
+                bitBuf >>= 5;
+                bitCount -= 5;
+
+                int hclen = (bitBuf & 0x0F) + 4;
+                bitBuf >>= 4;
+                bitCount -= 4;
+
+                if (hlit > 286 || hdist > 32) {
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                    return false;
+                }
+
+                int[] clOrder = { 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 };
+
+                for (int i = 0; i < CODELENGTH_TABLE_SIZE; i++) {
+                    _codeLenLengths[i] = 0;
+                }
+
+                for (int i = 0; i < hclen; i++) {
+                    while (bitCount < 3) {
+                        if (inPos >= inputLen) {
+                            ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                            ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                            return false;
+                        }
+                        bitBuf |= input[inPos++] << bitCount;
+                        bitCount += 8;
+                    }
+
+                    _codeLenLengths[clOrder[i]] = bitBuf & 7;
+                    bitBuf >>= 3;
+                    bitCount -= 3;
+                }
+
+                if (!BuildDecodeTable(_codeLenLengths, CODELENGTH_TABLE_SIZE, 7, _codeLenTable, 1 << 7)) {
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                    return false;
+                }
+
+                int totalCodes = hlit + hdist;
+                for (int i = 0; i < 320; i++) {
+                    _allLengths[i] = 0;
+                }
+
+                int idx = 0;
+                int safetyCounter = 0;
+                while (idx < totalCodes) {
+                    if (++safetyCounter > totalCodes + 1000) {
+                        ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                        ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                        return false;
+                    }
+
+                    while (bitCount < 15) {
+                        if (inPos >= inputLen) {
+                            ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                            ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                            return false;
+                        }
+                        bitBuf |= input[inPos++] << bitCount;
+                        bitCount += 8;
+                    }
+
+                    int sym = DecodeSymbol(_codeLenTable, 7, ref bitBuf, ref bitCount);
+                    if (sym < 0) {
+                        ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                        ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                        return false;
+                    }
+
+                    if (sym < 16) {
+                        _allLengths[idx++] = sym;
+                    }
+                    else if (sym == 16) {
+                        while (bitCount < 2) {
+                            if (inPos >= inputLen) {
+                                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                                return false;
+                            }
+                            bitBuf |= input[inPos++] << bitCount;
+                            bitCount += 8;
+                        }
+
+                        int repeat = 3 + (bitBuf & 3);
+                        bitBuf >>= 2;
+                        bitCount -= 2;
+
+                        if (idx == 0) {
+                            ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                            ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                            return false;
+                        }
+
+                        int prevLen = _allLengths[idx - 1];
+                        for (int j = 0; j < repeat && idx < totalCodes; j++) {
+                            _allLengths[idx++] = prevLen;
+                        }
+                    }
+                    else if (sym == 17) {
+                        while (bitCount < 3) {
+                            if (inPos >= inputLen) {
+                                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                                return false;
+                            }
+                            bitBuf |= input[inPos++] << bitCount;
+                            bitCount += 8;
+                        }
+
+                        int repeat = 3 + (bitBuf & 7);
+                        bitBuf >>= 3;
+                        bitCount -= 3;
+
+                        for (int j = 0; j < repeat && idx < totalCodes; j++) {
+                            _allLengths[idx++] = 0;
+                        }
+                    }
+                    else if (sym == 18) {
+                        while (bitCount < 7) {
+                            if (inPos >= inputLen) {
+                                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                                return false;
+                            }
+                            bitBuf |= input[inPos++] << bitCount;
+                            bitCount += 8;
+                        }
+
+                        int repeat = 11 + (bitBuf & 0x7F);
+                        bitBuf >>= 7;
+                        bitCount -= 7;
+
+                        for (int j = 0; j < repeat && idx < totalCodes; j++) {
+                            _allLengths[idx++] = 0;
+                        }
+                    }
+                    else {
+                        ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                        ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                        return false;
+                    }
+                }
+
+                for (int i = 0; i < hlit && i < LITLEN_TABLE_SIZE; i++) {
+                    _litLenLengths[i] = _allLengths[i];
+                }
+                for (int i = hlit; i < LITLEN_TABLE_SIZE; i++) {
+                    _litLenLengths[i] = 0;
+                }
+
+                for (int i = 0; i < hdist && i < DIST_TABLE_SIZE; i++) {
+                    _distLengths[i] = _allLengths[hlit + i];
+                }
+                for (int i = hdist; i < DIST_TABLE_SIZE; i++) {
+                    _distLengths[i] = 0;
+                }
+
+                if (!BuildDecodeTable(_litLenLengths, LITLEN_TABLE_SIZE, 15, _litLenTable, 1 << 15)) {
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                    return false;
+                }
+                if (!BuildDecodeTable(_distLengths, DIST_TABLE_SIZE, 15, _distTable, 1 << 15)) {
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+                    ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                    return false;
+                }
+
+                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_OK");
+                ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_BAD");
+            ProbeBreadcrumb("PNGDECOMP_HUFFMAN_SETUP_EXIT");
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressInflateSmokeProbe(byte[] input, int inputLen, byte[] output, int outputMax, out int outputLen) {
+            ProbeBreadcrumb("PNGDECOMP_INFLATE_ENTER");
+            ProbeBreadcrumb("PNGDECOMP_INFLATE_FIRST_SYMBOL_ENTER");
+            bool ok = DecompressZlib(input, inputLen, output, outputMax, out outputLen);
+            if (!ok) {
+                ProbeBreadcrumb("PNGDECOMP_INFLATE_EXIT");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_INFLATE_FIRST_SYMBOL_EXIT");
+            ProbeBreadcrumb("PNGDECOMP_INFLATE_PROGRESS");
+            ProbeBreadcrumb("PNGDECOMP_INFLATE_OK");
+            ProbeBreadcrumb("PNGDECOMP_INFLATE_EXIT");
+            return true;
         }
         
         /// <summary>

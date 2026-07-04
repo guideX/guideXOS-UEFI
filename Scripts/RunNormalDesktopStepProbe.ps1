@@ -29,6 +29,14 @@ param(
     [switch]$CursorPngLoadAfterIhdrProbe,
     [switch]$CursorPngLoadAfterChunkScanProbe,
     [switch]$CursorPngLoadAfterIdatAggregationProbe,
+    [switch]$CursorPngDecompressPreMetaProbe,
+    [switch]$CursorPngDecompressNoopProbe,
+    [switch]$CursorPngDecompressBytesNoopProbe,
+    [switch]$CursorPngDecompressZlibHeaderProbe,
+    [switch]$CursorPngDecompressOutputAllocProbe,
+    [switch]$CursorPngDecompressDeflateHeaderProbe,
+    [switch]$CursorPngDecompressHuffmanSetupProbe,
+    [switch]$CursorPngDecompressInflateSmokeProbe,
     [switch]$CursorPngLoadAfterDecompressProbe,
     [switch]$CursorPngLoadAfterImageCreateProbe,
     [switch]$CursorDrawBusyProbe,
@@ -411,6 +419,14 @@ if ($CursorPngLoadWrapperProbe) { $cursorVariantCount++ }
 if ($CursorPngLoadAfterIhdrProbe) { $cursorVariantCount++ }
 if ($CursorPngLoadAfterChunkScanProbe) { $cursorVariantCount++ }
 if ($CursorPngLoadAfterIdatAggregationProbe) { $cursorVariantCount++ }
+if ($CursorPngDecompressPreMetaProbe) { $cursorVariantCount++ }
+if ($CursorPngDecompressNoopProbe) { $cursorVariantCount++ }
+if ($CursorPngDecompressBytesNoopProbe) { $cursorVariantCount++ }
+if ($CursorPngDecompressZlibHeaderProbe) { $cursorVariantCount++ }
+if ($CursorPngDecompressOutputAllocProbe) { $cursorVariantCount++ }
+if ($CursorPngDecompressDeflateHeaderProbe) { $cursorVariantCount++ }
+if ($CursorPngDecompressHuffmanSetupProbe) { $cursorVariantCount++ }
+if ($CursorPngDecompressInflateSmokeProbe) { $cursorVariantCount++ }
 if ($CursorPngLoadAfterDecompressProbe) { $cursorVariantCount++ }
 if ($CursorPngLoadAfterImageCreateProbe) { $cursorVariantCount++ }
 if ($CursorDrawBusyProbe) { $cursorVariantCount++ }
@@ -515,7 +531,7 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;' `
         -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = $step13CursorPlaceholder;" `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER'
-    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe -or $CursorDrawBusyProbe -or $CursorDrawBusyDirectProbe -or $CursorDrawFallbackProbe
+    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngDecompressPreMetaProbe -or $CursorPngDecompressNoopProbe -or $CursorPngDecompressBytesNoopProbe -or $CursorPngDecompressZlibHeaderProbe -or $CursorPngDecompressOutputAllocProbe -or $CursorPngDecompressDeflateHeaderProbe -or $CursorPngDecompressHuffmanSetupProbe -or $CursorPngDecompressInflateSmokeProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe -or $CursorDrawBusyProbe -or $CursorDrawBusyDirectProbe -or $CursorDrawFallbackProbe
     $step13RealCursorImageRendering = if ($step13RealCursorImageRenderingEnabled) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;' `
@@ -626,6 +642,46 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION = $cursorPngLoadAfterIdatAggregationProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION'
+    $cursorPngDecompressPreMetaProbeValue = if ($CursorPngDecompressPreMetaProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREMETA = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREMETA = $cursorPngDecompressPreMetaProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREMETA'
+    $cursorPngDecompressNoopProbeValue = if ($CursorPngDecompressNoopProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_NOOP = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_NOOP = $cursorPngDecompressNoopProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_DECOMPRESS_NOOP'
+    $cursorPngDecompressBytesNoopProbeValue = if ($CursorPngDecompressBytesNoopProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_BYTES_NOOP = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_BYTES_NOOP = $cursorPngDecompressBytesNoopProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_DECOMPRESS_BYTES_NOOP'
+    $cursorPngDecompressZlibHeaderProbeValue = if ($CursorPngDecompressZlibHeaderProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_ZLIB_HEADER = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_ZLIB_HEADER = $cursorPngDecompressZlibHeaderProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_DECOMPRESS_ZLIB_HEADER'
+    $cursorPngDecompressOutputAllocProbeValue = if ($CursorPngDecompressOutputAllocProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC = $cursorPngDecompressOutputAllocProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC'
+    $cursorPngDecompressDeflateHeaderProbeValue = if ($CursorPngDecompressDeflateHeaderProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER = $cursorPngDecompressDeflateHeaderProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER'
+    $cursorPngDecompressHuffmanSetupProbeValue = if ($CursorPngDecompressHuffmanSetupProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP = $cursorPngDecompressHuffmanSetupProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP'
+    $cursorPngDecompressInflateSmokeProbeValue = if ($CursorPngDecompressInflateSmokeProbe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE = $cursorPngDecompressInflateSmokeProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE'
     $cursorPngLoadAfterDecompressProbeValue = if ($CursorPngLoadAfterDecompressProbe) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS = false;' `
@@ -636,13 +692,29 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE = $cursorPngLoadAfterImageCreateProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE'
-    $pngProbeEnabled = $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe
+    $pngProbeEnabled = $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngDecompressPreMetaProbe -or $CursorPngDecompressNoopProbe -or $CursorPngDecompressBytesNoopProbe -or $CursorPngDecompressZlibHeaderProbe -or $CursorPngDecompressOutputAllocProbe -or $CursorPngDecompressDeflateHeaderProbe -or $CursorPngDecompressHuffmanSetupProbe -or $CursorPngDecompressInflateSmokeProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe
     $pngLoaderVariantLabel = if ($CursorPngLoadAfterIhdrProbe) {
         'PNG-F'
     } elseif ($CursorPngLoadAfterChunkScanProbe) {
         'PNG-G'
     } elseif ($CursorPngLoadAfterIdatAggregationProbe) {
         'PNG-H'
+    } elseif ($CursorPngDecompressPreMetaProbe) {
+        'PNG-I0'
+    } elseif ($CursorPngDecompressNoopProbe) {
+        'PNG-I1'
+    } elseif ($CursorPngDecompressBytesNoopProbe) {
+        'PNG-I2'
+    } elseif ($CursorPngDecompressZlibHeaderProbe) {
+        'PNG-I3'
+    } elseif ($CursorPngDecompressOutputAllocProbe) {
+        'PNG-I4'
+    } elseif ($CursorPngDecompressDeflateHeaderProbe) {
+        'PNG-I5'
+    } elseif ($CursorPngDecompressHuffmanSetupProbe) {
+        'PNG-I6'
+    } elseif ($CursorPngDecompressInflateSmokeProbe) {
+        'PNG-I7'
     } elseif ($CursorPngLoadAfterDecompressProbe) {
         'PNG-I'
     } elseif ($CursorPngLoadAfterImageCreateProbe) {
@@ -720,7 +792,7 @@ try {
     Write-Host "[probe] Safe placeholders until step 10: enabled" -ForegroundColor Cyan
     Write-Host "[probe] Patched Program.cs for temporary step probe" -ForegroundColor Cyan
     Write-Host "[probe] Building via build.ps1..." -ForegroundColor Cyan
-    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $buildScript
+    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $buildScript -SkipRamdisk
     if ($LASTEXITCODE -ne 0) {
         throw "build.ps1 failed with exit code $LASTEXITCODE"
     }
@@ -987,6 +1059,14 @@ try {
     $cursorPngLoadAfterIhdrPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR=1')
     $cursorPngLoadAfterChunkScanPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN=1')
     $cursorPngLoadAfterIdatAggregationPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION=1')
+    $cursorPngDecompressPreMetaPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREMETA=1')
+    $cursorPngDecompressNoopPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_DECOMPRESS_NOOP=1')
+    $cursorPngDecompressBytesNoopPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_DECOMPRESS_BYTES_NOOP=1')
+    $cursorPngDecompressZlibHeaderPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_DECOMPRESS_ZLIB_HEADER=1')
+    $cursorPngDecompressOutputAllocPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC=1')
+    $cursorPngDecompressDeflateHeaderPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER=1')
+    $cursorPngDecompressHuffmanSetupPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP=1')
+    $cursorPngDecompressInflateSmokePresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE=1')
     $cursorPngLoadAfterDecompressPresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS=1')
     $cursorPngLoadAfterImageCreatePresent = $serialText.Contains('UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE=1')
     $cursorPngNullPresent = $serialText.Contains('CURSOR_PNG_NULL')
@@ -994,6 +1074,53 @@ try {
     $cursorPngDimsEnterPresent = $serialText.Contains('CURSOR_PNG_DIMS_ENTER')
     $cursorPngDimsExitPresent = $serialText.Contains('CURSOR_PNG_DIMS_EXIT')
     $cursorPngProbeExitPresent = $serialText.Contains('CURSOR_PNG_PROBE_EXIT')
+    $pngLoaderDecompressPreMetaEnterPresent = $serialText.Contains('PNGLOADER_DECOMPRESS_PREMETA_ENTER')
+    $pngLoaderDecompressPreMetaLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_DECOMPRESS_PREMETA_LEN'
+    $pngLoaderDecompressPreMetaExpectedOutLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_DECOMPRESS_PREMETA_EXPECTED_OUT_LEN'
+    $pngLoaderDecompressPreMetaExitPresent = $serialText.Contains('PNGLOADER_DECOMPRESS_PREMETA_EXIT')
+    $pngDecompressNoopEnterPresent = $serialText.Contains('PNGDECOMP_NOOP_ENTER')
+    $pngDecompressNoopExitPresent = $serialText.Contains('PNGDECOMP_NOOP_EXIT')
+    $pngDecompressBytesNoopEnterPresent = $serialText.Contains('PNGDECOMP_BYTES_NOOP_ENTER')
+    $pngDecompressBytesNoopNullPresent = $serialText.Contains('PNGDECOMP_BYTES_NOOP_NULL')
+    $pngDecompressBytesNoopOkPresent = $serialText.Contains('PNGDECOMP_BYTES_NOOP_OK')
+    $pngDecompressBytesNoopLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGDECOMP_BYTES_NOOP_LEN'
+    $pngDecompressBytesNoopExitPresent = $serialText.Contains('PNGDECOMP_BYTES_NOOP_EXIT')
+    $pngDecompressZlibHeaderEnterPresent = $serialText.Contains('PNGDECOMP_ZLIB_HEADER_ENTER')
+    $pngDecompressZlibLenOkPresent = $serialText.Contains('PNGDECOMP_ZLIB_LEN_OK')
+    $pngDecompressZlibLenBadPresent = $serialText.Contains('PNGDECOMP_ZLIB_LEN_BAD')
+    $pngDecompressZlibCmf = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGDECOMP_ZLIB_CMF'
+    $pngDecompressZlibFlg = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGDECOMP_ZLIB_FLG'
+    $pngDecompressZlibMethodOkPresent = $serialText.Contains('PNGDECOMP_ZLIB_METHOD_OK')
+    $pngDecompressZlibMethodBadPresent = $serialText.Contains('PNGDECOMP_ZLIB_METHOD_BAD')
+    $pngDecompressZlibFcheckOkPresent = $serialText.Contains('PNGDECOMP_ZLIB_FCHECK_OK')
+    $pngDecompressZlibFcheckBadPresent = $serialText.Contains('PNGDECOMP_ZLIB_FCHECK_BAD')
+    $pngDecompressZlibFdictSetPresent = $serialText.Contains('PNGDECOMP_ZLIB_FDICT_SET')
+    $pngDecompressZlibFdictClearPresent = $serialText.Contains('PNGDECOMP_ZLIB_FDICT_CLEAR')
+    $pngDecompressZlibHeaderExitPresent = $serialText.Contains('PNGDECOMP_ZLIB_HEADER_EXIT')
+    $pngDecompressOutputAllocEnterPresent = $serialText.Contains('PNGDECOMP_OUTPUT_ALLOC_ENTER')
+    $pngDecompressOutputAllocSize = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGDECOMP_OUTPUT_ALLOC_SIZE'
+    $pngDecompressOutputAllocOkPresent = $serialText.Contains('PNGDECOMP_OUTPUT_ALLOC_OK')
+    $pngDecompressOutputAllocNullPresent = $serialText.Contains('PNGDECOMP_OUTPUT_ALLOC_NULL')
+    $pngDecompressOutputAllocExitPresent = $serialText.Contains('PNGDECOMP_OUTPUT_ALLOC_EXIT')
+    $pngDecompressDeflateEnterPresent = $serialText.Contains('PNGDECOMP_DEFLATE_ENTER')
+    $pngDecompressDeflateFirstBlockEnterPresent = $serialText.Contains('PNGDECOMP_DEFLATE_FIRST_BLOCK_ENTER')
+    $pngDecompressDeflateBfinal = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGDECOMP_DEFLATE_BFINAL'
+    $pngDecompressDeflateBtype = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGDECOMP_DEFLATE_BTYPE'
+    $pngDecompressDeflateFirstBlockExitPresent = $serialText.Contains('PNGDECOMP_DEFLATE_FIRST_BLOCK_EXIT')
+    $pngDecompressDeflateExitPresent = $serialText.Contains('PNGDECOMP_DEFLATE_EXIT')
+    $pngDecompressHuffmanSetupEnterPresent = $serialText.Contains('PNGDECOMP_HUFFMAN_SETUP_ENTER')
+    $pngDecompressHuffmanFixedPresent = $serialText.Contains('PNGDECOMP_HUFFMAN_FIXED')
+    $pngDecompressHuffmanDynamicPresent = $serialText.Contains('PNGDECOMP_HUFFMAN_DYNAMIC')
+    $pngDecompressHuffmanSetupOkPresent = $serialText.Contains('PNGDECOMP_HUFFMAN_SETUP_OK')
+    $pngDecompressHuffmanSetupBadPresent = $serialText.Contains('PNGDECOMP_HUFFMAN_SETUP_BAD')
+    $pngDecompressHuffmanSetupExitPresent = $serialText.Contains('PNGDECOMP_HUFFMAN_SETUP_EXIT')
+    $pngDecompressInflateEnterPresent = $serialText.Contains('PNGDECOMP_INFLATE_ENTER')
+    $pngDecompressInflateFirstSymbolEnterPresent = $serialText.Contains('PNGDECOMP_INFLATE_FIRST_SYMBOL_ENTER')
+    $pngDecompressInflateFirstSymbolExitPresent = $serialText.Contains('PNGDECOMP_INFLATE_FIRST_SYMBOL_EXIT')
+    $pngDecompressInflateProgressPresent = $serialText.Contains('PNGDECOMP_INFLATE_PROGRESS')
+    $pngDecompressInflateBoundsAbortPresent = $serialText.Contains('PNGDECOMP_INFLATE_BOUNDS_ABORT')
+    $pngDecompressInflateOkPresent = $serialText.Contains('PNGDECOMP_INFLATE_OK')
+    $pngDecompressInflateExitPresent = $serialText.Contains('PNGDECOMP_INFLATE_EXIT')
     $loadPngSafeEnterPresent = $serialText.Contains('LOADPNGSAFE_ENTER')
     $loadPngSafeReadFailPresent = $serialText.Contains('LOADPNGSAFE_READ_FAIL')
     $loadPngSafeReadNullPresent = $serialText.Contains('LOADPNGSAFE_READ_NULL')
@@ -1268,6 +1395,53 @@ try {
         'PNGLOADER_IDAT_BYTES_ENTER'
         'PNGLOADER_IDAT_BYTES_EMPTY'
         'PNGLOADER_IDAT_BYTES_OK'
+        'PNGLOADER_DECOMPRESS_PREMETA_ENTER'
+        'PNGLOADER_DECOMPRESS_PREMETA_LEN'
+        'PNGLOADER_DECOMPRESS_PREMETA_EXPECTED_OUT_LEN'
+        'PNGLOADER_DECOMPRESS_PREMETA_EXIT'
+        'PNGDECOMP_NOOP_ENTER'
+        'PNGDECOMP_NOOP_EXIT'
+        'PNGDECOMP_BYTES_NOOP_ENTER'
+        'PNGDECOMP_BYTES_NOOP_NULL'
+        'PNGDECOMP_BYTES_NOOP_OK'
+        'PNGDECOMP_BYTES_NOOP_LEN'
+        'PNGDECOMP_BYTES_NOOP_EXIT'
+        'PNGDECOMP_ZLIB_HEADER_ENTER'
+        'PNGDECOMP_ZLIB_LEN_BAD'
+        'PNGDECOMP_ZLIB_LEN_OK'
+        'PNGDECOMP_ZLIB_CMF'
+        'PNGDECOMP_ZLIB_FLG'
+        'PNGDECOMP_ZLIB_METHOD_BAD'
+        'PNGDECOMP_ZLIB_METHOD_OK'
+        'PNGDECOMP_ZLIB_FCHECK_BAD'
+        'PNGDECOMP_ZLIB_FCHECK_OK'
+        'PNGDECOMP_ZLIB_FDICT_SET'
+        'PNGDECOMP_ZLIB_FDICT_CLEAR'
+        'PNGDECOMP_ZLIB_HEADER_EXIT'
+        'PNGDECOMP_OUTPUT_ALLOC_ENTER'
+        'PNGDECOMP_OUTPUT_ALLOC_SIZE'
+        'PNGDECOMP_OUTPUT_ALLOC_NULL'
+        'PNGDECOMP_OUTPUT_ALLOC_OK'
+        'PNGDECOMP_OUTPUT_ALLOC_EXIT'
+        'PNGDECOMP_DEFLATE_ENTER'
+        'PNGDECOMP_DEFLATE_FIRST_BLOCK_ENTER'
+        'PNGDECOMP_DEFLATE_BFINAL='
+        'PNGDECOMP_DEFLATE_BTYPE='
+        'PNGDECOMP_DEFLATE_FIRST_BLOCK_EXIT'
+        'PNGDECOMP_DEFLATE_EXIT'
+        'PNGDECOMP_HUFFMAN_SETUP_ENTER'
+        'PNGDECOMP_HUFFMAN_FIXED'
+        'PNGDECOMP_HUFFMAN_DYNAMIC'
+        'PNGDECOMP_HUFFMAN_SETUP_BAD'
+        'PNGDECOMP_HUFFMAN_SETUP_OK'
+        'PNGDECOMP_HUFFMAN_SETUP_EXIT'
+        'PNGDECOMP_INFLATE_ENTER'
+        'PNGDECOMP_INFLATE_FIRST_SYMBOL_ENTER'
+        'PNGDECOMP_INFLATE_FIRST_SYMBOL_EXIT'
+        'PNGDECOMP_INFLATE_PROGRESS'
+        'PNGDECOMP_INFLATE_BOUNDS_ABORT'
+        'PNGDECOMP_INFLATE_OK'
+        'PNGDECOMP_INFLATE_EXIT'
         'PNGLOADER_DECOMPRESS_ENTER'
         'PNGLOADER_DECOMPRESS_NULL'
         'PNGLOADER_DECOMPRESS_OK'
@@ -1587,6 +1761,53 @@ try {
         Write-Host "[probe] PNGLOADER_IDAT_BYTES_ENTER present: $pngLoaderIdatBytesEnterPresent" -ForegroundColor Green
         Write-Host "[probe] PNGLOADER_IDAT_BYTES_OK present: $pngLoaderIdatBytesOkPresent" -ForegroundColor Green
         Write-Host "[probe] PNGLOADER_IDAT_BYTES_EMPTY present: $pngLoaderIdatBytesEmptyPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_DECOMPRESS_PREMETA_ENTER present: $pngLoaderDecompressPreMetaEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_DECOMPRESS_PREMETA_LEN: $pngLoaderDecompressPreMetaLen" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_DECOMPRESS_PREMETA_EXPECTED_OUT_LEN: $pngLoaderDecompressPreMetaExpectedOutLen" -ForegroundColor Green
+        Write-Host "[probe] PNGLOADER_DECOMPRESS_PREMETA_EXIT present: $pngLoaderDecompressPreMetaExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_NOOP_ENTER present: $pngDecompressNoopEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_NOOP_EXIT present: $pngDecompressNoopExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_BYTES_NOOP_ENTER present: $pngDecompressBytesNoopEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_BYTES_NOOP_NULL present: $pngDecompressBytesNoopNullPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_BYTES_NOOP_OK present: $pngDecompressBytesNoopOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_BYTES_NOOP_LEN: $pngDecompressBytesNoopLen" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_BYTES_NOOP_EXIT present: $pngDecompressBytesNoopExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_HEADER_ENTER present: $pngDecompressZlibHeaderEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_LEN_OK present: $pngDecompressZlibLenOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_LEN_BAD present: $pngDecompressZlibLenBadPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_CMF: $pngDecompressZlibCmf" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_FLG: $pngDecompressZlibFlg" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_METHOD_OK present: $pngDecompressZlibMethodOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_METHOD_BAD present: $pngDecompressZlibMethodBadPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_FCHECK_OK present: $pngDecompressZlibFcheckOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_FCHECK_BAD present: $pngDecompressZlibFcheckBadPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_FDICT_SET present: $pngDecompressZlibFdictSetPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_FDICT_CLEAR present: $pngDecompressZlibFdictClearPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_ZLIB_HEADER_EXIT present: $pngDecompressZlibHeaderExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_OUTPUT_ALLOC_ENTER present: $pngDecompressOutputAllocEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_OUTPUT_ALLOC_SIZE: $pngDecompressOutputAllocSize" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_OUTPUT_ALLOC_OK present: $pngDecompressOutputAllocOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_OUTPUT_ALLOC_NULL present: $pngDecompressOutputAllocNullPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_OUTPUT_ALLOC_EXIT present: $pngDecompressOutputAllocExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_DEFLATE_ENTER present: $pngDecompressDeflateEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_DEFLATE_FIRST_BLOCK_ENTER present: $pngDecompressDeflateFirstBlockEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_DEFLATE_BFINAL: $pngDecompressDeflateBfinal" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_DEFLATE_BTYPE: $pngDecompressDeflateBtype" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_DEFLATE_FIRST_BLOCK_EXIT present: $pngDecompressDeflateFirstBlockExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_DEFLATE_EXIT present: $pngDecompressDeflateExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_HUFFMAN_SETUP_ENTER present: $pngDecompressHuffmanSetupEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_HUFFMAN_FIXED present: $pngDecompressHuffmanFixedPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_HUFFMAN_DYNAMIC present: $pngDecompressHuffmanDynamicPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_HUFFMAN_SETUP_OK present: $pngDecompressHuffmanSetupOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_HUFFMAN_SETUP_BAD present: $pngDecompressHuffmanSetupBadPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_HUFFMAN_SETUP_EXIT present: $pngDecompressHuffmanSetupExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_INFLATE_ENTER present: $pngDecompressInflateEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_INFLATE_FIRST_SYMBOL_ENTER present: $pngDecompressInflateFirstSymbolEnterPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_INFLATE_FIRST_SYMBOL_EXIT present: $pngDecompressInflateFirstSymbolExitPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_INFLATE_PROGRESS present: $pngDecompressInflateProgressPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_INFLATE_BOUNDS_ABORT present: $pngDecompressInflateBoundsAbortPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_INFLATE_OK present: $pngDecompressInflateOkPresent" -ForegroundColor Green
+        Write-Host "[probe] PNGDECOMP_INFLATE_EXIT present: $pngDecompressInflateExitPresent" -ForegroundColor Green
         Write-Host "[probe] PNGLOADER_DECOMPRESS_ENTER present: $pngLoaderDecompressEnterPresent" -ForegroundColor Green
         Write-Host "[probe] PNGLOADER_DECOMPRESS_OK present: $pngLoaderDecompressOkPresent" -ForegroundColor Green
         Write-Host "[probe] PNGLOADER_DECOMPRESS_NULL present: $pngLoaderDecompressNullPresent" -ForegroundColor Green
@@ -1784,6 +2005,17 @@ try {
             "CURSOR_PNG_BEFORE_FILE_LOOKUP_PRESENT=$cursorPngBeforeFileLookupPresent"
             "CURSOR_PNG_AFTER_FILE_LOOKUP_PRESENT=$cursorPngAfterFileLookupPresent"
             "CURSOR_PNG_BYTES_LENGTH=$cursorPngBytesLength"
+            "CURSOR_PNG_LOAD_AFTER_IHDR_PRESENT=$cursorPngLoadAfterIhdrPresent"
+            "CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN_PRESENT=$cursorPngLoadAfterChunkScanPresent"
+            "CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION_PRESENT=$cursorPngLoadAfterIdatAggregationPresent"
+            "CURSOR_PNG_DECOMPRESS_PREMETA_PRESENT=$cursorPngDecompressPreMetaPresent"
+            "CURSOR_PNG_DECOMPRESS_NOOP_PRESENT=$cursorPngDecompressNoopPresent"
+            "CURSOR_PNG_DECOMPRESS_BYTES_NOOP_PRESENT=$cursorPngDecompressBytesNoopPresent"
+            "CURSOR_PNG_DECOMPRESS_ZLIB_HEADER_PRESENT=$cursorPngDecompressZlibHeaderPresent"
+            "CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC_PRESENT=$cursorPngDecompressOutputAllocPresent"
+            "CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER_PRESENT=$cursorPngDecompressDeflateHeaderPresent"
+            "CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP_PRESENT=$cursorPngDecompressHuffmanSetupPresent"
+            "CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE_PRESENT=$cursorPngDecompressInflateSmokePresent"
             "CURSOR_PNG_HEADER_HELPER_ENTER_PRESENT=$cursorPngHeaderHelperEnterPresent"
             "CURSOR_PNG_HEADER_HELPER_BAD_PRESENT=$cursorPngHeaderHelperBadPresent"
             "CURSOR_PNG_HEADER_HELPER_OK_PRESENT=$cursorPngHeaderHelperOkPresent"
@@ -1832,6 +2064,53 @@ try {
             "PNGLOADER_CHUNK_SCAN_EXIT_PRESENT=$pngLoaderChunkScanExitPresent"
             "PNGLOADER_IDAT_CHUNK_COUNT=$pngLoaderIdatChunkCount"
             "PNGLOADER_IDAT_COMPRESSED_BYTES=$pngLoaderIdatCompressedBytes"
+            "PNGLOADER_DECOMPRESS_PREMETA_ENTER_PRESENT=$pngLoaderDecompressPreMetaEnterPresent"
+            "PNGLOADER_DECOMPRESS_PREMETA_LEN=$pngLoaderDecompressPreMetaLen"
+            "PNGLOADER_DECOMPRESS_PREMETA_EXPECTED_OUT_LEN=$pngLoaderDecompressPreMetaExpectedOutLen"
+            "PNGLOADER_DECOMPRESS_PREMETA_EXIT_PRESENT=$pngLoaderDecompressPreMetaExitPresent"
+            "PNGDECOMP_NOOP_ENTER_PRESENT=$pngDecompressNoopEnterPresent"
+            "PNGDECOMP_NOOP_EXIT_PRESENT=$pngDecompressNoopExitPresent"
+            "PNGDECOMP_BYTES_NOOP_ENTER_PRESENT=$pngDecompressBytesNoopEnterPresent"
+            "PNGDECOMP_BYTES_NOOP_NULL_PRESENT=$pngDecompressBytesNoopNullPresent"
+            "PNGDECOMP_BYTES_NOOP_OK_PRESENT=$pngDecompressBytesNoopOkPresent"
+            "PNGDECOMP_BYTES_NOOP_LEN=$pngDecompressBytesNoopLen"
+            "PNGDECOMP_BYTES_NOOP_EXIT_PRESENT=$pngDecompressBytesNoopExitPresent"
+            "PNGDECOMP_ZLIB_HEADER_ENTER_PRESENT=$pngDecompressZlibHeaderEnterPresent"
+            "PNGDECOMP_ZLIB_LEN_OK_PRESENT=$pngDecompressZlibLenOkPresent"
+            "PNGDECOMP_ZLIB_LEN_BAD_PRESENT=$pngDecompressZlibLenBadPresent"
+            "PNGDECOMP_ZLIB_CMF=$pngDecompressZlibCmf"
+            "PNGDECOMP_ZLIB_FLG=$pngDecompressZlibFlg"
+            "PNGDECOMP_ZLIB_METHOD_OK_PRESENT=$pngDecompressZlibMethodOkPresent"
+            "PNGDECOMP_ZLIB_METHOD_BAD_PRESENT=$pngDecompressZlibMethodBadPresent"
+            "PNGDECOMP_ZLIB_FCHECK_OK_PRESENT=$pngDecompressZlibFcheckOkPresent"
+            "PNGDECOMP_ZLIB_FCHECK_BAD_PRESENT=$pngDecompressZlibFcheckBadPresent"
+            "PNGDECOMP_ZLIB_FDICT_SET_PRESENT=$pngDecompressZlibFdictSetPresent"
+            "PNGDECOMP_ZLIB_FDICT_CLEAR_PRESENT=$pngDecompressZlibFdictClearPresent"
+            "PNGDECOMP_ZLIB_HEADER_EXIT_PRESENT=$pngDecompressZlibHeaderExitPresent"
+            "PNGDECOMP_OUTPUT_ALLOC_ENTER_PRESENT=$pngDecompressOutputAllocEnterPresent"
+            "PNGDECOMP_OUTPUT_ALLOC_SIZE=$pngDecompressOutputAllocSize"
+            "PNGDECOMP_OUTPUT_ALLOC_OK_PRESENT=$pngDecompressOutputAllocOkPresent"
+            "PNGDECOMP_OUTPUT_ALLOC_NULL_PRESENT=$pngDecompressOutputAllocNullPresent"
+            "PNGDECOMP_OUTPUT_ALLOC_EXIT_PRESENT=$pngDecompressOutputAllocExitPresent"
+            "PNGDECOMP_DEFLATE_ENTER_PRESENT=$pngDecompressDeflateEnterPresent"
+            "PNGDECOMP_DEFLATE_FIRST_BLOCK_ENTER_PRESENT=$pngDecompressDeflateFirstBlockEnterPresent"
+            "PNGDECOMP_DEFLATE_BFINAL=$pngDecompressDeflateBfinal"
+            "PNGDECOMP_DEFLATE_BTYPE=$pngDecompressDeflateBtype"
+            "PNGDECOMP_DEFLATE_FIRST_BLOCK_EXIT_PRESENT=$pngDecompressDeflateFirstBlockExitPresent"
+            "PNGDECOMP_DEFLATE_EXIT_PRESENT=$pngDecompressDeflateExitPresent"
+            "PNGDECOMP_HUFFMAN_SETUP_ENTER_PRESENT=$pngDecompressHuffmanSetupEnterPresent"
+            "PNGDECOMP_HUFFMAN_FIXED_PRESENT=$pngDecompressHuffmanFixedPresent"
+            "PNGDECOMP_HUFFMAN_DYNAMIC_PRESENT=$pngDecompressHuffmanDynamicPresent"
+            "PNGDECOMP_HUFFMAN_SETUP_OK_PRESENT=$pngDecompressHuffmanSetupOkPresent"
+            "PNGDECOMP_HUFFMAN_SETUP_BAD_PRESENT=$pngDecompressHuffmanSetupBadPresent"
+            "PNGDECOMP_HUFFMAN_SETUP_EXIT_PRESENT=$pngDecompressHuffmanSetupExitPresent"
+            "PNGDECOMP_INFLATE_ENTER_PRESENT=$pngDecompressInflateEnterPresent"
+            "PNGDECOMP_INFLATE_FIRST_SYMBOL_ENTER_PRESENT=$pngDecompressInflateFirstSymbolEnterPresent"
+            "PNGDECOMP_INFLATE_FIRST_SYMBOL_EXIT_PRESENT=$pngDecompressInflateFirstSymbolExitPresent"
+            "PNGDECOMP_INFLATE_PROGRESS_PRESENT=$pngDecompressInflateProgressPresent"
+            "PNGDECOMP_INFLATE_BOUNDS_ABORT_PRESENT=$pngDecompressInflateBoundsAbortPresent"
+            "PNGDECOMP_INFLATE_OK_PRESENT=$pngDecompressInflateOkPresent"
+            "PNGDECOMP_INFLATE_EXIT_PRESENT=$pngDecompressInflateExitPresent"
             "PNGLOADER_IDAT_BYTES_ENTER_PRESENT=$pngLoaderIdatBytesEnterPresent"
             "PNGLOADER_IDAT_BYTES_OK_PRESENT=$pngLoaderIdatBytesOkPresent"
             "PNGLOADER_IDAT_BYTES_EMPTY_PRESENT=$pngLoaderIdatBytesEmptyPresent"

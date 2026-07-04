@@ -421,6 +421,14 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR = false;
     private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN = false;
     private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREMETA = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_NOOP = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_BYTES_NOOP = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_ZLIB_HEADER = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE = false;
     private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS = false;
     private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE = false;
     internal const bool NORMAL_DESKTOP_UEFI_PROBE_BYPASS_STEP8_DRAWIMAGE = false;
@@ -685,6 +693,22 @@ unsafe class Program {
             probeMode = PngLoader.LoadProbeMode.AfterChunkScan;
         } else if (UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION) {
             probeMode = PngLoader.LoadProbeMode.AfterIdatAggregation;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREMETA) {
+            probeMode = PngLoader.LoadProbeMode.DecompressPreMeta;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_NOOP) {
+            probeMode = PngLoader.LoadProbeMode.DecompressNoop;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_BYTES_NOOP) {
+            probeMode = PngLoader.LoadProbeMode.DecompressBytesNoop;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_ZLIB_HEADER) {
+            probeMode = PngLoader.LoadProbeMode.DecompressZlibHeader;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC) {
+            probeMode = PngLoader.LoadProbeMode.DecompressOutputAlloc;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER) {
+            probeMode = PngLoader.LoadProbeMode.DecompressDeflateHeader;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP) {
+            probeMode = PngLoader.LoadProbeMode.DecompressHuffmanSetup;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE) {
+            probeMode = PngLoader.LoadProbeMode.DecompressInflateSmoke;
         } else if (UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS) {
             probeMode = PngLoader.LoadProbeMode.AfterDecompress;
         } else if (UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE) {
@@ -1671,6 +1695,14 @@ unsafe class Program {
                        UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR ||
                        UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN ||
                        UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREMETA ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_NOOP ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_BYTES_NOOP ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_ZLIB_HEADER ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE ||
                        UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS ||
                        UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE) {
                 ProbeNormalDesktopCursorSourcePng();
@@ -1748,6 +1780,14 @@ unsafe class Program {
                                 UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR ||
                                 UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN ||
                                 UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREMETA ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_NOOP ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_BYTES_NOOP ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_ZLIB_HEADER ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE ||
                                 UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS ||
                                 UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE ||
                                 UEFI_PROBE_CURSOR_SOURCE_PNG;
@@ -1787,6 +1827,14 @@ unsafe class Program {
                    UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR ||
                    UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN ||
                    UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IDAT_AGGREGATION ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREMETA ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_NOOP ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_BYTES_NOOP ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_ZLIB_HEADER ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE ||
                    UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS ||
                    UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE ||
                    UEFI_PROBE_CURSOR_SOURCE_PNG) {
