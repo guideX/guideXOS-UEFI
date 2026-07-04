@@ -80,6 +80,11 @@ namespace guideXOS.Misc {
             DecompressOutputAlloc,
             DecompressDeflateHeader,
             DecompressHuffmanSetup,
+            DecompressGateInlineReturn,
+            DecompressGateHelperReturn,
+            DecompressGateBoolOnly,
+            DecompressGateNoStateCopy,
+            DecompressPostGateFirstInstruction,
             DecompressAfterInputGate,
             DecompressPrepNoop,
             DecompressPrepMetadata,
@@ -2440,6 +2445,59 @@ namespace guideXOS.Misc {
                 return false;
             }
 
+            if (probeMode == LoadProbeMode.DecompressGateInlineReturn) {
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
+                return CursorPngProbeGateOnlyInline(
+                    data,
+                    width,
+                    height,
+                    bitDepth,
+                    colorType,
+                    idatChunkCount,
+                    idatTotalSize,
+                    expectedSize);
+            }
+
+            if (probeMode == LoadProbeMode.DecompressGateHelperReturn) {
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
+                _ = CursorPngProbeGateHelperReturning(
+                    data,
+                    width,
+                    height,
+                    bitDepth,
+                    colorType,
+                    idatChunkCount,
+                    idatTotalSize,
+                    expectedSize);
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressGateBoolOnly) {
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
+                return CursorPngProbeGateBoolCallerAfter(
+                    data,
+                    width,
+                    height,
+                    bitDepth,
+                    colorType,
+                    idatChunkCount,
+                    idatTotalSize,
+                    expectedSize);
+            }
+
+            if (probeMode == LoadProbeMode.DecompressGateNoStateCopy) {
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
+                return CursorPngProbeGateNoStateCopy(
+                    data,
+                    width,
+                    height,
+                    bitDepth,
+                    colorType,
+                    idatChunkCount,
+                    idatTotalSize,
+                    expectedSize);
+            }
+
             if (probeMode == LoadProbeMode.DecompressOutputAlloc) {
                 ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_ENTER");
                 ProbeValue("PNGDECOMP_OUTPUT_ALLOC_SIZE", (ulong)(uint)expectedSize);
@@ -2506,7 +2564,8 @@ namespace guideXOS.Misc {
                 probeMode == LoadProbeMode.DecompressInflateFirstSymbolDecode ||
                 probeMode == LoadProbeMode.DecompressInflateLiteralWrite ||
                 probeMode == LoadProbeMode.DecompressInflateLengthDistance ||
-                probeMode == LoadProbeMode.DecompressInflateOneStep) {
+                probeMode == LoadProbeMode.DecompressInflateOneStep ||
+                probeMode == LoadProbeMode.DecompressPostGateFirstInstruction) {
                 ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
                 bool splitProbeOk = RunCursorInflateSplitProbe(
                     probeMode,
@@ -2767,6 +2826,108 @@ namespace guideXOS.Misc {
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool CursorPngProbeGateOnlyInline(byte[] data, int width, int height, byte bitDepth, byte colorType, int idatChunkCount, int idatTotalSize, int expectedSize) {
+            ProbeBreadcrumb("PNGDECOMP_GATE_INLINE_ENTER");
+            if (data == null || data.Length != 1070) return false;
+            if (data.Length < 33 ||
+                data[0] != 0x89 ||
+                data[1] != 0x50 ||
+                data[2] != 0x4E ||
+                data[3] != 0x47 ||
+                data[4] != 0x0D ||
+                data[5] != 0x0A ||
+                data[6] != 0x1A ||
+                data[7] != 0x0A ||
+                ((uint)data[8] << 24 | (uint)data[9] << 16 | (uint)data[10] << 8 | (uint)data[11]) != 13 ||
+                ((uint)data[12] << 24 | (uint)data[13] << 16 | (uint)data[14] << 8 | (uint)data[15]) != 0x49484452) {
+                return false;
+            }
+
+            if (width != 28 || height != 28) return false;
+            if (bitDepth != 8 || colorType != 6) return false;
+            if (idatChunkCount != 1 || idatTotalSize != 555 || expectedSize != 3164) return false;
+            ProbeBreadcrumb("PNGDECOMP_GATE_INLINE_OK");
+            ProbeBreadcrumb("PNGDECOMP_GATE_INLINE_BEFORE_RETURN");
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool CursorPngProbeGateHelperReturning(byte[] data, int width, int height, byte bitDepth, byte colorType, int idatChunkCount, int idatTotalSize, int expectedSize) {
+            ProbeBreadcrumb("PNGDECOMP_GATE_HELPER_ENTER");
+            if (data == null || data.Length != 1070) return false;
+            if (data.Length < 33 ||
+                data[0] != 0x89 ||
+                data[1] != 0x50 ||
+                data[2] != 0x4E ||
+                data[3] != 0x47 ||
+                data[4] != 0x0D ||
+                data[5] != 0x0A ||
+                data[6] != 0x1A ||
+                data[7] != 0x0A ||
+                ReadBE32(data, 8) != 13 ||
+                ReadBE32(data, 12) != 0x49484452) {
+                return false;
+            }
+
+            if (width != 28 || height != 28 || bitDepth != 8 || colorType != 6 || idatChunkCount != 1 || idatTotalSize != 555 || expectedSize != 3164) {
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_GATE_HELPER_OK");
+            ProbeBreadcrumb("PNGDECOMP_GATE_HELPER_RETURNING");
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool CursorPngProbeGateOnlyBoolHelper(byte[] data, int width, int height, byte bitDepth, byte colorType, int idatChunkCount, int idatTotalSize, int expectedSize) {
+            ProbeBreadcrumb("PNGDECOMP_GATE_BOOL_ENTER");
+            if (data == null || data.Length != 1070) return false;
+            if (data.Length < 33 ||
+                data[0] != 0x89 ||
+                data[1] != 0x50 ||
+                data[2] != 0x4E ||
+                data[3] != 0x47 ||
+                data[4] != 0x0D ||
+                data[5] != 0x0A ||
+                data[6] != 0x1A ||
+                data[7] != 0x0A ||
+                ReadBE32(data, 8) != 13 ||
+                ReadBE32(data, 12) != 0x49484452) {
+                return false;
+            }
+
+            if (width != 28 || height != 28 || bitDepth != 8 || colorType != 6 || idatChunkCount != 1 || idatTotalSize != 555 || expectedSize != 3164) {
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_GATE_BOOL_OK");
+            ProbeBreadcrumb("PNGDECOMP_GATE_BOOL_EXIT");
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool CursorPngProbeGateBoolCallerAfter(byte[] data, int width, int height, byte bitDepth, byte colorType, int idatChunkCount, int idatTotalSize, int expectedSize) {
+            _ = CursorPngProbeGateOnlyBoolHelper(data, width, height, bitDepth, colorType, idatChunkCount, idatTotalSize, expectedSize);
+            ProbeBreadcrumb("PNGDECOMP_GATE_BOOL_CALLER_AFTER");
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool CursorPngProbeGateNoStateCopy(byte[] data, int width, int height, byte bitDepth, byte colorType, int idatChunkCount, int idatTotalSize, int expectedSize) {
+            ProbeBreadcrumb("PNGDECOMP_GATE_NO_STATE_COPY_ENTER");
+            _ = CursorPngProbeGateOnlyBoolHelper(data, width, height, bitDepth, colorType, idatChunkCount, idatTotalSize, expectedSize);
+            ProbeBreadcrumb("PNGDECOMP_GATE_NO_STATE_COPY_AFTER");
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool CursorPngProbePostGateFirstInstruction(byte[] data, int width, int height, byte bitDepth, byte colorType, int idatChunkCount, int idatTotalSize, int expectedSize) {
+            _ = CursorPngProbeGateOnlyBoolHelper(data, width, height, bitDepth, colorType, idatChunkCount, idatTotalSize, expectedSize);
+            ProbeBreadcrumb("PNGDECOMP_POST_GATE_FIRST_INSTRUCTION");
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
         private static bool RunCursorInflateSplitProbe(
             LoadProbeMode probeMode,
             byte[] data,
@@ -2780,6 +2941,14 @@ namespace guideXOS.Misc {
             int idatTotalSize,
             int expectedSize) {
             if (!HasValidCursorPngInputGate(data, width, height, bitDepth, colorType, idatChunkCount, idatTotalSize, expectedSize)) {
+                compressedData.Dispose();
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressPostGateFirstInstruction) {
+                ProbeBreadcrumb("PNGDECOMP_POST_GATE_FIRST_INSTRUCTION");
                 compressedData.Dispose();
                 ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
                 ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");

@@ -428,6 +428,11 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC = false;
     private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER = false;
     private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_INLINE = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_HELPER_RETURN = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_BOOL_ONLY = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_NO_STATE_COPY = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_POST_GATE_FIRST_INSTRUCTION = false;
     private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_AFTER_INPUT_GATE = false;
     private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREP_NOOP = false;
     private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREP_METADATA = false;
@@ -720,6 +725,16 @@ unsafe class Program {
             probeMode = PngLoader.LoadProbeMode.DecompressDeflateHeader;
         } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP) {
             probeMode = PngLoader.LoadProbeMode.DecompressHuffmanSetup;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_INLINE) {
+            probeMode = PngLoader.LoadProbeMode.DecompressGateInlineReturn;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_HELPER_RETURN) {
+            probeMode = PngLoader.LoadProbeMode.DecompressGateHelperReturn;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_BOOL_ONLY) {
+            probeMode = PngLoader.LoadProbeMode.DecompressGateBoolOnly;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_NO_STATE_COPY) {
+            probeMode = PngLoader.LoadProbeMode.DecompressGateNoStateCopy;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_POST_GATE_FIRST_INSTRUCTION) {
+            probeMode = PngLoader.LoadProbeMode.DecompressPostGateFirstInstruction;
         } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_AFTER_INPUT_GATE) {
             probeMode = PngLoader.LoadProbeMode.DecompressAfterInputGate;
         } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREP_NOOP) {
@@ -1741,6 +1756,11 @@ unsafe class Program {
                        UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC ||
                        UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER ||
                        UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_INLINE ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_HELPER_RETURN ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_BOOL_ONLY ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_NO_STATE_COPY ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_POST_GATE_FIRST_INSTRUCTION ||
                        UEFI_PROBE_CURSOR_PNG_DECOMPRESS_AFTER_INPUT_GATE ||
                        UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREP_NOOP ||
                        UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREP_METADATA ||
@@ -1839,6 +1859,11 @@ unsafe class Program {
                                 UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC ||
                                 UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER ||
                                 UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_INLINE ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_HELPER_RETURN ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_BOOL_ONLY ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_NO_STATE_COPY ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_POST_GATE_FIRST_INSTRUCTION ||
                                 UEFI_PROBE_CURSOR_PNG_DECOMPRESS_AFTER_INPUT_GATE ||
                                 UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREP_NOOP ||
                                 UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREP_METADATA ||
@@ -1899,6 +1924,11 @@ unsafe class Program {
                    UEFI_PROBE_CURSOR_PNG_DECOMPRESS_OUTPUT_ALLOC ||
                    UEFI_PROBE_CURSOR_PNG_DECOMPRESS_DEFLATE_HEADER ||
                    UEFI_PROBE_CURSOR_PNG_DECOMPRESS_HUFFMAN_SETUP ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_INLINE ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_HELPER_RETURN ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_BOOL_ONLY ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_GATE_NO_STATE_COPY ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_POST_GATE_FIRST_INSTRUCTION ||
                    UEFI_PROBE_CURSOR_PNG_DECOMPRESS_AFTER_INPUT_GATE ||
                    UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREP_NOOP ||
                    UEFI_PROBE_CURSOR_PNG_DECOMPRESS_PREP_METADATA ||
