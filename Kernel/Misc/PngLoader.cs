@@ -78,9 +78,24 @@ namespace guideXOS.Misc {
             DecompressOutputAlloc,
             DecompressDeflateHeader,
             DecompressHuffmanSetup,
+            DecompressInflateBoundary,
+            DecompressInflateBitReader,
+            DecompressInflateFirstSymbolDecode,
+            DecompressInflateLiteralWrite,
+            DecompressInflateLengthDistance,
+            DecompressInflateOneStep,
             DecompressInflateSmoke,
             AfterDecompress,
             AfterImageCreate
+        }
+
+        private struct CursorInflateContext {
+            public byte[] Input;
+            public int InputLen;
+            public int InPos;
+            public int BitBuf;
+            public int BitCount;
+            public int BlockType;
         }
 
         private static void ProbeBreadcrumb(string marker) {
@@ -2434,31 +2449,82 @@ namespace guideXOS.Misc {
                 return false;
             }
 
-            if (probeMode == LoadProbeMode.DecompressInflateSmoke) {
-                ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_ENTER");
-                ProbeValue("PNGDECOMP_OUTPUT_ALLOC_SIZE", (ulong)(uint)expectedSize);
-                byte[] smokePixels = new byte[expectedSize];
-                if (smokePixels == null) {
+            bool cursorInflateSplitProbe = probeMode == LoadProbeMode.DecompressInflateBoundary ||
+                                           probeMode == LoadProbeMode.DecompressInflateBitReader ||
+                                           probeMode == LoadProbeMode.DecompressInflateFirstSymbolDecode ||
+                                           probeMode == LoadProbeMode.DecompressInflateLiteralWrite ||
+                                           probeMode == LoadProbeMode.DecompressInflateLengthDistance ||
+                                           probeMode == LoadProbeMode.DecompressInflateOneStep;
+
+            if (probeMode == LoadProbeMode.DecompressInflateSmoke || cursorInflateSplitProbe) {
+                if (!HasValidCursorPngInputGate(data, width, height, bitDepth, colorType, idatChunkCount, idatTotalSize, expectedSize)) {
                     compressedData.Dispose();
-                    ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_NULL");
-                    ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_EXIT");
                     return false;
                 }
 
-                ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_OK");
-                ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_EXIT");
+                if (probeMode == LoadProbeMode.DecompressInflateSmoke) {
+                    ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_ENTER");
+                    ProbeValue("PNGDECOMP_OUTPUT_ALLOC_SIZE", (ulong)(uint)expectedSize);
+                    byte[] smokePixels = new byte[expectedSize];
+                    if (smokePixels == null) {
+                        compressedData.Dispose();
+                        ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_NULL");
+                        ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_EXIT");
+                        return false;
+                    }
+
+                    ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_OK");
+                    ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_EXIT");
+                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
+                    bool smokeOk = PngDecompressInflateSmokeProbe(compressedData, compressedPos, smokePixels, expectedSize, out int smokeSize);
+                    compressedData.Dispose();
+                    smokePixels.Dispose();
+                    if (!smokeOk) {
+                        ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+                        ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+                        return false;
+                    }
+
+                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_OK");
+                    ProbeValue("PNGLOADER_DECOMPRESSED_BYTES", (ulong)(uint)smokeSize);
+                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+                    return false;
+                }
+
                 ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
-                bool smokeOk = PngDecompressInflateSmokeProbe(compressedData, compressedPos, smokePixels, expectedSize, out int smokeSize);
-                compressedData.Dispose();
-                smokePixels.Dispose();
-                if (!smokeOk) {
+                if (!TryPrepareCursorInflateContext(compressedData, compressedPos, out CursorInflateContext inflateContext)) {
+                    if (probeMode == LoadProbeMode.DecompressInflateBitReader) {
+                        ProbeBreadcrumb("PNGDECOMP_BITREADER_BAD");
+                        ProbeBreadcrumb("PNGDECOMP_BITREADER_EXIT");
+                    }
+                    compressedData.Dispose();
                     ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
                     ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
                     return false;
                 }
 
-                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_OK");
-                ProbeValue("PNGLOADER_DECOMPRESSED_BYTES", (ulong)(uint)smokeSize);
+                if (probeMode == LoadProbeMode.DecompressInflateBoundary) {
+                    PngDecompressInflateBoundaryProbe();
+                } else if (probeMode == LoadProbeMode.DecompressInflateBitReader) {
+                    _ = PngDecompressInflateBitReaderProbe(ref inflateContext);
+                } else if (probeMode == LoadProbeMode.DecompressInflateFirstSymbolDecode) {
+                    _ = PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int firstSymbol);
+                    _ = firstSymbol;
+                } else if (probeMode == LoadProbeMode.DecompressInflateLiteralWrite) {
+                    if (PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int literalSymbol) && literalSymbol < 256) {
+                        _ = PngDecompressInflateLiteralWriteProbe(literalSymbol, expectedSize);
+                    }
+                } else if (probeMode == LoadProbeMode.DecompressInflateLengthDistance) {
+                    if (PngDecompressInflateFirstSymbolDecodeProbe(ref inflateContext, out int lengthSymbol) && lengthSymbol > 255) {
+                        _ = PngDecompressInflateLengthDistanceProbe(ref inflateContext, lengthSymbol);
+                    }
+                } else if (probeMode == LoadProbeMode.DecompressInflateOneStep) {
+                    _ = PngDecompressInflateOneStepProbe(ref inflateContext, expectedSize, out int oneStepSymbol);
+                    _ = oneStepSymbol;
+                }
+
+                compressedData.Dispose();
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
                 ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
                 return false;
             }
@@ -2653,6 +2719,457 @@ namespace guideXOS.Misc {
                     // Invalid filter type
                     return false;
             }
+        }
+
+        private static bool HasValidCursorPngInputGate(byte[] data, int width, int height, byte bitDepth, byte colorType, int idatChunkCount, int idatTotalSize, int expectedSize) {
+            ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_ENTER");
+
+            if (data == null || data.Length != 1070) {
+                ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_BAD_LEN");
+                ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_EXIT");
+                return false;
+            }
+
+            bool headerOk = data.Length >= 33 &&
+                            data[0] == 0x89 &&
+                            data[1] == 0x50 &&
+                            data[2] == 0x4E &&
+                            data[3] == 0x47 &&
+                            data[4] == 0x0D &&
+                            data[5] == 0x0A &&
+                            data[6] == 0x1A &&
+                            data[7] == 0x0A &&
+                            ReadBE32(data, 8) == 13 &&
+                            ReadBE32(data, 12) == 0x49484452;
+
+            if (!headerOk) {
+                ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_BAD_FORMAT");
+                ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_EXIT");
+                return false;
+            }
+
+            if (width != 28 || height != 28) {
+                ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_BAD_DIMS");
+                ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_EXIT");
+                return false;
+            }
+
+            if (bitDepth != 8 || colorType != 6) {
+                ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_BAD_FORMAT");
+                ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_EXIT");
+                return false;
+            }
+
+            if (idatChunkCount != 1 || idatTotalSize != 555 || expectedSize != 3164) {
+                ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_BAD_IDAT");
+                ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_EXIT");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_OK");
+            ProbeBreadcrumb("PNGDECOMP_INPUT_GATE_EXIT");
+            return true;
+        }
+
+        private static bool TryPrepareCursorInflateContext(byte[] input, int inputLen, out CursorInflateContext context) {
+            context = new CursorInflateContext();
+
+            if (input == null || inputLen < 2) return false;
+
+            byte cmf = input[0];
+            byte flg = input[1];
+            if ((cmf & 0x0F) != 8 || (flg & 0x20) != 0 || ((cmf * 256 + flg) % 31) != 0) {
+                return false;
+            }
+
+            int inPos = 2;
+            int bitBuf = 0;
+            int bitCount = 0;
+
+            if (bitCount < 1) {
+                if (inPos >= inputLen) return false;
+                bitBuf |= input[inPos++] << bitCount;
+                bitCount += 8;
+            }
+            bool lastBlock = (bitBuf & 1) == 1;
+            _ = lastBlock;
+            bitBuf >>= 1;
+            bitCount--;
+
+            if (bitCount < 2) {
+                if (inPos >= inputLen) return false;
+                bitBuf |= input[inPos++] << bitCount;
+                bitCount += 8;
+            }
+
+            int blockType = bitBuf & 3;
+            bitBuf >>= 2;
+            bitCount -= 2;
+
+            if (blockType == 1) {
+                for (int i = 0; i < LITLEN_TABLE_SIZE; i++) {
+                    if (i < 144) _litLenLengths[i] = 8;
+                    else if (i < 256) _litLenLengths[i] = 9;
+                    else if (i < 280) _litLenLengths[i] = 7;
+                    else _litLenLengths[i] = 8;
+                }
+
+                for (int i = 0; i < DIST_TABLE_SIZE; i++) {
+                    _distLengths[i] = 5;
+                }
+
+                if (!BuildDecodeTable(_litLenLengths, LITLEN_TABLE_SIZE, 15, _litLenTable, 1 << 15)) return false;
+                if (!BuildDecodeTable(_distLengths, DIST_TABLE_SIZE, 15, _distTable, 1 << 15)) return false;
+            } else if (blockType == 2) {
+                while (bitCount < 14) {
+                    if (inPos >= inputLen) return false;
+                    bitBuf |= input[inPos++] << bitCount;
+                    bitCount += 8;
+                }
+
+                int hlit = (bitBuf & 0x1F) + 257;
+                bitBuf >>= 5;
+                bitCount -= 5;
+
+                int hdist = (bitBuf & 0x1F) + 1;
+                bitBuf >>= 5;
+                bitCount -= 5;
+
+                int hclen = (bitBuf & 0x0F) + 4;
+                bitBuf >>= 4;
+                bitCount -= 4;
+
+                if (hlit > 286 || hdist > 32) return false;
+
+                int[] clOrder = { 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 };
+
+                for (int i = 0; i < CODELENGTH_TABLE_SIZE; i++) {
+                    _codeLenLengths[i] = 0;
+                }
+
+                for (int i = 0; i < hclen; i++) {
+                    while (bitCount < 3) {
+                        if (inPos >= inputLen) return false;
+                        bitBuf |= input[inPos++] << bitCount;
+                        bitCount += 8;
+                    }
+
+                    _codeLenLengths[clOrder[i]] = bitBuf & 7;
+                    bitBuf >>= 3;
+                    bitCount -= 3;
+                }
+
+                if (!BuildDecodeTable(_codeLenLengths, CODELENGTH_TABLE_SIZE, 7, _codeLenTable, 1 << 7)) return false;
+
+                int totalCodes = hlit + hdist;
+                for (int i = 0; i < 320; i++) {
+                    _allLengths[i] = 0;
+                }
+
+                int idx = 0;
+                int safetyCounter = 0;
+                while (idx < totalCodes) {
+                    if (++safetyCounter > totalCodes + 1000) return false;
+
+                    while (bitCount < 15) {
+                        if (inPos >= inputLen) return false;
+                        bitBuf |= input[inPos++] << bitCount;
+                        bitCount += 8;
+                    }
+
+                    int sym = DecodeSymbol(_codeLenTable, 7, ref bitBuf, ref bitCount);
+                    if (sym < 0) return false;
+
+                    if (sym < 16) {
+                        _allLengths[idx++] = sym;
+                    } else if (sym == 16) {
+                        while (bitCount < 2) {
+                            if (inPos >= inputLen) return false;
+                            bitBuf |= input[inPos++] << bitCount;
+                            bitCount += 8;
+                        }
+
+                        int repeat = 3 + (bitBuf & 3);
+                        bitBuf >>= 2;
+                        bitCount -= 2;
+
+                        if (idx == 0) return false;
+
+                        int prevLen = _allLengths[idx - 1];
+                        for (int j = 0; j < repeat && idx < totalCodes; j++) {
+                            _allLengths[idx++] = prevLen;
+                        }
+                    } else if (sym == 17) {
+                        while (bitCount < 3) {
+                            if (inPos >= inputLen) return false;
+                            bitBuf |= input[inPos++] << bitCount;
+                            bitCount += 8;
+                        }
+
+                        int repeat = 3 + (bitBuf & 7);
+                        bitBuf >>= 3;
+                        bitCount -= 3;
+
+                        for (int j = 0; j < repeat && idx < totalCodes; j++) {
+                            _allLengths[idx++] = 0;
+                        }
+                    } else if (sym == 18) {
+                        while (bitCount < 7) {
+                            if (inPos >= inputLen) return false;
+                            bitBuf |= input[inPos++] << bitCount;
+                            bitCount += 8;
+                        }
+
+                        int repeat = 11 + (bitBuf & 0x7F);
+                        bitBuf >>= 7;
+                        bitCount -= 7;
+
+                        for (int j = 0; j < repeat && idx < totalCodes; j++) {
+                            _allLengths[idx++] = 0;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+
+                for (int i = 0; i < hlit && i < LITLEN_TABLE_SIZE; i++) {
+                    _litLenLengths[i] = _allLengths[i];
+                }
+                for (int i = hlit; i < LITLEN_TABLE_SIZE; i++) {
+                    _litLenLengths[i] = 0;
+                }
+
+                for (int i = 0; i < hdist && i < DIST_TABLE_SIZE; i++) {
+                    _distLengths[i] = _allLengths[hlit + i];
+                }
+                for (int i = hdist; i < DIST_TABLE_SIZE; i++) {
+                    _distLengths[i] = 0;
+                }
+
+                if (!BuildDecodeTable(_litLenLengths, LITLEN_TABLE_SIZE, 15, _litLenTable, 1 << 15)) return false;
+                if (!BuildDecodeTable(_distLengths, DIST_TABLE_SIZE, 15, _distTable, 1 << 15)) return false;
+            } else {
+                return false;
+            }
+
+            context.Input = input;
+            context.InputLen = inputLen;
+            context.InPos = inPos;
+            context.BitBuf = bitBuf;
+            context.BitCount = bitCount;
+            context.BlockType = blockType;
+            return true;
+        }
+
+        private static bool TryDecodeCursorFirstSymbol(ref CursorInflateContext context, out int symbol) {
+            symbol = -1;
+
+            while (context.BitCount < 15) {
+                if (context.InPos >= context.InputLen) return false;
+                context.BitBuf |= context.Input[context.InPos++] << context.BitCount;
+                context.BitCount += 8;
+            }
+
+            symbol = DecodeSymbol(_litLenTable, 15, ref context.BitBuf, ref context.BitCount);
+            return symbol >= 0;
+        }
+
+        private static bool TryDecodeCursorLengthDistance(ref CursorInflateContext context, int symbol, out int length, out int distanceSymbol, out int distance) {
+            length = -1;
+            distanceSymbol = -1;
+            distance = -1;
+
+            if (symbol < FIRST_LENGTH_CODE_INDEX || symbol > LAST_LENGTH_CODE_INDEX) {
+                return false;
+            }
+
+            int inPos = context.InPos;
+            int bitBuf = context.BitBuf;
+            int bitCount = context.BitCount;
+
+            length = GetLength(symbol, ref bitBuf, ref bitCount, context.Input, context.InputLen, ref inPos);
+            if (length < 0) return false;
+
+            while (bitCount < 15) {
+                if (inPos >= context.InputLen) return false;
+                bitBuf |= context.Input[inPos++] << bitCount;
+                bitCount += 8;
+            }
+
+            distanceSymbol = DecodeSymbol(_distTable, 15, ref bitBuf, ref bitCount);
+            if (distanceSymbol < 0) return false;
+
+            distance = GetDistance(distanceSymbol, ref bitBuf, ref bitCount, context.Input, context.InputLen, ref inPos);
+            if (distance < 0) return false;
+
+            context.InPos = inPos;
+            context.BitBuf = bitBuf;
+            context.BitCount = bitCount;
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void PngDecompressInflateBoundaryProbe() {
+            ProbeBreadcrumb("PNGDECOMP_FIRST_SYMBOL_BOUNDARY_ENTER");
+            ProbeBreadcrumb("PNGDECOMP_FIRST_SYMBOL_BOUNDARY_EXIT");
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressInflateBitReaderProbe(ref CursorInflateContext context) {
+            ProbeBreadcrumb("PNGDECOMP_BITREADER_ENTER");
+            ProbeValue("PNGDECOMP_BITREADER_BYTEPOS", (ulong)(uint)context.InPos);
+            ProbeValue("PNGDECOMP_BITREADER_BITCOUNT", (ulong)(uint)context.BitCount);
+            ProbeBreadcrumb("PNGDECOMP_BITREADER_OK");
+            ProbeBreadcrumb("PNGDECOMP_BITREADER_EXIT");
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressInflateFirstSymbolDecodeProbe(ref CursorInflateContext context, out int symbol) {
+            ProbeBreadcrumb("PNGDECOMP_FIRST_SYMBOL_DECODE_ENTER");
+            if (!TryDecodeCursorFirstSymbol(ref context, out symbol)) {
+                ProbeBreadcrumb("PNGDECOMP_FIRST_SYMBOL_DECODE_EXIT");
+                return false;
+            }
+
+            ProbeValue("PNGDECOMP_FIRST_SYMBOL_VALUE", (ulong)(uint)symbol);
+            if (symbol < 256) {
+                ProbeBreadcrumb("PNGDECOMP_FIRST_SYMBOL_LITERAL");
+            } else if (symbol == 256) {
+                ProbeBreadcrumb("PNGDECOMP_FIRST_SYMBOL_END");
+            } else {
+                ProbeBreadcrumb("PNGDECOMP_FIRST_SYMBOL_LENGTH");
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_FIRST_SYMBOL_DECODE_EXIT");
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressInflateLiteralWriteProbe(int symbol, int expectedSize) {
+            ProbeBreadcrumb("PNGDECOMP_LITERAL_WRITE_ENTER");
+            if (symbol < 0 || symbol > 255 || expectedSize <= 0) {
+                ProbeBreadcrumb("PNGDECOMP_LITERAL_WRITE_BOUNDS_BAD");
+                ProbeBreadcrumb("PNGDECOMP_LITERAL_WRITE_EXIT");
+                return false;
+            }
+
+            int outPos = 0;
+            if (outPos < 0 || outPos >= expectedSize) {
+                ProbeBreadcrumb("PNGDECOMP_LITERAL_WRITE_BOUNDS_BAD");
+                ProbeBreadcrumb("PNGDECOMP_LITERAL_WRITE_EXIT");
+                return false;
+            }
+
+            byte[] scratch = new byte[1];
+            if (scratch == null) {
+                ProbeBreadcrumb("PNGDECOMP_LITERAL_WRITE_BOUNDS_BAD");
+                ProbeBreadcrumb("PNGDECOMP_LITERAL_WRITE_EXIT");
+                return false;
+            }
+
+            scratch[0] = (byte)symbol;
+            ProbeBreadcrumb("PNGDECOMP_LITERAL_WRITE_BOUNDS_OK");
+            ProbeBreadcrumb("PNGDECOMP_LITERAL_WRITE_EXIT");
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressInflateLengthDistanceProbe(ref CursorInflateContext context, int symbol) {
+            ProbeBreadcrumb("PNGDECOMP_LEN_DIST_ENTER");
+            if (!TryDecodeCursorLengthDistance(ref context, symbol, out int length, out int distanceSymbol, out int distance)) {
+                ProbeBreadcrumb("PNGDECOMP_LEN_DIST_EXIT");
+                return false;
+            }
+
+            ProbeValue("PNGDECOMP_LENGTH_SYMBOL", (ulong)(uint)symbol);
+            ProbeValue("PNGDECOMP_LENGTH_VALUE", (ulong)(uint)length);
+            ProbeValue("PNGDECOMP_DISTANCE_SYMBOL", (ulong)(uint)distanceSymbol);
+            ProbeValue("PNGDECOMP_DISTANCE_VALUE", (ulong)(uint)distance);
+            ProbeBreadcrumb("PNGDECOMP_LEN_DIST_EXIT");
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressInflateOneStepProbe(ref CursorInflateContext context, int expectedSize, out int firstSymbol) {
+            ProbeBreadcrumb("PNGDECOMP_ONE_STEP_ENTER");
+            if (!TryDecodeCursorFirstSymbol(ref context, out firstSymbol)) {
+                ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BOUNDS_ABORT");
+                ProbeBreadcrumb("PNGDECOMP_ONE_STEP_EXIT");
+                return false;
+            }
+
+            ProbeValue("PNGDECOMP_FIRST_SYMBOL_VALUE", (ulong)(uint)firstSymbol);
+            if (firstSymbol < 256) {
+                ProbeBreadcrumb("PNGDECOMP_FIRST_SYMBOL_LITERAL");
+            } else if (firstSymbol == 256) {
+                ProbeBreadcrumb("PNGDECOMP_FIRST_SYMBOL_END");
+            } else {
+                ProbeBreadcrumb("PNGDECOMP_FIRST_SYMBOL_LENGTH");
+            }
+
+            if (firstSymbol < 256) {
+                ProbeBreadcrumb("PNGDECOMP_ONE_STEP_LITERAL");
+                if (expectedSize <= 0) {
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BOUNDS_ABORT");
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_EXIT");
+                    return false;
+                }
+
+                byte[] scratch = new byte[1];
+                if (scratch == null) {
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BOUNDS_ABORT");
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_EXIT");
+                    return false;
+                }
+
+                scratch[0] = (byte)firstSymbol;
+                ProbeBreadcrumb("PNGDECOMP_ONE_STEP_OK");
+                ProbeBreadcrumb("PNGDECOMP_ONE_STEP_EXIT");
+                return true;
+            }
+
+            if (firstSymbol > 255) {
+                ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BACKREF");
+                if (!TryDecodeCursorLengthDistance(ref context, firstSymbol, out int length, out _, out int distance)) {
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BOUNDS_ABORT");
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_EXIT");
+                    return false;
+                }
+
+                if (distance <= 0) {
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BOUNDS_ABORT");
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_EXIT");
+                    return false;
+                }
+
+                byte[] scratch = new byte[expectedSize];
+                if (scratch == null) {
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BOUNDS_ABORT");
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_EXIT");
+                    return false;
+                }
+
+                int outPos = 0;
+                if (distance > outPos) {
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BOUNDS_ABORT");
+                    ProbeBreadcrumb("PNGDECOMP_ONE_STEP_EXIT");
+                    return false;
+                }
+
+                for (int i = 0; i < length && outPos < expectedSize; i++) {
+                    scratch[outPos] = scratch[outPos - distance];
+                    outPos++;
+                }
+
+                ProbeBreadcrumb("PNGDECOMP_ONE_STEP_OK");
+                ProbeBreadcrumb("PNGDECOMP_ONE_STEP_EXIT");
+                return true;
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_ONE_STEP_BOUNDS_ABORT");
+            ProbeBreadcrumb("PNGDECOMP_ONE_STEP_EXIT");
+            return false;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
