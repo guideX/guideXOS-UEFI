@@ -83,6 +83,33 @@ function Get-FileSnapshot {
     }
 }
 
+function Quote-CmdArg {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    if ($Value -match '[\s`"]') {
+        return '"' + ($Value -replace '"', '\"') + '"'
+    }
+
+    return $Value
+}
+
+function Format-CmdLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Exe,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Args
+    )
+
+    $parts = @((Quote-CmdArg -Value $Exe))
+    $parts += $Args | ForEach-Object { Quote-CmdArg -Value $_ }
+    return ($parts -join ' ')
+}
+
 function Assert-SingleReplacement {
     param(
         [Parameter(Mandatory = $true)]
@@ -1027,6 +1054,19 @@ try {
         throw "kernel.elf and ESP\kernel.elf hashes do not match."
     }
 
+    $kernelArtifacts = Get-ChildItem -Path $root -Recurse -File -Filter 'kernel.elf' | Sort-Object FullName
+    Write-Host "[probe] kernel.elf artifacts under repo: $($kernelArtifacts.Count)" -ForegroundColor Cyan
+    foreach ($artifact in $kernelArtifacts) {
+        $artifactSnapshot = Get-FileSnapshot -Path $artifact.FullName
+        Write-Host ("[probe]   {0}" -f $artifactSnapshot.Path) -ForegroundColor Gray
+        Write-Host ("[probe]     mtime:  {0}" -f $artifactSnapshot.LastWriteTime.ToString('o')) -ForegroundColor Gray
+        Write-Host ("[probe]     sha256: {0}" -f $artifactSnapshot.Sha256) -ForegroundColor Gray
+        Write-Host ("[probe]     bytes:  {0}" -f $artifactSnapshot.Length) -ForegroundColor Gray
+    }
+    if ($kernelArtifacts.Count -gt 1) {
+        Write-Host "[probe] WARNING: multiple plausible boot artifacts exist; verify QEMU is using the intended root/ESP pair above." -ForegroundColor Yellow
+    }
+
     if (Test-Path $serialLog) {
         Remove-Item -LiteralPath $serialLog -Force
     }
@@ -1044,6 +1084,10 @@ try {
 
     Write-Host "[probe] Launching QEMU with the bundled q35 UEFI firmware path..." -ForegroundColor Cyan
     Write-Host "[probe] Serial log: $serialLog" -ForegroundColor Cyan
+    Write-Host "[probe] QEMU executable: $qemuExe" -ForegroundColor Cyan
+    Write-Host "[probe] QEMU pflash code path: $qemuFirmwareCode" -ForegroundColor Cyan
+    Write-Host "[probe] QEMU pflash vars path: $qemuFirmwareVars" -ForegroundColor Cyan
+    Write-Host "[probe] QEMU ESP/disk path: fat:rw:ESP" -ForegroundColor Cyan
 
     $serialRelative = $serialLog.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/'
 
@@ -1062,6 +1106,9 @@ try {
     if ($GuiVisible -and $qmpPort) {
         $qemuArgs += @('-qmp', "tcp:127.0.0.1:$qmpPort,server,nowait")
     }
+
+    $qemuCommandLine = Format-CmdLine -Exe $qemuExe -Args $qemuArgs
+    Write-Host "[probe] QEMU command line: $qemuCommandLine" -ForegroundColor Cyan
 
     $qemuProcess = Start-Process -FilePath $qemuExe `
         -ArgumentList $qemuArgs `
