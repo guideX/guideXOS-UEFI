@@ -948,6 +948,44 @@ try {
     [System.IO.File]::WriteAllText($programPath, $patched)
     $programPatched = $true
 
+    $patchedProgramSnapshot = Get-FileSnapshot -Path $programPath
+    $patchedProgramText = [System.IO.File]::ReadAllText($programPath)
+    $sourcePathMatchesBuildPath = $programPath -eq (Join-Path $root 'guideXOS\Program.cs')
+    if (-not $patchedProgramText.Contains($runId)) {
+        throw "Patched Program.cs does not contain the fresh run ID: $runId"
+    }
+    if (-not $patchedProgramText.Contains('private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = true;')) {
+        throw "Patched Program.cs is missing the normal desktop render-path allow gate."
+    }
+    if (-not $patchedProgramText.Contains('private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = false;')) {
+        throw "Patched Program.cs is missing the TinyUEFI bypass disable gate."
+    }
+    if (-not $patchedProgramText.Contains('private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = true;')) {
+        throw "Patched Program.cs is missing the step-probe enable gate."
+    }
+
+    $preflightLog = Join-Path $probeRoot "step_probe_preflight_$runId.txt"
+    $preflight = @(
+        "RUN_ID=$runId"
+        "PROGRAM_PATH=$programPath"
+        "BUILD_SCRIPT_PATH=$buildScript"
+        "KERNEL_PROJECT_PATH=$(Join-Path $root 'guideXOS\guideXOS.csproj')"
+        "SOURCE_PATH_MATCH_BUILD_PATH=$sourcePathMatchesBuildPath"
+        "PROGRAM_CONTAINS_RUN_ID=$($patchedProgramText.Contains($runId))"
+        "PROGRAM_CONTAINS_ALLOW_NORMAL_GATE=$($patchedProgramText.Contains('private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = true;'))"
+        "PROGRAM_CONTAINS_TINY_BYPASS_GATE=$($patchedProgramText.Contains('private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = false;'))"
+        "PROGRAM_CONTAINS_STEP_PROBE_GATE=$($patchedProgramText.Contains('private const bool NORMAL_DESKTOP_UEFI_STEP_PROBE = true;'))"
+        "PROGRAM_SHA256=$($patchedProgramSnapshot.Sha256)"
+        "PROGRAM_BYTES=$($patchedProgramSnapshot.Length)"
+        "PROGRAM_MTIME=$($patchedProgramSnapshot.LastWriteTime.ToString('o'))"
+    )
+    [System.IO.File]::WriteAllLines($preflightLog, $preflight)
+    Write-Host "[probe] Preflight source proof: $preflightLog" -ForegroundColor Cyan
+    Write-Host "[probe] Program.cs path: $programPath" -ForegroundColor Cyan
+    Write-Host "[probe] Program.cs hash: $($patchedProgramSnapshot.Sha256)" -ForegroundColor Cyan
+    Write-Host "[probe] Program.cs contains run ID: $($patchedProgramText.Contains($runId))" -ForegroundColor Cyan
+    Write-Host "[probe] Source path matches build path: $sourcePathMatchesBuildPath" -ForegroundColor Cyan
+
     $windowStyle = if ($GuiVisible) { 'Normal' } else { 'Hidden' }
 
     Write-Host "[probe] Run ID: $runId" -ForegroundColor Cyan
@@ -1085,6 +1123,18 @@ try {
             $validRun = $false
             Write-Host "[probe] Missing required breadcrumb: $required" -ForegroundColor Red
         }
+    }
+
+    if (-not $validRun) {
+        Write-Host "[probe] INVALID run: missing required breadcrumbs, so no OS inference was made." -ForegroundColor Red
+        if (Test-Path $stderrLog) {
+            $stderrText = [System.IO.File]::ReadAllText($stderrLog)
+            if ($stderrText.Trim()) {
+                Write-Host "[probe] QEMU stderr:" -ForegroundColor Yellow
+                Write-Host $stderrText -ForegroundColor Yellow
+            }
+        }
+        throw "Probe run invalid. Serial log did not contain the required fresh probe markers."
     }
 
     $probeEnterRegex = [regex]'NORM_STEP_[A-Z0-9_]+_ENTER'

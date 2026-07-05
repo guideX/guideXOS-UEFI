@@ -1211,6 +1211,7 @@ unsafe class Program {
         bool useTinyUefi = isUefi && UEFI_USE_TINY_RENDER_LOOP_BYPASS && !useSafeNormalUefiDesktop && !UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
         bool useNormalUefiDesktopStepProbe = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && NORMAL_DESKTOP_UEFI_STEP_PROBE;
         bool useNormalUefiDesktop = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && !NORMAL_DESKTOP_UEFI_STEP_PROBE;
+        LogUefiRenderDispatchGateDiagnostics(isUefi, useSafeNormalUefiDesktop, useTinyUefi, useNormalUefiDesktopStepProbe, useNormalUefiDesktop);
         LogUefiRenderDispatchDiagnostics(useNormalUefiDesktopStepProbe, useTinyUefi, useSafeNormalUefiDesktop, useNormalUefiDesktop);
         SerialBreadcrumb(useSafeNormalUefiDesktop ? "SMAIN_DISPATCH_REASON=SAFE_NORMAL_DESKTOP_UEFI" :
                          useTinyUefi ? "SMAIN_DISPATCH_REASON=TINY_UEFI" :
@@ -2236,6 +2237,20 @@ unsafe class Program {
         SerialBreadcrumb("SMAIN_GFX_H");
         SerialWriteUnsigned(gfxH);
         SerialChar('\n');
+    }
+
+    private static void LogUefiRenderDispatchGateDiagnostics(bool isUefi, bool useSafeNormalDesktopUefi, bool useTinyUefi, bool useNormalUefiDesktopStepProbe, bool useNormalUefiDesktop) {
+        SerialBreadcrumb("SMAIN_DISPATCH_GATE_ENTER");
+        SerialBreadcrumb(isUefi ? "SMAIN_DISPATCH_GATE_BOOT_MODE_UEFI_TRUE" : "SMAIN_DISPATCH_GATE_BOOT_MODE_UEFI_FALSE");
+        SerialBreadcrumb(NORMAL_DESKTOP_UEFI_STEP_PROBE ? "SMAIN_DISPATCH_GATE_NORMAL_STEP_PROBE_TRUE" : "SMAIN_DISPATCH_GATE_NORMAL_STEP_PROBE_FALSE");
+        SerialBreadcrumb(UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH ? "SMAIN_DISPATCH_GATE_ALLOW_NORMAL_TRUE" : "SMAIN_DISPATCH_GATE_ALLOW_NORMAL_FALSE");
+        SerialBreadcrumb(UEFI_USE_TINY_RENDER_LOOP_BYPASS ? "SMAIN_DISPATCH_GATE_TINY_BYPASS_TRUE" : "SMAIN_DISPATCH_GATE_TINY_BYPASS_FALSE");
+        SerialBreadcrumb(UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME ? "SMAIN_DISPATCH_GATE_SAFE_NORMAL_TRUE" : "SMAIN_DISPATCH_GATE_SAFE_NORMAL_FALSE");
+        if (useNormalUefiDesktopStepProbe) {
+            SerialBreadcrumb("SMAIN_DISPATCH_GATE_STEP_PROBE_SELECTED");
+        } else if (!useSafeNormalDesktopUefi && !useTinyUefi && !useNormalUefiDesktop) {
+            SerialBreadcrumb("SMAIN_DISPATCH_GATE_LEGACY_SELECTED");
+        }
     }
 
     private static void LogUefiRenderDispatchDiagnostics(bool emitVerbose, bool useTinyUefi, bool useSafeNormalDesktopUefi, bool useNormalUefiDesktop) {
