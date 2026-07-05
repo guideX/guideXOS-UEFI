@@ -99,6 +99,11 @@ namespace guideXOS.Misc {
             DecompressInflateLengthDistance,
             DecompressInflateOneStep,
             DecompressInflateSmoke,
+            DecompressTinyBoundary,
+            DecompressTinyBitReader,
+            DecompressTinyFirstSymbol,
+            DecompressTinyOneOp,
+            DecompressTinyInflateSmoke,
             AfterDecompress,
             AfterImageCreate
         }
@@ -110,6 +115,19 @@ namespace guideXOS.Misc {
             public int BitBuf;
             public int BitCount;
             public int BlockType;
+        }
+
+        private struct CursorPngTinyProbeContext {
+            public byte[] Data;
+            public byte[] CompressedData;
+            public int CompressedPos;
+            public int Width;
+            public int Height;
+            public byte BitDepth;
+            public byte ColorType;
+            public int IdatChunkCount;
+            public int IdatTotalSize;
+            public int ExpectedSize;
         }
 
         private static void ProbeBreadcrumb(string marker) {
@@ -2169,10 +2187,206 @@ namespace guideXOS.Misc {
             result = null;
             ProbeBreadcrumb("PNGLOADER_ENTER");
             try {
+                if (IsTinyProbeMode(probeMode)) {
+                    return LoadTinyProbe(data, out result, probeMode);
+                }
+
                 return LoadCore(data, out result, probeMode);
             } finally {
                 ProbeBreadcrumb("PNGLOADER_EXIT");
             }
+        }
+
+        private static bool IsTinyProbeMode(LoadProbeMode probeMode) {
+            return probeMode == LoadProbeMode.DecompressTinyBoundary ||
+                   probeMode == LoadProbeMode.DecompressTinyBitReader ||
+                   probeMode == LoadProbeMode.DecompressTinyFirstSymbol ||
+                   probeMode == LoadProbeMode.DecompressTinyOneOp ||
+                   probeMode == LoadProbeMode.DecompressTinyInflateSmoke;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool LoadTinyProbe(byte[] data, out Image result, LoadProbeMode probeMode) {
+            result = null;
+
+            if (!_initialized) return false;
+
+            if (data == null) {
+                ProbeBreadcrumb("PNGLOADER_BYTES_NULL");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGLOADER_BYTES_OK");
+            ProbeValue("PNGLOADER_BYTES_LENGTH", (ulong)data.Length);
+
+            ProbeBreadcrumb("PNGLOADER_HEADER_ENTER");
+            if (data.Length < 33) {
+                ProbeBreadcrumb("PNGLOADER_HEADER_BAD");
+                return false;
+            }
+
+            if (data[0] != 0x89 || data[1] != 0x50 || data[2] != 0x4E || data[3] != 0x47 ||
+                data[4] != 0x0D || data[5] != 0x0A || data[6] != 0x1A || data[7] != 0x0A) {
+                ProbeBreadcrumb("PNGLOADER_HEADER_BAD");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGLOADER_HEADER_OK");
+
+            int pos = 8;
+            int width = 0;
+            int height = 0;
+            int idatTotalSize = 0;
+            int idatChunkCount = 0;
+
+            ProbeBreadcrumb("PNGLOADER_IHDR_ENTER");
+            if (pos + 12 > data.Length) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+
+            uint chunkLen = ReadBE32(data, pos);
+            if (chunkLen != 13) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+
+            uint chunkType = ReadBE32(data, pos + 4);
+            if (chunkType != 0x49484452) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+
+            width = (int)ReadBE32(data, pos + 8);
+            height = (int)ReadBE32(data, pos + 12);
+            byte bitDepth = data[pos + 16];
+            byte colorType = data[pos + 17];
+            byte compressionMethod = data[pos + 18];
+            byte filterMethod = data[pos + 19];
+            byte interlaceMethod = data[pos + 20];
+
+            if (width <= 0 || width > MAX_WIDTH) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (height <= 0 || height > MAX_HEIGHT) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (bitDepth != 8) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (colorType != 6) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (compressionMethod != 0) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (filterMethod != 0) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+            if (interlaceMethod != 0) {
+                ProbeBreadcrumb("PNGLOADER_IHDR_BAD");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGLOADER_IHDR_OK");
+            ProbeBreadcrumb("PNGLOADER_IHDR_DIMS");
+            ProbeValue("PNGLOADER_IHDR_WIDTH", (ulong)(uint)width);
+            ProbeValue("PNGLOADER_IHDR_HEIGHT", (ulong)(uint)height);
+            ProbeValue("PNGLOADER_IHDR_BIT_DEPTH", (ulong)bitDepth);
+            ProbeValue("PNGLOADER_IHDR_COLOR_TYPE", (ulong)colorType);
+
+            const int tinyKnownIdatChunkOffset = 491;
+            const int tinyKnownIdatPayloadSize = 555;
+            const int tinyKnownIdatPayloadOffset = tinyKnownIdatChunkOffset + 8;
+            const uint tinyKnownIdatType = 0x49444154;
+
+            ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_ENTER");
+            if (data.Length != 1070 ||
+                ReadBE32(data, tinyKnownIdatChunkOffset) != (uint)tinyKnownIdatPayloadSize ||
+                ReadBE32(data, tinyKnownIdatChunkOffset + 4) != tinyKnownIdatType) {
+                ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+                return false;
+            }
+
+            idatChunkCount = 1;
+            idatTotalSize = tinyKnownIdatPayloadSize;
+            ProbeBreadcrumb("PNGLOADER_CHUNK_TYPE_IDAT");
+            ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_EXIT");
+
+            ProbeValue("PNGLOADER_IDAT_CHUNK_COUNT", (ulong)(uint)idatChunkCount);
+            ProbeValue("PNGLOADER_IDAT_COMPRESSED_BYTES", (ulong)(uint)idatTotalSize);
+            ProbeBreadcrumb("PNGLOADER_IDAT_BYTES_ENTER");
+
+            byte[] compressedData = new byte[idatTotalSize];
+            if (compressedData == null) {
+                ProbeBreadcrumb("PNGLOADER_IDAT_BYTES_EMPTY");
+                return false;
+            }
+
+            int compressedPos = 0;
+            while (compressedPos < idatTotalSize) {
+                compressedData[compressedPos] = data[tinyKnownIdatPayloadOffset + compressedPos];
+                compressedPos++;
+            }
+
+            if (compressedPos != idatTotalSize || compressedPos <= 0) {
+                compressedData.Dispose();
+                ProbeBreadcrumb("PNGLOADER_IDAT_BYTES_EMPTY");
+                return false;
+            }
+            ProbeBreadcrumb("PNGLOADER_IDAT_BYTES_OK");
+
+            int bytesPerPixel = 4;
+            int scanlineBytes = width * bytesPerPixel;
+            int expectedSize = height * (scanlineBytes + 1);
+
+            ProbeBreadcrumb("PNGLOADER_DECOMPRESS_PREMETA_ENTER");
+            ProbeValue("PNGLOADER_DECOMPRESS_PREMETA_LEN", (ulong)(uint)compressedPos);
+            ProbeValue("PNGLOADER_DECOMPRESS_PREMETA_EXPECTED_OUT_LEN", (ulong)(uint)expectedSize);
+            ProbeBreadcrumb("PNGLOADER_DECOMPRESS_PREMETA_EXIT");
+
+            CursorPngTinyProbeContext tinyContext = new CursorPngTinyProbeContext {
+                Data = data,
+                CompressedData = compressedData,
+                CompressedPos = compressedPos,
+                Width = width,
+                Height = height,
+                BitDepth = bitDepth,
+                ColorType = colorType,
+                IdatChunkCount = idatChunkCount,
+                IdatTotalSize = idatTotalSize,
+                ExpectedSize = expectedSize
+            };
+
+            ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
+            bool tinySmokeOk = false;
+            int tinySmokeLen = 0;
+            if (probeMode == LoadProbeMode.DecompressTinyBoundary) {
+                tinySmokeOk = PngDecompressTinyBoundaryProbe(ref tinyContext);
+            } else if (probeMode == LoadProbeMode.DecompressTinyBitReader) {
+                tinySmokeOk = PngDecompressTinyBitReaderProbe(ref tinyContext);
+            } else if (probeMode == LoadProbeMode.DecompressTinyFirstSymbol) {
+                tinySmokeOk = PngDecompressTinyFirstSymbolProbe(ref tinyContext);
+            } else if (probeMode == LoadProbeMode.DecompressTinyOneOp) {
+                tinySmokeOk = PngDecompressTinyOneOpProbe(ref tinyContext);
+            } else if (probeMode == LoadProbeMode.DecompressTinyInflateSmoke) {
+                tinySmokeOk = PngDecompressTinyInflateSmokeProbe(ref tinyContext, out tinySmokeLen);
+            }
+            compressedData.Dispose();
+            if (tinySmokeOk) {
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_OK");
+                ProbeValue("PNGLOADER_DECOMPRESSED_BYTES", (ulong)(uint)tinySmokeLen);
+            } else {
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+            }
+            ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
+            return false;
         }
 
         private static bool LoadCore(byte[] data, out Image result, LoadProbeMode probeMode) {
@@ -2513,6 +2727,36 @@ namespace guideXOS.Misc {
                 outputProbe.Dispose();
                 compressedData.Dispose();
                 ProbeBreadcrumb("PNGDECOMP_OUTPUT_ALLOC_EXIT");
+                return false;
+            }
+
+            if (probeMode == LoadProbeMode.DecompressTinyBoundary ||
+                probeMode == LoadProbeMode.DecompressTinyBitReader ||
+                probeMode == LoadProbeMode.DecompressTinyFirstSymbol ||
+                probeMode == LoadProbeMode.DecompressTinyOneOp ||
+                probeMode == LoadProbeMode.DecompressTinyInflateSmoke) {
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_ENTER");
+                bool tinySmokeOk = PngDecompressTinyDispatchProbe(
+                    data,
+                    compressedData,
+                    compressedPos,
+                    width,
+                    height,
+                    bitDepth,
+                    colorType,
+                    idatChunkCount,
+                    idatTotalSize,
+                    expectedSize,
+                    probeMode,
+                    out int tinySmokeLen);
+                compressedData.Dispose();
+                if (tinySmokeOk) {
+                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_OK");
+                    ProbeValue("PNGLOADER_DECOMPRESSED_BYTES", (ulong)(uint)tinySmokeLen);
+                } else {
+                    ProbeBreadcrumb("PNGLOADER_DECOMPRESS_NULL");
+                }
+                ProbeBreadcrumb("PNGLOADER_DECOMPRESS_EXIT");
                 return false;
             }
 
@@ -3566,6 +3810,245 @@ namespace guideXOS.Misc {
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressTinyBoundaryProbe(ref CursorPngTinyProbeContext context) {
+            ProbeBreadcrumb("PNGDECOMP_TINY_BOUNDARY_ENTER");
+            if (!HasValidCursorPngInputGate(context.Data, context.Width, context.Height, context.BitDepth, context.ColorType, context.IdatChunkCount, context.IdatTotalSize, context.ExpectedSize)) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_BOUNDARY_EXIT");
+                return false;
+            }
+
+            if (!TryPrepareCursorInflateBoundaryContext(context.CompressedData, context.CompressedPos, out CursorInflateContext boundaryContext)) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_BOUNDARY_EXIT");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_TINY_BOUNDARY_AFTER_SETUP");
+            _ = boundaryContext;
+            ProbeBreadcrumb("PNGDECOMP_TINY_BOUNDARY_BEFORE_RETURN");
+            ProbeBreadcrumb("PNGDECOMP_TINY_BOUNDARY_EXIT");
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressTinyBitReaderProbe(ref CursorPngTinyProbeContext context) {
+            ProbeBreadcrumb("PNGDECOMP_TINY_BITREADER_ENTER");
+            if (!HasValidCursorPngInputGate(context.Data, context.Width, context.Height, context.BitDepth, context.ColorType, context.IdatChunkCount, context.IdatTotalSize, context.ExpectedSize)) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_BITREADER_EXIT");
+                return false;
+            }
+
+            if (!TryPrepareCursorInflateBoundaryContext(context.CompressedData, context.CompressedPos, out CursorInflateContext boundaryContext)) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_BITREADER_EXIT");
+                return false;
+            }
+
+            ProbeValue("PNGDECOMP_TINY_BITREADER_BYTEPOS", (ulong)(uint)boundaryContext.InPos);
+            ProbeValue("PNGDECOMP_TINY_BITREADER_BITCOUNT", (ulong)(uint)boundaryContext.BitCount);
+            ProbeBreadcrumb("PNGDECOMP_TINY_BITREADER_EXIT");
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressTinyFirstSymbolProbe(ref CursorPngTinyProbeContext context) {
+            ProbeBreadcrumb("PNGDECOMP_TINY_SYMBOL_ENTER");
+            if (!HasValidCursorPngInputGate(context.Data, context.Width, context.Height, context.BitDepth, context.ColorType, context.IdatChunkCount, context.IdatTotalSize, context.ExpectedSize)) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_SYMBOL_EXIT");
+                return false;
+            }
+
+            if (!TryPrepareCursorInflateContext(context.CompressedData, context.CompressedPos, out CursorInflateContext symbolContext)) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_SYMBOL_EXIT");
+                return false;
+            }
+
+            if (!TryDecodeCursorFirstSymbol(ref symbolContext, out int symbol)) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_SYMBOL_EXIT");
+                return false;
+            }
+
+            ProbeValue("PNGDECOMP_TINY_SYMBOL_VALUE", (ulong)(uint)symbol);
+            if (symbol < 256) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_SYMBOL_LITERAL");
+            } else if (symbol == 256) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_SYMBOL_END");
+            } else {
+                ProbeBreadcrumb("PNGDECOMP_TINY_SYMBOL_LENGTH");
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_TINY_SYMBOL_EXIT");
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressTinyOneOpProbe(ref CursorPngTinyProbeContext context) {
+            ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_ENTER");
+            if (!HasValidCursorPngInputGate(context.Data, context.Width, context.Height, context.BitDepth, context.ColorType, context.IdatChunkCount, context.IdatTotalSize, context.ExpectedSize)) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_BOUNDS_ABORT");
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+                return false;
+            }
+
+            if (!TryPrepareCursorInflateContext(context.CompressedData, context.CompressedPos, out CursorInflateContext opContext)) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_BOUNDS_ABORT");
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+                return false;
+            }
+
+            if (!TryDecodeCursorFirstSymbol(ref opContext, out int firstSymbol)) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_BOUNDS_ABORT");
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+                return false;
+            }
+
+            if (firstSymbol < 256) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_LITERAL");
+                if (context.ExpectedSize <= 0) {
+                    ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_BOUNDS_ABORT");
+                    ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+                    return false;
+                }
+
+                byte[] oneByteOutput = new byte[context.ExpectedSize];
+                if (oneByteOutput == null) {
+                    ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_BOUNDS_ABORT");
+                    ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+                    return false;
+                }
+
+                int outPos = 0;
+                if (outPos >= context.ExpectedSize) {
+                    ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_BOUNDS_ABORT");
+                    ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+                    return false;
+                }
+
+                oneByteOutput[outPos] = (byte)firstSymbol;
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_OK");
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+                return false;
+            }
+
+            if (firstSymbol == 256) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_BOUNDS_ABORT");
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+                return false;
+            }
+
+            if (firstSymbol > 256) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_LENGTH");
+                if (!TryDecodeCursorLengthDistance(ref opContext, firstSymbol, out int length, out int distanceSymbol, out int distance)) {
+                    ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_BOUNDS_ABORT");
+                    ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+                    return false;
+                }
+
+                _ = distanceSymbol;
+                if (length <= 0 || length > context.ExpectedSize || distance <= 0 || distance > context.ExpectedSize) {
+                    ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_BOUNDS_ABORT");
+                    ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+                    return false;
+                }
+
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_OK");
+                ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_BOUNDS_ABORT");
+            ProbeBreadcrumb("PNGDECOMP_TINY_ONEOP_EXIT");
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressTinyInflateSmokeProbe(ref CursorPngTinyProbeContext context, out int smokeLen) {
+            smokeLen = 0;
+            ProbeBreadcrumb("PNGDECOMP_TINY_INFLATE_ENTER");
+            if (!HasValidCursorPngInputGate(context.Data, context.Width, context.Height, context.BitDepth, context.ColorType, context.IdatChunkCount, context.IdatTotalSize, context.ExpectedSize)) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_INFLATE_BOUNDS_ABORT");
+                ProbeBreadcrumb("PNGDECOMP_TINY_INFLATE_EXIT");
+                return false;
+            }
+
+            byte[] smokeOutput = new byte[context.ExpectedSize];
+            if (smokeOutput == null) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_INFLATE_BOUNDS_ABORT");
+                ProbeBreadcrumb("PNGDECOMP_TINY_INFLATE_EXIT");
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGDECOMP_TINY_INFLATE_PROGRESS");
+            bool smokeOk = DecompressZlib(context.CompressedData, context.CompressedPos, smokeOutput, context.ExpectedSize, MAX_INFLATE_SMOKE_SYMBOL_ITERATIONS, out int smokeActualLen);
+            if (!smokeOk || smokeActualLen != context.ExpectedSize) {
+                ProbeBreadcrumb("PNGDECOMP_TINY_INFLATE_BOUNDS_ABORT");
+                ProbeBreadcrumb("PNGDECOMP_TINY_INFLATE_EXIT");
+                return false;
+            }
+
+            smokeLen = smokeActualLen;
+            ProbeBreadcrumb("PNGDECOMP_TINY_INFLATE_OK");
+            ProbeBreadcrumb("PNGDECOMP_TINY_INFLATE_EXIT");
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressTinyDispatchProbe(
+            byte[] data,
+            byte[] compressedData,
+            int compressedPos,
+            int width,
+            int height,
+            byte bitDepth,
+            byte colorType,
+            int idatChunkCount,
+            int idatTotalSize,
+            int expectedSize,
+            LoadProbeMode probeMode,
+            out int smokeLen) {
+            CursorPngTinyProbeContext context = new CursorPngTinyProbeContext {
+                Data = data,
+                CompressedData = compressedData,
+                CompressedPos = compressedPos,
+                Width = width,
+                Height = height,
+                BitDepth = bitDepth,
+                ColorType = colorType,
+                IdatChunkCount = idatChunkCount,
+                IdatTotalSize = idatTotalSize,
+                ExpectedSize = expectedSize
+            };
+            return PngDecompressTinyDispatchProbe(ref context, probeMode, out smokeLen);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PngDecompressTinyDispatchProbe(
+            ref CursorPngTinyProbeContext context,
+            LoadProbeMode probeMode,
+            out int smokeLen) {
+            smokeLen = 0;
+            if (probeMode == LoadProbeMode.DecompressTinyBoundary) {
+                return PngDecompressTinyBoundaryProbe(ref context);
+            }
+
+            if (probeMode == LoadProbeMode.DecompressTinyBitReader) {
+                return PngDecompressTinyBitReaderProbe(ref context);
+            }
+
+            if (probeMode == LoadProbeMode.DecompressTinyFirstSymbol) {
+                return PngDecompressTinyFirstSymbolProbe(ref context);
+            }
+
+            if (probeMode == LoadProbeMode.DecompressTinyOneOp) {
+                return PngDecompressTinyOneOpProbe(ref context);
+            }
+
+            if (probeMode == LoadProbeMode.DecompressTinyInflateSmoke) {
+                return PngDecompressTinyInflateSmokeProbe(ref context, out smokeLen);
+            }
+
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
         private static bool PngDecompressInflateBitReaderProbe(ref CursorInflateContext context) {
             ProbeBreadcrumb("PNGDECOMP_BITREADER_ENTER");
             ProbeValue("PNGDECOMP_BITREADER_BYTEPOS", (ulong)(uint)context.InPos);
@@ -4145,6 +4628,10 @@ namespace guideXOS.Misc {
         /// Returns false on any error.
         /// </summary>
         private static bool DecompressZlib(byte[] input, int inputLen, byte[] output, int outputMax, out int outputLen) {
+            return DecompressZlib(input, inputLen, output, outputMax, MAX_DECODE_ITERATIONS, out outputLen);
+        }
+
+        private static bool DecompressZlib(byte[] input, int inputLen, byte[] output, int outputMax, int maxIterations, out int outputLen) {
             outputLen = 0;
             
             if (input == null || inputLen < 6) return false;
@@ -4177,7 +4664,7 @@ namespace guideXOS.Misc {
             
             while (!lastBlock && outPos < outputMax && inPos < inputLen) {
                 // Safety: prevent infinite loops
-                if (++iterations > MAX_DECODE_ITERATIONS) return false;
+                if (++iterations > maxIterations) return false;
                 
                 // Read BFINAL (1 bit)
                 if (bitCount < 1) {
@@ -4222,12 +4709,12 @@ namespace guideXOS.Misc {
                 }
                 else if (blockType == 1) {
                     // Fixed Huffman codes
-                    bool ok = DecodeFixedHuffman(input, inputLen, output, outputMax, ref inPos, ref outPos, ref bitBuf, ref bitCount);
+                    bool ok = DecodeFixedHuffman(input, inputLen, output, outputMax, maxIterations, ref inPos, ref outPos, ref bitBuf, ref bitCount);
                     if (!ok) return false;
                 }
                 else if (blockType == 2) {
                     // Dynamic Huffman codes
-                    bool ok = DecodeDynamicHuffman(input, inputLen, output, outputMax, ref inPos, ref outPos, ref bitBuf, ref bitCount);
+                    bool ok = DecodeDynamicHuffman(input, inputLen, output, outputMax, maxIterations, ref inPos, ref outPos, ref bitBuf, ref bitCount);
                     if (!ok) return false;
                 }
                 else {
@@ -4250,7 +4737,7 @@ namespace guideXOS.Misc {
         /// - Literals 280-287: 8-bit codes starting at 11000000
         /// - Distances: All 5-bit codes
         /// </summary>
-        private static bool DecodeFixedHuffman(byte[] input, int inputLen, byte[] output, int outputMax,
+        private static bool DecodeFixedHuffman(byte[] input, int inputLen, byte[] output, int outputMax, int maxIterations,
             ref int inPos, ref int outPos, ref int bitBuf, ref int bitCount) {
             
             // Build fixed literal/length table
@@ -4271,7 +4758,7 @@ namespace guideXOS.Misc {
             if (!BuildDecodeTable(_distLengths, DIST_TABLE_SIZE, 15, _distTable, 1 << 15)) return false;
             
             // Decode symbols
-            return DecodeHuffmanBlock(input, inputLen, output, outputMax, ref inPos, ref outPos, ref bitBuf, ref bitCount);
+            return DecodeHuffmanBlock(input, inputLen, output, outputMax, maxIterations, ref inPos, ref outPos, ref bitBuf, ref bitCount);
         }
         
         /// <summary>
@@ -4280,7 +4767,7 @@ namespace guideXOS.Misc {
         /// First reads the code length tables from the stream,
         /// then uses them to decode the actual data.
         /// </summary>
-        private static bool DecodeDynamicHuffman(byte[] input, int inputLen, byte[] output, int outputMax,
+        private static bool DecodeDynamicHuffman(byte[] input, int inputLen, byte[] output, int outputMax, int maxIterations,
             ref int inPos, ref int outPos, ref int bitBuf, ref int bitCount) {
             
             // Read dynamic table header
@@ -4427,7 +4914,7 @@ namespace guideXOS.Misc {
             if (!BuildDecodeTable(_distLengths, DIST_TABLE_SIZE, 15, _distTable, 1 << 15)) return false;
             
             // Decode symbols
-            return DecodeHuffmanBlock(input, inputLen, output, outputMax, ref inPos, ref outPos, ref bitBuf, ref bitCount);
+            return DecodeHuffmanBlock(input, inputLen, output, outputMax, maxIterations, ref inPos, ref outPos, ref bitBuf, ref bitCount);
         }
         
         /// <summary>
@@ -4518,13 +5005,13 @@ namespace guideXOS.Misc {
         /// Decode a Huffman-compressed block using pre-built tables.
         /// Handles literal bytes and length/distance pairs.
         /// </summary>
-        private static bool DecodeHuffmanBlock(byte[] input, int inputLen, byte[] output, int outputMax,
+        private static bool DecodeHuffmanBlock(byte[] input, int inputLen, byte[] output, int outputMax, int maxIterations,
             ref int inPos, ref int outPos, ref int bitBuf, ref int bitCount) {
             
             int iterations = 0;
             
             while (outPos < outputMax) {
-                if (++iterations > MAX_DECODE_ITERATIONS) return false;
+                if (++iterations > maxIterations) return false;
                 
                 // Ensure we have enough bits for longest code (15 bits)
                 while (bitCount < 15) {

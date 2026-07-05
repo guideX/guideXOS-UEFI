@@ -447,6 +447,11 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_LENGTH_DISTANCE = false;
     private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_ONE_STEP = false;
     private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_BOUNDARY = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_BITREADER = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_FIRST_SYMBOL = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_ONE_OP = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_INFLATE_SMOKE = false;
     private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS = false;
     private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE = false;
     internal const bool NORMAL_DESKTOP_UEFI_PROBE_BYPASS_STEP8_DRAWIMAGE = false;
@@ -763,6 +768,16 @@ unsafe class Program {
             probeMode = PngLoader.LoadProbeMode.DecompressInflateOneStep;
         } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE) {
             probeMode = PngLoader.LoadProbeMode.DecompressInflateSmoke;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_BOUNDARY) {
+            probeMode = PngLoader.LoadProbeMode.DecompressTinyBoundary;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_BITREADER) {
+            probeMode = PngLoader.LoadProbeMode.DecompressTinyBitReader;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_FIRST_SYMBOL) {
+            probeMode = PngLoader.LoadProbeMode.DecompressTinyFirstSymbol;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_ONE_OP) {
+            probeMode = PngLoader.LoadProbeMode.DecompressTinyOneOp;
+        } else if (UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_INFLATE_SMOKE) {
+            probeMode = PngLoader.LoadProbeMode.DecompressTinyInflateSmoke;
         } else if (UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS) {
             probeMode = PngLoader.LoadProbeMode.AfterDecompress;
         } else if (UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE) {
@@ -1776,6 +1791,11 @@ unsafe class Program {
                        UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_LENGTH_DISTANCE ||
                        UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_ONE_STEP ||
                        UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_BOUNDARY ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_BITREADER ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_FIRST_SYMBOL ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_ONE_OP ||
+                       UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_INFLATE_SMOKE ||
                        UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS ||
                        UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE) {
                 ProbeNormalDesktopCursorSourcePng();
@@ -1879,6 +1899,11 @@ unsafe class Program {
                                 UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_LENGTH_DISTANCE ||
                                 UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_ONE_STEP ||
                                 UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_BOUNDARY ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_BITREADER ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_FIRST_SYMBOL ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_ONE_OP ||
+                                UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_INFLATE_SMOKE ||
                                 UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS ||
                                 UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE ||
                                 UEFI_PROBE_CURSOR_SOURCE_PNG;
@@ -1944,6 +1969,11 @@ unsafe class Program {
                    UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_LENGTH_DISTANCE ||
                    UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_ONE_STEP ||
                    UEFI_PROBE_CURSOR_PNG_DECOMPRESS_INFLATE_SMOKE ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_BOUNDARY ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_BITREADER ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_FIRST_SYMBOL ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_ONE_OP ||
+                   UEFI_PROBE_CURSOR_PNG_DECOMPRESS_TINY_INFLATE_SMOKE ||
                    UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_DECOMPRESS ||
                    UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE ||
                    UEFI_PROBE_CURSOR_SOURCE_PNG) {
