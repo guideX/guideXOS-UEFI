@@ -688,7 +688,7 @@ namespace guideXOS.Misc {
             // Skip zlib header and decompress
             return Inflate(data, offset + 2, size - 6, expectedSize);
         }
-        
+
         #endregion
         
         #region PNG Decoding

@@ -139,7 +139,7 @@ namespace guideXOS.Misc {
             if (BootConsole.CurrentMode != guideXOS.BootMode.UEFI) return;
             Program.CursorImageProbeValue(marker, value);
         }
-        
+
         /// <summary>
         /// Validate PNG signature and parse IHDR chunk.
         /// 
@@ -1160,10 +1160,10 @@ namespace guideXOS.Misc {
             // Assumption: For PNG, we expect exactly expectedOutputSize bytes.
             // Some DEFLATE streams might produce less, but PNG requires exact size.
             if (outPos != expectedOutputSize) return false;
-            
+
             return true;
         }
-        
+
         /// <summary>
         /// Decode a Huffman-compressed block using pre-built tables.
         /// 

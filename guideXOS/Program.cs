@@ -417,6 +417,11 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_PNG_BYTES_NOOP = false;
     private const bool UEFI_PROBE_CURSOR_PNG_HEADER_HELPER = false;
     private const bool UEFI_PROBE_CURSOR_PNG_IHDR_HELPER = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S0 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S1 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S2 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S3 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER = false;
     private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR = false;
     private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN = false;
@@ -702,6 +707,62 @@ unsafe class Program {
         SerialBreadcrumb("CURSOR_PNG_IHDR_HEIGHT=" + height.ToString());
         SerialBreadcrumb("CURSOR_PNG_IHDR_HELPER_EXIT");
         return true;
+    }
+
+    private static bool IsUefiCursorPngStandaloneProbeEnabled() {
+        return GetUefiCursorPngStandaloneProbeStage() != UefiCursorPngProbeStage.None;
+    }
+
+    private static UefiCursorPngProbeStage GetUefiCursorPngStandaloneProbeStage() {
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S0) {
+            return UefiCursorPngProbeStage.S0;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S1) {
+            return UefiCursorPngProbeStage.S1;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S2) {
+            return UefiCursorPngProbeStage.S2;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S3) {
+            return UefiCursorPngProbeStage.S3;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4) {
+            return UefiCursorPngProbeStage.S4;
+        }
+
+        return UefiCursorPngProbeStage.None;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeNormalDesktopCursorSourcePngStandalone() {
+        const string cursorPngPath = "Images/Cursor.png";
+        SerialBreadcrumb("CURSOR_PNG_PROBE_ENTER");
+        SerialBreadcrumb("CURSOR_PNG_BEFORE_DISK_CHECK");
+        bool diskExists = false;
+        try {
+            diskExists = File.Exists(cursorPngPath);
+        } catch { }
+        SerialBreadcrumb("CURSOR_PNG_AFTER_DISK_CHECK");
+
+        SerialBreadcrumb("CURSOR_PNG_BEFORE_FILE_LOOKUP");
+        byte[] pngBytes = null;
+        try {
+            pngBytes = File.ReadAllBytes(cursorPngPath);
+        } catch { }
+        SerialBreadcrumb("CURSOR_PNG_AFTER_FILE_LOOKUP");
+        if (pngBytes != null) {
+            SerialBreadcrumb("CURSOR_PNG_BYTES_LENGTH=" + pngBytes.Length.ToString());
+        }
+
+        _ = diskExists;
+        UefiCursorPngProbeStage standaloneStage = GetUefiCursorPngStandaloneProbeStage();
+        _ = UefiCursorPngProbe.Probe(pngBytes, standaloneStage);
+        _ = pngBytes;
+        SerialBreadcrumb("CURSOR_PNG_PROBE_EXIT");
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1761,6 +1822,12 @@ unsafe class Program {
                 ProbeNormalDesktopCursorSourcePng();
             } else if (UEFI_PROBE_CURSOR_PNG_IHDR_HELPER) {
                 ProbeNormalDesktopCursorSourcePng();
+            } else if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S0 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S1 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S2 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S3 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4) {
+                ProbeNormalDesktopCursorSourcePng();
             } else if (UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER ||
                        UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR ||
                        UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_CHUNK_SCAN ||
@@ -1868,6 +1935,11 @@ unsafe class Program {
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void ProbeNormalDesktopCursorSourcePng() {
+        if (IsUefiCursorPngStandaloneProbeEnabled()) {
+            ProbeNormalDesktopCursorSourcePngStandalone();
+            return;
+        }
+
         const string cursorPngPath = "Images/Cursor.png";
         bool loaderStageProbe = UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER ||
                                 UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR ||

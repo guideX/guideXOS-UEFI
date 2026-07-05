@@ -26,6 +26,11 @@ param(
     [switch]$CursorPngBytesNoopProbe,
     [switch]$CursorPngHeaderHelperProbe,
     [switch]$CursorPngIhdrHelperProbe,
+    [switch]$CursorPngStandaloneS0Probe,
+    [switch]$CursorPngStandaloneS1Probe,
+    [switch]$CursorPngStandaloneS2Probe,
+    [switch]$CursorPngStandaloneS3Probe,
+    [switch]$CursorPngStandaloneS4Probe,
     [switch]$CursorPngLoadWrapperProbe,
     [switch]$CursorPngLoadAfterIhdrProbe,
     [switch]$CursorPngLoadAfterChunkScanProbe,
@@ -172,6 +177,25 @@ function Get-SerialMarkerValue {
     }
 
     return $null
+}
+
+function Get-DeepestSerialMarker {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Markers
+    )
+
+    $deepest = $null
+    foreach ($marker in $Markers) {
+        if ($Text.Contains($marker)) {
+            $deepest = $marker
+        }
+    }
+
+    return $deepest
 }
 
 function Get-CursorProbeDims {
@@ -466,6 +490,11 @@ if ($CursorPngNoopLoaderProbe) { $cursorVariantCount++ }
 if ($CursorPngBytesNoopProbe) { $cursorVariantCount++ }
 if ($CursorPngHeaderHelperProbe) { $cursorVariantCount++ }
 if ($CursorPngIhdrHelperProbe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS0Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS1Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS2Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS3Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4Probe) { $cursorVariantCount++ }
 if ($CursorPngLoadWrapperProbe) { $cursorVariantCount++ }
 if ($CursorPngLoadAfterIhdrProbe) { $cursorVariantCount++ }
 if ($CursorPngLoadAfterChunkScanProbe) { $cursorVariantCount++ }
@@ -538,6 +567,16 @@ $cursorBodyVariant = if ($CursorEmptyBodyProbe) {
     'PngHeaderHelper'
 } elseif ($CursorPngIhdrHelperProbe) {
     'PngIhdrHelper'
+} elseif ($CursorPngStandaloneS0Probe) {
+    'PngStandaloneS0'
+} elseif ($CursorPngStandaloneS1Probe) {
+    'PngStandaloneS1'
+} elseif ($CursorPngStandaloneS2Probe) {
+    'PngStandaloneS2'
+} elseif ($CursorPngStandaloneS3Probe) {
+    'PngStandaloneS3'
+} elseif ($CursorPngStandaloneS4Probe) {
+    'PngStandaloneS4'
 } elseif ($CursorPngLoadWrapperProbe) {
     'PngLoadWrapper'
 } elseif ($CursorPngDecompressInflateBoundaryProbe) {
@@ -627,7 +666,7 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;' `
         -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = $step13CursorPlaceholder;" `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER'
-    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngDecompressPreMetaProbe -or $CursorPngDecompressNoopProbe -or $CursorPngDecompressBytesNoopProbe -or $CursorPngDecompressZlibHeaderProbe -or $CursorPngDecompressOutputAllocProbe -or $CursorPngDecompressDeflateHeaderProbe -or $CursorPngDecompressHuffmanSetupProbe -or $CursorPngDecompressGateInlineProbe -or $CursorPngDecompressGateHelperReturnProbe -or $CursorPngDecompressGateBoolOnlyProbe -or $CursorPngDecompressGateNoStateCopyProbe -or $CursorPngDecompressPostGateFirstInstructionProbe -or $CursorPngDecompressAfterInputGateProbe -or $CursorPngDecompressPrepNoopProbe -or $CursorPngDecompressPrepMetadataProbe -or $CursorPngDecompressPrepBytesProbe -or $CursorPngDecompressPrepInlineProbe -or $CursorPngDecompressPrepBoundaryProbe -or $CursorPngDecompressPrepContextProbe -or $CursorPngDecompressInflateBoundaryProbe -or $CursorPngDecompressInflateBitReaderProbe -or $CursorPngDecompressInflateFirstSymbolDecodeProbe -or $CursorPngDecompressInflateLiteralWriteProbe -or $CursorPngDecompressInflateLengthDistanceProbe -or $CursorPngDecompressInflateOneStepProbe -or $CursorPngDecompressInflateSmokeProbe -or $CursorPngDecompressTinyBoundaryProbe -or $CursorPngDecompressTinyBitReaderProbe -or $CursorPngDecompressTinyFirstSymbolProbe -or $CursorPngDecompressTinyOneOpProbe -or $CursorPngDecompressTinyInflateSmokeProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe -or $CursorDrawBusyProbe -or $CursorDrawBusyDirectProbe -or $CursorDrawFallbackProbe
+    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngStandaloneS0Probe -or $CursorPngStandaloneS1Probe -or $CursorPngStandaloneS2Probe -or $CursorPngStandaloneS3Probe -or $CursorPngStandaloneS4Probe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngDecompressPreMetaProbe -or $CursorPngDecompressNoopProbe -or $CursorPngDecompressBytesNoopProbe -or $CursorPngDecompressZlibHeaderProbe -or $CursorPngDecompressOutputAllocProbe -or $CursorPngDecompressDeflateHeaderProbe -or $CursorPngDecompressHuffmanSetupProbe -or $CursorPngDecompressGateInlineProbe -or $CursorPngDecompressGateHelperReturnProbe -or $CursorPngDecompressGateBoolOnlyProbe -or $CursorPngDecompressGateNoStateCopyProbe -or $CursorPngDecompressPostGateFirstInstructionProbe -or $CursorPngDecompressAfterInputGateProbe -or $CursorPngDecompressPrepNoopProbe -or $CursorPngDecompressPrepMetadataProbe -or $CursorPngDecompressPrepBytesProbe -or $CursorPngDecompressPrepInlineProbe -or $CursorPngDecompressPrepBoundaryProbe -or $CursorPngDecompressPrepContextProbe -or $CursorPngDecompressInflateBoundaryProbe -or $CursorPngDecompressInflateBitReaderProbe -or $CursorPngDecompressInflateFirstSymbolDecodeProbe -or $CursorPngDecompressInflateLiteralWriteProbe -or $CursorPngDecompressInflateLengthDistanceProbe -or $CursorPngDecompressInflateOneStepProbe -or $CursorPngDecompressInflateSmokeProbe -or $CursorPngDecompressTinyBoundaryProbe -or $CursorPngDecompressTinyBitReaderProbe -or $CursorPngDecompressTinyFirstSymbolProbe -or $CursorPngDecompressTinyOneOpProbe -or $CursorPngDecompressTinyInflateSmokeProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe -or $CursorDrawBusyProbe -or $CursorDrawBusyDirectProbe -or $CursorDrawFallbackProbe
     $step13RealCursorImageRendering = if ($step13RealCursorImageRenderingEnabled) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;' `
@@ -718,6 +757,31 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_IHDR_HELPER = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_PNG_IHDR_HELPER = $cursorPngIhdrHelperProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_PNG_IHDR_HELPER'
+    $cursorPngStandaloneS0ProbeValue = if ($CursorPngStandaloneS0Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S0 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S0 = $cursorPngStandaloneS0ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S0'
+    $cursorPngStandaloneS1ProbeValue = if ($CursorPngStandaloneS1Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S1 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S1 = $cursorPngStandaloneS1ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S1'
+    $cursorPngStandaloneS2ProbeValue = if ($CursorPngStandaloneS2Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S2 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S2 = $cursorPngStandaloneS2ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S2'
+    $cursorPngStandaloneS3ProbeValue = if ($CursorPngStandaloneS3Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S3 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S3 = $cursorPngStandaloneS3ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S3'
+    $cursorPngStandaloneS4ProbeValue = if ($CursorPngStandaloneS4Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4 = $cursorPngStandaloneS4ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4'
     $cursorPngLoadWrapperProbeValue = if ($CursorPngLoadWrapperProbe) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER = false;' `
@@ -903,7 +967,7 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE = $cursorPngLoadAfterImageCreateProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE'
-    $pngProbeEnabled = $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngDecompressPreMetaProbe -or $CursorPngDecompressNoopProbe -or $CursorPngDecompressBytesNoopProbe -or $CursorPngDecompressZlibHeaderProbe -or $CursorPngDecompressOutputAllocProbe -or $CursorPngDecompressDeflateHeaderProbe -or $CursorPngDecompressHuffmanSetupProbe -or $CursorPngDecompressGateInlineProbe -or $CursorPngDecompressGateHelperReturnProbe -or $CursorPngDecompressGateBoolOnlyProbe -or $CursorPngDecompressGateNoStateCopyProbe -or $CursorPngDecompressPostGateFirstInstructionProbe -or $CursorPngDecompressAfterInputGateProbe -or $CursorPngDecompressPrepNoopProbe -or $CursorPngDecompressPrepMetadataProbe -or $CursorPngDecompressPrepBytesProbe -or $CursorPngDecompressPrepInlineProbe -or $CursorPngDecompressPrepBoundaryProbe -or $CursorPngDecompressPrepContextProbe -or $CursorPngDecompressInflateBoundaryProbe -or $CursorPngDecompressInflateBitReaderProbe -or $CursorPngDecompressInflateFirstSymbolDecodeProbe -or $CursorPngDecompressInflateLiteralWriteProbe -or $CursorPngDecompressInflateLengthDistanceProbe -or $CursorPngDecompressInflateOneStepProbe -or $CursorPngDecompressInflateSmokeProbe -or $CursorPngDecompressTinyBoundaryProbe -or $CursorPngDecompressTinyBitReaderProbe -or $CursorPngDecompressTinyFirstSymbolProbe -or $CursorPngDecompressTinyOneOpProbe -or $CursorPngDecompressTinyInflateSmokeProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe
+    $pngProbeEnabled = $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngStandaloneS0Probe -or $CursorPngStandaloneS1Probe -or $CursorPngStandaloneS2Probe -or $CursorPngStandaloneS3Probe -or $CursorPngStandaloneS4Probe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngDecompressPreMetaProbe -or $CursorPngDecompressNoopProbe -or $CursorPngDecompressBytesNoopProbe -or $CursorPngDecompressZlibHeaderProbe -or $CursorPngDecompressOutputAllocProbe -or $CursorPngDecompressDeflateHeaderProbe -or $CursorPngDecompressHuffmanSetupProbe -or $CursorPngDecompressGateInlineProbe -or $CursorPngDecompressGateHelperReturnProbe -or $CursorPngDecompressGateBoolOnlyProbe -or $CursorPngDecompressGateNoStateCopyProbe -or $CursorPngDecompressPostGateFirstInstructionProbe -or $CursorPngDecompressAfterInputGateProbe -or $CursorPngDecompressPrepNoopProbe -or $CursorPngDecompressPrepMetadataProbe -or $CursorPngDecompressPrepBytesProbe -or $CursorPngDecompressPrepInlineProbe -or $CursorPngDecompressPrepBoundaryProbe -or $CursorPngDecompressPrepContextProbe -or $CursorPngDecompressInflateBoundaryProbe -or $CursorPngDecompressInflateBitReaderProbe -or $CursorPngDecompressInflateFirstSymbolDecodeProbe -or $CursorPngDecompressInflateLiteralWriteProbe -or $CursorPngDecompressInflateLengthDistanceProbe -or $CursorPngDecompressInflateOneStepProbe -or $CursorPngDecompressInflateSmokeProbe -or $CursorPngDecompressTinyBoundaryProbe -or $CursorPngDecompressTinyBitReaderProbe -or $CursorPngDecompressTinyFirstSymbolProbe -or $CursorPngDecompressTinyOneOpProbe -or $CursorPngDecompressTinyInflateSmokeProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe
     $pngLoaderVariantLabel = if ($CursorPngLoadAfterIhdrProbe) {
         'PNG-ENTRY-BASELINE'
     } elseif ($CursorPngLoadAfterChunkScanProbe) {
@@ -986,6 +1050,16 @@ try {
         'PNG-HEADER'
     } elseif ($CursorPngIhdrHelperProbe) {
         'PNG-IHDR'
+    } elseif ($CursorPngStandaloneS0Probe) {
+        'PNG-S0'
+    } elseif ($CursorPngStandaloneS1Probe) {
+        'PNG-S1'
+    } elseif ($CursorPngStandaloneS2Probe) {
+        'PNG-S2'
+    } elseif ($CursorPngStandaloneS3Probe) {
+        'PNG-S3'
+    } elseif ($CursorPngStandaloneS4Probe) {
+        'PNG-S4'
     } else {
         'NONE'
     }
@@ -1383,6 +1457,133 @@ try {
     $cursorPngIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'CURSOR_PNG_IHDR_WIDTH'
     $cursorPngIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'CURSOR_PNG_IHDR_HEIGHT'
     $cursorPngIhdrHelperExitPresent = $serialText.Contains('CURSOR_PNG_IHDR_HELPER_EXIT')
+    $uefiPngProbeLen = $null
+    $uefiPngProbeIhdrWidth = $null
+    $uefiPngProbeIhdrHeight = $null
+    $uefiPngProbeIhdrBitDepth = $null
+    $uefiPngProbeIhdrColorType = $null
+    $uefiPngProbeIdatChunkCount = $null
+    $uefiPngProbeIdatCompressedBytes = $null
+    $uefiPngProbeZlibCmf = $null
+    $uefiPngProbeZlibFlg = $null
+    $uefiPngProbeZlibHeaderOkPresent = $false
+    $uefiPngProbeOutputAllocEnterPresent = $false
+    $uefiPngProbeOutputAllocOkPresent = $false
+    $uefiPngProbeOutputAllocSize = $null
+    $uefiPngProbeInflateEnterPresent = $false
+    $uefiPngProbeInflateProgressPresent = $false
+    $uefiPngProbeInflateBoundsAbortPresent = $false
+    $uefiPngProbeInflateFaultPresent = $false
+    $uefiPngProbeInflateOkPresent = $false
+    $uefiPngProbeInflateExitPresent = $false
+    $uefiPngProbeDeepestMarker = $null
+    if ($CursorPngStandaloneS0Probe) {
+        $uefiPngProbeLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S0_LEN'
+        $uefiPngProbeIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S0_IHDR_WIDTH'
+        $uefiPngProbeIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S0_IHDR_HEIGHT'
+        $uefiPngProbeIhdrBitDepth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S0_IHDR_BIT_DEPTH'
+        $uefiPngProbeIhdrColorType = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S0_IHDR_COLOR_TYPE'
+        $uefiPngProbeDeepestMarker = Get-DeepestSerialMarker -Text $serialText -Markers @(
+            'UEFI_PNG_PROBE_S0_ENTER'
+            'UEFI_PNG_PROBE_S0_BYTES_OK'
+            'UEFI_PNG_PROBE_S0_HEADER_OK'
+            'UEFI_PNG_PROBE_S0_IHDR_OK'
+            'UEFI_PNG_PROBE_S0_EXIT'
+        )
+    } elseif ($CursorPngStandaloneS1Probe) {
+        $uefiPngProbeLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S1_LEN'
+        $uefiPngProbeIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S1_IHDR_WIDTH'
+        $uefiPngProbeIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S1_IHDR_HEIGHT'
+        $uefiPngProbeIhdrBitDepth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S1_IHDR_BIT_DEPTH'
+        $uefiPngProbeIhdrColorType = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S1_IHDR_COLOR_TYPE'
+        $uefiPngProbeIdatChunkCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S1_IDAT_CHUNK_COUNT'
+        $uefiPngProbeIdatCompressedBytes = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S1_IDAT_COMPRESSED_BYTES'
+        $uefiPngProbeDeepestMarker = Get-DeepestSerialMarker -Text $serialText -Markers @(
+            'UEFI_PNG_PROBE_S1_ENTER'
+            'UEFI_PNG_PROBE_S1_CHUNK_SCAN_ENTER'
+            'UEFI_PNG_PROBE_S1_IDAT_SEEN'
+            'UEFI_PNG_PROBE_S1_IEND_SEEN'
+            'UEFI_PNG_PROBE_S1_CHUNK_SCAN_EXIT'
+            'UEFI_PNG_PROBE_S1_EXIT'
+        )
+    } elseif ($CursorPngStandaloneS2Probe) {
+        $uefiPngProbeLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S2_LEN'
+        $uefiPngProbeIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S2_IHDR_WIDTH'
+        $uefiPngProbeIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S2_IHDR_HEIGHT'
+        $uefiPngProbeIhdrBitDepth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S2_IHDR_BIT_DEPTH'
+        $uefiPngProbeIhdrColorType = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S2_IHDR_COLOR_TYPE'
+        $uefiPngProbeIdatChunkCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S2_IDAT_CHUNK_COUNT'
+        $uefiPngProbeIdatCompressedBytes = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S2_IDAT_BYTES'
+        $uefiPngProbeDeepestMarker = Get-DeepestSerialMarker -Text $serialText -Markers @(
+            'UEFI_PNG_PROBE_S2_ENTER'
+            'UEFI_PNG_PROBE_S2_IDAT_AGG_ENTER'
+            'UEFI_PNG_PROBE_S2_IDAT_BYTES'
+            'UEFI_PNG_PROBE_S2_IDAT_AGG_EXIT'
+            'UEFI_PNG_PROBE_S2_EXIT'
+        )
+    } elseif ($CursorPngStandaloneS3Probe) {
+        $uefiPngProbeLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S3_LEN'
+        $uefiPngProbeIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S3_IHDR_WIDTH'
+        $uefiPngProbeIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S3_IHDR_HEIGHT'
+        $uefiPngProbeIhdrBitDepth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S3_IHDR_BIT_DEPTH'
+        $uefiPngProbeIhdrColorType = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S3_IHDR_COLOR_TYPE'
+        $uefiPngProbeIdatChunkCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S3_IDAT_CHUNK_COUNT'
+        $uefiPngProbeIdatCompressedBytes = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S3_IDAT_BYTES'
+        $uefiPngProbeZlibCmf = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S3_ZLIB_CMF'
+        $uefiPngProbeZlibFlg = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S3_ZLIB_FLG'
+        $uefiPngProbeZlibHeaderOkPresent = $serialText.Contains('UEFI_PNG_PROBE_S3_ZLIB_HEADER_OK')
+        $uefiPngProbeOutputAllocEnterPresent = $serialText.Contains('UEFI_PNG_PROBE_S3_OUTPUT_ALLOC_ENTER')
+        $uefiPngProbeOutputAllocOkPresent = $serialText.Contains('UEFI_PNG_PROBE_S3_OUTPUT_ALLOC_OK')
+        $uefiPngProbeOutputAllocSize = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S3_OUTPUT_ALLOC_SIZE'
+        $uefiPngProbeDeepestMarker = Get-DeepestSerialMarker -Text $serialText -Markers @(
+            'UEFI_PNG_PROBE_S3_ENTER'
+            'UEFI_PNG_PROBE_S3_IDAT_AGG_ENTER'
+            'UEFI_PNG_PROBE_S3_IDAT_BYTES'
+            'UEFI_PNG_PROBE_S3_IDAT_AGG_EXIT'
+            'UEFI_PNG_PROBE_S3_ZLIB_HEADER_OK'
+            'UEFI_PNG_PROBE_S3_OUTPUT_ALLOC_ENTER'
+            'UEFI_PNG_PROBE_S3_OUTPUT_ALLOC_OK'
+            'UEFI_PNG_PROBE_S3_OUTPUT_ALLOC_EXIT'
+            'UEFI_PNG_PROBE_S3_EXIT'
+        )
+    } elseif ($CursorPngStandaloneS4Probe) {
+        $uefiPngProbeLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S4_LEN'
+        $uefiPngProbeIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S4_IHDR_WIDTH'
+        $uefiPngProbeIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S4_IHDR_HEIGHT'
+        $uefiPngProbeIhdrBitDepth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S4_IHDR_BIT_DEPTH'
+        $uefiPngProbeIhdrColorType = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S4_IHDR_COLOR_TYPE'
+        $uefiPngProbeIdatChunkCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S4_IDAT_CHUNK_COUNT'
+        $uefiPngProbeIdatCompressedBytes = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S4_IDAT_BYTES'
+        $uefiPngProbeZlibCmf = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S4_ZLIB_CMF'
+        $uefiPngProbeZlibFlg = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S4_ZLIB_FLG'
+        $uefiPngProbeZlibHeaderOkPresent = $serialText.Contains('UEFI_PNG_PROBE_S4_ZLIB_HEADER_OK')
+        $uefiPngProbeOutputAllocEnterPresent = $serialText.Contains('UEFI_PNG_PROBE_S4_OUTPUT_ALLOC_ENTER')
+        $uefiPngProbeOutputAllocOkPresent = $serialText.Contains('UEFI_PNG_PROBE_S4_OUTPUT_ALLOC_OK')
+        $uefiPngProbeOutputAllocSize = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S4_OUTPUT_ALLOC_SIZE'
+        $uefiPngProbeInflateEnterPresent = $serialText.Contains('UEFI_PNG_PROBE_S4_INFLATE_ENTER')
+        $uefiPngProbeInflateProgressPresent = $serialText.Contains('UEFI_PNG_PROBE_S4_INFLATE_PROGRESS')
+        $uefiPngProbeInflateBoundsAbortPresent = $serialText.Contains('UEFI_PNG_PROBE_S4_INFLATE_BOUNDS_ABORT')
+        $uefiPngProbeInflateFaultPresent = $serialText.Contains('UEFI_PNG_PROBE_S4_INFLATE_FAULT')
+        $uefiPngProbeInflateOkPresent = $serialText.Contains('UEFI_PNG_PROBE_S4_INFLATE_OK')
+        $uefiPngProbeInflateExitPresent = $serialText.Contains('UEFI_PNG_PROBE_S4_INFLATE_EXIT')
+        $uefiPngProbeDeepestMarker = Get-DeepestSerialMarker -Text $serialText -Markers @(
+            'UEFI_PNG_PROBE_S4_ENTER'
+            'UEFI_PNG_PROBE_S4_IDAT_AGG_ENTER'
+            'UEFI_PNG_PROBE_S4_IDAT_BYTES'
+            'UEFI_PNG_PROBE_S4_IDAT_AGG_EXIT'
+            'UEFI_PNG_PROBE_S4_ZLIB_HEADER_OK'
+            'UEFI_PNG_PROBE_S4_OUTPUT_ALLOC_ENTER'
+            'UEFI_PNG_PROBE_S4_OUTPUT_ALLOC_OK'
+            'UEFI_PNG_PROBE_S4_OUTPUT_ALLOC_EXIT'
+            'UEFI_PNG_PROBE_S4_INFLATE_ENTER'
+            'UEFI_PNG_PROBE_S4_INFLATE_PROGRESS'
+            'UEFI_PNG_PROBE_S4_INFLATE_BOUNDS_ABORT'
+            'UEFI_PNG_PROBE_S4_INFLATE_FAULT'
+            'UEFI_PNG_PROBE_S4_INFLATE_OK'
+            'UEFI_PNG_PROBE_S4_INFLATE_EXIT'
+            'UEFI_PNG_PROBE_S4_EXIT'
+        )
+    }
     $cursorPngLoadWrapperEnterPresent = $serialText.Contains('CURSOR_PNG_LOAD_WRAPPER_ENTER')
     $cursorPngLoadWrapperBeforeCallPresent = $serialText.Contains('CURSOR_PNG_LOAD_WRAPPER_BEFORE_CALL')
     $cursorPngLoadWrapperAfterCallPresent = $serialText.Contains('CURSOR_PNG_LOAD_WRAPPER_AFTER_CALL')
@@ -2303,6 +2504,19 @@ try {
         Write-Host "[probe] NORM_STEP_013_CURSOR_IMG_EXIT present: $step13CursorImageExitPresent" -ForegroundColor Green
         Write-Host "[probe] NORM_STEP_013_EXIT present: $step13ExitPresent" -ForegroundColor Green
         Write-Host "[probe] Enabled PNG variant: $pngLoaderVariantLabel" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG deepest marker: $uefiPngProbeDeepestMarker" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG byte length: $uefiPngProbeLen" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG IHDR width: $uefiPngProbeIhdrWidth" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG IHDR height: $uefiPngProbeIhdrHeight" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG bit depth: $uefiPngProbeIhdrBitDepth" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG color type: $uefiPngProbeIhdrColorType" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG IDAT chunk count: $uefiPngProbeIdatChunkCount" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG compressed IDAT bytes: $uefiPngProbeIdatCompressedBytes" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG zlib header ok: $uefiPngProbeZlibHeaderOkPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG output alloc ok: $uefiPngProbeOutputAllocOkPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG inflate ok: $uefiPngProbeInflateOkPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG inflate bounds abort: $uefiPngProbeInflateBoundsAbortPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG inflate fault: $uefiPngProbeInflateFaultPresent" -ForegroundColor Green
         Write-Host "[probe] PNGDECOMP_GATE_INLINE_ENTER present: $pngDecompressGateInlineEnterPresent" -ForegroundColor Green
         Write-Host "[probe] PNGDECOMP_GATE_INLINE_OK present: $pngDecompressGateInlineOkPresent" -ForegroundColor Green
         Write-Host "[probe] PNGDECOMP_GATE_INLINE_BEFORE_RETURN present: $pngDecompressGateInlineBeforeReturnPresent" -ForegroundColor Green
@@ -2628,6 +2842,27 @@ try {
             "STEP13_REAL_CURSOR_IMAGE_RENDERING_ENABLED=$step13RealCursorImageRenderingEnabled"
             "CURSOR_BODY_VARIANT=$cursorBodyVariant"
             "PNG_VARIANT=$pngLoaderVariantLabel"
+            "UEFI_PNG_PROBE_VARIANT=$pngLoaderVariantLabel"
+            "UEFI_PNG_PROBE_DEEPEST_MARKER=$uefiPngProbeDeepestMarker"
+            "UEFI_PNG_PROBE_LEN=$uefiPngProbeLen"
+            "UEFI_PNG_PROBE_IHDR_WIDTH=$uefiPngProbeIhdrWidth"
+            "UEFI_PNG_PROBE_IHDR_HEIGHT=$uefiPngProbeIhdrHeight"
+            "UEFI_PNG_PROBE_IHDR_BIT_DEPTH=$uefiPngProbeIhdrBitDepth"
+            "UEFI_PNG_PROBE_IHDR_COLOR_TYPE=$uefiPngProbeIhdrColorType"
+            "UEFI_PNG_PROBE_IDAT_CHUNK_COUNT=$uefiPngProbeIdatChunkCount"
+            "UEFI_PNG_PROBE_IDAT_COMPRESSED_BYTES=$uefiPngProbeIdatCompressedBytes"
+            "UEFI_PNG_PROBE_ZLIB_CMF=$uefiPngProbeZlibCmf"
+            "UEFI_PNG_PROBE_ZLIB_FLG=$uefiPngProbeZlibFlg"
+            "UEFI_PNG_PROBE_ZLIB_HEADER_OK_PRESENT=$uefiPngProbeZlibHeaderOkPresent"
+            "UEFI_PNG_PROBE_OUTPUT_ALLOC_ENTER_PRESENT=$uefiPngProbeOutputAllocEnterPresent"
+            "UEFI_PNG_PROBE_OUTPUT_ALLOC_OK_PRESENT=$uefiPngProbeOutputAllocOkPresent"
+            "UEFI_PNG_PROBE_OUTPUT_ALLOC_SIZE=$uefiPngProbeOutputAllocSize"
+            "UEFI_PNG_PROBE_INFLATE_ENTER_PRESENT=$uefiPngProbeInflateEnterPresent"
+            "UEFI_PNG_PROBE_INFLATE_PROGRESS_PRESENT=$uefiPngProbeInflateProgressPresent"
+            "UEFI_PNG_PROBE_INFLATE_BOUNDS_ABORT_PRESENT=$uefiPngProbeInflateBoundsAbortPresent"
+            "UEFI_PNG_PROBE_INFLATE_FAULT_PRESENT=$uefiPngProbeInflateFaultPresent"
+            "UEFI_PNG_PROBE_INFLATE_OK_PRESENT=$uefiPngProbeInflateOkPresent"
+            "UEFI_PNG_PROBE_INFLATE_EXIT_PRESENT=$uefiPngProbeInflateExitPresent"
             "PNGLOADER_DEEPEST_MARKER=$pngLoaderDeepestMarker"
             "PNGLOADER_ENTRY_BASELINE_LEN=$pngLoaderBytesLength"
             "PNGLOADER_ENTRY_BASELINE_IHDR_WIDTH=$pngLoaderIhdrWidth"
