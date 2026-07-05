@@ -2185,24 +2185,47 @@ namespace guideXOS.Misc {
 
         public static bool Load(byte[] data, out Image result, LoadProbeMode probeMode) {
             result = null;
-            ProbeBreadcrumb("PNGLOADER_ENTER");
+            bool entryBaselineProbe = probeMode == LoadProbeMode.AfterIhdr;
+            ProbeBreadcrumb(entryBaselineProbe ? "PNGLOADER_ENTRY_BASELINE_ENTER" : "PNGLOADER_ENTER");
             try {
-                if (IsTinyProbeMode(probeMode)) {
-                    return LoadTinyProbe(data, out result, probeMode);
+                if (entryBaselineProbe) {
+                    return LoadEntryBaselineProbe(data, out result);
                 }
 
                 return LoadCore(data, out result, probeMode);
             } finally {
-                ProbeBreadcrumb("PNGLOADER_EXIT");
+                ProbeBreadcrumb(entryBaselineProbe ? "PNGLOADER_ENTRY_BASELINE_EXIT" : "PNGLOADER_EXIT");
             }
         }
 
-        private static bool IsTinyProbeMode(LoadProbeMode probeMode) {
-            return probeMode == LoadProbeMode.DecompressTinyBoundary ||
-                   probeMode == LoadProbeMode.DecompressTinyBitReader ||
-                   probeMode == LoadProbeMode.DecompressTinyFirstSymbol ||
-                   probeMode == LoadProbeMode.DecompressTinyOneOp ||
-                   probeMode == LoadProbeMode.DecompressTinyInflateSmoke;
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool LoadEntryBaselineProbe(byte[] data, out Image result) {
+            result = null;
+
+            if (!_initialized) return false;
+            if (data == null) return false;
+
+            ProbeBreadcrumb("PNGLOADER_ENTRY_BASELINE_BYTES_OK");
+            ProbeValue("PNGLOADER_ENTRY_BASELINE_LEN", (ulong)data.Length);
+
+            if (data.Length < 33) return false;
+
+            if (data[0] != 0x89 || data[1] != 0x50 || data[2] != 0x4E || data[3] != 0x47 ||
+                data[4] != 0x0D || data[5] != 0x0A || data[6] != 0x1A || data[7] != 0x0A) {
+                return false;
+            }
+
+            ProbeBreadcrumb("PNGLOADER_ENTRY_BASELINE_HEADER_OK");
+
+            int width = (int)ReadBE32(data, 16);
+            int height = (int)ReadBE32(data, 20);
+            if (width <= 0 || width > MAX_WIDTH) return false;
+            if (height <= 0 || height > MAX_HEIGHT) return false;
+
+            ProbeBreadcrumb("PNGLOADER_ENTRY_BASELINE_IHDR_OK");
+            ProbeValue("PNGLOADER_ENTRY_BASELINE_IHDR_WIDTH", (ulong)(uint)width);
+            ProbeValue("PNGLOADER_ENTRY_BASELINE_IHDR_HEIGHT", (ulong)(uint)height);
+            return false;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -2483,10 +2506,6 @@ namespace guideXOS.Misc {
             ProbeValue("PNGLOADER_IHDR_HEIGHT", (ulong)(uint)height);
             ProbeValue("PNGLOADER_IHDR_BIT_DEPTH", (ulong)bitDepth);
             ProbeValue("PNGLOADER_IHDR_COLOR_TYPE", (ulong)colorType);
-
-            if (probeMode == LoadProbeMode.AfterIhdr) {
-                return false;
-            }
 
             ProbeBreadcrumb("PNGLOADER_CHUNK_SCAN_ENTER");
             pos = 8;

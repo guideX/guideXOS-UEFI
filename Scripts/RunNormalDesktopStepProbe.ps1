@@ -563,7 +563,7 @@ $cursorBodyVariant = if ($CursorEmptyBodyProbe) {
 } elseif ($CursorPngDecompressTinyInflateSmokeProbe) {
     'PngTinyInflateSmoke'
 } elseif ($CursorPngLoadAfterIhdrProbe) {
-    'PngLoadAfterIhdr'
+    'PngEntryBaseline'
 } elseif ($CursorPngLoadAfterChunkScanProbe) {
     'PngLoadAfterChunkScan'
 } elseif ($CursorPngLoadAfterIdatAggregationProbe) {
@@ -905,7 +905,7 @@ try {
         -Label 'UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE'
     $pngProbeEnabled = $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngDecompressPreMetaProbe -or $CursorPngDecompressNoopProbe -or $CursorPngDecompressBytesNoopProbe -or $CursorPngDecompressZlibHeaderProbe -or $CursorPngDecompressOutputAllocProbe -or $CursorPngDecompressDeflateHeaderProbe -or $CursorPngDecompressHuffmanSetupProbe -or $CursorPngDecompressGateInlineProbe -or $CursorPngDecompressGateHelperReturnProbe -or $CursorPngDecompressGateBoolOnlyProbe -or $CursorPngDecompressGateNoStateCopyProbe -or $CursorPngDecompressPostGateFirstInstructionProbe -or $CursorPngDecompressAfterInputGateProbe -or $CursorPngDecompressPrepNoopProbe -or $CursorPngDecompressPrepMetadataProbe -or $CursorPngDecompressPrepBytesProbe -or $CursorPngDecompressPrepInlineProbe -or $CursorPngDecompressPrepBoundaryProbe -or $CursorPngDecompressPrepContextProbe -or $CursorPngDecompressInflateBoundaryProbe -or $CursorPngDecompressInflateBitReaderProbe -or $CursorPngDecompressInflateFirstSymbolDecodeProbe -or $CursorPngDecompressInflateLiteralWriteProbe -or $CursorPngDecompressInflateLengthDistanceProbe -or $CursorPngDecompressInflateOneStepProbe -or $CursorPngDecompressInflateSmokeProbe -or $CursorPngDecompressTinyBoundaryProbe -or $CursorPngDecompressTinyBitReaderProbe -or $CursorPngDecompressTinyFirstSymbolProbe -or $CursorPngDecompressTinyOneOpProbe -or $CursorPngDecompressTinyInflateSmokeProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe
     $pngLoaderVariantLabel = if ($CursorPngLoadAfterIhdrProbe) {
-        'PNG-F'
+        'PNG-ENTRY-BASELINE'
     } elseif ($CursorPngLoadAfterChunkScanProbe) {
         'PNG-G'
     } elseif ($CursorPngLoadAfterIdatAggregationProbe) {
@@ -1582,40 +1582,49 @@ try {
     $loadPngSafeOkPresent = $serialText.Contains('LOADPNGSAFE_OK')
     $loadPngSafeNullPresent = $serialText.Contains('LOADPNGSAFE_NULL')
     $loadPngSafeExitPresent = $serialText.Contains('LOADPNGSAFE_EXIT')
-    $pngLoaderEnterPresent = $serialText.Contains('PNGLOADER_ENTER')
-    $pngLoaderBytesNullPresent = $serialText.Contains('PNGLOADER_BYTES_NULL')
-    $pngLoaderBytesOkPresent = $serialText.Contains('PNGLOADER_BYTES_OK')
-    $pngLoaderHeaderEnterPresent = $serialText.Contains('PNGLOADER_HEADER_ENTER')
-    $pngLoaderHeaderOkPresent = $serialText.Contains('PNGLOADER_HEADER_OK')
-    $pngLoaderHeaderBadPresent = $serialText.Contains('PNGLOADER_HEADER_BAD')
-    $pngLoaderIhdrEnterPresent = $serialText.Contains('PNGLOADER_IHDR_ENTER')
-    $pngLoaderIhdrOkPresent = $serialText.Contains('PNGLOADER_IHDR_OK')
-    $pngLoaderIhdrBadPresent = $serialText.Contains('PNGLOADER_IHDR_BAD')
-    $pngLoaderIhdrDimsPresent = $serialText.Contains('PNGLOADER_IHDR_DIMS')
-    $pngLoaderIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IHDR_WIDTH'
-    $pngLoaderIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IHDR_HEIGHT'
+    $pngLoaderEntryBaselineEnterPresent = $serialText.Contains('PNGLOADER_ENTRY_BASELINE_ENTER')
+    $pngLoaderEntryBaselineBytesOkPresent = $serialText.Contains('PNGLOADER_ENTRY_BASELINE_BYTES_OK')
+    $pngLoaderEntryBaselineLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_ENTRY_BASELINE_LEN'
+    $pngLoaderEntryBaselineHeaderOkPresent = $serialText.Contains('PNGLOADER_ENTRY_BASELINE_HEADER_OK')
+    $pngLoaderEntryBaselineIhdrOkPresent = $serialText.Contains('PNGLOADER_ENTRY_BASELINE_IHDR_OK')
+    $pngLoaderEntryBaselineIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_ENTRY_BASELINE_IHDR_WIDTH'
+    $pngLoaderEntryBaselineIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_ENTRY_BASELINE_IHDR_HEIGHT'
+    $pngLoaderEntryBaselineExitPresent = $serialText.Contains('PNGLOADER_ENTRY_BASELINE_EXIT')
+    $pngLoaderEnterPresent = if ($CursorPngLoadAfterIhdrProbe) { $pngLoaderEntryBaselineEnterPresent } else { $serialText.Contains('PNGLOADER_ENTER') }
+    $pngLoaderBytesNullPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_BYTES_NULL') }
+    $pngLoaderBytesOkPresent = if ($CursorPngLoadAfterIhdrProbe) { $pngLoaderEntryBaselineBytesOkPresent } else { $serialText.Contains('PNGLOADER_BYTES_OK') }
+    $pngLoaderBytesLength = if ($CursorPngLoadAfterIhdrProbe) { $pngLoaderEntryBaselineLen } else { Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_BYTES_LENGTH' }
+    $pngLoaderHeaderEnterPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_HEADER_ENTER') }
+    $pngLoaderHeaderOkPresent = if ($CursorPngLoadAfterIhdrProbe) { $pngLoaderEntryBaselineHeaderOkPresent } else { $serialText.Contains('PNGLOADER_HEADER_OK') }
+    $pngLoaderHeaderBadPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_HEADER_BAD') }
+    $pngLoaderIhdrEnterPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_IHDR_ENTER') }
+    $pngLoaderIhdrOkPresent = if ($CursorPngLoadAfterIhdrProbe) { $pngLoaderEntryBaselineIhdrOkPresent } else { $serialText.Contains('PNGLOADER_IHDR_OK') }
+    $pngLoaderIhdrBadPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_IHDR_BAD') }
+    $pngLoaderIhdrDimsPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_IHDR_DIMS') }
+    $pngLoaderIhdrWidth = if ($CursorPngLoadAfterIhdrProbe) { $pngLoaderEntryBaselineIhdrWidth } else { Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IHDR_WIDTH' }
+    $pngLoaderIhdrHeight = if ($CursorPngLoadAfterIhdrProbe) { $pngLoaderEntryBaselineIhdrHeight } else { Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IHDR_HEIGHT' }
     $pngLoaderIhdrBitDepth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IHDR_BIT_DEPTH'
     $pngLoaderIhdrColorType = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IHDR_COLOR_TYPE'
-    $pngLoaderChunkScanEnterPresent = $serialText.Contains('PNGLOADER_CHUNK_SCAN_ENTER')
-    $pngLoaderChunkTypeIhdrPresent = $serialText.Contains('PNGLOADER_CHUNK_TYPE_IHDR')
-    $pngLoaderChunkTypeIdatPresent = $serialText.Contains('PNGLOADER_CHUNK_TYPE_IDAT')
-    $pngLoaderChunkTypeIendPresent = $serialText.Contains('PNGLOADER_CHUNK_TYPE_IEND')
-    $pngLoaderChunkScanExitPresent = $serialText.Contains('PNGLOADER_CHUNK_SCAN_EXIT')
-    $pngLoaderIdatChunkCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IDAT_CHUNK_COUNT'
-    $pngLoaderIdatCompressedBytes = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IDAT_COMPRESSED_BYTES'
-    $pngLoaderIdatBytesEnterPresent = $serialText.Contains('PNGLOADER_IDAT_BYTES_ENTER')
-    $pngLoaderIdatBytesOkPresent = $serialText.Contains('PNGLOADER_IDAT_BYTES_OK')
-    $pngLoaderIdatBytesEmptyPresent = $serialText.Contains('PNGLOADER_IDAT_BYTES_EMPTY')
-    $pngLoaderDecompressEnterPresent = $serialText.Contains('PNGLOADER_DECOMPRESS_ENTER')
-    $pngLoaderDecompressExitPresent = $serialText.Contains('PNGLOADER_DECOMPRESS_EXIT')
-    $pngLoaderDecompressNullPresent = $serialText.Contains('PNGLOADER_DECOMPRESS_NULL')
-    $pngLoaderDecompressOkPresent = $serialText.Contains('PNGLOADER_DECOMPRESS_OK')
-    $pngLoaderDecompressedBytes = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_DECOMPRESSED_BYTES'
-    $pngLoaderImageCreateEnterPresent = $serialText.Contains('PNGLOADER_IMAGE_CREATE_ENTER')
-    $pngLoaderImageCreateExitPresent = $serialText.Contains('PNGLOADER_IMAGE_CREATE_EXIT')
-    $pngLoaderImageNullPresent = $serialText.Contains('PNGLOADER_IMAGE_NULL')
-    $pngLoaderImageOkPresent = $serialText.Contains('PNGLOADER_IMAGE_OK')
-    $pngLoaderExitPresent = $serialText.Contains('PNGLOADER_EXIT')
+    $pngLoaderChunkScanEnterPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_CHUNK_SCAN_ENTER') }
+    $pngLoaderChunkTypeIhdrPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_CHUNK_TYPE_IHDR') }
+    $pngLoaderChunkTypeIdatPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_CHUNK_TYPE_IDAT') }
+    $pngLoaderChunkTypeIendPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_CHUNK_TYPE_IEND') }
+    $pngLoaderChunkScanExitPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_CHUNK_SCAN_EXIT') }
+    $pngLoaderIdatChunkCount = if ($CursorPngLoadAfterIhdrProbe) { $null } else { Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IDAT_CHUNK_COUNT' }
+    $pngLoaderIdatCompressedBytes = if ($CursorPngLoadAfterIhdrProbe) { $null } else { Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_IDAT_COMPRESSED_BYTES' }
+    $pngLoaderIdatBytesEnterPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_IDAT_BYTES_ENTER') }
+    $pngLoaderIdatBytesOkPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_IDAT_BYTES_OK') }
+    $pngLoaderIdatBytesEmptyPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_IDAT_BYTES_EMPTY') }
+    $pngLoaderDecompressEnterPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_DECOMPRESS_ENTER') }
+    $pngLoaderDecompressExitPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_DECOMPRESS_EXIT') }
+    $pngLoaderDecompressNullPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_DECOMPRESS_NULL') }
+    $pngLoaderDecompressOkPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_DECOMPRESS_OK') }
+    $pngLoaderDecompressedBytes = if ($CursorPngLoadAfterIhdrProbe) { $null } else { Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'PNGLOADER_DECOMPRESSED_BYTES' }
+    $pngLoaderImageCreateEnterPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_IMAGE_CREATE_ENTER') }
+    $pngLoaderImageCreateExitPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_IMAGE_CREATE_EXIT') }
+    $pngLoaderImageNullPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_IMAGE_NULL') }
+    $pngLoaderImageOkPresent = if ($CursorPngLoadAfterIhdrProbe) { $false } else { $serialText.Contains('PNGLOADER_IMAGE_OK') }
+    $pngLoaderExitPresent = if ($CursorPngLoadAfterIhdrProbe) { $pngLoaderEntryBaselineExitPresent } else { $serialText.Contains('PNGLOADER_EXIT') }
     $cursorValidateEnterPresent = $serialText.Contains('CURSOR_VALIDATE_ENTER')
     $cursorValidateExitPresent = $serialText.Contains('CURSOR_VALIDATE_EXIT')
     $cursorValidateNullPresent = $serialText.Contains('CURSOR_VALIDATE_NULL')
@@ -1828,40 +1837,53 @@ try {
             $cursorPngDeepestMarker = $marker
         }
     }
-    $pngLoaderMarkerSequence = @(
-        'PNGLOADER_ENTER'
-        'PNGLOADER_BYTES_NULL'
-        'PNGLOADER_BYTES_OK'
-        'PNGLOADER_HEADER_ENTER'
-        'PNGLOADER_HEADER_BAD'
-        'PNGLOADER_HEADER_OK'
-        'PNGLOADER_IHDR_ENTER'
-        'PNGLOADER_IHDR_BAD'
-        'PNGLOADER_IHDR_OK'
-        'PNGLOADER_IHDR_DIMS'
-        'PNGLOADER_CHUNK_SCAN_ENTER'
-        'PNGLOADER_CHUNK_TYPE_IHDR'
-        'PNGLOADER_CHUNK_TYPE_IDAT'
-        'PNGLOADER_CHUNK_TYPE_IEND'
-        'PNGLOADER_CHUNK_SCAN_EXIT'
-        'PNGLOADER_IDAT_BYTES_ENTER'
-        'PNGLOADER_IDAT_BYTES_EMPTY'
-        'PNGLOADER_IDAT_BYTES_OK'
-        'PNGLOADER_DECOMPRESS_PREMETA_ENTER'
-        'PNGLOADER_DECOMPRESS_PREMETA_LEN'
-        'PNGLOADER_DECOMPRESS_PREMETA_EXPECTED_OUT_LEN'
-        'PNGLOADER_DECOMPRESS_PREMETA_EXIT'
-        'PNGLOADER_DECOMPRESS_ENTER'
-        'PNGLOADER_DECOMPRESS_NULL'
-        'PNGLOADER_DECOMPRESS_OK'
-        'PNGLOADER_DECOMPRESS_EXIT'
-        'PNGLOADER_IMAGE_CREATE_ENTER'
-        'PNGLOADER_IMAGE_NULL'
-        'PNGLOADER_IMAGE_OK'
-        'PNGLOADER_IMAGE_CREATE_EXIT'
-        'PNGLOADER_EXIT'
-        'PNGLOADER_DECOMPRESSED_BYTES'
-    )
+    $pngLoaderMarkerSequence = if ($CursorPngLoadAfterIhdrProbe) {
+        @(
+            'PNGLOADER_ENTRY_BASELINE_ENTER'
+            'PNGLOADER_ENTRY_BASELINE_BYTES_OK'
+            'PNGLOADER_ENTRY_BASELINE_LEN'
+            'PNGLOADER_ENTRY_BASELINE_HEADER_OK'
+            'PNGLOADER_ENTRY_BASELINE_IHDR_OK'
+            'PNGLOADER_ENTRY_BASELINE_IHDR_WIDTH'
+            'PNGLOADER_ENTRY_BASELINE_IHDR_HEIGHT'
+            'PNGLOADER_ENTRY_BASELINE_EXIT'
+        )
+    } else {
+        @(
+            'PNGLOADER_ENTER'
+            'PNGLOADER_BYTES_NULL'
+            'PNGLOADER_BYTES_OK'
+            'PNGLOADER_HEADER_ENTER'
+            'PNGLOADER_HEADER_BAD'
+            'PNGLOADER_HEADER_OK'
+            'PNGLOADER_IHDR_ENTER'
+            'PNGLOADER_IHDR_BAD'
+            'PNGLOADER_IHDR_OK'
+            'PNGLOADER_IHDR_DIMS'
+            'PNGLOADER_CHUNK_SCAN_ENTER'
+            'PNGLOADER_CHUNK_TYPE_IHDR'
+            'PNGLOADER_CHUNK_TYPE_IDAT'
+            'PNGLOADER_CHUNK_TYPE_IEND'
+            'PNGLOADER_CHUNK_SCAN_EXIT'
+            'PNGLOADER_IDAT_BYTES_ENTER'
+            'PNGLOADER_IDAT_BYTES_EMPTY'
+            'PNGLOADER_IDAT_BYTES_OK'
+            'PNGLOADER_DECOMPRESS_PREMETA_ENTER'
+            'PNGLOADER_DECOMPRESS_PREMETA_LEN'
+            'PNGLOADER_DECOMPRESS_PREMETA_EXPECTED_OUT_LEN'
+            'PNGLOADER_DECOMPRESS_PREMETA_EXIT'
+            'PNGLOADER_DECOMPRESS_ENTER'
+            'PNGLOADER_DECOMPRESS_NULL'
+            'PNGLOADER_DECOMPRESS_OK'
+            'PNGLOADER_DECOMPRESS_EXIT'
+            'PNGLOADER_IMAGE_CREATE_ENTER'
+            'PNGLOADER_IMAGE_NULL'
+            'PNGLOADER_IMAGE_OK'
+            'PNGLOADER_IMAGE_CREATE_EXIT'
+            'PNGLOADER_EXIT'
+            'PNGLOADER_DECOMPRESSED_BYTES'
+        )
+    }
     $pngLoaderDeepestMarker = $null
     foreach ($marker in $pngLoaderMarkerSequence) {
         if ($serialText.Contains($marker)) {
@@ -2405,6 +2427,16 @@ try {
         Write-Host "[probe] CURSOR_PNG_PROBE_EXIT present: $cursorPngProbeExitPresent" -ForegroundColor Green
         Write-Host "[probe] Deepest PNG marker reached: $cursorPngDeepestMarker" -ForegroundColor Green
         Write-Host "[probe] Deepest PNGDECOMP marker reached: $pngDecompressDeepestMarker" -ForegroundColor Green
+        if ($CursorPngLoadAfterIhdrProbe) {
+            Write-Host "[probe] PNGLOADER_ENTRY_BASELINE_ENTER present: $pngLoaderEnterPresent" -ForegroundColor Green
+            Write-Host "[probe] PNGLOADER_ENTRY_BASELINE_BYTES_OK present: $pngLoaderBytesOkPresent" -ForegroundColor Green
+            Write-Host "[probe] PNGLOADER_ENTRY_BASELINE_LEN: $pngLoaderBytesLength" -ForegroundColor Green
+            Write-Host "[probe] PNGLOADER_ENTRY_BASELINE_HEADER_OK present: $pngLoaderHeaderOkPresent" -ForegroundColor Green
+            Write-Host "[probe] PNGLOADER_ENTRY_BASELINE_IHDR_OK present: $pngLoaderIhdrOkPresent" -ForegroundColor Green
+            Write-Host "[probe] PNGLOADER_ENTRY_BASELINE_IHDR_WIDTH: $pngLoaderIhdrWidth" -ForegroundColor Green
+            Write-Host "[probe] PNGLOADER_ENTRY_BASELINE_IHDR_HEIGHT: $pngLoaderIhdrHeight" -ForegroundColor Green
+            Write-Host "[probe] PNGLOADER_ENTRY_BASELINE_EXIT present: $pngLoaderExitPresent" -ForegroundColor Green
+        }
         Write-Host "[probe] PNGLOADER_ENTER present: $pngLoaderEnterPresent" -ForegroundColor Green
         Write-Host "[probe] PNGLOADER_BYTES_NULL present: $pngLoaderBytesNullPresent" -ForegroundColor Green
         Write-Host "[probe] PNGLOADER_BYTES_OK present: $pngLoaderBytesOkPresent" -ForegroundColor Green
@@ -2597,6 +2629,9 @@ try {
             "CURSOR_BODY_VARIANT=$cursorBodyVariant"
             "PNG_VARIANT=$pngLoaderVariantLabel"
             "PNGLOADER_DEEPEST_MARKER=$pngLoaderDeepestMarker"
+            "PNGLOADER_ENTRY_BASELINE_LEN=$pngLoaderBytesLength"
+            "PNGLOADER_ENTRY_BASELINE_IHDR_WIDTH=$pngLoaderIhdrWidth"
+            "PNGLOADER_ENTRY_BASELINE_IHDR_HEIGHT=$pngLoaderIhdrHeight"
             "PNGDECOMP_DEEPEST_MARKER=$pngDecompressDeepestMarker"
             "PNGDECOMP_AFTER_INPUT_GATE_ENTER_PRESENT=$pngDecompressAfterInputGateEnterPresent"
             "PNGDECOMP_AFTER_INPUT_GATE_EXIT_PRESENT=$pngDecompressAfterInputGateExitPresent"
