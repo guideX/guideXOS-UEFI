@@ -782,10 +782,6 @@ unsafe class Program {
         const string cursorPngPath = "Images/Cursor.png";
         SerialBreadcrumb("CURSOR_PNG_PROBE_ENTER");
         SerialBreadcrumb("CURSOR_PNG_BEFORE_DISK_CHECK");
-        bool diskExists = false;
-        try {
-            diskExists = File.Exists(cursorPngPath);
-        } catch { }
         SerialBreadcrumb("CURSOR_PNG_AFTER_DISK_CHECK");
 
         SerialBreadcrumb("CURSOR_PNG_BEFORE_FILE_LOOKUP");
@@ -798,7 +794,6 @@ unsafe class Program {
             SerialBreadcrumb("CURSOR_PNG_BYTES_LENGTH=" + pngBytes.Length.ToString());
         }
 
-        _ = diskExists;
         UefiCursorPngProbeStage standaloneStage = GetUefiCursorPngStandaloneProbeStage();
         _ = UefiCursorPngProbe.Probe(pngBytes, standaloneStage);
         _ = pngBytes;
@@ -2031,8 +2026,6 @@ unsafe class Program {
         SerialBreadcrumb("CURSOR_PNG_PROBE_ENTER");
 
         SerialBreadcrumb("CURSOR_PNG_BEFORE_DISK_CHECK");
-        bool diskExists = false;
-        try { diskExists = File.Exists(cursorPngPath); } catch { }
         SerialBreadcrumb("CURSOR_PNG_AFTER_DISK_CHECK");
 
         SerialBreadcrumb("CURSOR_PNG_BEFORE_FILE_LOOKUP");
@@ -2045,7 +2038,6 @@ unsafe class Program {
 
         bool headerOk = CursorPngHeaderHelperProbe(pngBytes);
         if (!headerOk && !loaderStageProbe) {
-            _ = diskExists;
             _ = pngBytes;
             SerialBreadcrumb("CURSOR_PNG_PROBE_EXIT");
             return;
@@ -2102,7 +2094,6 @@ unsafe class Program {
             SerialBreadcrumb("CURSOR_PNG_PROBE_VARIANT_UNSET");
         }
 
-        _ = diskExists;
         _ = pngBytes;
         SerialBreadcrumb("CURSOR_PNG_PROBE_EXIT");
     }
