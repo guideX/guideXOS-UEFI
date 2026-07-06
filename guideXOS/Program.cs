@@ -398,6 +398,12 @@ unsafe class Program {
     private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;
     private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4A = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B0 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B1 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B2 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B3 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B4 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B5 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D = false;
@@ -744,6 +750,30 @@ unsafe class Program {
 
         if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4A) {
             return UefiCursorPngProbeStage.S4A;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B0) {
+            return UefiCursorPngProbeStage.S4B0;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B1) {
+            return UefiCursorPngProbeStage.S4B1;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B2) {
+            return UefiCursorPngProbeStage.S4B2;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B3) {
+            return UefiCursorPngProbeStage.S4B3;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B4) {
+            return UefiCursorPngProbeStage.S4B4;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B5) {
+            return UefiCursorPngProbeStage.S4B5;
         }
 
         if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B) {
@@ -1863,6 +1893,12 @@ unsafe class Program {
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S3 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4A ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B0 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B1 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B2 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B3 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B4 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B5 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D ||
@@ -3280,6 +3316,7 @@ unsafe class Program {
     /// </summary>
     private static void RenderLoopNormalDesktopStepProbe() {
         SerialBreadcrumb("NORM_PROBE_ENTER");
+        SerialBreadcrumb("STEP_PROBE_RUN_ID_20260706_054556");
         WindowManager.ProbeSerialMode = true;
 
         bool graphicsReady = false;

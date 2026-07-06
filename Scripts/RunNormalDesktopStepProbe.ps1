@@ -32,6 +32,12 @@ param(
     [switch]$CursorPngStandaloneS3Probe,
     [switch]$CursorPngStandaloneS4Probe,
     [switch]$CursorPngStandaloneS4AProbe,
+    [switch]$CursorPngStandaloneS4B0Probe,
+    [switch]$CursorPngStandaloneS4B1Probe,
+    [switch]$CursorPngStandaloneS4B2Probe,
+    [switch]$CursorPngStandaloneS4B3Probe,
+    [switch]$CursorPngStandaloneS4B4Probe,
+    [switch]$CursorPngStandaloneS4B5Probe,
     [switch]$CursorPngStandaloneS4BProbe,
     [switch]$CursorPngStandaloneS4CProbe,
     [switch]$CursorPngStandaloneS4DProbe,
@@ -504,6 +510,12 @@ if ($CursorPngStandaloneS2Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS3Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4AProbe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4B0Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4B1Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4B2Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4B3Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4B4Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4B5Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4BProbe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4CProbe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4DProbe) { $cursorVariantCount++ }
@@ -595,6 +607,18 @@ $cursorBodyVariant = if ($CursorEmptyBodyProbe) {
     'PngStandaloneS4'
 } elseif ($CursorPngStandaloneS4AProbe) {
     'PngStandaloneS4A'
+} elseif ($CursorPngStandaloneS4B0Probe) {
+    'PngStandaloneS4B0'
+} elseif ($CursorPngStandaloneS4B1Probe) {
+    'PngStandaloneS4B1'
+} elseif ($CursorPngStandaloneS4B2Probe) {
+    'PngStandaloneS4B2'
+} elseif ($CursorPngStandaloneS4B3Probe) {
+    'PngStandaloneS4B3'
+} elseif ($CursorPngStandaloneS4B4Probe) {
+    'PngStandaloneS4B4'
+} elseif ($CursorPngStandaloneS4B5Probe) {
+    'PngStandaloneS4B5'
 } elseif ($CursorPngStandaloneS4BProbe) {
     'PngStandaloneS4B'
 } elseif ($CursorPngStandaloneS4CProbe) {
@@ -698,7 +722,7 @@ try {
         -Old 'private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;' `
         -New "private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = $step13CursorPlaceholder;" `
         -Label 'NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER'
-    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngStandaloneS0Probe -or $CursorPngStandaloneS1Probe -or $CursorPngStandaloneS2Probe -or $CursorPngStandaloneS3Probe -or $CursorPngStandaloneS4Probe -or $CursorPngStandaloneS4AProbe -or $CursorPngStandaloneS4BProbe -or $CursorPngStandaloneS4CProbe -or $CursorPngStandaloneS4DProbe -or $CursorPngStandaloneS4EProbe -or $CursorPngStandaloneS4FProbe -or $CursorPngStandaloneS4GProbe -or $CursorPngStandaloneS4HProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngDecompressPreMetaProbe -or $CursorPngDecompressNoopProbe -or $CursorPngDecompressBytesNoopProbe -or $CursorPngDecompressZlibHeaderProbe -or $CursorPngDecompressOutputAllocProbe -or $CursorPngDecompressDeflateHeaderProbe -or $CursorPngDecompressHuffmanSetupProbe -or $CursorPngDecompressGateInlineProbe -or $CursorPngDecompressGateHelperReturnProbe -or $CursorPngDecompressGateBoolOnlyProbe -or $CursorPngDecompressGateNoStateCopyProbe -or $CursorPngDecompressPostGateFirstInstructionProbe -or $CursorPngDecompressAfterInputGateProbe -or $CursorPngDecompressPrepNoopProbe -or $CursorPngDecompressPrepMetadataProbe -or $CursorPngDecompressPrepBytesProbe -or $CursorPngDecompressPrepInlineProbe -or $CursorPngDecompressPrepBoundaryProbe -or $CursorPngDecompressPrepContextProbe -or $CursorPngDecompressInflateBoundaryProbe -or $CursorPngDecompressInflateBitReaderProbe -or $CursorPngDecompressInflateFirstSymbolDecodeProbe -or $CursorPngDecompressInflateLiteralWriteProbe -or $CursorPngDecompressInflateLengthDistanceProbe -or $CursorPngDecompressInflateOneStepProbe -or $CursorPngDecompressInflateSmokeProbe -or $CursorPngDecompressTinyBoundaryProbe -or $CursorPngDecompressTinyBitReaderProbe -or $CursorPngDecompressTinyFirstSymbolProbe -or $CursorPngDecompressTinyOneOpProbe -or $CursorPngDecompressTinyInflateSmokeProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe -or $CursorDrawBusyProbe -or $CursorDrawBusyDirectProbe -or $CursorDrawFallbackProbe
+    $step13RealCursorImageRenderingEnabled = $ProbeRealCursorImageRendering -or $CursorEmptyBodyProbe -or $CursorInlineBodyProbe -or $CursorStaticBodyProbe -or $CursorStaticImageRefProbe -or $CursorStaticDimsProbe -or $CursorStaticRawDataRefProbe -or $CursorStaticFirstPixelProbe -or $CursorSourceExistingRefsProbe -or $CursorSourceFallbackProbe -or $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngStandaloneS0Probe -or $CursorPngStandaloneS1Probe -or $CursorPngStandaloneS2Probe -or $CursorPngStandaloneS3Probe -or $CursorPngStandaloneS4Probe -or $CursorPngStandaloneS4AProbe -or $CursorPngStandaloneS4B0Probe -or $CursorPngStandaloneS4B1Probe -or $CursorPngStandaloneS4B2Probe -or $CursorPngStandaloneS4B3Probe -or $CursorPngStandaloneS4B4Probe -or $CursorPngStandaloneS4B5Probe -or $CursorPngStandaloneS4BProbe -or $CursorPngStandaloneS4CProbe -or $CursorPngStandaloneS4DProbe -or $CursorPngStandaloneS4EProbe -or $CursorPngStandaloneS4FProbe -or $CursorPngStandaloneS4GProbe -or $CursorPngStandaloneS4HProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngDecompressPreMetaProbe -or $CursorPngDecompressNoopProbe -or $CursorPngDecompressBytesNoopProbe -or $CursorPngDecompressZlibHeaderProbe -or $CursorPngDecompressOutputAllocProbe -or $CursorPngDecompressDeflateHeaderProbe -or $CursorPngDecompressHuffmanSetupProbe -or $CursorPngDecompressGateInlineProbe -or $CursorPngDecompressGateHelperReturnProbe -or $CursorPngDecompressGateBoolOnlyProbe -or $CursorPngDecompressGateNoStateCopyProbe -or $CursorPngDecompressPostGateFirstInstructionProbe -or $CursorPngDecompressAfterInputGateProbe -or $CursorPngDecompressPrepNoopProbe -or $CursorPngDecompressPrepMetadataProbe -or $CursorPngDecompressPrepBytesProbe -or $CursorPngDecompressPrepInlineProbe -or $CursorPngDecompressPrepBoundaryProbe -or $CursorPngDecompressPrepContextProbe -or $CursorPngDecompressInflateBoundaryProbe -or $CursorPngDecompressInflateBitReaderProbe -or $CursorPngDecompressInflateFirstSymbolDecodeProbe -or $CursorPngDecompressInflateLiteralWriteProbe -or $CursorPngDecompressInflateLengthDistanceProbe -or $CursorPngDecompressInflateOneStepProbe -or $CursorPngDecompressInflateSmokeProbe -or $CursorPngDecompressTinyBoundaryProbe -or $CursorPngDecompressTinyBitReaderProbe -or $CursorPngDecompressTinyFirstSymbolProbe -or $CursorPngDecompressTinyOneOpProbe -or $CursorPngDecompressTinyInflateSmokeProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe -or $CursorDrawBusyProbe -or $CursorDrawBusyDirectProbe -or $CursorDrawFallbackProbe
     $step13RealCursorImageRendering = if ($step13RealCursorImageRenderingEnabled) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;' `
@@ -819,6 +843,36 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4A = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4A = $cursorPngStandaloneS4AProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4A'
+    $cursorPngStandaloneS4B0ProbeValue = if ($CursorPngStandaloneS4B0Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B0 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B0 = $cursorPngStandaloneS4B0ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B0'
+    $cursorPngStandaloneS4B1ProbeValue = if ($CursorPngStandaloneS4B1Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B1 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B1 = $cursorPngStandaloneS4B1ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B1'
+    $cursorPngStandaloneS4B2ProbeValue = if ($CursorPngStandaloneS4B2Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B2 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B2 = $cursorPngStandaloneS4B2ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B2'
+    $cursorPngStandaloneS4B3ProbeValue = if ($CursorPngStandaloneS4B3Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B3 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B3 = $cursorPngStandaloneS4B3ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B3'
+    $cursorPngStandaloneS4B4ProbeValue = if ($CursorPngStandaloneS4B4Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B4 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B4 = $cursorPngStandaloneS4B4ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B4'
+    $cursorPngStandaloneS4B5ProbeValue = if ($CursorPngStandaloneS4B5Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B5 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B5 = $cursorPngStandaloneS4B5ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B5'
     $cursorPngStandaloneS4BProbeValue = if ($CursorPngStandaloneS4BProbe) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B = false;' `
@@ -1039,7 +1093,7 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE = $cursorPngLoadAfterImageCreateProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IMAGE_CREATE'
-    $pngProbeEnabled = $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngStandaloneS0Probe -or $CursorPngStandaloneS1Probe -or $CursorPngStandaloneS2Probe -or $CursorPngStandaloneS3Probe -or $CursorPngStandaloneS4Probe -or $CursorPngStandaloneS4AProbe -or $CursorPngStandaloneS4BProbe -or $CursorPngStandaloneS4CProbe -or $CursorPngStandaloneS4DProbe -or $CursorPngStandaloneS4EProbe -or $CursorPngStandaloneS4FProbe -or $CursorPngStandaloneS4GProbe -or $CursorPngStandaloneS4HProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngDecompressPreMetaProbe -or $CursorPngDecompressNoopProbe -or $CursorPngDecompressBytesNoopProbe -or $CursorPngDecompressZlibHeaderProbe -or $CursorPngDecompressOutputAllocProbe -or $CursorPngDecompressDeflateHeaderProbe -or $CursorPngDecompressHuffmanSetupProbe -or $CursorPngDecompressGateInlineProbe -or $CursorPngDecompressGateHelperReturnProbe -or $CursorPngDecompressGateBoolOnlyProbe -or $CursorPngDecompressGateNoStateCopyProbe -or $CursorPngDecompressPostGateFirstInstructionProbe -or $CursorPngDecompressAfterInputGateProbe -or $CursorPngDecompressPrepNoopProbe -or $CursorPngDecompressPrepMetadataProbe -or $CursorPngDecompressPrepBytesProbe -or $CursorPngDecompressPrepInlineProbe -or $CursorPngDecompressPrepBoundaryProbe -or $CursorPngDecompressPrepContextProbe -or $CursorPngDecompressInflateBoundaryProbe -or $CursorPngDecompressInflateBitReaderProbe -or $CursorPngDecompressInflateFirstSymbolDecodeProbe -or $CursorPngDecompressInflateLiteralWriteProbe -or $CursorPngDecompressInflateLengthDistanceProbe -or $CursorPngDecompressInflateOneStepProbe -or $CursorPngDecompressInflateSmokeProbe -or $CursorPngDecompressTinyBoundaryProbe -or $CursorPngDecompressTinyBitReaderProbe -or $CursorPngDecompressTinyFirstSymbolProbe -or $CursorPngDecompressTinyOneOpProbe -or $CursorPngDecompressTinyInflateSmokeProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe
+    $pngProbeEnabled = $CursorSourcePngProbe -or $CursorPngNoopLoaderProbe -or $CursorPngBytesNoopProbe -or $CursorPngHeaderHelperProbe -or $CursorPngIhdrHelperProbe -or $CursorPngStandaloneS0Probe -or $CursorPngStandaloneS1Probe -or $CursorPngStandaloneS2Probe -or $CursorPngStandaloneS3Probe -or $CursorPngStandaloneS4Probe -or $CursorPngStandaloneS4AProbe -or $CursorPngStandaloneS4B0Probe -or $CursorPngStandaloneS4B1Probe -or $CursorPngStandaloneS4B2Probe -or $CursorPngStandaloneS4B3Probe -or $CursorPngStandaloneS4B4Probe -or $CursorPngStandaloneS4B5Probe -or $CursorPngStandaloneS4BProbe -or $CursorPngStandaloneS4CProbe -or $CursorPngStandaloneS4DProbe -or $CursorPngStandaloneS4EProbe -or $CursorPngStandaloneS4FProbe -or $CursorPngStandaloneS4GProbe -or $CursorPngStandaloneS4HProbe -or $CursorPngLoadWrapperProbe -or $CursorPngLoadAfterIhdrProbe -or $CursorPngLoadAfterChunkScanProbe -or $CursorPngLoadAfterIdatAggregationProbe -or $CursorPngDecompressPreMetaProbe -or $CursorPngDecompressNoopProbe -or $CursorPngDecompressBytesNoopProbe -or $CursorPngDecompressZlibHeaderProbe -or $CursorPngDecompressOutputAllocProbe -or $CursorPngDecompressDeflateHeaderProbe -or $CursorPngDecompressHuffmanSetupProbe -or $CursorPngDecompressGateInlineProbe -or $CursorPngDecompressGateHelperReturnProbe -or $CursorPngDecompressGateBoolOnlyProbe -or $CursorPngDecompressGateNoStateCopyProbe -or $CursorPngDecompressPostGateFirstInstructionProbe -or $CursorPngDecompressAfterInputGateProbe -or $CursorPngDecompressPrepNoopProbe -or $CursorPngDecompressPrepMetadataProbe -or $CursorPngDecompressPrepBytesProbe -or $CursorPngDecompressPrepInlineProbe -or $CursorPngDecompressPrepBoundaryProbe -or $CursorPngDecompressPrepContextProbe -or $CursorPngDecompressInflateBoundaryProbe -or $CursorPngDecompressInflateBitReaderProbe -or $CursorPngDecompressInflateFirstSymbolDecodeProbe -or $CursorPngDecompressInflateLiteralWriteProbe -or $CursorPngDecompressInflateLengthDistanceProbe -or $CursorPngDecompressInflateOneStepProbe -or $CursorPngDecompressInflateSmokeProbe -or $CursorPngDecompressTinyBoundaryProbe -or $CursorPngDecompressTinyBitReaderProbe -or $CursorPngDecompressTinyFirstSymbolProbe -or $CursorPngDecompressTinyOneOpProbe -or $CursorPngDecompressTinyInflateSmokeProbe -or $CursorPngLoadAfterDecompressProbe -or $CursorPngLoadAfterImageCreateProbe
     $pngLoaderVariantLabel = if ($CursorPngLoadAfterIhdrProbe) {
         'PNG-ENTRY-BASELINE'
     } elseif ($CursorPngLoadAfterChunkScanProbe) {
@@ -1134,6 +1188,18 @@ try {
         'PNG-S4'
     } elseif ($CursorPngStandaloneS4AProbe) {
         'PNG-S4A'
+    } elseif ($CursorPngStandaloneS4B0Probe) {
+        'PNG-S4B0'
+    } elseif ($CursorPngStandaloneS4B1Probe) {
+        'PNG-S4B1'
+    } elseif ($CursorPngStandaloneS4B2Probe) {
+        'PNG-S4B2'
+    } elseif ($CursorPngStandaloneS4B3Probe) {
+        'PNG-S4B3'
+    } elseif ($CursorPngStandaloneS4B4Probe) {
+        'PNG-S4B4'
+    } elseif ($CursorPngStandaloneS4B5Probe) {
+        'PNG-S4B5'
     } elseif ($CursorPngStandaloneS4BProbe) {
         'PNG-S4B'
     } elseif ($CursorPngStandaloneS4CProbe) {

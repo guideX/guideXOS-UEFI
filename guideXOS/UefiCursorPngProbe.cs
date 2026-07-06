@@ -12,6 +12,12 @@ internal enum UefiCursorPngProbeStage {
     S3,
     S4,
     S4A,
+    S4B0,
+    S4B1,
+    S4B2,
+    S4B3,
+    S4B4,
+    S4B5,
     S4B,
     S4C,
     S4D,
@@ -42,6 +48,35 @@ internal static class UefiCursorPngProbe {
                 break;
             case UefiCursorPngProbeStage.S4A:
                 ProbeS4A(bytes);
+                break;
+            case UefiCursorPngProbeStage.S4B0:
+                Breadcrumb("UEFI_PNG_PROBE_S4B0_SELECTED");
+                Breadcrumb("UEFI_PNG_PROBE_S4B0_RETURN");
+                break;
+            case UefiCursorPngProbeStage.S4B1:
+                Breadcrumb("UEFI_PNG_PROBE_S4B1_BEFORE_CALL");
+                ProbeS4B1Body();
+                Breadcrumb("UEFI_PNG_PROBE_S4B1_AFTER_CALL");
+                break;
+            case UefiCursorPngProbeStage.S4B2:
+                Breadcrumb("UEFI_PNG_PROBE_S4B2_BEFORE_CALL");
+                ProbeS4B2Body(1070, 28, 28, 555, 3164);
+                Breadcrumb("UEFI_PNG_PROBE_S4B2_AFTER_CALL");
+                break;
+            case UefiCursorPngProbeStage.S4B3:
+                Breadcrumb("UEFI_PNG_PROBE_S4B3_BEFORE_CALL");
+                ProbeS4B3Body(bytes);
+                Breadcrumb("UEFI_PNG_PROBE_S4B3_AFTER_CALL");
+                break;
+            case UefiCursorPngProbeStage.S4B4:
+                Breadcrumb("UEFI_PNG_PROBE_S4B4_BEFORE_CALL");
+                ProbeS4B4Body(bytes);
+                Breadcrumb("UEFI_PNG_PROBE_S4B4_AFTER_CALL");
+                break;
+            case UefiCursorPngProbeStage.S4B5:
+                Breadcrumb("UEFI_PNG_PROBE_S4B5_BEFORE_CALL");
+                ProbeS4B5Body(bytes);
+                Breadcrumb("UEFI_PNG_PROBE_S4B5_AFTER_CALL");
                 break;
             case UefiCursorPngProbeStage.S4B:
                 ProbeS4B(bytes);
@@ -417,6 +452,89 @@ internal static class UefiCursorPngProbe {
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B1Body() {
+        Breadcrumb("UEFI_PNG_PROBE_S4B1_ENTER");
+        try {
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B1_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B2Body(int pngLen, int width, int height, int idatLen, int expectedOut) {
+        Breadcrumb("UEFI_PNG_PROBE_S4B2_ENTER");
+        try {
+            if (pngLen != 1070 ||
+                width != 28 ||
+                height != 28 ||
+                idatLen != 555 ||
+                expectedOut != 3164) {
+                return;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4B2_VALUES_OK");
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B2_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B3Body(byte[] bytes) {
+        Breadcrumb("UEFI_PNG_PROBE_S4B3_ENTER");
+        try {
+            if (bytes == null || bytes.Length != 1070) {
+                return;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4B3_BYTES_OK");
+            Value("UEFI_PNG_PROBE_S4B3_LEN", (ulong)(uint)bytes.Length);
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B3_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B4Body(byte[] bytes) {
+        Breadcrumb("UEFI_PNG_PROBE_S4B4_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4Setup(bytes, "UEFI_PNG_PROBE_S4B4", out byte[] compressedData, out int idatTotalBytes, out byte[] output)) {
+                return;
+            }
+
+            _ = compressedData;
+            _ = idatTotalBytes;
+            _ = output;
+            Breadcrumb("UEFI_PNG_PROBE_S4B4_AFTER_S4A_SETUP");
+            Breadcrumb("UEFI_PNG_PROBE_S4B4_BEFORE_BLOCK_HEADER");
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B4_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B5Body(byte[] bytes) {
+        Breadcrumb("UEFI_PNG_PROBE_S4B5_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4Setup(bytes, "UEFI_PNG_PROBE_S4B5", out byte[] compressedData, out int idatTotalBytes, out byte[] output)) {
+                return;
+            }
+
+            _ = output;
+            if (!TryReadStandaloneS4BlockHeader(compressedData, idatTotalBytes, "UEFI_PNG_PROBE_S4B5", out int bfinal, out int btype)) {
+                return;
+            }
+
+            if (bfinal != 1 || btype != 2) {
+                return;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4B5_DYNAMIC");
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B5_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static void ProbeS4B(byte[] bytes) {
         Breadcrumb("UEFI_PNG_PROBE_S4B_ENTER");
         try {
@@ -599,6 +717,33 @@ internal static class UefiCursorPngProbe {
         Value(prefix + "_ZLIB_CMF", (ulong)cmf);
         Value(prefix + "_ZLIB_FLG", (ulong)flg);
         Breadcrumb(prefix + "_ZLIB_HEADER_OK");
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool TryPrepareStandaloneS4Setup(byte[] bytes, string prefix, out byte[] compressedData, out int idatTotalBytes, out byte[] output) {
+        compressedData = null;
+        idatTotalBytes = 0;
+        output = null;
+
+        if (!TryPrepareStandaloneS4Metadata(bytes, prefix, out compressedData, out idatTotalBytes)) {
+            return false;
+        }
+
+        if (idatTotalBytes != 555) {
+            return false;
+        }
+
+        Breadcrumb(prefix + "_IDAT_LEN_OK");
+
+        const int expectedOutputBytes = 3164;
+        output = new byte[expectedOutputBytes];
+        if (output == null || output.Length != expectedOutputBytes) {
+            return false;
+        }
+
+        Value(prefix + "_EXPECTED_OUT_LEN", (ulong)(uint)output.Length);
+        Breadcrumb(prefix + "_EXPECTED_OUT_OK");
         return true;
     }
 
