@@ -397,6 +397,14 @@ unsafe class Program {
     private const bool NORMAL_DESKTOP_UEFI_PROBE_SKIP_CURSOR_DRAW = false;
     private const bool NORMAL_DESKTOP_UEFI_PROBE_CURSOR_PLACEHOLDER = false;
     private const bool UEFI_PROBE_REAL_CURSOR_IMAGE_RENDERING = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4A = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4F = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4G = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4H = false;
     // Probe-safe rule: when CursorMoving is null, real cursor rendering may
     // use CursorBusy or a fresh procedural fallback image before any PNG path.
     // Keep PNG loading disabled in this pass and preserve the placeholder
@@ -732,6 +740,38 @@ unsafe class Program {
 
         if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4) {
             return UefiCursorPngProbeStage.S4;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4A) {
+            return UefiCursorPngProbeStage.S4A;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B) {
+            return UefiCursorPngProbeStage.S4B;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C) {
+            return UefiCursorPngProbeStage.S4C;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D) {
+            return UefiCursorPngProbeStage.S4D;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E) {
+            return UefiCursorPngProbeStage.S4E;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4F) {
+            return UefiCursorPngProbeStage.S4F;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4G) {
+            return UefiCursorPngProbeStage.S4G;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4H) {
+            return UefiCursorPngProbeStage.S4H;
         }
 
         return UefiCursorPngProbeStage.None;
@@ -1826,7 +1866,15 @@ unsafe class Program {
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S1 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S2 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S3 ||
-                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4) {
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4A ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4F ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4G ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4H) {
                 ProbeNormalDesktopCursorSourcePng();
             } else if (UEFI_PROBE_CURSOR_PNG_LOAD_WRAPPER ||
                        UEFI_PROBE_CURSOR_PNG_LOAD_AFTER_IHDR ||
@@ -2357,12 +2405,13 @@ unsafe class Program {
 
     private static void LogUefiRenderDispatchDiagnostics(bool emitVerbose, bool useTinyUefi, bool useSafeNormalDesktopUefi, bool useNormalUefiDesktop) {
         bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
-        UefiBootInfo* bootInfo = Framebuffer.OriginalBootInfo;
-        uint fbW = bootInfo != null ? bootInfo->FramebufferWidth : Framebuffer.Width;
-        uint fbH = bootInfo != null ? bootInfo->FramebufferHeight : Framebuffer.Height;
-        uint pitchBytes = bootInfo != null ? bootInfo->FramebufferPitch : 0;
-        uint bpp = bootInfo != null && (bootInfo->FramebufferFormat == FramebufferFormat.R8G8B8A8 || bootInfo->FramebufferFormat == FramebufferFormat.B8G8R8A8) ? 32u : 0u;
-        uint pitchPixels = (pitchBytes != 0 && bpp != 0) ? (pitchBytes / (bpp / 8u)) : 0;
+        // Use the recovered framebuffer state directly here so step-probe runs
+        // do not depend on the original UEFI boot-info pointer staying valid.
+        uint fbW = Framebuffer.Width != 0 ? (uint)Framebuffer.Width : (uint)Framebuffer.OriginalWidth;
+        uint fbH = Framebuffer.Height != 0 ? (uint)Framebuffer.Height : (uint)Framebuffer.OriginalHeight;
+        uint pitchBytes = fbW != 0 ? fbW * 4u : 0u;
+        uint bpp = fbW != 0 ? 32u : 0u;
+        uint pitchPixels = fbW;
 
         SerialBreadcrumb("SMAIN_DIAG_BEGIN");
         SerialBreadcrumb(isUefi ? "SMAIN_DIAG_UEFI_MODE=1" : "SMAIN_DIAG_UEFI_MODE=0");

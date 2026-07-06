@@ -10,7 +10,15 @@ internal enum UefiCursorPngProbeStage {
     S1,
     S2,
     S3,
-    S4
+    S4,
+    S4A,
+    S4B,
+    S4C,
+    S4D,
+    S4E,
+    S4F,
+    S4G,
+    S4H
 }
 
 internal static class UefiCursorPngProbe {
@@ -31,6 +39,30 @@ internal static class UefiCursorPngProbe {
                 break;
             case UefiCursorPngProbeStage.S4:
                 ProbeS4(bytes);
+                break;
+            case UefiCursorPngProbeStage.S4A:
+                ProbeS4A(bytes);
+                break;
+            case UefiCursorPngProbeStage.S4B:
+                ProbeS4B(bytes);
+                break;
+            case UefiCursorPngProbeStage.S4C:
+                ProbeS4C(bytes);
+                break;
+            case UefiCursorPngProbeStage.S4D:
+                ProbeS4D(bytes);
+                break;
+            case UefiCursorPngProbeStage.S4E:
+                ProbeS4E(bytes);
+                break;
+            case UefiCursorPngProbeStage.S4F:
+                ProbeS4F(bytes);
+                break;
+            case UefiCursorPngProbeStage.S4G:
+                ProbeS4G(bytes);
+                break;
+            case UefiCursorPngProbeStage.S4H:
+                ProbeS4H(bytes);
                 break;
             default:
                 Breadcrumb("UEFI_PNG_PROBE_VARIANT_UNSET");
@@ -342,6 +374,519 @@ internal static class UefiCursorPngProbe {
         } finally {
             Breadcrumb("UEFI_PNG_PROBE_S4_INFLATE_EXIT");
         }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4A(byte[] bytes) {
+        Breadcrumb("UEFI_PNG_PROBE_S4A_ENTER");
+        try {
+            if (!TryPrepareStandaloneInflate(bytes, "UEFI_PNG_PROBE_S4A", out _, out _, out _, out _, out _, out _)) {
+                return;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4A_AFTER_ZLIB_HEADER");
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4A_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B(byte[] bytes) {
+        Breadcrumb("UEFI_PNG_PROBE_S4B_ENTER");
+        try {
+            if (!TryPrepareStandaloneInflate(bytes, "UEFI_PNG_PROBE_S4B", out byte[] compressedData, out int idatTotalBytes, out _, out _, out _, out _)) {
+                return;
+            }
+
+            unsafe {
+                fixed (byte* compressedPtr = compressedData) {
+                    ZlibBitReader reader = new ZlibBitReader(compressedPtr + 2, idatTotalBytes - 6);
+                    if (!TryReadStandaloneBlockHeader(ref reader, "UEFI_PNG_PROBE_S4B", out _, out _)) {
+                        return;
+                    }
+                }
+            }
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4C(byte[] bytes) {
+        Breadcrumb("UEFI_PNG_PROBE_S4C_ENTER");
+        try {
+            if (!TryPrepareStandaloneInflate(bytes, "UEFI_PNG_PROBE_S4C", out byte[] compressedData, out int idatTotalBytes, out _, out _, out _, out _)) {
+                return;
+            }
+
+            unsafe {
+                fixed (byte* compressedPtr = compressedData) {
+                    ZlibBitReader reader = new ZlibBitReader(compressedPtr + 2, idatTotalBytes - 6);
+                    if (!TryReadStandaloneBlockHeader(ref reader, "UEFI_PNG_PROBE_S4C", out _, out int btype)) {
+                        return;
+                    }
+
+                    if (btype != 2) {
+                        return;
+                    }
+
+                    if (!TryReadStandaloneDynamicCounts(ref reader, "UEFI_PNG_PROBE_S4C", out _, out _, out _)) {
+                        return;
+                    }
+                }
+            }
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4C_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4D(byte[] bytes) {
+        Breadcrumb("UEFI_PNG_PROBE_S4D_ENTER");
+        try {
+            if (!TryPrepareStandaloneInflate(bytes, "UEFI_PNG_PROBE_S4D", out byte[] compressedData, out int idatTotalBytes, out _, out _, out _, out _)) {
+                return;
+            }
+
+            unsafe {
+                fixed (byte* compressedPtr = compressedData) {
+                    ZlibBitReader reader = new ZlibBitReader(compressedPtr + 2, idatTotalBytes - 6);
+                    if (!TryReadStandaloneBlockHeader(ref reader, "UEFI_PNG_PROBE_S4D", out _, out int btype)) {
+                        return;
+                    }
+
+                    if (btype != 2) {
+                        return;
+                    }
+
+                    if (!TryReadStandaloneDynamicCounts(ref reader, "UEFI_PNG_PROBE_S4D", out int hlit, out int hdist, out int hclen)) {
+                        return;
+                    }
+
+                    if (!TryReadStandaloneCodeLengthAlphabet(ref reader, "UEFI_PNG_PROBE_S4D", hclen, out _)) {
+                        return;
+                    }
+                }
+            }
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4D_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4E(byte[] bytes) {
+        Breadcrumb("UEFI_PNG_PROBE_S4E_ENTER");
+        try {
+            if (!TryPrepareStandaloneInflate(bytes, "UEFI_PNG_PROBE_S4E", out byte[] compressedData, out int idatTotalBytes, out _, out _, out _, out _)) {
+                Breadcrumb("UEFI_PNG_PROBE_S4E_TABLES_BAD");
+                return;
+            }
+
+            unsafe {
+                fixed (byte* compressedPtr = compressedData) {
+                    ZlibBitReader reader = new ZlibBitReader(compressedPtr + 2, idatTotalBytes - 6);
+                    if (!TryBuildStandaloneDynamicTrees(ref reader, "UEFI_PNG_PROBE_S4E", out _, out _)) {
+                        Breadcrumb("UEFI_PNG_PROBE_S4E_TABLES_BAD");
+                        return;
+                    }
+                }
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4E_TABLES_OK");
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4E_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4F(byte[] bytes) {
+        Breadcrumb("UEFI_PNG_PROBE_S4F_ENTER");
+        try {
+            if (!TryPrepareStandaloneInflate(bytes, "UEFI_PNG_PROBE_S4F", out byte[] compressedData, out int idatTotalBytes, out _, out _, out _, out _)) {
+                return;
+            }
+
+            unsafe {
+                fixed (byte* compressedPtr = compressedData) {
+                    ZlibBitReader reader = new ZlibBitReader(compressedPtr + 2, idatTotalBytes - 6);
+                    if (!TryBuildStandaloneDynamicTrees(ref reader, "UEFI_PNG_PROBE_S4F", out HuffmanTree litTree, out _)) {
+                        return;
+                    }
+
+                    if (!TryDecodeSymbol(ref reader, litTree, out int symbol)) {
+                        return;
+                    }
+
+                    Value("UEFI_PNG_PROBE_S4F_SYMBOL_VALUE", (ulong)(uint)symbol);
+                    if (symbol < 256) {
+                        Breadcrumb("UEFI_PNG_PROBE_S4F_LITERAL");
+                    } else if (symbol == 256) {
+                        Breadcrumb("UEFI_PNG_PROBE_S4F_END");
+                    } else if (symbol >= 257 && symbol <= 285) {
+                        Breadcrumb("UEFI_PNG_PROBE_S4F_LENGTH");
+                    }
+                }
+            }
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4F_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4G(byte[] bytes) {
+        Breadcrumb("UEFI_PNG_PROBE_S4G_ENTER");
+        try {
+            if (!TryPrepareStandaloneInflate(bytes, "UEFI_PNG_PROBE_S4G", out byte[] compressedData, out int idatTotalBytes, out _, out _, out _, out _)) {
+                return;
+            }
+
+            unsafe {
+                fixed (byte* compressedPtr = compressedData) {
+                    ZlibBitReader reader = new ZlibBitReader(compressedPtr + 2, idatTotalBytes - 6);
+                    if (!TryBuildStandaloneDynamicTrees(ref reader, "UEFI_PNG_PROBE_S4G", out HuffmanTree litTree, out HuffmanTree distTree)) {
+                        return;
+                    }
+
+                    byte[] output = new byte[3164];
+                    if (output == null) {
+                        return;
+                    }
+
+                    if (!TryDecodeSymbol(ref reader, litTree, out int symbol)) {
+                        return;
+                    }
+
+                    if (symbol < 256) {
+                        output[0] = (byte)symbol;
+                        Breadcrumb("UEFI_PNG_PROBE_S4G_LITERAL_WRITE");
+                        Breadcrumb("UEFI_PNG_PROBE_S4G_OK");
+                        return;
+                    }
+
+                    if (symbol == 256) {
+                        Breadcrumb("UEFI_PNG_PROBE_S4G_OK");
+                        return;
+                    }
+
+                    if (symbol >= 257 && symbol <= 285) {
+                        int lengthIndex = symbol - 257;
+                        int length = GetLengthBase(lengthIndex);
+                        int lengthExtra = GetLengthExtra(lengthIndex);
+                        if (lengthExtra > 0) {
+                            if (!reader.ReadBits(lengthExtra, out int extra)) {
+                                return;
+                            }
+
+                            length += extra;
+                        }
+
+                        if (!TryDecodeSymbol(ref reader, distTree, out int distSymbol) || distSymbol < 0 || distSymbol >= 30) {
+                            return;
+                        }
+
+                        int distance = GetDistanceBase(distSymbol);
+                        int distanceExtra = GetDistanceExtra(distSymbol);
+                        if (distanceExtra > 0) {
+                            if (!reader.ReadBits(distanceExtra, out int extra)) {
+                                return;
+                            }
+
+                            distance += extra;
+                        }
+
+                        Breadcrumb("UEFI_PNG_PROBE_S4G_LEN_DIST");
+                        if (distance <= 0 || distance > 0 || length > output.Length) {
+                            Breadcrumb("UEFI_PNG_PROBE_S4G_BOUNDS_ABORT");
+                            return;
+                        }
+
+                        Breadcrumb("UEFI_PNG_PROBE_S4G_OK");
+                        return;
+                    }
+                }
+            }
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4G_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4H(byte[] bytes) {
+        Breadcrumb("UEFI_PNG_PROBE_S4H_ENTER");
+        try {
+            if (!TryPrepareStandaloneInflate(bytes, "UEFI_PNG_PROBE_S4H", out byte[] compressedData, out int idatTotalBytes, out _, out _, out _, out _)) {
+                return;
+            }
+
+            unsafe {
+                fixed (byte* compressedPtr = compressedData) {
+                    ZlibBitReader reader = new ZlibBitReader(compressedPtr + 2, idatTotalBytes - 6);
+                    if (TryReadStandaloneBlockHeader(ref reader, "UEFI_PNG_PROBE_S4H", out _, out int btype) &&
+                        btype == 2 &&
+                        TryReadStandaloneDynamicCounts(ref reader, "UEFI_PNG_PROBE_S4H", out _, out _, out int hclen)) {
+                        _ = TryReadStandaloneCodeLengthAlphabet(ref reader, "UEFI_PNG_PROBE_S4H", hclen, out _);
+                    }
+                }
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4H_PROGRESS");
+            byte[] output = new byte[3164];
+            if (output == null) {
+                Breadcrumb("UEFI_PNG_PROBE_S4H_BOUNDS_ABORT");
+                return;
+            }
+
+            if (TryInflateZlibSmoke(compressedData, idatTotalBytes, output, 3164)) {
+                Breadcrumb("UEFI_PNG_PROBE_S4H_OK");
+            } else {
+                Breadcrumb("UEFI_PNG_PROBE_S4H_BOUNDS_ABORT");
+            }
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4H_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool TryPrepareStandaloneInflate(byte[] bytes, string prefix, out byte[] compressedData, out int idatTotalBytes, out int width, out int height, out byte bitDepth, out byte colorType) {
+        compressedData = null;
+        idatTotalBytes = 0;
+        width = 0;
+        height = 0;
+        bitDepth = 0;
+        colorType = 0;
+
+        if (!TryReadHeader(bytes)) {
+            return false;
+        }
+
+        width = (int)ReadU32BE(bytes, 16);
+        height = (int)ReadU32BE(bytes, 20);
+        bitDepth = bytes[24];
+        colorType = bytes[25];
+        Value(prefix + "_LEN", (ulong)bytes.Length);
+        Value(prefix + "_IHDR_WIDTH", (ulong)(uint)width);
+        Value(prefix + "_IHDR_HEIGHT", (ulong)(uint)height);
+        Value(prefix + "_IHDR_BIT_DEPTH", (ulong)bitDepth);
+        Value(prefix + "_IHDR_COLOR_TYPE", (ulong)colorType);
+
+        if (width <= 0 || height <= 0 || bitDepth != 8 || colorType != 6) {
+            return false;
+        }
+
+        Breadcrumb(prefix + "_IDAT_AGG_ENTER");
+        compressedData = new byte[555];
+        if (compressedData == null) {
+            Breadcrumb(prefix + "_IDAT_AGG_EXIT");
+            return false;
+        }
+
+        if (!TryAggregateIdat(bytes, 33, compressedData, out int idatChunkCount, out idatTotalBytes) ||
+            idatChunkCount != 1 ||
+            idatTotalBytes != 555) {
+            Breadcrumb(prefix + "_IDAT_AGG_EXIT");
+            return false;
+        }
+
+        Value(prefix + "_IDAT_CHUNK_COUNT", (ulong)(uint)idatChunkCount);
+        Value(prefix + "_IDAT_BYTES", (ulong)(uint)idatTotalBytes);
+        Breadcrumb(prefix + "_IDAT_AGG_EXIT");
+
+        byte cmf = compressedData[0];
+        byte flg = compressedData[1];
+        if ((cmf & 0x0F) != 8 ||
+            (flg & 0x20) != 0 ||
+            ((cmf * 256 + flg) % 31) != 0) {
+            return false;
+        }
+
+        Value(prefix + "_ZLIB_CMF", (ulong)cmf);
+        Value(prefix + "_ZLIB_FLG", (ulong)flg);
+        Breadcrumb(prefix + "_ZLIB_HEADER_OK");
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool TryReadStandaloneBlockHeader(ref ZlibBitReader reader, string prefix, out int bfinal, out int btype) {
+        bfinal = 0;
+        btype = 0;
+        if (!reader.ReadBits(1, out bfinal) ||
+            !reader.ReadBits(2, out btype)) {
+            return false;
+        }
+
+        Value(prefix + "_BFINAL", (ulong)(uint)bfinal);
+        Value(prefix + "_BTYPE", (ulong)(uint)btype);
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool TryReadStandaloneDynamicCounts(ref ZlibBitReader reader, string prefix, out int hlit, out int hdist, out int hclen) {
+        hlit = 0;
+        hdist = 0;
+        hclen = 0;
+
+        if (!reader.ReadBits(5, out int hlitBits) ||
+            !reader.ReadBits(5, out int hdistBits) ||
+            !reader.ReadBits(4, out int hclenBits)) {
+            return false;
+        }
+
+        hlit = hlitBits + 257;
+        hdist = hdistBits + 1;
+        hclen = hclenBits + 4;
+        Value(prefix + "_HLIT", (ulong)(uint)hlit);
+        Value(prefix + "_HDIST", (ulong)(uint)hdist);
+        Value(prefix + "_HCLEN", (ulong)(uint)hclen);
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool TryReadStandaloneCodeLengthAlphabet(ref ZlibBitReader reader, string prefix, int hclen, out int[] codeLengthLengths) {
+        codeLengthLengths = new int[19];
+        for (int i = 0; i < hclen; i++) {
+            if (!reader.ReadBits(3, out int length)) {
+                codeLengthLengths = null;
+                return false;
+            }
+
+            codeLengthLengths[GetCLCLOrder(i)] = length;
+        }
+
+        Breadcrumb(prefix + "_CODELEN_ALPHABET_OK");
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool TryBuildStandaloneDynamicTrees(ref ZlibBitReader reader, string prefix, out HuffmanTree litTree, out HuffmanTree distTree) {
+        litTree = null;
+        distTree = null;
+
+        if (!TryReadStandaloneBlockHeader(ref reader, prefix, out _, out int btype)) {
+            return false;
+        }
+
+        if (btype != 2) {
+            return false;
+        }
+
+        if (!TryReadStandaloneDynamicCounts(ref reader, prefix, out int hlit, out int hdist, out int hclen)) {
+            return false;
+        }
+
+        int[] codeLengthLengths = null;
+        Breadcrumb(prefix + "_CL_BUILD_ENTER");
+        if (!TryReadStandaloneCodeLengthAlphabet(ref reader, prefix, hclen, out codeLengthLengths) ||
+            !BuildHuffmanTree(codeLengthLengths, 19, 7, out HuffmanTree codeLengthTree)) {
+            return false;
+        }
+
+        Breadcrumb(prefix + "_CL_TREE_OK");
+
+        int totalLengths = hlit + hdist;
+        int[] lengths = new int[totalLengths];
+        int index = 0;
+        while (index < totalLengths) {
+            if (!TryDecodeSymbol(ref reader, codeLengthTree, out int code)) {
+                litTree = null;
+                distTree = null;
+                return false;
+            }
+
+            if (code <= 15) {
+                lengths[index++] = code;
+            } else if (code == 16) {
+                if (index == 0) {
+                    litTree = null;
+                    distTree = null;
+                    return false;
+                }
+
+                if (!reader.ReadBits(2, out int repeatBits)) {
+                    litTree = null;
+                    distTree = null;
+                    return false;
+                }
+
+                int repeat = repeatBits + 3;
+                if (index + repeat > totalLengths) {
+                    litTree = null;
+                    distTree = null;
+                    return false;
+                }
+
+                int value = lengths[index - 1];
+                for (int i = 0; i < repeat && index < totalLengths; i++) {
+                    lengths[index++] = value;
+                }
+            } else if (code == 17) {
+                if (!reader.ReadBits(3, out int repeatBits)) {
+                    litTree = null;
+                    distTree = null;
+                    return false;
+                }
+
+                int repeat = repeatBits + 3;
+                if (index + repeat > totalLengths) {
+                    litTree = null;
+                    distTree = null;
+                    return false;
+                }
+
+                for (int i = 0; i < repeat && index < totalLengths; i++) {
+                    lengths[index++] = 0;
+                }
+            } else if (code == 18) {
+                if (!reader.ReadBits(7, out int repeatBits)) {
+                    litTree = null;
+                    distTree = null;
+                    return false;
+                }
+
+                int repeat = repeatBits + 11;
+                if (index + repeat > totalLengths) {
+                    litTree = null;
+                    distTree = null;
+                    return false;
+                }
+
+                for (int i = 0; i < repeat && index < totalLengths; i++) {
+                    lengths[index++] = 0;
+                }
+            } else {
+                litTree = null;
+                distTree = null;
+                return false;
+            }
+        }
+
+        Breadcrumb(prefix + "_LENGTHS_OK");
+
+        int[] decodedLitLengths = new int[hlit];
+        int[] decodedDistLengths = new int[hdist];
+        for (int i = 0; i < hlit; i++) {
+            decodedLitLengths[i] = lengths[i];
+        }
+        for (int i = 0; i < hdist; i++) {
+            decodedDistLengths[i] = lengths[hlit + i];
+        }
+
+        codeLengthTree = null;
+        if (!BuildHuffmanTree(decodedLitLengths, hlit, 15, out litTree)) {
+            litTree = null;
+            distTree = null;
+            return false;
+        }
+
+        Breadcrumb(prefix + "_LIT_TREE_OK");
+
+        if (!BuildHuffmanTree(decodedDistLengths, hdist, 15, out distTree)) {
+            litTree = null;
+            distTree = null;
+            return false;
+        }
+
+        Breadcrumb(prefix + "_DIST_TREE_OK");
+        return true;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
