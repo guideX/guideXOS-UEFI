@@ -19,6 +19,10 @@ internal enum UefiCursorPngProbeStage {
     S4B4,
     S4B5,
     S4B6,
+    S4B7R,
+    S4B7S,
+    S4B7T,
+    S4B7U,
     S4B7,
     S4B8,
     S4B,
@@ -91,7 +95,39 @@ internal static class UefiCursorPngProbe {
                     s_standaloneProbeBytes = null;
                 }
                 break;
+            case UefiCursorPngProbeStage.S4B7R:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                ProbeS4B7RBody();
+                break;
+            case UefiCursorPngProbeStage.S4B7S:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4B7SBody();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4B7T:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4B7TBody();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4B7U:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4B7UBody();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
             case UefiCursorPngProbeStage.S4B7:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
                 s_standaloneProbeBytes = bytes;
                 try {
                     ProbeS4B7Body();
@@ -641,6 +677,66 @@ internal static class UefiCursorPngProbe {
             Breadcrumb("UEFI_PNG_PROBE_S4B6_BEFORE_BLOCK_HEADER");
         } finally {
             Breadcrumb("UEFI_PNG_PROBE_S4B6_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B7RBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4B7R_ENTER");
+        try {
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B7R_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B7SBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4B7S_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4B7S", out _, out _, out _)) {
+                return;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4B7S_AFTER_S4A_SETUP");
+            Breadcrumb("UEFI_PNG_PROBE_S4B7S_BEFORE_BLOCK_HEADER");
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B7S_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B7TBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4B7T_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4B7T", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            byte rawCompressedByte = compressedData[2];
+            Value("UEFI_PNG_PROBE_S4B7T_RAW_BYTE", (ulong)rawCompressedByte);
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B7T_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B7UBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4B7U_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4B7U", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            byte rawCompressedByte = compressedData[2];
+            int bfinal = rawCompressedByte & 1;
+            int btype = (rawCompressedByte >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4B7U_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4B7U_BTYPE", (ulong)(uint)btype);
+            Breadcrumb("UEFI_PNG_PROBE_S4B7U_DYNAMIC");
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B7U_EXIT");
         }
     }
 

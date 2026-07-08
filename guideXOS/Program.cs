@@ -405,6 +405,10 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B4 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B5 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B6 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7R = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7S = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7T = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7U = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B8 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B = false;
@@ -783,6 +787,22 @@ unsafe class Program {
             return UefiCursorPngProbeStage.S4B6;
         }
 
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7R) {
+            return UefiCursorPngProbeStage.S4B7R;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7S) {
+            return UefiCursorPngProbeStage.S4B7S;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7T) {
+            return UefiCursorPngProbeStage.S4B7T;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7U) {
+            return UefiCursorPngProbeStage.S4B7U;
+        }
+
         if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7) {
             return UefiCursorPngProbeStage.S4B7;
         }
@@ -840,8 +860,20 @@ unsafe class Program {
         }
 
         UefiCursorPngProbeStage standaloneStage = GetUefiCursorPngStandaloneProbeStage();
+        bool isS4B7Route = standaloneStage == UefiCursorPngProbeStage.S4B7R ||
+                           standaloneStage == UefiCursorPngProbeStage.S4B7S ||
+                           standaloneStage == UefiCursorPngProbeStage.S4B7T ||
+                           standaloneStage == UefiCursorPngProbeStage.S4B7U ||
+                           standaloneStage == UefiCursorPngProbeStage.S4B7;
+        if (isS4B7Route) {
+            SerialBreadcrumb("CURSOR_PNG_S4B7_ROUTE_SELECTED");
+            SerialBreadcrumb("CURSOR_PNG_S4B7_BEFORE_PROBE_CALL");
+        }
         _ = UefiCursorPngProbe.Probe(pngBytes, standaloneStage);
         _ = pngBytes;
+        if (isS4B7Route) {
+            SerialBreadcrumb("CURSOR_PNG_S4B7_AFTER_PROBE_CALL");
+        }
         SerialBreadcrumb("CURSOR_PNG_PROBE_EXIT");
     }
 
@@ -1915,6 +1947,10 @@ unsafe class Program {
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B4 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B5 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B6 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7R ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7S ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7T ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7U ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B8 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B ||
