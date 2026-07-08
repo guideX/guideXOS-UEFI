@@ -404,6 +404,9 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B3 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B4 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B5 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B6 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B8 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D = false;
@@ -774,6 +777,18 @@ unsafe class Program {
 
         if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B5) {
             return UefiCursorPngProbeStage.S4B5;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B6) {
+            return UefiCursorPngProbeStage.S4B6;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7) {
+            return UefiCursorPngProbeStage.S4B7;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B8) {
+            return UefiCursorPngProbeStage.S4B8;
         }
 
         if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B) {
@@ -1899,6 +1914,9 @@ unsafe class Program {
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B3 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B4 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B5 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B6 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B8 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D ||

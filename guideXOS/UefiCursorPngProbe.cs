@@ -18,6 +18,9 @@ internal enum UefiCursorPngProbeStage {
     S4B3,
     S4B4,
     S4B5,
+    S4B6,
+    S4B7,
+    S4B8,
     S4B,
     S4C,
     S4D,
@@ -28,6 +31,8 @@ internal enum UefiCursorPngProbeStage {
 }
 
 internal static class UefiCursorPngProbe {
+    private static byte[] s_standaloneProbeBytes;
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static Image Probe(byte[] bytes, UefiCursorPngProbeStage stage) {
         switch (stage) {
@@ -77,6 +82,30 @@ internal static class UefiCursorPngProbe {
                 Breadcrumb("UEFI_PNG_PROBE_S4B5_BEFORE_CALL");
                 ProbeS4B5Body(bytes);
                 Breadcrumb("UEFI_PNG_PROBE_S4B5_AFTER_CALL");
+                break;
+            case UefiCursorPngProbeStage.S4B6:
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4B6Body();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4B7:
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4B7Body();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4B8:
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4B8Body();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
                 break;
             case UefiCursorPngProbeStage.S4B:
                 ProbeS4B(bytes);
@@ -531,6 +560,142 @@ internal static class UefiCursorPngProbe {
             Breadcrumb("UEFI_PNG_PROBE_S4B5_DYNAMIC");
         } finally {
             Breadcrumb("UEFI_PNG_PROBE_S4B5_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool TryPrepareStandaloneS4ProbeBody(string prefix, out byte[] compressedData, out int idatTotalBytes, out byte[] output) {
+        byte[] bytes = s_standaloneProbeBytes;
+        compressedData = null;
+        idatTotalBytes = 0;
+        output = null;
+
+        if (!TryReadHeader(bytes)) {
+            return false;
+        }
+
+        int width = (int)ReadU32BE(bytes, 16);
+        int height = (int)ReadU32BE(bytes, 20);
+        byte bitDepth = bytes[24];
+        byte colorType = bytes[25];
+        Value(prefix + "_LEN", (ulong)bytes.Length);
+        Value(prefix + "_IHDR_WIDTH", (ulong)(uint)width);
+        Value(prefix + "_IHDR_HEIGHT", (ulong)(uint)height);
+        Value(prefix + "_IHDR_BIT_DEPTH", (ulong)bitDepth);
+        Value(prefix + "_IHDR_COLOR_TYPE", (ulong)colorType);
+
+        if (width <= 0 || height <= 0 || bitDepth != 8 || colorType != 6) {
+            return false;
+        }
+
+        Breadcrumb(prefix + "_IDAT_AGG_ENTER");
+        compressedData = new byte[555];
+        if (compressedData == null) {
+            Breadcrumb(prefix + "_IDAT_AGG_EXIT");
+            return false;
+        }
+
+        if (!TryAggregateIdat(bytes, 33, compressedData, out int idatChunkCount, out idatTotalBytes) ||
+            idatChunkCount != 1 ||
+            idatTotalBytes != 555) {
+            Breadcrumb(prefix + "_IDAT_AGG_EXIT");
+            return false;
+        }
+
+        Value(prefix + "_IDAT_CHUNK_COUNT", (ulong)(uint)idatChunkCount);
+        Value(prefix + "_IDAT_BYTES", (ulong)(uint)idatTotalBytes);
+        Breadcrumb(prefix + "_IDAT_AGG_EXIT");
+
+        byte cmf = compressedData[0];
+        byte flg = compressedData[1];
+        if ((cmf & 0x0F) != 8 ||
+            (flg & 0x20) != 0 ||
+            ((cmf * 256 + flg) % 31) != 0) {
+            return false;
+        }
+
+        Value(prefix + "_ZLIB_CMF", (ulong)cmf);
+        Value(prefix + "_ZLIB_FLG", (ulong)flg);
+        Breadcrumb(prefix + "_ZLIB_HEADER_OK");
+
+        const int expectedOutputBytes = 3164;
+        output = new byte[expectedOutputBytes];
+        if (output == null || output.Length != expectedOutputBytes) {
+            return false;
+        }
+
+        Value(prefix + "_EXPECTED_OUT_LEN", (ulong)(uint)output.Length);
+        Breadcrumb(prefix + "_EXPECTED_OUT_OK");
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B6Body() {
+        Breadcrumb("UEFI_PNG_PROBE_S4B6_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4B6", out _, out _, out _)) {
+                return;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4B6_AFTER_S4A_SETUP");
+            Breadcrumb("UEFI_PNG_PROBE_S4B6_BEFORE_BLOCK_HEADER");
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B6_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B7Body() {
+        Breadcrumb("UEFI_PNG_PROBE_S4B7_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4B7", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4B7_AFTER_S4A_SETUP");
+            Breadcrumb("UEFI_PNG_PROBE_S4B7_BEFORE_BLOCK_HEADER");
+
+            byte deflate0 = compressedData[2];
+            int bfinal = deflate0 & 1;
+            int btype = (deflate0 >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4B7_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4B7_BTYPE", (ulong)(uint)btype);
+            Breadcrumb("UEFI_PNG_PROBE_S4B7_DYNAMIC");
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B7_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B8Body() {
+        if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4B8", out byte[] compressedData, out int idatTotalBytes, out _)) {
+            return;
+        }
+
+        Breadcrumb("UEFI_PNG_PROBE_S4B8_AFTER_S4A_SETUP");
+
+        byte deflate0 = compressedData[2];
+        ProbeS4B8PrimitiveBitReader(0, 0, deflate0, compressedData[3], compressedData[4], compressedData[5]);
+        _ = idatTotalBytes;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4B8PrimitiveBitReader(int bytePosition, int bitCount, byte compressed0, byte compressed1, byte compressed2, byte compressed3) {
+        Breadcrumb("UEFI_PNG_PROBE_S4B8_ENTER");
+        try {
+            _ = bytePosition;
+            _ = bitCount;
+            _ = compressed1;
+            _ = compressed2;
+            _ = compressed3;
+
+            int bfinal = compressed0 & 1;
+            int btype = (compressed0 >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4B8_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4B8_BTYPE", (ulong)(uint)btype);
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4B8_EXIT");
         }
     }
 
