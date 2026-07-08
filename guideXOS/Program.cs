@@ -408,7 +408,9 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7R = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7S = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7T = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7T2 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7U = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C0 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B8 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B = false;
@@ -795,12 +797,20 @@ unsafe class Program {
             return UefiCursorPngProbeStage.S4B7S;
         }
 
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7T2) {
+            return UefiCursorPngProbeStage.S4B7T2;
+        }
+
         if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7T) {
             return UefiCursorPngProbeStage.S4B7T;
         }
 
         if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7U) {
             return UefiCursorPngProbeStage.S4B7U;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C0) {
+            return UefiCursorPngProbeStage.S4C0;
         }
 
         if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7) {
@@ -1950,7 +1960,9 @@ unsafe class Program {
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7R ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7S ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7T ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7T2 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7U ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C0 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B8 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B ||
@@ -3444,7 +3456,7 @@ unsafe class Program {
 
         SerialBreadcrumb("NORM_STEP_004_ENTER");
         SerialBreadcrumb("NORM_STEP_004_CALLSITE=Framebuffer.Graphics.FillRectangle(16,16,32,32,0xFFFF2020u)");
-        Framebuffer.Graphics.FillRectangle(16, 16, 32, 32, 0xFFFF2020u);
+        graphics.FillRectangle(16, 16, 32, 32, 0xFFFF2020u);
         SerialBreadcrumb("NORM_STEP_004_EXIT");
 
         SerialBreadcrumb("NORM_STEP_005_ENTER");
@@ -3455,7 +3467,7 @@ unsafe class Program {
 
         SerialBreadcrumb("NORM_STEP_006_ENTER");
         SerialBreadcrumb("NORM_STEP_006_CALLSITE=Framebuffer.Graphics.FillRectangle(0,0,Framebuffer.Width,Framebuffer.Height,0xFF1E1E1Eu)");
-        Framebuffer.Graphics.FillRectangle(0, 0, Framebuffer.Width, Framebuffer.Height, 0xFF1E1E1Eu);
+        graphics.FillRectangle(0, 0, Framebuffer.Width, Framebuffer.Height, 0xFF1E1E1Eu);
         SerialBreadcrumb("NORM_STEP_006_EXIT");
 
         SerialBreadcrumb("NORM_STEP_007_ENTER");

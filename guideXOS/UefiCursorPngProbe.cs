@@ -22,11 +22,13 @@ internal enum UefiCursorPngProbeStage {
     S4B7R,
     S4B7S,
     S4B7T,
+    S4B7T2,
     S4B7U,
     S4B7,
     S4B8,
     S4B,
     S4C,
+    S4C0,
     S4D,
     S4E,
     S4F,
@@ -113,6 +115,42 @@ internal static class UefiCursorPngProbe {
                 s_standaloneProbeBytes = bytes;
                 try {
                     ProbeS4B7TBody();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4B7T2:
+            case UefiCursorPngProbeStage.S4C0:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    bool isS4C0 = stage == UefiCursorPngProbeStage.S4C0;
+                    string probePrefix = isS4C0 ? "UEFI_PNG_PROBE_S4C0" : "UEFI_PNG_PROBE_S4B7T2";
+                    Breadcrumb(probePrefix + "_ENTER");
+                    try {
+                        if (!TryPrepareStandaloneS4ProbeBody(probePrefix, out byte[] compressedData, out int idatTotalBytes, out _)) {
+                            break;
+                        }
+
+                        byte rawCompressedByte = compressedData[2];
+                        Value(probePrefix + "_RAW_BYTE", (ulong)rawCompressedByte);
+
+                        int bfinal = rawCompressedByte & 1;
+                        int btype = (rawCompressedByte >> 1) & 3;
+                        Value(probePrefix + "_BFINAL", (ulong)(uint)bfinal);
+                        Value(probePrefix + "_BTYPE", (ulong)(uint)btype);
+                        if (isS4C0) {
+                            if (btype == 2) {
+                                Breadcrumb("UEFI_PNG_PROBE_S4C0_AFTER_BLOCK_HEADER");
+                            }
+                        } else if (btype == 2) {
+                            Breadcrumb("UEFI_PNG_PROBE_S4B7T2_DYNAMIC");
+                        }
+
+                        _ = idatTotalBytes;
+                    } finally {
+                        Breadcrumb(probePrefix + "_EXIT");
+                    }
                 } finally {
                     s_standaloneProbeBytes = null;
                 }
