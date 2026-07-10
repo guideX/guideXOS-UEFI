@@ -29,6 +29,10 @@ internal enum UefiCursorPngProbeStage {
     S4B,
     S4C,
     S4C0,
+    S4C1,
+    S4C2,
+    S4C3,
+    S4C4,
     S4D,
     S4E,
     S4F,
@@ -151,6 +155,42 @@ internal static class UefiCursorPngProbe {
                     } finally {
                         Breadcrumb(probePrefix + "_EXIT");
                     }
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4C1:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4C1StandaloneBody();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4C2:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4C2StandaloneBody();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4C3:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4C3StandaloneBody();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4C4:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4C4StandaloneBody();
                 } finally {
                     s_standaloneProbeBytes = null;
                 }
@@ -551,6 +591,151 @@ internal static class UefiCursorPngProbe {
             Breadcrumb("UEFI_PNG_PROBE_S4A_AFTER_ZLIB_HEADER");
         } finally {
             Breadcrumb("UEFI_PNG_PROBE_S4A_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4C1StandaloneBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4C1_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4C1", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            byte rawCompressedByte = compressedData[2];
+            Value("UEFI_PNG_PROBE_S4C1_RAW_BYTE", (ulong)rawCompressedByte);
+
+            int bfinal = rawCompressedByte & 1;
+            int btype = (rawCompressedByte >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4C1_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4C1_BTYPE", (ulong)(uint)btype);
+            if (bfinal != 1 || btype != 2) {
+                return;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4C1_AFTER_BLOCK_HEADER");
+            Breadcrumb("UEFI_PNG_PROBE_S4C1_BEFORE_COUNTS");
+
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4C1_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4C2StandaloneBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4C2_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4C2", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            byte rawCompressedByte = compressedData[2];
+            Value("UEFI_PNG_PROBE_S4C2_RAW_BYTE", (ulong)rawCompressedByte);
+
+            int bfinal = rawCompressedByte & 1;
+            int btype = (rawCompressedByte >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4C2_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4C2_BTYPE", (ulong)(uint)btype);
+            if (bfinal != 1 || btype != 2) {
+                return;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4C2_AFTER_BLOCK_HEADER");
+            Breadcrumb("UEFI_PNG_PROBE_S4C2_BEFORE_COUNTS");
+
+            int hlitBits = (compressedData[2] >> 3) & 0x1F;
+            Value("UEFI_PNG_PROBE_S4C2_HLIT_BITS", (ulong)(uint)hlitBits);
+            int hlit = hlitBits + 257;
+            Value("UEFI_PNG_PROBE_S4C2_HLIT", (ulong)(uint)hlit);
+
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4C2_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4C3StandaloneBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4C3_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4C3", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            byte rawCompressedByte = compressedData[2];
+            Value("UEFI_PNG_PROBE_S4C3_RAW_BYTE", (ulong)rawCompressedByte);
+
+            int bfinal = rawCompressedByte & 1;
+            int btype = (rawCompressedByte >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4C3_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4C3_BTYPE", (ulong)(uint)btype);
+            if (bfinal != 1 || btype != 2) {
+                return;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4C3_AFTER_BLOCK_HEADER");
+            Breadcrumb("UEFI_PNG_PROBE_S4C3_BEFORE_COUNTS");
+
+            int hlitBits = (compressedData[2] >> 3) & 0x1F;
+            Value("UEFI_PNG_PROBE_S4C3_HLIT_BITS", (ulong)(uint)hlitBits);
+            int hlit = hlitBits + 257;
+            Value("UEFI_PNG_PROBE_S4C3_HLIT", (ulong)(uint)hlit);
+
+            int hdistBits = compressedData[3] & 0x1F;
+            Value("UEFI_PNG_PROBE_S4C3_HDIST_BITS", (ulong)(uint)hdistBits);
+            int hdist = hdistBits + 1;
+            Value("UEFI_PNG_PROBE_S4C3_HDIST", (ulong)(uint)hdist);
+
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4C3_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void ProbeS4C4StandaloneBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4C4_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4C4", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            byte rawCompressedByte = compressedData[2];
+            Value("UEFI_PNG_PROBE_S4C4_RAW_BYTE", (ulong)rawCompressedByte);
+
+            int bfinal = rawCompressedByte & 1;
+            int btype = (rawCompressedByte >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4C4_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4C4_BTYPE", (ulong)(uint)btype);
+            if (bfinal != 1 || btype != 2) {
+                return;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4C4_AFTER_BLOCK_HEADER");
+            Breadcrumb("UEFI_PNG_PROBE_S4C4_BEFORE_COUNTS");
+
+            int hlitBits = (compressedData[2] >> 3) & 0x1F;
+            Value("UEFI_PNG_PROBE_S4C4_HLIT_BITS", (ulong)(uint)hlitBits);
+            int hlit = hlitBits + 257;
+            Value("UEFI_PNG_PROBE_S4C4_HLIT", (ulong)(uint)hlit);
+
+            int hdistBits = compressedData[3] & 0x1F;
+            Value("UEFI_PNG_PROBE_S4C4_HDIST_BITS", (ulong)(uint)hdistBits);
+            int hdist = hdistBits + 1;
+            Value("UEFI_PNG_PROBE_S4C4_HDIST", (ulong)(uint)hdist);
+
+            int hclenBits = ((compressedData[3] >> 5) & 0x07) | ((compressedData[4] & 0x01) << 3);
+            Value("UEFI_PNG_PROBE_S4C4_HCLEN_BITS", (ulong)(uint)hclenBits);
+            int hclen = hclenBits + 4;
+            Value("UEFI_PNG_PROBE_S4C4_HCLEN", (ulong)(uint)hclen);
+
+            bool countsOk = hlit >= 257 && hlit <= 286 && hdist >= 1 && hdist <= 32 && hclen >= 4 && hclen <= 19;
+            Breadcrumb(countsOk ? "UEFI_PNG_PROBE_S4C4_COUNTS_OK" : "UEFI_PNG_PROBE_S4C4_COUNTS_BAD");
+
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4C4_EXIT");
         }
     }
 
