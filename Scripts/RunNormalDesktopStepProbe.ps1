@@ -51,6 +51,10 @@ param(
     [switch]$CursorPngStandaloneS4C2Probe,
     [switch]$CursorPngStandaloneS4C3Probe,
     [switch]$CursorPngStandaloneS4C4Probe,
+    [switch]$CursorPngStandaloneS4D0Probe,
+    [switch]$CursorPngStandaloneS4D1Probe,
+    [switch]$CursorPngStandaloneS4D2Probe,
+    [switch]$CursorPngStandaloneS4D3Probe,
     [switch]$CursorPngStandaloneS4CProbe,
     [switch]$CursorPngStandaloneS4DProbe,
     [switch]$CursorPngStandaloneS4EProbe,
@@ -541,6 +545,10 @@ if ($CursorPngStandaloneS4C1Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4C2Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4C3Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4C4Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4D0Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4D1Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4D2Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4D3Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4CProbe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4DProbe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4EProbe) { $cursorVariantCount++ }
@@ -669,6 +677,14 @@ $cursorBodyVariant = if ($CursorEmptyBodyProbe) {
     'PngStandaloneS4C3'
 } elseif ($CursorPngStandaloneS4C4Probe) {
     'PngStandaloneS4C4'
+} elseif ($CursorPngStandaloneS4D0Probe) {
+    'PngStandaloneS4D0'
+} elseif ($CursorPngStandaloneS4D1Probe) {
+    'PngStandaloneS4D1'
+} elseif ($CursorPngStandaloneS4D2Probe) {
+    'PngStandaloneS4D2'
+} elseif ($CursorPngStandaloneS4D3Probe) {
+    'PngStandaloneS4D3'
 } elseif ($CursorPngStandaloneS4CProbe) {
     'PngStandaloneS4C'
 } elseif ($CursorPngStandaloneS4DProbe) {
@@ -811,6 +827,10 @@ try {
         $CursorPngStandaloneS4C2Probe -or
         $CursorPngStandaloneS4C3Probe -or
         $CursorPngStandaloneS4C4Probe -or
+        $CursorPngStandaloneS4D0Probe -or
+        $CursorPngStandaloneS4D1Probe -or
+        $CursorPngStandaloneS4D2Probe -or
+        $CursorPngStandaloneS4D3Probe -or
         $CursorPngStandaloneS4CProbe -or
         $CursorPngStandaloneS4DProbe -or
         $CursorPngStandaloneS4EProbe -or
@@ -1063,6 +1083,26 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C4 = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C4 = $cursorPngStandaloneS4C4ProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C4'
+    $cursorPngStandaloneS4D0ProbeValue = if ($CursorPngStandaloneS4D0Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D0 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D0 = $cursorPngStandaloneS4D0ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D0'
+    $cursorPngStandaloneS4D1ProbeValue = if ($CursorPngStandaloneS4D1Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D1 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D1 = $cursorPngStandaloneS4D1ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D1'
+    $cursorPngStandaloneS4D2ProbeValue = if ($CursorPngStandaloneS4D2Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D2 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D2 = $cursorPngStandaloneS4D2ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D2'
+    $cursorPngStandaloneS4D3ProbeValue = if ($CursorPngStandaloneS4D3Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D3 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D3 = $cursorPngStandaloneS4D3ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D3'
     $cursorPngStandaloneS4B7ProbeValue = if ($CursorPngStandaloneS4B7Probe) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7 = false;' `
@@ -1324,6 +1364,10 @@ try {
         $CursorPngStandaloneS4C2Probe -or
         $CursorPngStandaloneS4C3Probe -or
         $CursorPngStandaloneS4C4Probe -or
+        $CursorPngStandaloneS4D0Probe -or
+        $CursorPngStandaloneS4D1Probe -or
+        $CursorPngStandaloneS4D2Probe -or
+        $CursorPngStandaloneS4D3Probe -or
         $CursorPngStandaloneS4CProbe -or
         $CursorPngStandaloneS4DProbe -or
         $CursorPngStandaloneS4EProbe -or
@@ -1500,6 +1544,14 @@ try {
         'PNG-S4C3'
     } elseif ($CursorPngStandaloneS4C4Probe) {
         'PNG-S4C4'
+    } elseif ($CursorPngStandaloneS4D0Probe) {
+        'PNG-S4D0'
+    } elseif ($CursorPngStandaloneS4D1Probe) {
+        'PNG-S4D1'
+    } elseif ($CursorPngStandaloneS4D2Probe) {
+        'PNG-S4D2'
+    } elseif ($CursorPngStandaloneS4D3Probe) {
+        'PNG-S4D3'
     } elseif ($CursorPngStandaloneS4CProbe) {
         'PNG-S4C'
     } elseif ($CursorPngStandaloneS4DProbe) {

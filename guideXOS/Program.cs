@@ -415,6 +415,10 @@ unsafe class Program {
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C2 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C3 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C4 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D0 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D1 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D2 = false;
+    private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D3 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B8 = false;
     private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B = false;
@@ -831,6 +835,22 @@ unsafe class Program {
 
         if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C4) {
             return UefiCursorPngProbeStage.S4C4;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D0) {
+            return UefiCursorPngProbeStage.S4D0;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D1) {
+            return UefiCursorPngProbeStage.S4D1;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D2) {
+            return UefiCursorPngProbeStage.S4D2;
+        }
+
+        if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D3) {
+            return UefiCursorPngProbeStage.S4D3;
         }
 
         if (UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7) {
@@ -1987,6 +2007,10 @@ unsafe class Program {
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C2 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C3 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4C4 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D0 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D1 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D2 ||
+                       UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D3 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B8 ||
                        UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B ||
