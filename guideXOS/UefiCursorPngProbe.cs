@@ -37,6 +37,11 @@ internal enum UefiCursorPngProbeStage {
     S4D1,
     S4D2,
     S4D3,
+    S4E0,
+    S4E1,
+    S4E2,
+    S4E3,
+    S4E4,
     S4D,
     S4E,
     S4F,
@@ -231,6 +236,53 @@ internal static class UefiCursorPngProbe {
                 s_standaloneProbeBytes = bytes;
                 try {
                     ProbeS4D3StandaloneBody();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4E0:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    Breadcrumb("UEFI_PNG_PROBE_S4E0_CALL_ENTER");
+                    ProbeS4E0StandaloneBody();
+                    Breadcrumb("UEFI_PNG_PROBE_S4E0_CALL_EXIT");
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4E1:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4E1StandaloneBody();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4E2:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4E2StandaloneBody();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4E3:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4E3StandaloneBody();
+                } finally {
+                    s_standaloneProbeBytes = null;
+                }
+                break;
+            case UefiCursorPngProbeStage.S4E4:
+                Breadcrumb("UEFI_PNG_PROBE_S4B7_ROUTE_ENTER");
+                s_standaloneProbeBytes = bytes;
+                try {
+                    ProbeS4E4StandaloneBody();
                 } finally {
                     s_standaloneProbeBytes = null;
                 }
@@ -1046,6 +1098,576 @@ internal static class UefiCursorPngProbe {
             _ = idatTotalBytes;
         } finally {
             Breadcrumb("UEFI_PNG_PROBE_S4D3_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    private static void ProbeS4E0StandaloneBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4E0_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4E0", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            byte rawCompressedByte = compressedData[2];
+            int bfinal = rawCompressedByte & 1;
+            int btype = (rawCompressedByte >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4E0_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4E0_BTYPE", (ulong)(uint)btype);
+            if (bfinal != 1 || btype != 2) {
+                return;
+            }
+
+            int hlitBits = (compressedData[2] >> 3) & 0x1F;
+            int hlit = hlitBits + 257;
+            Value("UEFI_PNG_PROBE_S4E0_HLIT", (ulong)(uint)hlit);
+
+            int hdistBits = compressedData[3] & 0x1F;
+            int hdist = hdistBits + 1;
+            Value("UEFI_PNG_PROBE_S4E0_HDIST", (ulong)(uint)hdist);
+
+            int hclenBits = ((compressedData[3] >> 5) & 0x07) | ((compressedData[4] & 0x01) << 3);
+            int hclen = hclenBits + 4;
+            Value("UEFI_PNG_PROBE_S4E0_HCLEN", (ulong)(uint)hclen);
+
+            if (hlit != 283 || hdist != 23 || hclen != 18) {
+                return;
+            }
+
+            int[] codeLengthLengths = new int[19];
+            int countRead = 0;
+            int nonzeroCount = 0;
+            int maxValue = 0;
+            int bitOffset = 17;
+            for (int i = 0; i < 18; i++) {
+                int byteIndex = 2 + (bitOffset >> 3);
+                int bitShift = bitOffset & 7;
+                int codeLengthValue = compressedData[byteIndex] >> bitShift;
+                if (bitShift > 5) {
+                    codeLengthValue |= compressedData[byteIndex + 1] << (8 - bitShift);
+                }
+
+                codeLengthValue &= 0x07;
+                codeLengthLengths[GetCLCLOrder(i)] = codeLengthValue;
+                if (codeLengthValue != 0) {
+                    nonzeroCount++;
+                }
+
+                if (codeLengthValue > maxValue) {
+                    maxValue = codeLengthValue;
+                }
+
+                countRead++;
+                bitOffset += 3;
+            }
+
+            Value("UEFI_PNG_PROBE_S4E0_COUNT_READ", (ulong)(uint)countRead);
+            Value("UEFI_PNG_PROBE_S4E0_NONZERO_COUNT", (ulong)(uint)nonzeroCount);
+            Value("UEFI_PNG_PROBE_S4E0_MAX_VALUE", (ulong)(uint)maxValue);
+
+            bool valuesOk = countRead == 18 && nonzeroCount == 13 && maxValue == 7;
+            Breadcrumb(valuesOk ? "UEFI_PNG_PROBE_S4E0_VALUES_OK" : "UEFI_PNG_PROBE_S4E0_VALUES_BAD");
+            Breadcrumb("UEFI_PNG_PROBE_S4E0_AFTER_ALPHABET");
+            Breadcrumb("UEFI_PNG_PROBE_S4E0_BEFORE_TABLE_BUILD");
+
+            _ = codeLengthLengths;
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4E0_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    private static void ProbeS4E1StandaloneBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4E1_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4E1", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            byte rawCompressedByte = compressedData[2];
+            int bfinal = rawCompressedByte & 1;
+            int btype = (rawCompressedByte >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4E1_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4E1_BTYPE", (ulong)(uint)btype);
+            if (bfinal != 1 || btype != 2) {
+                return;
+            }
+
+            int hlitBits = (compressedData[2] >> 3) & 0x1F;
+            int hlit = hlitBits + 257;
+            Value("UEFI_PNG_PROBE_S4E1_HLIT", (ulong)(uint)hlit);
+
+            int hdistBits = compressedData[3] & 0x1F;
+            int hdist = hdistBits + 1;
+            Value("UEFI_PNG_PROBE_S4E1_HDIST", (ulong)(uint)hdist);
+
+            int hclenBits = ((compressedData[3] >> 5) & 0x07) | ((compressedData[4] & 0x01) << 3);
+            int hclen = hclenBits + 4;
+            Value("UEFI_PNG_PROBE_S4E1_HCLEN", (ulong)(uint)hclen);
+
+            if (hlit != 283 || hdist != 23 || hclen != 18) {
+                return;
+            }
+
+            int[] codeLengthLengths = new int[19];
+            int countRead = 0;
+            int nonzeroCount = 0;
+            int zeroCount = 0;
+            int maxBits = 0;
+            int[] bitLengthCounts = new int[8];
+            int bitOffset = 17;
+            for (int i = 0; i < 18; i++) {
+                int byteIndex = 2 + (bitOffset >> 3);
+                int bitShift = bitOffset & 7;
+                int codeLengthValue = compressedData[byteIndex] >> bitShift;
+                if (bitShift > 5) {
+                    codeLengthValue |= compressedData[byteIndex + 1] << (8 - bitShift);
+                }
+
+                codeLengthValue &= 0x07;
+                codeLengthLengths[GetCLCLOrder(i)] = codeLengthValue;
+                countRead++;
+                bitOffset += 3;
+            }
+
+            for (int symbol = 0; symbol < codeLengthLengths.Length; symbol++) {
+                int length = codeLengthLengths[symbol];
+                bitLengthCounts[length]++;
+                if (length == 0) {
+                    zeroCount++;
+                } else {
+                    nonzeroCount++;
+                }
+
+                if (length > maxBits) {
+                    maxBits = length;
+                }
+            }
+
+            Value("UEFI_PNG_PROBE_S4E1_COUNT_READ", (ulong)(uint)countRead);
+            Value("UEFI_PNG_PROBE_S4E1_NONZERO_COUNT", (ulong)(uint)nonzeroCount);
+            Value("UEFI_PNG_PROBE_S4E1_ZERO_COUNT", (ulong)(uint)zeroCount);
+            Value("UEFI_PNG_PROBE_S4E1_MAX_BITS", (ulong)(uint)maxBits);
+            Value("UEFI_PNG_PROBE_S4E1_LEN_1_COUNT", (ulong)(uint)bitLengthCounts[1]);
+            Value("UEFI_PNG_PROBE_S4E1_LEN_2_COUNT", (ulong)(uint)bitLengthCounts[2]);
+            Value("UEFI_PNG_PROBE_S4E1_LEN_3_COUNT", (ulong)(uint)bitLengthCounts[3]);
+            Value("UEFI_PNG_PROBE_S4E1_LEN_4_COUNT", (ulong)(uint)bitLengthCounts[4]);
+            Value("UEFI_PNG_PROBE_S4E1_LEN_5_COUNT", (ulong)(uint)bitLengthCounts[5]);
+            Value("UEFI_PNG_PROBE_S4E1_LEN_6_COUNT", (ulong)(uint)bitLengthCounts[6]);
+            Value("UEFI_PNG_PROBE_S4E1_LEN_7_COUNT", (ulong)(uint)bitLengthCounts[7]);
+
+            bool histogramOk = countRead == 18 && nonzeroCount == 13 && zeroCount == 6 && maxBits == 7;
+            Breadcrumb(histogramOk ? "UEFI_PNG_PROBE_S4E1_HISTOGRAM_OK" : "UEFI_PNG_PROBE_S4E1_HISTOGRAM_BAD");
+
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4E1_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    private static void ProbeS4E2StandaloneBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4E2_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4E2", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            byte rawCompressedByte = compressedData[2];
+            int bfinal = rawCompressedByte & 1;
+            int btype = (rawCompressedByte >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4E2_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4E2_BTYPE", (ulong)(uint)btype);
+            if (bfinal != 1 || btype != 2) {
+                return;
+            }
+
+            int hlitBits = (compressedData[2] >> 3) & 0x1F;
+            int hlit = hlitBits + 257;
+            Value("UEFI_PNG_PROBE_S4E2_HLIT", (ulong)(uint)hlit);
+
+            int hdistBits = compressedData[3] & 0x1F;
+            int hdist = hdistBits + 1;
+            Value("UEFI_PNG_PROBE_S4E2_HDIST", (ulong)(uint)hdist);
+
+            int hclenBits = ((compressedData[3] >> 5) & 0x07) | ((compressedData[4] & 0x01) << 3);
+            int hclen = hclenBits + 4;
+            Value("UEFI_PNG_PROBE_S4E2_HCLEN", (ulong)(uint)hclen);
+
+            if (hlit != 283 || hdist != 23 || hclen != 18) {
+                return;
+            }
+
+            int[] codeLengthLengths = new int[19];
+            int countRead = 0;
+            int nonzeroCount = 0;
+            int zeroCount = 0;
+            int maxBits = 0;
+            int[] bitLengthCounts = new int[8];
+            int bitOffset = 17;
+            for (int i = 0; i < 18; i++) {
+                int byteIndex = 2 + (bitOffset >> 3);
+                int bitShift = bitOffset & 7;
+                int codeLengthValue = compressedData[byteIndex] >> bitShift;
+                if (bitShift > 5) {
+                    codeLengthValue |= compressedData[byteIndex + 1] << (8 - bitShift);
+                }
+
+                codeLengthValue &= 0x07;
+                codeLengthLengths[GetCLCLOrder(i)] = codeLengthValue;
+                countRead++;
+                bitOffset += 3;
+            }
+
+            for (int symbol = 0; symbol < codeLengthLengths.Length; symbol++) {
+                int length = codeLengthLengths[symbol];
+                bitLengthCounts[length]++;
+                if (length == 0) {
+                    zeroCount++;
+                } else {
+                    nonzeroCount++;
+                }
+
+                if (length > maxBits) {
+                    maxBits = length;
+                }
+            }
+
+            int[] nextCode = new int[8];
+            int code = 0;
+            for (int bits = 1; bits <= 7; bits++) {
+                code = (code + bitLengthCounts[bits - 1]) << 1;
+                nextCode[bits] = code;
+                Value("UEFI_PNG_PROBE_S4E2_NEXT_CODE_" + bits.ToString(), (ulong)(uint)code);
+            }
+
+            int codeSpaceEnd = nextCode[7] + bitLengthCounts[7];
+            int codeSpaceRemaining = 128 - codeSpaceEnd;
+            if (codeSpaceRemaining < 0) {
+                codeSpaceRemaining = 0;
+            }
+            Value("UEFI_PNG_PROBE_S4E2_COUNT_READ", (ulong)(uint)countRead);
+            Value("UEFI_PNG_PROBE_S4E2_NONZERO_COUNT", (ulong)(uint)nonzeroCount);
+            Value("UEFI_PNG_PROBE_S4E2_ZERO_COUNT", (ulong)(uint)zeroCount);
+            Value("UEFI_PNG_PROBE_S4E2_MAX_BITS", (ulong)(uint)maxBits);
+            Value("UEFI_PNG_PROBE_S4E2_CODE_SPACE_END", (ulong)(uint)codeSpaceEnd);
+            Value("UEFI_PNG_PROBE_S4E2_CODE_SPACE_REMAINING", (ulong)(uint)codeSpaceRemaining);
+
+            bool nextCodeOk = countRead == 18 && nonzeroCount == 13 && zeroCount == 6 && maxBits == 7 && codeSpaceEnd <= 128;
+            Breadcrumb(nextCodeOk ? "UEFI_PNG_PROBE_S4E2_NEXT_CODE_OK" : "UEFI_PNG_PROBE_S4E2_NEXT_CODE_BAD");
+
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4E2_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    private static void ProbeS4E3StandaloneBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4E3_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4E3", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            byte rawCompressedByte = compressedData[2];
+            int bfinal = rawCompressedByte & 1;
+            int btype = (rawCompressedByte >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4E3_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4E3_BTYPE", (ulong)(uint)btype);
+            if (bfinal != 1 || btype != 2) {
+                return;
+            }
+
+            int hlitBits = (compressedData[2] >> 3) & 0x1F;
+            int hlit = hlitBits + 257;
+            Value("UEFI_PNG_PROBE_S4E3_HLIT", (ulong)(uint)hlit);
+
+            int hdistBits = compressedData[3] & 0x1F;
+            int hdist = hdistBits + 1;
+            Value("UEFI_PNG_PROBE_S4E3_HDIST", (ulong)(uint)hdist);
+
+            int hclenBits = ((compressedData[3] >> 5) & 0x07) | ((compressedData[4] & 0x01) << 3);
+            int hclen = hclenBits + 4;
+            Value("UEFI_PNG_PROBE_S4E3_HCLEN", (ulong)(uint)hclen);
+
+            if (hlit != 283 || hdist != 23 || hclen != 18) {
+                return;
+            }
+
+            int[] codeLengthLengths = new int[19];
+            int countRead = 0;
+            int nonzeroCount = 0;
+            int zeroCount = 0;
+            int maxBits = 0;
+            int[] bitLengthCounts = new int[8];
+            int bitOffset = 17;
+            for (int i = 0; i < 18; i++) {
+                int byteIndex = 2 + (bitOffset >> 3);
+                int bitShift = bitOffset & 7;
+                int codeLengthValue = compressedData[byteIndex] >> bitShift;
+                if (bitShift > 5) {
+                    codeLengthValue |= compressedData[byteIndex + 1] << (8 - bitShift);
+                }
+
+                codeLengthValue &= 0x07;
+                codeLengthLengths[GetCLCLOrder(i)] = codeLengthValue;
+                countRead++;
+                bitOffset += 3;
+            }
+
+            for (int symbol = 0; symbol < codeLengthLengths.Length; symbol++) {
+                int length = codeLengthLengths[symbol];
+                bitLengthCounts[length]++;
+                if (length == 0) {
+                    zeroCount++;
+                } else {
+                    nonzeroCount++;
+                }
+
+                if (length > maxBits) {
+                    maxBits = length;
+                }
+            }
+
+            int[] nextCode = new int[8];
+            int code = 0;
+            for (int bits = 1; bits <= 7; bits++) {
+                code = (code + bitLengthCounts[bits - 1]) << 1;
+                nextCode[bits] = code;
+            }
+
+            Breadcrumb("UEFI_PNG_PROBE_S4E3_TABLE_BUILD_ENTER");
+            int[] tableSymbols = new int[19];
+            int[] tableLengths = new int[19];
+            int[] tableCodes = new int[19];
+            int entryCount = 0;
+            for (int symbol = 0; symbol < codeLengthLengths.Length; symbol++) {
+                int length = codeLengthLengths[symbol];
+                if (length == 0) {
+                    continue;
+                }
+
+                int canonicalCode = nextCode[length]++;
+                tableSymbols[entryCount] = symbol;
+                tableLengths[entryCount] = length;
+                tableCodes[entryCount] = canonicalCode;
+                entryCount++;
+            }
+
+            Value("UEFI_PNG_PROBE_S4E3_COUNT_READ", (ulong)(uint)countRead);
+            Value("UEFI_PNG_PROBE_S4E3_NONZERO_COUNT", (ulong)(uint)nonzeroCount);
+            Value("UEFI_PNG_PROBE_S4E3_ZERO_COUNT", (ulong)(uint)zeroCount);
+            Value("UEFI_PNG_PROBE_S4E3_MAX_BITS", (ulong)(uint)maxBits);
+            Value("UEFI_PNG_PROBE_S4E3_TABLE_ENTRY_COUNT", (ulong)(uint)entryCount);
+
+            bool tableBuildOk = countRead == 18 && nonzeroCount == 13 && zeroCount == 6 && maxBits == 7 && entryCount == 13;
+            Breadcrumb(tableBuildOk ? "UEFI_PNG_PROBE_S4E3_TABLE_BUILD_OK" : "UEFI_PNG_PROBE_S4E3_TABLE_BUILD_BAD");
+
+            _ = tableSymbols;
+            _ = tableLengths;
+            _ = tableCodes;
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4E3_EXIT");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    private static void ProbeS4E4StandaloneBody() {
+        Breadcrumb("UEFI_PNG_PROBE_S4E4_ENTER");
+        try {
+            if (!TryPrepareStandaloneS4ProbeBody("UEFI_PNG_PROBE_S4E4", out byte[] compressedData, out int idatTotalBytes, out _)) {
+                return;
+            }
+
+            byte rawCompressedByte = compressedData[2];
+            int bfinal = rawCompressedByte & 1;
+            int btype = (rawCompressedByte >> 1) & 3;
+            Value("UEFI_PNG_PROBE_S4E4_BFINAL", (ulong)(uint)bfinal);
+            Value("UEFI_PNG_PROBE_S4E4_BTYPE", (ulong)(uint)btype);
+            if (bfinal != 1 || btype != 2) {
+                return;
+            }
+
+            int hlitBits = (compressedData[2] >> 3) & 0x1F;
+            int hlit = hlitBits + 257;
+            Value("UEFI_PNG_PROBE_S4E4_HLIT", (ulong)(uint)hlit);
+
+            int hdistBits = compressedData[3] & 0x1F;
+            int hdist = hdistBits + 1;
+            Value("UEFI_PNG_PROBE_S4E4_HDIST", (ulong)(uint)hdist);
+
+            int hclenBits = ((compressedData[3] >> 5) & 0x07) | ((compressedData[4] & 0x01) << 3);
+            int hclen = hclenBits + 4;
+            Value("UEFI_PNG_PROBE_S4E4_HCLEN", (ulong)(uint)hclen);
+
+            if (hlit != 283 || hdist != 23 || hclen != 18) {
+                return;
+            }
+
+            int[] codeLengthLengths = new int[19];
+            int countRead = 0;
+            int nonzeroCount = 0;
+            int zeroCount = 0;
+            int maxBits = 0;
+            int[] bitLengthCounts = new int[8];
+            int bitOffset = 17;
+            for (int i = 0; i < 18; i++) {
+                int byteIndex = 2 + (bitOffset >> 3);
+                int bitShift = bitOffset & 7;
+                int codeLengthValue = compressedData[byteIndex] >> bitShift;
+                if (bitShift > 5) {
+                    codeLengthValue |= compressedData[byteIndex + 1] << (8 - bitShift);
+                }
+
+                codeLengthValue &= 0x07;
+                codeLengthLengths[GetCLCLOrder(i)] = codeLengthValue;
+                countRead++;
+                bitOffset += 3;
+            }
+
+            for (int symbol = 0; symbol < codeLengthLengths.Length; symbol++) {
+                int length = codeLengthLengths[symbol];
+                bitLengthCounts[length]++;
+                if (length == 0) {
+                    zeroCount++;
+                } else {
+                    nonzeroCount++;
+                }
+
+                if (length > maxBits) {
+                    maxBits = length;
+                }
+            }
+
+            int[] nextCode = new int[8];
+            int code = 0;
+            for (int bits = 1; bits <= 7; bits++) {
+                code = (code + bitLengthCounts[bits - 1]) << 1;
+                nextCode[bits] = code;
+            }
+
+            int[] tableSymbols = new int[19];
+            int[] tableLengths = new int[19];
+            int[] tableCodes = new int[19];
+            int entryCount = 0;
+            for (int symbol = 0; symbol < codeLengthLengths.Length; symbol++) {
+                int length = codeLengthLengths[symbol];
+                if (length == 0) {
+                    continue;
+                }
+
+                int canonicalCode = nextCode[length]++;
+                tableSymbols[entryCount] = symbol;
+                tableLengths[entryCount] = length;
+                tableCodes[entryCount] = canonicalCode;
+                entryCount++;
+            }
+
+            Value("UEFI_PNG_PROBE_S4E4_COUNT_READ", (ulong)(uint)countRead);
+            Value("UEFI_PNG_PROBE_S4E4_NONZERO_COUNT", (ulong)(uint)nonzeroCount);
+            Value("UEFI_PNG_PROBE_S4E4_ZERO_COUNT", (ulong)(uint)zeroCount);
+            Value("UEFI_PNG_PROBE_S4E4_MAX_BITS", (ulong)(uint)maxBits);
+            Value("UEFI_PNG_PROBE_S4E4_TABLE_ENTRY_COUNT", (ulong)(uint)entryCount);
+
+            int smokeIndex = -1;
+            for (int i = 0; i < entryCount; i++) {
+                if (tableSymbols[i] == 16) {
+                    smokeIndex = i;
+                    break;
+                }
+            }
+
+            if (smokeIndex < 0 && entryCount > 0) {
+                smokeIndex = 0;
+            }
+
+            bool lookupOk = countRead == 18 && smokeIndex >= 0 && entryCount == 13 && nonzeroCount == 13 && zeroCount == 6 && maxBits == 7;
+            if (lookupOk) {
+                int smokeSymbol = tableSymbols[smokeIndex];
+                int smokeLength = tableLengths[smokeIndex];
+                int smokeCode = tableCodes[smokeIndex];
+                Value("UEFI_PNG_PROBE_S4E4_LOOKUP_SMOKE_SYMBOL", (ulong)(uint)smokeSymbol);
+                Value("UEFI_PNG_PROBE_S4E4_LOOKUP_SMOKE_BITS", (ulong)(uint)smokeLength);
+                Value("UEFI_PNG_PROBE_S4E4_LOOKUP_SMOKE_CODE", (ulong)(uint)smokeCode);
+
+                int[] zero = new int[256];
+                int[] one = new int[256];
+                int[] symbolTree = new int[256];
+                for (int i = 0; i < zero.Length; i++) {
+                    zero[i] = -1;
+                    one[i] = -1;
+                    symbolTree[i] = -1;
+                }
+
+                int nodeCount = 1;
+                for (int entry = 0; entry < entryCount && lookupOk; entry++) {
+                    int symbol = tableSymbols[entry];
+                    int length = tableLengths[entry];
+                    int canonicalCode = tableCodes[entry];
+                    int node = 0;
+                    for (int bitIndex = 0; bitIndex < length; bitIndex++) {
+                        int bit = (canonicalCode >> bitIndex) & 1;
+                        int next = bit == 0 ? zero[node] : one[node];
+                        bool isLeaf = bitIndex == length - 1;
+
+                        if (next < 0) {
+                            if (nodeCount >= zero.Length) {
+                                lookupOk = false;
+                                break;
+                            }
+
+                            next = nodeCount++;
+                            zero[next] = -1;
+                            one[next] = -1;
+                            symbolTree[next] = -1;
+                            if (bit == 0) {
+                                zero[node] = next;
+                            } else {
+                                one[node] = next;
+                            }
+                        } else if (!isLeaf && symbolTree[next] >= 0) {
+                            lookupOk = false;
+                            break;
+                        }
+
+                        if (isLeaf) {
+                            if (symbolTree[next] >= 0) {
+                                lookupOk = false;
+                                break;
+                            }
+
+                            symbolTree[next] = symbol;
+                        }
+
+                        node = next;
+                    }
+                }
+
+                if (lookupOk) {
+                    int node = 0;
+                    for (int bitIndex = 0; bitIndex < smokeLength; bitIndex++) {
+                        int bit = (smokeCode >> bitIndex) & 1;
+                        node = bit == 0 ? zero[node] : one[node];
+                        if (node < 0) {
+                            lookupOk = false;
+                            break;
+                        }
+                    }
+
+                    if (lookupOk && symbolTree[node] != smokeSymbol) {
+                        lookupOk = false;
+                    }
+                }
+            }
+
+            Breadcrumb(lookupOk ? "UEFI_PNG_PROBE_S4E4_LOOKUP_SMOKE_OK" : "UEFI_PNG_PROBE_S4E4_LOOKUP_SMOKE_BAD");
+
+            _ = idatTotalBytes;
+        } finally {
+            Breadcrumb("UEFI_PNG_PROBE_S4E4_EXIT");
         }
     }
 

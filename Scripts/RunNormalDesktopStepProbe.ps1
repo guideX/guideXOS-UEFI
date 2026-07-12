@@ -55,6 +55,11 @@ param(
     [switch]$CursorPngStandaloneS4D1Probe,
     [switch]$CursorPngStandaloneS4D2Probe,
     [switch]$CursorPngStandaloneS4D3Probe,
+    [switch]$CursorPngStandaloneS4E0Probe,
+    [switch]$CursorPngStandaloneS4E1Probe,
+    [switch]$CursorPngStandaloneS4E2Probe,
+    [switch]$CursorPngStandaloneS4E3Probe,
+    [switch]$CursorPngStandaloneS4E4Probe,
     [switch]$CursorPngStandaloneS4CProbe,
     [switch]$CursorPngStandaloneS4DProbe,
     [switch]$CursorPngStandaloneS4EProbe,
@@ -549,6 +554,11 @@ if ($CursorPngStandaloneS4D0Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4D1Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4D2Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4D3Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4E0Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4E1Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4E2Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4E3Probe) { $cursorVariantCount++ }
+if ($CursorPngStandaloneS4E4Probe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4CProbe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4DProbe) { $cursorVariantCount++ }
 if ($CursorPngStandaloneS4EProbe) { $cursorVariantCount++ }
@@ -831,6 +841,11 @@ try {
         $CursorPngStandaloneS4D1Probe -or
         $CursorPngStandaloneS4D2Probe -or
         $CursorPngStandaloneS4D3Probe -or
+        $CursorPngStandaloneS4E0Probe -or
+        $CursorPngStandaloneS4E1Probe -or
+        $CursorPngStandaloneS4E2Probe -or
+        $CursorPngStandaloneS4E3Probe -or
+        $CursorPngStandaloneS4E4Probe -or
         $CursorPngStandaloneS4CProbe -or
         $CursorPngStandaloneS4DProbe -or
         $CursorPngStandaloneS4EProbe -or
@@ -1103,6 +1118,31 @@ try {
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D3 = false;' `
         -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D3 = $cursorPngStandaloneS4D3ProbeValue;" `
         -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4D3'
+    $cursorPngStandaloneS4E0ProbeValue = if ($CursorPngStandaloneS4E0Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E0 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E0 = $cursorPngStandaloneS4E0ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E0'
+    $cursorPngStandaloneS4E1ProbeValue = if ($CursorPngStandaloneS4E1Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E1 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E1 = $cursorPngStandaloneS4E1ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E1'
+    $cursorPngStandaloneS4E2ProbeValue = if ($CursorPngStandaloneS4E2Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E2 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E2 = $cursorPngStandaloneS4E2ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E2'
+    $cursorPngStandaloneS4E3ProbeValue = if ($CursorPngStandaloneS4E3Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E3 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E3 = $cursorPngStandaloneS4E3ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E3'
+    $cursorPngStandaloneS4E4ProbeValue = if ($CursorPngStandaloneS4E4Probe) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E4 = false;' `
+        -New "private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E4 = $cursorPngStandaloneS4E4ProbeValue;" `
+        -Label 'UEFI_PROBE_CURSOR_PNG_STANDALONE_S4E4'
     $cursorPngStandaloneS4B7ProbeValue = if ($CursorPngStandaloneS4B7Probe) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_PROBE_CURSOR_PNG_STANDALONE_S4B7 = false;' `
@@ -1548,12 +1588,22 @@ try {
         'PNG-S4D0'
     } elseif ($CursorPngStandaloneS4D1Probe) {
         'PNG-S4D1'
-    } elseif ($CursorPngStandaloneS4D2Probe) {
-        'PNG-S4D2'
-    } elseif ($CursorPngStandaloneS4D3Probe) {
-        'PNG-S4D3'
-    } elseif ($CursorPngStandaloneS4CProbe) {
-        'PNG-S4C'
+} elseif ($CursorPngStandaloneS4D2Probe) {
+    'PNG-S4D2'
+} elseif ($CursorPngStandaloneS4D3Probe) {
+    'PNG-S4D3'
+} elseif ($CursorPngStandaloneS4E0Probe) {
+    'PNG-S4E0'
+} elseif ($CursorPngStandaloneS4E1Probe) {
+    'PNG-S4E1'
+} elseif ($CursorPngStandaloneS4E2Probe) {
+    'PNG-S4E2'
+} elseif ($CursorPngStandaloneS4E3Probe) {
+    'PNG-S4E3'
+} elseif ($CursorPngStandaloneS4E4Probe) {
+    'PNG-S4E4'
+} elseif ($CursorPngStandaloneS4CProbe) {
+    'PNG-S4C'
     } elseif ($CursorPngStandaloneS4DProbe) {
         'PNG-S4D'
     } elseif ($CursorPngStandaloneS4EProbe) {
@@ -2444,6 +2494,180 @@ try {
             'UEFI_PNG_PROBE_S4C4_COUNTS_OK'
             'UEFI_PNG_PROBE_S4C4_COUNTS_BAD'
             'UEFI_PNG_PROBE_S4C4_EXIT'
+        )
+    } elseif ($CursorPngStandaloneS4D0Probe -or $CursorPngStandaloneS4D1Probe -or $CursorPngStandaloneS4D2Probe -or $CursorPngStandaloneS4D3Probe) {
+        $uefiPngProbeS4Variant = if ($CursorPngStandaloneS4D0Probe) {
+            'S4D0'
+        } elseif ($CursorPngStandaloneS4D1Probe) {
+            'S4D1'
+        } elseif ($CursorPngStandaloneS4D2Probe) {
+            'S4D2'
+        } else {
+            'S4D3'
+        }
+        $uefiPngProbePrefix = 'UEFI_PNG_PROBE_' + $uefiPngProbeS4Variant
+        $uefiPngProbeLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LEN')
+        $uefiPngProbeIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IHDR_WIDTH')
+        $uefiPngProbeIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IHDR_HEIGHT')
+        $uefiPngProbeIhdrBitDepth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IHDR_BIT_DEPTH')
+        $uefiPngProbeIhdrColorType = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IHDR_COLOR_TYPE')
+        $uefiPngProbeIdatChunkCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IDAT_CHUNK_COUNT')
+        $uefiPngProbeIdatCompressedBytes = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IDAT_BYTES')
+        $uefiPngProbeZlibCmf = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_ZLIB_CMF')
+        $uefiPngProbeZlibFlg = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_ZLIB_FLG')
+        $uefiPngProbeZlibHeaderOkPresent = $serialText.Contains($uefiPngProbePrefix + '_ZLIB_HEADER_OK')
+        $uefiPngProbeBfinal = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_BFINAL')
+        $uefiPngProbeBtype = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_BTYPE')
+        $uefiPngProbeHlitBits = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HLIT_BITS')
+        $uefiPngProbeHlit = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HLIT')
+        $uefiPngProbeHdistBits = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HDIST_BITS')
+        $uefiPngProbeHdist = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HDIST')
+        $uefiPngProbeHclenBits = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HCLEN_BITS')
+        $uefiPngProbeHclen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HCLEN')
+        $uefiPngProbeCodeLenCountRead = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_COUNT_READ')
+        $uefiPngProbeCodeLenNonzeroCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_NONZERO_COUNT')
+        $uefiPngProbeCodeLenMaxValue = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_MAX_VALUE')
+        $uefiPngProbeCodeLenValuesOkPresent = $serialText.Contains($uefiPngProbePrefix + '_VALUES_OK')
+        $uefiPngProbeCodeLenValuesBadPresent = $serialText.Contains($uefiPngProbePrefix + '_VALUES_BAD')
+        $uefiPngProbeCodeLenAlphabetOkPresent = $uefiPngProbeCodeLenValuesOkPresent
+        $uefiPngProbeDynamicPresent = $uefiPngProbeBtype -eq 2
+        $uefiPngProbeDeepestMarker = Get-DeepestSerialMarker -Text $serialText -Markers @(
+            $uefiPngProbePrefix + '_ENTER'
+            $uefiPngProbePrefix + '_LEN'
+            $uefiPngProbePrefix + '_IHDR_WIDTH'
+            $uefiPngProbePrefix + '_IHDR_HEIGHT'
+            $uefiPngProbePrefix + '_IDAT_AGG_ENTER'
+            $uefiPngProbePrefix + '_IDAT_BYTES'
+            $uefiPngProbePrefix + '_IDAT_AGG_EXIT'
+            $uefiPngProbePrefix + '_ZLIB_HEADER_OK'
+            $uefiPngProbePrefix + '_BFINAL'
+            $uefiPngProbePrefix + '_BTYPE'
+            $uefiPngProbePrefix + '_HLIT_BITS'
+            $uefiPngProbePrefix + '_HLIT'
+            $uefiPngProbePrefix + '_HDIST_BITS'
+            $uefiPngProbePrefix + '_HDIST'
+            $uefiPngProbePrefix + '_HCLEN_BITS'
+            $uefiPngProbePrefix + '_HCLEN'
+            $uefiPngProbePrefix + '_COUNT_READ'
+            $uefiPngProbePrefix + '_NONZERO_COUNT'
+            $uefiPngProbePrefix + '_MAX_VALUE'
+            $uefiPngProbePrefix + '_VALUES_OK'
+            $uefiPngProbePrefix + '_VALUES_BAD'
+            $uefiPngProbePrefix + '_AFTER_COUNTS'
+            $uefiPngProbePrefix + '_BEFORE_CODELEN_ALPHABET'
+            $uefiPngProbePrefix + '_EXIT'
+        )
+    } elseif ($CursorPngStandaloneS4E0Probe -or $CursorPngStandaloneS4E1Probe -or $CursorPngStandaloneS4E2Probe -or $CursorPngStandaloneS4E3Probe -or $CursorPngStandaloneS4E4Probe) {
+        $uefiPngProbeS4Variant = if ($CursorPngStandaloneS4E0Probe) {
+            'S4E0'
+        } elseif ($CursorPngStandaloneS4E1Probe) {
+            'S4E1'
+        } elseif ($CursorPngStandaloneS4E2Probe) {
+            'S4E2'
+        } elseif ($CursorPngStandaloneS4E3Probe) {
+            'S4E3'
+        } else {
+            'S4E4'
+        }
+        $uefiPngProbePrefix = 'UEFI_PNG_PROBE_' + $uefiPngProbeS4Variant
+        $uefiPngProbeLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LEN')
+        $uefiPngProbeIhdrWidth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IHDR_WIDTH')
+        $uefiPngProbeIhdrHeight = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IHDR_HEIGHT')
+        $uefiPngProbeIhdrBitDepth = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IHDR_BIT_DEPTH')
+        $uefiPngProbeIhdrColorType = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IHDR_COLOR_TYPE')
+        $uefiPngProbeIdatChunkCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IDAT_CHUNK_COUNT')
+        $uefiPngProbeIdatCompressedBytes = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_IDAT_BYTES')
+        $uefiPngProbeZlibCmf = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_ZLIB_CMF')
+        $uefiPngProbeZlibFlg = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_ZLIB_FLG')
+        $uefiPngProbeZlibHeaderOkPresent = $serialText.Contains($uefiPngProbePrefix + '_ZLIB_HEADER_OK')
+        $uefiPngProbeBfinal = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_BFINAL')
+        $uefiPngProbeBtype = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_BTYPE')
+        $uefiPngProbeHlitBits = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HLIT_BITS')
+        $uefiPngProbeHlit = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HLIT')
+        $uefiPngProbeHdistBits = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HDIST_BITS')
+        $uefiPngProbeHdist = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HDIST')
+        $uefiPngProbeHclenBits = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HCLEN_BITS')
+        $uefiPngProbeHclen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_HCLEN')
+        $uefiPngProbeCodeLenCountRead = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_COUNT_READ')
+        $uefiPngProbeCodeLenNonzeroCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_NONZERO_COUNT')
+        $uefiPngProbeCodeLenZeroCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_ZERO_COUNT')
+        $uefiPngProbeCodeLenMaxValue = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_MAX_VALUE')
+        $uefiPngProbeCodeLenMaxBits = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_MAX_BITS')
+        $uefiPngProbeCodeLenLen1Count = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LEN_1_COUNT')
+        $uefiPngProbeCodeLenLen2Count = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LEN_2_COUNT')
+        $uefiPngProbeCodeLenLen3Count = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LEN_3_COUNT')
+        $uefiPngProbeCodeLenLen4Count = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LEN_4_COUNT')
+        $uefiPngProbeCodeLenLen5Count = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LEN_5_COUNT')
+        $uefiPngProbeCodeLenLen6Count = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LEN_6_COUNT')
+        $uefiPngProbeCodeLenLen7Count = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LEN_7_COUNT')
+        $uefiPngProbeCodeLenValuesOkPresent = $serialText.Contains($uefiPngProbePrefix + '_VALUES_OK')
+        $uefiPngProbeCodeLenValuesBadPresent = $serialText.Contains($uefiPngProbePrefix + '_VALUES_BAD')
+        $uefiPngProbeCodeLenHistogramOkPresent = $serialText.Contains($uefiPngProbePrefix + '_HISTOGRAM_OK')
+        $uefiPngProbeCodeLenHistogramBadPresent = $serialText.Contains($uefiPngProbePrefix + '_HISTOGRAM_BAD')
+        $uefiPngProbeCodeLenNextCodeOkPresent = $serialText.Contains($uefiPngProbePrefix + '_NEXT_CODE_OK')
+        $uefiPngProbeCodeLenNextCodeBadPresent = $serialText.Contains($uefiPngProbePrefix + '_NEXT_CODE_BAD')
+        $uefiPngProbeCodeLenCodeSpaceEnd = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_CODE_SPACE_END')
+        $uefiPngProbeCodeLenCodeSpaceRemaining = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_CODE_SPACE_REMAINING')
+        $uefiPngProbeCodeLenTableEntryCount = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_TABLE_ENTRY_COUNT')
+        $uefiPngProbeCodeLenTableBuildOkPresent = $serialText.Contains($uefiPngProbePrefix + '_TABLE_BUILD_OK')
+        $uefiPngProbeCodeLenTableBuildBadPresent = $serialText.Contains($uefiPngProbePrefix + '_TABLE_BUILD_BAD')
+        $uefiPngProbeCodeLenLookupSmokeSymbol = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LOOKUP_SMOKE_SYMBOL')
+        $uefiPngProbeCodeLenLookupSmokeBits = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LOOKUP_SMOKE_BITS')
+        $uefiPngProbeCodeLenLookupSmokeCode = Get-SerialMarkerValue -Text $serialText -MarkerPrefix ($uefiPngProbePrefix + '_LOOKUP_SMOKE_CODE')
+        $uefiPngProbeCodeLenLookupSmokeOkPresent = $serialText.Contains($uefiPngProbePrefix + '_LOOKUP_SMOKE_OK')
+        $uefiPngProbeCodeLenLookupSmokeBadPresent = $serialText.Contains($uefiPngProbePrefix + '_LOOKUP_SMOKE_BAD')
+        $uefiPngProbeCodeLenAlphabetOkPresent = $uefiPngProbeCodeLenValuesOkPresent
+        $uefiPngProbeTablesOkPresent = $uefiPngProbeCodeLenTableBuildOkPresent
+        $uefiPngProbeTablesBadPresent = $uefiPngProbeCodeLenTableBuildBadPresent
+        $uefiPngProbeDynamicPresent = $uefiPngProbeBtype -eq 2
+        $uefiPngProbeDeepestMarker = Get-DeepestSerialMarker -Text $serialText -Markers @(
+            $uefiPngProbePrefix + '_ENTER'
+            $uefiPngProbePrefix + '_LEN'
+            $uefiPngProbePrefix + '_IHDR_WIDTH'
+            $uefiPngProbePrefix + '_IHDR_HEIGHT'
+            $uefiPngProbePrefix + '_IDAT_AGG_ENTER'
+            $uefiPngProbePrefix + '_IDAT_BYTES'
+            $uefiPngProbePrefix + '_IDAT_AGG_EXIT'
+            $uefiPngProbePrefix + '_ZLIB_HEADER_OK'
+            $uefiPngProbePrefix + '_BFINAL'
+            $uefiPngProbePrefix + '_BTYPE'
+            $uefiPngProbePrefix + '_HLIT_BITS'
+            $uefiPngProbePrefix + '_HLIT'
+            $uefiPngProbePrefix + '_HDIST_BITS'
+            $uefiPngProbePrefix + '_HDIST'
+            $uefiPngProbePrefix + '_HCLEN_BITS'
+            $uefiPngProbePrefix + '_HCLEN'
+            $uefiPngProbePrefix + '_AFTER_BLOCK_HEADER'
+            $uefiPngProbePrefix + '_BEFORE_COUNTS'
+            $uefiPngProbePrefix + '_AFTER_COUNTS'
+            $uefiPngProbePrefix + '_BEFORE_CODELEN_ALPHABET'
+            $uefiPngProbePrefix + '_COUNT_READ'
+            $uefiPngProbePrefix + '_NONZERO_COUNT'
+            $uefiPngProbePrefix + '_ZERO_COUNT'
+            $uefiPngProbePrefix + '_MAX_VALUE'
+            $uefiPngProbePrefix + '_MAX_BITS'
+            $uefiPngProbePrefix + '_LEN_1_COUNT'
+            $uefiPngProbePrefix + '_LEN_2_COUNT'
+            $uefiPngProbePrefix + '_LEN_3_COUNT'
+            $uefiPngProbePrefix + '_LEN_4_COUNT'
+            $uefiPngProbePrefix + '_LEN_5_COUNT'
+            $uefiPngProbePrefix + '_LEN_6_COUNT'
+            $uefiPngProbePrefix + '_LEN_7_COUNT'
+            $uefiPngProbePrefix + '_VALUES_OK'
+            $uefiPngProbePrefix + '_VALUES_BAD'
+            $uefiPngProbePrefix + '_HISTOGRAM_OK'
+            $uefiPngProbePrefix + '_HISTOGRAM_BAD'
+            $uefiPngProbePrefix + '_NEXT_CODE_OK'
+            $uefiPngProbePrefix + '_NEXT_CODE_BAD'
+            $uefiPngProbePrefix + '_TABLE_BUILD_ENTER'
+            $uefiPngProbePrefix + '_TABLE_ENTRY_COUNT'
+            $uefiPngProbePrefix + '_TABLE_BUILD_OK'
+            $uefiPngProbePrefix + '_TABLE_BUILD_BAD'
+            $uefiPngProbePrefix + '_LOOKUP_SMOKE_OK'
+            $uefiPngProbePrefix + '_LOOKUP_SMOKE_BAD'
+            $uefiPngProbePrefix + '_AFTER_ALPHABET'
+            $uefiPngProbePrefix + '_BEFORE_TABLE_BUILD'
+            $uefiPngProbePrefix + '_EXIT'
         )
     } elseif ($CursorPngStandaloneS4B7Probe) {
         $uefiPngProbeLen = Get-SerialMarkerValue -Text $serialText -MarkerPrefix 'UEFI_PNG_PROBE_S4B7_LEN'
@@ -3720,6 +3944,37 @@ try {
         Write-Host "[probe] UEFI PNG output alloc size: $uefiPngProbeOutputAllocSize" -ForegroundColor Green
         Write-Host "[probe] UEFI PNG BFINAL: $uefiPngProbeBfinal" -ForegroundColor Green
         Write-Host "[probe] UEFI PNG BTYPE: $uefiPngProbeBtype" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG HLIT: $uefiPngProbeHlit" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG HDIST: $uefiPngProbeHdist" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG HCLEN: $uefiPngProbeHclen" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length count read: $uefiPngProbeCodeLenCountRead" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length nonzero count: $uefiPngProbeCodeLenNonzeroCount" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length zero count: $uefiPngProbeCodeLenZeroCount" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length max value: $uefiPngProbeCodeLenMaxValue" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length max bits: $uefiPngProbeCodeLenMaxBits" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length len1 count: $uefiPngProbeCodeLenLen1Count" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length len2 count: $uefiPngProbeCodeLenLen2Count" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length len3 count: $uefiPngProbeCodeLenLen3Count" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length len4 count: $uefiPngProbeCodeLenLen4Count" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length len5 count: $uefiPngProbeCodeLenLen5Count" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length len6 count: $uefiPngProbeCodeLenLen6Count" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length len7 count: $uefiPngProbeCodeLenLen7Count" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length values ok: $uefiPngProbeCodeLenValuesOkPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length values bad: $uefiPngProbeCodeLenValuesBadPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length histogram ok: $uefiPngProbeCodeLenHistogramOkPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length histogram bad: $uefiPngProbeCodeLenHistogramBadPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length next-code ok: $uefiPngProbeCodeLenNextCodeOkPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length next-code bad: $uefiPngProbeCodeLenNextCodeBadPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length code space end: $uefiPngProbeCodeLenCodeSpaceEnd" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length code space remaining: $uefiPngProbeCodeLenCodeSpaceRemaining" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length table entry count: $uefiPngProbeCodeLenTableEntryCount" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length table build ok: $uefiPngProbeCodeLenTableBuildOkPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length table build bad: $uefiPngProbeCodeLenTableBuildBadPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length lookup smoke symbol: $uefiPngProbeCodeLenLookupSmokeSymbol" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length lookup smoke bits: $uefiPngProbeCodeLenLookupSmokeBits" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length lookup smoke code: $uefiPngProbeCodeLenLookupSmokeCode" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length lookup smoke ok: $uefiPngProbeCodeLenLookupSmokeOkPresent" -ForegroundColor Green
+        Write-Host "[probe] UEFI PNG code-length lookup smoke bad: $uefiPngProbeCodeLenLookupSmokeBadPresent" -ForegroundColor Green
         Write-Host "[probe] UEFI PNG inflate ok: $uefiPngProbeInflateOkPresent" -ForegroundColor Green
         Write-Host "[probe] UEFI PNG inflate bounds abort: $uefiPngProbeInflateBoundsAbortPresent" -ForegroundColor Green
         Write-Host "[probe] UEFI PNG inflate fault: $uefiPngProbeInflateFaultPresent" -ForegroundColor Green
@@ -4071,6 +4326,34 @@ try {
             "UEFI_PNG_PROBE_HDIST=$uefiPngProbeHdist"
             "UEFI_PNG_PROBE_HCLEN_BITS=$uefiPngProbeHclenBits"
             "UEFI_PNG_PROBE_HCLEN=$uefiPngProbeHclen"
+            "UEFI_PNG_PROBE_CODELEN_COUNT_READ=$uefiPngProbeCodeLenCountRead"
+            "UEFI_PNG_PROBE_CODELEN_NONZERO_COUNT=$uefiPngProbeCodeLenNonzeroCount"
+            "UEFI_PNG_PROBE_CODELEN_ZERO_COUNT=$uefiPngProbeCodeLenZeroCount"
+            "UEFI_PNG_PROBE_CODELEN_MAX_VALUE=$uefiPngProbeCodeLenMaxValue"
+            "UEFI_PNG_PROBE_CODELEN_MAX_BITS=$uefiPngProbeCodeLenMaxBits"
+            "UEFI_PNG_PROBE_CODELEN_LEN_1_COUNT=$uefiPngProbeCodeLenLen1Count"
+            "UEFI_PNG_PROBE_CODELEN_LEN_2_COUNT=$uefiPngProbeCodeLenLen2Count"
+            "UEFI_PNG_PROBE_CODELEN_LEN_3_COUNT=$uefiPngProbeCodeLenLen3Count"
+            "UEFI_PNG_PROBE_CODELEN_LEN_4_COUNT=$uefiPngProbeCodeLenLen4Count"
+            "UEFI_PNG_PROBE_CODELEN_LEN_5_COUNT=$uefiPngProbeCodeLenLen5Count"
+            "UEFI_PNG_PROBE_CODELEN_LEN_6_COUNT=$uefiPngProbeCodeLenLen6Count"
+            "UEFI_PNG_PROBE_CODELEN_LEN_7_COUNT=$uefiPngProbeCodeLenLen7Count"
+            "UEFI_PNG_PROBE_CODELEN_VALUES_OK_PRESENT=$uefiPngProbeCodeLenValuesOkPresent"
+            "UEFI_PNG_PROBE_CODELEN_VALUES_BAD_PRESENT=$uefiPngProbeCodeLenValuesBadPresent"
+            "UEFI_PNG_PROBE_CODELEN_HISTOGRAM_OK_PRESENT=$uefiPngProbeCodeLenHistogramOkPresent"
+            "UEFI_PNG_PROBE_CODELEN_HISTOGRAM_BAD_PRESENT=$uefiPngProbeCodeLenHistogramBadPresent"
+            "UEFI_PNG_PROBE_CODELEN_NEXT_CODE_OK_PRESENT=$uefiPngProbeCodeLenNextCodeOkPresent"
+            "UEFI_PNG_PROBE_CODELEN_NEXT_CODE_BAD_PRESENT=$uefiPngProbeCodeLenNextCodeBadPresent"
+            "UEFI_PNG_PROBE_CODELEN_CODE_SPACE_END=$uefiPngProbeCodeLenCodeSpaceEnd"
+            "UEFI_PNG_PROBE_CODELEN_CODE_SPACE_REMAINING=$uefiPngProbeCodeLenCodeSpaceRemaining"
+            "UEFI_PNG_PROBE_CODELEN_TABLE_ENTRY_COUNT=$uefiPngProbeCodeLenTableEntryCount"
+            "UEFI_PNG_PROBE_CODELEN_TABLE_BUILD_OK_PRESENT=$uefiPngProbeCodeLenTableBuildOkPresent"
+            "UEFI_PNG_PROBE_CODELEN_TABLE_BUILD_BAD_PRESENT=$uefiPngProbeCodeLenTableBuildBadPresent"
+            "UEFI_PNG_PROBE_CODELEN_LOOKUP_SMOKE_SYMBOL=$uefiPngProbeCodeLenLookupSmokeSymbol"
+            "UEFI_PNG_PROBE_CODELEN_LOOKUP_SMOKE_BITS=$uefiPngProbeCodeLenLookupSmokeBits"
+            "UEFI_PNG_PROBE_CODELEN_LOOKUP_SMOKE_CODE=$uefiPngProbeCodeLenLookupSmokeCode"
+            "UEFI_PNG_PROBE_CODELEN_LOOKUP_SMOKE_OK_PRESENT=$uefiPngProbeCodeLenLookupSmokeOkPresent"
+            "UEFI_PNG_PROBE_CODELEN_LOOKUP_SMOKE_BAD_PRESENT=$uefiPngProbeCodeLenLookupSmokeBadPresent"
             "UEFI_PNG_PROBE_COUNTS_OK_PRESENT=$uefiPngProbeCountsOkPresent"
             "UEFI_PNG_PROBE_COUNTS_BAD_PRESENT=$uefiPngProbeCountsBadPresent"
             "UEFI_PNG_PROBE_CODELEN_ALPHABET_OK_PRESENT=$uefiPngProbeCodeLenAlphabetOkPresent"
