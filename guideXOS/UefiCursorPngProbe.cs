@@ -1044,6 +1044,22 @@ internal static class UefiCursorPngProbe {
             }
 
             Breadcrumb("UEFI_PNG_PROBE_S4D3_BEFORE_HISTOGRAM");
+            ulong histogramPacked = 0;
+            bitOffset = 17;
+            for (int i = 0; i < 18; i++) {
+                int byteIndex = 2 + (bitOffset >> 3);
+                int bitShift = bitOffset & 7;
+                int codeLengthValue = compressedData[byteIndex] >> bitShift;
+                if (bitShift > 5) {
+                    codeLengthValue |= compressedData[byteIndex + 1] << (8 - bitShift);
+                }
+
+                codeLengthValue &= 0x07;
+                histogramPacked += 1UL << (codeLengthValue * 8);
+                bitOffset += 3;
+            }
+
+            Value("UEFI_PNG_PROBE_S4D3_HISTOGRAM_PACKED", histogramPacked);
             _ = idatTotalBytes;
         } finally {
             Breadcrumb("UEFI_PNG_PROBE_S4D3_EXIT");
