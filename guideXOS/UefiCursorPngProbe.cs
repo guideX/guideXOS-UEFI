@@ -1043,6 +1043,7 @@ internal static class UefiCursorPngProbe {
                 return;
             }
 
+            Breadcrumb("UEFI_PNG_PROBE_S4D3_BEFORE_HISTOGRAM");
             _ = idatTotalBytes;
         } finally {
             Breadcrumb("UEFI_PNG_PROBE_S4D3_EXIT");
