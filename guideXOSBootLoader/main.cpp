@@ -306,18 +306,214 @@ typedef struct {
 RSDPDescriptor20* FindRSDP(EFI_SYSTEM_TABLE* SystemTable) {
     EFI_CONFIGURATION_TABLE* configTable = SystemTable->ConfigurationTable;
     UINTN tableCount = SystemTable->NumberOfTableEntries;
+    RSDPDescriptor20* acpi10Rsdp = nullptr;
 
     for (UINTN i = 0; i < tableCount; ++i) {
         EFI_GUID* guid = &configTable[i].VendorGuid;
 
-        if (CompareGuid(guid, &gEfiAcpi20TableGuid) ||
-            CompareGuid(guid, &gEfiAcpi10TableGuid)) {
-
+        // Prefer the ACPI 2.0 table.  OVMF commonly publishes both GUIDs;
+        // returning the first match can select the legacy RSDP (revision 0)
+        // even though the XSDT and MCFG are available.
+        if (CompareGuid(guid, &gEfiAcpi20TableGuid)) {
             return (RSDPDescriptor20*)configTable[i].VendorTable;
+        }
+
+        if (CompareGuid(guid, &gEfiAcpi10TableGuid) && acpi10Rsdp == nullptr)
+            acpi10Rsdp = (RSDPDescriptor20*)configTable[i].VendorTable;
+    }
+
+    return acpi10Rsdp;
+}
+
+#pragma pack(push, 1)
+struct AcpiSdtHeaderForLoader {
+    char   Signature[4];
+    UINT32 Length;
+    UINT8  Revision;
+    UINT8  Checksum;
+    char   OemId[6];
+    char   OemTableId[8];
+    UINT32 OemRevision;
+    UINT32 CreatorId;
+    UINT32 CreatorRevision;
+};
+
+struct AcpiMcfgAllocationForLoader {
+    UINT64 BaseAddress;
+    UINT16 Segment;
+    UINT8  StartBus;
+    UINT8  EndBus;
+    UINT32 Reserved;
+};
+
+struct AcpiMcfgHeaderForLoader {
+    AcpiSdtHeaderForLoader Header;
+    UINT64 Reserved;
+};
+#pragma pack(pop)
+
+static constexpr UINTN MAX_ACPI_TABLES_FOR_LOADER = 64;
+static constexpr UINTN MAX_MCFG_ENTRIES_FOR_LOADER = 16;
+static constexpr UINTN MAX_RANGES_FOR_LOADER = 128;
+
+struct AcpiTableRangeForLoader {
+    EFI_PHYSICAL_ADDRESS Base;
+    UINTN Size;
+};
+
+struct AcpiDiscoveryForLoader {
+    bool Present;
+    bool UsingXsdt;
+    EFI_PHYSICAL_ADDRESS RootAddress;
+    UINT32 RootLength;
+    AcpiTableRangeForLoader Tables[MAX_ACPI_TABLES_FOR_LOADER];
+    UINTN TableCount;
+    AcpiMcfgAllocationForLoader McfgEntries[MAX_MCFG_ENTRIES_FOR_LOADER];
+    UINTN McfgEntryCount;
+};
+
+static bool AcpiSignatureIs(const AcpiSdtHeaderForLoader* header, const char* signature) {
+    if (header == nullptr || signature == nullptr) return false;
+    for (UINTN i = 0; i < 4; ++i) {
+        if (header->Signature[i] != signature[i]) return false;
+    }
+    return true;
+}
+
+static bool AcpiHeaderIsSaneForLoader(EFI_PHYSICAL_ADDRESS address, UINT32* outLength) {
+    if (address == 0 || outLength == nullptr) return false;
+
+    AcpiSdtHeaderForLoader* header =
+        (AcpiSdtHeaderForLoader*)(UINTN)address;
+    // ACPI tables are firmware-owned input.  Bound the length before using it
+    // to walk physical memory while still allowing large OEM tables.
+    if (header->Length < sizeof(AcpiSdtHeaderForLoader) ||
+        header->Length > (16u * 1024u * 1024u)) {
+        return false;
+    }
+
+    *outLength = header->Length;
+    return true;
+}
+
+static void AcpiRecordTableForLoader(
+    AcpiDiscoveryForLoader* discovery,
+    EFI_PHYSICAL_ADDRESS address,
+    UINT32 length)
+{
+    if (discovery == nullptr || discovery->TableCount >= MAX_ACPI_TABLES_FOR_LOADER)
+        return;
+
+    discovery->Tables[discovery->TableCount].Base = address;
+    discovery->Tables[discovery->TableCount].Size = (UINTN)length;
+    discovery->TableCount++;
+}
+
+static void DiscoverAcpiForLoader(
+    RSDPDescriptor20* rsdp,
+    AcpiDiscoveryForLoader* discovery)
+{
+    if (discovery == nullptr) return;
+    SetMem(discovery, sizeof(*discovery), 0);
+    if (rsdp == nullptr) return;
+
+    EFI_PHYSICAL_ADDRESS rootAddress = 0;
+    UINTN rootEntrySize = sizeof(UINT32);
+    bool useXsdt = false;
+
+    if (rsdp->Revision >= 2 && rsdp->Length >= 36 && rsdp->XsdtAddress != 0) {
+        rootAddress = (EFI_PHYSICAL_ADDRESS)rsdp->XsdtAddress;
+        rootEntrySize = sizeof(UINT64);
+        useXsdt = true;
+    } else if (rsdp->RsdtAddress != 0) {
+        rootAddress = (EFI_PHYSICAL_ADDRESS)rsdp->RsdtAddress;
+    }
+
+    UINT32 rootLength = 0;
+    if (!AcpiHeaderIsSaneForLoader(rootAddress, &rootLength)) {
+        // A malformed/unavailable XSDT should not prevent the legacy RSDT
+        // fallback from being used when the RSDP supplies one.
+        if (useXsdt && rsdp->RsdtAddress != 0) {
+            rootAddress = (EFI_PHYSICAL_ADDRESS)rsdp->RsdtAddress;
+            rootEntrySize = sizeof(UINT32);
+            useXsdt = false;
+            if (!AcpiHeaderIsSaneForLoader(rootAddress, &rootLength)) return;
+        } else {
+            return;
         }
     }
 
-    return nullptr;
+    AcpiSdtHeaderForLoader* root =
+        (AcpiSdtHeaderForLoader*)(UINTN)rootAddress;
+    if ((useXsdt && !AcpiSignatureIs(root, "XSDT")) ||
+        (!useXsdt && !AcpiSignatureIs(root, "RSDT"))) {
+        return;
+    }
+
+    discovery->Present = true;
+    discovery->UsingXsdt = useXsdt;
+    discovery->RootAddress = rootAddress;
+    discovery->RootLength = rootLength;
+    AcpiRecordTableForLoader(discovery, rootAddress, rootLength);
+
+    UINTN payloadBytes = rootLength - sizeof(AcpiSdtHeaderForLoader);
+    UINTN entryCount = payloadBytes / rootEntrySize;
+    if (entryCount > MAX_ACPI_TABLES_FOR_LOADER - 1)
+        entryCount = MAX_ACPI_TABLES_FOR_LOADER - 1;
+
+    UINT8* payload = (UINT8*)root + sizeof(AcpiSdtHeaderForLoader);
+    for (UINTN i = 0; i < entryCount; ++i) {
+        EFI_PHYSICAL_ADDRESS tableAddress;
+        if (useXsdt)
+            tableAddress = ((UINT64*)payload)[i];
+        else
+            tableAddress = ((UINT32*)payload)[i];
+
+        UINT32 tableLength = 0;
+        if (!AcpiHeaderIsSaneForLoader(tableAddress, &tableLength)) continue;
+
+        AcpiSdtHeaderForLoader* table =
+            (AcpiSdtHeaderForLoader*)(UINTN)tableAddress;
+        AcpiRecordTableForLoader(discovery, tableAddress, tableLength);
+
+        if (!AcpiSignatureIs(table, "MCFG")) continue;
+
+        const UINTN fixedMcfgSize = sizeof(AcpiMcfgHeaderForLoader);
+        if (tableLength < fixedMcfgSize) continue;
+
+        UINTN allocationCount =
+            (tableLength - fixedMcfgSize) / sizeof(AcpiMcfgAllocationForLoader);
+        if (allocationCount > MAX_MCFG_ENTRIES_FOR_LOADER)
+            allocationCount = MAX_MCFG_ENTRIES_FOR_LOADER;
+
+        AcpiMcfgAllocationForLoader* allocations =
+            (AcpiMcfgAllocationForLoader*)((UINT8*)table + fixedMcfgSize);
+        for (UINTN j = 0; j < allocationCount; ++j) {
+            AcpiMcfgAllocationForLoader* allocation = &allocations[j];
+            if (allocation->BaseAddress == 0 ||
+                allocation->StartBus > allocation->EndBus) {
+                continue;
+            }
+
+            if (discovery->McfgEntryCount >= MAX_MCFG_ENTRIES_FOR_LOADER)
+                break;
+
+            discovery->McfgEntries[discovery->McfgEntryCount++] = *allocation;
+            Print(L"ACPI MCFG allocation: base %p segment %u buses %u-%u\n",
+                  (VOID*)(UINTN)allocation->BaseAddress,
+                  (UINT32)allocation->Segment,
+                  (UINT32)allocation->StartBus,
+                  (UINT32)allocation->EndBus);
+        }
+    }
+
+    Print(L"ACPI %s root at %p length %u, tables %u\n",
+          useXsdt ? L"XSDT" : L"RSDT",
+          (VOID*)(UINTN)rootAddress,
+          (UINT32)rootLength,
+          (UINT32)discovery->TableCount);
+    if (discovery->McfgEntryCount == 0)
+        Print(L"ACPI MCFG not present or has no valid allocations\n");
 }
 
 // Simple memset for BootInfo
@@ -353,6 +549,12 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     } else {
         Print((CONST CHAR16*)L"ACPI RSDP found at %p, rev %u\n", (VOID*)rsdp, (UINT32)rsdp->Revision);
     }
+
+    // Discover the ACPI root and MCFG allocations while firmware still owns
+    // the tables.  The resulting ranges are carried into the post-EBS page
+    // tables; the kernel later parses the same RSDP independently.
+    AcpiDiscoveryForLoader acpiDiscovery{};
+    DiscoverAcpiForLoader(rsdp, &acpiDiscovery);
 
     // --- Locate GOP ---
     EFI_GUID gopGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
@@ -685,9 +887,10 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     const EFI_PHYSICAL_ADDRESS kernelPhysBase = (EFI_PHYSICAL_ADDRESS)kernelBase;
     const UINTN kernelSpanBytes = (kernelTotalSize != 0) ? (UINTN)kernelTotalSize : (64u * 1024u * 1024u);
 
-    // Use a dynamic array for ranges (max 20 should be plenty)
-    EFI_PHYSICAL_ADDRESS ranges[20];
-    UINTN sizes[20];
+    // Keep the range list bounded, but large enough for all ACPI tables plus
+    // the existing kernel/stack/framebuffer mappings on a normal platform.
+    EFI_PHYSICAL_ADDRESS ranges[MAX_RANGES_FOR_LOADER];
+    UINTN sizes[MAX_RANGES_FOR_LOADER];
     UINTN rangeCount = 0;
 
     // 1. Low 1MB for legacy compatibility
@@ -730,12 +933,23 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
         Print(L"Mapping ramdisk: %p size %Lu\n", (VOID*)(UINTN)ramdiskPhys, ramdiskSize);
     }
 
-    // 8. ACPI RSDP region (map at least one page for RSDP, kernel will map more as needed)
+    // 8. ACPI RSDP, root table and referenced tables.  After the CR3 switch
+    // the kernel must be able to parse the same firmware-owned tables without
+    // relying on the old UEFI page tables.
     if (rsdp != nullptr) {
         ranges[rangeCount] = (EFI_PHYSICAL_ADDRESS)(UINTN)rsdp & ~0xFFFull; // Page-align down
-        sizes[rangeCount] = EFI_PAGE_SIZE * 4; // Map a few pages for RSDP + nearby tables
+        sizes[rangeCount] = EFI_PAGE_SIZE * 4;
         rangeCount++;
         Print(L"Mapping ACPI RSDP region: %p\n", (VOID*)(UINTN)rsdp);
+    }
+
+    for (UINTN i = 0; i < acpiDiscovery.TableCount && rangeCount < MAX_RANGES_FOR_LOADER; ++i) {
+        ranges[rangeCount] = acpiDiscovery.Tables[i].Base;
+        sizes[rangeCount] = acpiDiscovery.Tables[i].Size;
+        rangeCount++;
+        Print(L"Mapping ACPI table: %p size %u\n",
+              (VOID*)(UINTN)acpiDiscovery.Tables[i].Base,
+              (UINT32)acpiDiscovery.Tables[i].Size);
     }
 
     // 9. CRITICAL: Map the bootloader/trampoline code region
@@ -878,6 +1092,35 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
             return st;
         }
         Print(L"Mapping IOAPIC MMIO (uncached): 0xFEC00000 size 4KB\n");
+    }
+
+    // PCI Express ECAM is firmware-described MMIO.  Map exactly the bus
+    // windows in MCFG and apply the same UC attributes used for APIC and GOP
+    // mappings; never assume 0xE0000000 on machines that describe another
+    // ECAM base or a narrower bus range.
+    for (UINTN i = 0; i < acpiDiscovery.McfgEntryCount; ++i) {
+        const AcpiMcfgAllocationForLoader* allocation =
+            &acpiDiscovery.McfgEntries[i];
+        UINT64 busCount = (UINT64)allocation->EndBus -
+                          (UINT64)allocation->StartBus + 1ull;
+        UINT64 ecamSize = busCount << 20;
+
+        EFI_STATUS st = guideXOS::paging::MapIdentityRangeUncached(
+            SystemTable,
+            pt.Pml4Phys,
+            (EFI_PHYSICAL_ADDRESS)allocation->BaseAddress,
+            (UINTN)ecamSize);
+        if (EFI_ERROR(st)) {
+            Print(L"Failed to map PCI ECAM uncached\n");
+            return st;
+        }
+
+        Print(L"Mapping PCI ECAM (uncached): base %p segment %u buses %u-%u size %Lu\n",
+              (VOID*)(UINTN)allocation->BaseAddress,
+              (UINT32)allocation->Segment,
+              (UINT32)allocation->StartBus,
+              (UINT32)allocation->EndBus,
+              (UINT64)ecamSize);
     }
 
     // Identity-map any new page table pages created by the uncached mappings

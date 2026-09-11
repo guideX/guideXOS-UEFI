@@ -10,7 +10,11 @@ namespace paging
     static inline UINT64* PhysToPtr(EFI_PHYSICAL_ADDRESS p) { return (UINT64*)(UINTN)p; }
 
     // Track allocated page table pages so we can identity-map them
-    static constexpr UINTN MAX_PT_PAGES = 512;
+    // The 1 GiB allocator identity map already consumes roughly one PT page
+    // per 2 MiB.  Firmware-described ECAM windows add more PT pages, so the
+    // old 512-entry tracking limit could leave newly allocated tables
+    // inaccessible after CR3 is switched.
+    static constexpr UINTN MAX_PT_PAGES = 2048;
     static EFI_PHYSICAL_ADDRESS g_ptPages[MAX_PT_PAGES];
     static UINTN g_ptPageCount = 0;
 

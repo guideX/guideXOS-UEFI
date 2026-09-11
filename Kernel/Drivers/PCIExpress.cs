@@ -73,12 +73,16 @@ namespace guideXOS.Kernel.Drivers {
         public static void Initialize() {
             if (ACPI.MCFG == null) return;
 
-            var numEntries = (ACPI.MCFG->Header.Length - sizeof(ACPI.MCFGHeader) + sizeof(ACPI.MCFGEntry)) / sizeof(ACPI.MCFGEntry);
+            uint fixedSize = (uint)(sizeof(ACPI.ACPI_HEADER) + sizeof(ulong));
+            if (ACPI.MCFG->Header.Length < fixedSize) return;
+
+            var numEntries = (ACPI.MCFG->Header.Length - fixedSize) / sizeof(ACPI.MCFGEntry);
 
             for (int i = 0; i < numEntries; i++) {
-                ACPI.MCFGEntry* Entries = &ACPI.MCFG->Entry0;
-                for (var bus = Entries->StartBus; bus < Entries->EndBus; bus++) {
-                    PCIExpress.CheckBus(Entries->BaseAddress, bus, Entries->Segment);
+                ACPI.MCFGEntry* entry = (ACPI.MCFGEntry*)((byte*)&ACPI.MCFG->Entry0 + i * sizeof(ACPI.MCFGEntry));
+                // EndBus is inclusive in the ACPI MCFG allocation structure.
+                for (int bus = entry->StartBus; bus <= entry->EndBus; bus++) {
+                    PCIExpress.CheckBus(entry->BaseAddress, (byte)bus, entry->Segment);
                 }
             }
         }
@@ -87,19 +91,19 @@ namespace guideXOS.Kernel.Drivers {
             ulong BusAddress = BaseAddress + (ulong)(Bus << 20);
 
             Header* Header0 = (Header*)BusAddress;
-            if (Header0->DeviceID == 0 || Header0->DeviceID == 0xFFFF) return;
+            if (Header0->VendorID == 0xFFFF) return;
 
             for (byte Slot = 0; Slot < 32; Slot++) {
                 ulong DeviceAddress = BusAddress + (ulong)(Slot << 15);
 
                 Header* Header1 = (Header*)DeviceAddress;
-                if (Header1->DeviceID == 0 || Header1->DeviceID == 0xFFFF) return;
+                if (Header1->VendorID == 0xFFFF) continue;
 
                 for (byte Func = 0; Func < 8; Func++) {
                     ulong FuncAddress = DeviceAddress + (ulong)(Func << 12);
 
                     DeviceHeader* Dev = (DeviceHeader*)FuncAddress;
-                    if (Dev->Header.DeviceID == 0 || Dev->Header.DeviceID == 0xFFFF) return;
+                    if (Dev->Header.VendorID == 0xFFFF) continue;
 
                     PCIDevice device = new();
                     device.Segment = Segment;

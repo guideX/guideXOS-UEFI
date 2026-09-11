@@ -75,6 +75,12 @@ namespace guideXOS.Kernel.Drivers {
             public fixed sbyte OEMID[6];
             public byte Revision;
             public uint RsdtAddress;
+            // ACPI 2.0+ extension.  The bootloader prefers this RSDP when
+            // both ACPI configuration-table GUIDs are published.
+            public uint Length;
+            public ulong XsdtAddress;
+            public byte ExtendedChecksum;
+            public fixed byte Reserved[3];
         };
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -269,20 +275,45 @@ namespace guideXOS.Kernel.Drivers {
                 return;
             }
 
-            ACPI_HEADER* rsdt = (ACPI_HEADER*)rsdp->RsdtAddress;
-            if (rsdt == null || *(uint*)rsdt != 0x54445352) { // 'RSDT'
-                BootConsole.WriteLine("[ACPI] RSDT not present/invalid");
+            ACPI_HEADER* root = null;
+            bool usingXsdt = false;
+
+            if (rsdp->Revision >= 2 && rsdp->Length >= 36 && rsdp->XsdtAddress != 0) {
+                ACPI_HEADER* xsdt = (ACPI_HEADER*)rsdp->XsdtAddress;
+                if (xsdt != null && *(uint*)xsdt == 0x54445358 && // 'XSDT'
+                    xsdt->Length >= sizeof(ACPI_HEADER)) {
+                    root = xsdt;
+                    usingXsdt = true;
+                }
+            }
+
+            // ACPI 1.0 firmware and malformed/unavailable XSDTs use RSDT.
+            if (root == null && rsdp->RsdtAddress != 0) {
+                ACPI_HEADER* rsdt = (ACPI_HEADER*)rsdp->RsdtAddress;
+                if (rsdt != null && *(uint*)rsdt == 0x54445352 && // 'RSDT'
+                    rsdt->Length >= sizeof(ACPI_HEADER)) {
+                    root = rsdt;
+                }
+            }
+
+            if (root == null) {
+                BootConsole.WriteLine("[ACPI] XSDT/RSDT not present/invalid");
                 _deviceLocated = false;
                 _deviceName = "[ACPI] Not Present";
                 return;
             }
 
-            uint* p = (uint*)(rsdt + 1);
-            uint* end = (uint*)((byte*)rsdt + rsdt->Length);
+            uint entrySize = usingXsdt ? sizeof(ulong) : sizeof(uint);
+            int entryCount = (int)((root->Length - sizeof(ACPI_HEADER)) / entrySize);
+            byte* entries = (byte*)root + sizeof(ACPI_HEADER);
 
-            while (p < end) {
-                uint address = *p++;
-                ParseDT((ACPI_HEADER*)address);
+            BootConsole.WriteLine(usingXsdt ? "[ACPI] Using XSDT" : "[ACPI] Using RSDT");
+            for (int i = 0; i < entryCount; i++) {
+                ulong address = usingXsdt
+                    ? ((ulong*)entries)[i]
+                    : ((uint*)entries)[i];
+                if (address != 0)
+                    ParseDT((ACPI_HEADER*)address);
             }
 
             _deviceLocated = true;
@@ -324,6 +355,8 @@ namespace guideXOS.Kernel.Drivers {
         }
 
         private static void ParseDT(ACPI_HEADER* hdr) {
+            if (hdr == null || hdr->Length < sizeof(ACPI_HEADER)) return;
+
             if (*(uint*)hdr->Signature == 0x50434146) {
                 FADT = (ACPI_FADT*)hdr;
 

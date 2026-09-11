@@ -151,6 +151,43 @@ public static class IDT {
         Native.Out8(0x3F8, (byte)'\n');
     }
 
+    private static unsafe void SerialWritePageTableWalk(ulong virtualAddress) {
+        const ulong Present = 1;
+        const ulong LargePage = 1UL << 7;
+        ulong cr3 = Native.ReadCR3() & ~0xFFFUL;
+        SerialWriteHexLine64("CR3=", cr3);
+
+        ulong* pml4 = (ulong*)cr3;
+        ulong pml4e = pml4[(virtualAddress >> 39) & 0x1FFUL];
+        SerialWriteHexLine64("PT_PML4E=", pml4e);
+        if ((pml4e & Present) == 0) return;
+
+        ulong* pdpt = (ulong*)(pml4e & ~0xFFFUL);
+        ulong pdpte = pdpt[(virtualAddress >> 30) & 0x1FFUL];
+        SerialWriteHexLine64("PT_PDPTE=", pdpte);
+        if ((pdpte & Present) == 0 || (pdpte & LargePage) != 0) return;
+
+        ulong* pd = (ulong*)(pdpte & ~0xFFFUL);
+        ulong pde = pd[(virtualAddress >> 21) & 0x1FFUL];
+        SerialWriteHexLine64("PT_PDE=", pde);
+        if ((pde & Present) == 0 || (pde & LargePage) != 0) return;
+
+        ulong* pt = (ulong*)(pde & ~0xFFFUL);
+        ulong pte = pt[(virtualAddress >> 12) & 0x1FFUL];
+        SerialWriteHexLine64("PT_PTE=", pte);
+    }
+
+    private static unsafe ulong GetInterruptedRsp(InterruptReturnStack* irs) {
+        if (irs == null) return 0;
+
+        // A ring-0 exception does not push RSP/SS.  The CPU frame is still
+        // RIP, CS, RFLAGS, so its original RSP is the address after those 3
+        // qwords.  For a privilege transition, use the CPU-pushed RSP.
+        if ((irs->cs & 3UL) == 0)
+            return (ulong)((byte*)irs + 24);
+        return irs->rsp;
+    }
+
     private static unsafe void SerialWriteFaultBreadcrumbs(int irq, ulong errorCode, InterruptReturnStack* irs) {
         switch (irq) {
             case 14:
@@ -173,7 +210,10 @@ public static class IDT {
 
         if (irs != null) {
             SerialWriteHexLine64("RIP=", irs->rip);
+            SerialWriteHexLine64("RSP=", GetInterruptedRsp(irs));
         }
+
+        SerialWritePageTableWalk(irq == 14 ? Native.ReadCR2() : (irs != null ? irs->rip : 0));
     }
 
     [RuntimeExport("intr_handler")]
@@ -185,6 +225,7 @@ public static class IDT {
             // Compute correct location of InterruptReturnStack depending on whether the CPU pushed an error code
             InterruptReturnStack* irs;
             bool hasErrorCode = false;
+            ulong actualErrorCode = 0;
             switch (irq) {
                 case 8:
                 case 10:
@@ -196,8 +237,11 @@ public static class IDT {
                 case 21:
                 case 29:
                 case 30:
-                    // Exceptions that push an error code: irs follows RegistersStack + errorCode
-                    irs = (InterruptReturnStack*)(((byte*)stack) + sizeof(RegistersStack) + sizeof(ulong));
+                    // isr_common always pushes a dummy errorCode slot.  For
+                    // CPU error-code exceptions, the real error code follows
+                    // that slot, then the CPU's return frame.
+                    actualErrorCode = *((ulong*)(((byte*)stack) + sizeof(RegistersStack) + sizeof(ulong)));
+                    irs = (InterruptReturnStack*)(((byte*)stack) + sizeof(RegistersStack) + sizeof(ulong) + sizeof(ulong));
                     hasErrorCode = true;
                     break;
                 default:
@@ -207,7 +251,7 @@ public static class IDT {
                     break;
             }
 
-            SerialWriteFaultBreadcrumbs(irq, stack->errorCode, irs);
+            SerialWriteFaultBreadcrumbs(irq, actualErrorCode, irs);
 
             if (irq == 14) {
                 BootConsole.WriteLine("UTINY_FAULT_PF");
@@ -220,7 +264,7 @@ public static class IDT {
             // Display enhanced graphical panic screen
             Panic.ShowEnhancedCrashScreen(
                 irq,
-                stack->errorCode,
+                actualErrorCode,
                 hasErrorCode,
                 &stack->rs,
                 irs,
