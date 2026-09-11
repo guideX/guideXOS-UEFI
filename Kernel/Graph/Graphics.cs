@@ -31,31 +31,22 @@ namespace guideXOS.Graph {
             }
         }
         public virtual void FillRectangle(int X, int Y, int Width, int Height, uint Color) {
-            bool abiProbe = global::Program.IsUefiAbiDiagnosticActive();
-            if (abiProbe) {
-                global::Program.AbiLogCurrentRsp("GRAPHICS_FILL_BODY");
-            }
-            if (VideoMemory == null || this.Width <= 0 || this.Height <= 0 || Width <= 0 || Height <= 0) return;
+            if (VideoMemory == null || this.Width <= 0 || this.Height <= 0 ||
+                Width <= 0 || Height <= 0) return;
+
             int x0 = X;
             int y0 = Y;
             int x1 = X + Width;
             int y1 = Y + Height;
-
             if (x0 < 0) x0 = 0;
             if (y0 < 0) y0 = 0;
             if (x1 > this.Width) x1 = this.Width;
             if (y1 > this.Height) y1 = this.Height;
-            if (x1 <= x0 || y1 <= y0 || VideoMemory == null) return;
+            if (x1 <= x0 || y1 <= y0) return;
 
             ulong rowPixels = (ulong)(x1 - x0);
             for (int y = y0; y < y1; y++) {
-                if (abiProbe && y == y0) {
-                    global::Program.AbiLogCurrentRsp("GRAPHICS_FILL_BEFORE_STOSD");
-                }
                 Native.Stosd(VideoMemory + (this.Width * y) + x0, Color, rowPixels);
-            }
-            if (abiProbe) {
-                global::Program.AbiLogCurrentRsp("GRAPHICS_FILL_AFTER_STOSD");
             }
         }
         public virtual void AFillRectangle(int X, int Y, int Width, int Height, uint Color) {
@@ -152,93 +143,36 @@ namespace guideXOS.Graph {
         }
 
         public virtual void DrawImage(int X, int Y, Image image, bool AlphaBlending = true) {
-            bool cursorProbe = global::Program.IsCursorImageDrawProbeActive();
-            if (cursorProbe) {
-                global::Program.CursorImageProbeBreadcrumb("CURSOR_IMG_DRAWIMAGE_METHOD_ENTER");
-            }
+            if (image == null || image.RawData == null) return;
+            if (VideoMemory == null || Width <= 0 || Height <= 0) return;
 
-            try {
-                if (cursorProbe) {
-                    global::Program.CursorImageProbeBreadcrumb("CURSOR_IMG_DRAWIMAGE_SOURCE_IMAGE_NULL_CHECK_ENTER");
-                }
-
-                if (image == null || image.RawData == null) {
-                    if (cursorProbe) {
-                        global::Program.CursorImageProbeBreadcrumb(image == null ? "CURSOR_IMG_DRAWIMAGE_SOURCE_IMAGE=NULL" : "CURSOR_IMG_DRAWIMAGE_RAWDATA=NULL");
-                        global::Program.CursorImageProbeBreadcrumb("CURSOR_IMG_DRAWIMAGE_SOURCE_IMAGE_NULL_CHECK_EXIT");
+            if (AlphaBlending) {
+                for (int h = 0; h < image.Height; h++) {
+                    for (int w = 0; w < image.Width; w++) {
+                        uint foreground = (uint)image.RawData[image.Width * h + w];
+                        int fA = (byte)((foreground >> 24) & 0xFF);
+                        if (fA != 0) DrawPoint(X + w, Y + h, foreground, true);
                     }
-                    return;
                 }
+            } else {
+                int _x = 0;
+                int _y = 0;
+                int clip_x = 0;
+                int clip_y = 0;
 
-                if (cursorProbe) {
-                    global::Program.CursorImageProbeBreadcrumb("CURSOR_IMG_DRAWIMAGE_SOURCE_IMAGE_NULL_CHECK_EXIT");
-                    global::Program.CursorImageProbeBreadcrumb("CURSOR_IMG_DRAWIMAGE_BOUNDS_CLIPPING_ENTER");
-                    bool clipped = X < 0 || Y < 0 || X + image.Width > Width || Y + image.Height > Height;
-                    global::Program.CursorImageProbeBreadcrumb(clipped ? "CURSOR_IMG_DRAWIMAGE_CLIP=OUT" : "CURSOR_IMG_DRAWIMAGE_CLIP=IN");
-                    global::Program.CursorImageProbeBreadcrumb("CURSOR_IMG_DRAWIMAGE_BOUNDS_CLIPPING_EXIT");
-                    global::Program.CursorImageProbeBreadcrumb(AlphaBlending ? "CURSOR_IMG_DRAWIMAGE_ALPHA_BLEND_BRANCH=1" : "CURSOR_IMG_DRAWIMAGE_ALPHA_BLEND_BRANCH=0");
-                }
-
-                if (VideoMemory == null || Width <= 0 || Height <= 0) {
-                    return;
-                }
-
-                if (AlphaBlending) {
-                    bool firstSourcePixelLogged = false;
-                    bool firstDestPixelLogged = false;
-                    for (int h = 0; h < image.Height; h++)
-                        for (int w = 0; w < image.Width; w++) {
-                            if (cursorProbe && !firstSourcePixelLogged && h == 0 && w == 0) {
-                                global::Program.CursorImageProbeBreadcrumb("CURSOR_IMG_DRAWIMAGE_FIRST_SOURCE_PIXEL_READ_ENTER");
-                            }
-
-                            uint foreground = (uint)image.RawData[image.Width * h + w];
-
-                            if (cursorProbe && !firstSourcePixelLogged && h == 0 && w == 0) {
-                                global::Program.CursorImageProbeBreadcrumb("CURSOR_IMG_DRAWIMAGE_FIRST_SOURCE_PIXEL_READ_EXIT");
-                                firstSourcePixelLogged = true;
-                            }
-
-                            int fA = (byte)((foreground >> 24) & 0xFF);
-
-                            if (fA != 0) {
-                                if (cursorProbe && !firstDestPixelLogged) {
-                                    global::Program.CursorImageProbeBreadcrumb("CURSOR_IMG_DRAWIMAGE_FIRST_DEST_PIXEL_WRITE_ENTER");
-                                }
-
-                                DrawPoint(X + w, Y + h, foreground, true);
-
-                                if (cursorProbe && !firstDestPixelLogged) {
-                                    global::Program.CursorImageProbeBreadcrumb("CURSOR_IMG_DRAWIMAGE_FIRST_DEST_PIXEL_WRITE_EXIT");
-                                    firstDestPixelLogged = true;
-                                }
-                            }
+                if (X < 0) _x = X;
+                if (Y < 0) _y = Y;
+                if (X + image.Width >= Width) clip_x = X - (Width - image.Width - 1);
+                if (Y + image.Height >= Height) clip_y = Y - (Height - image.Height - 1);
+                if (_x >= -image.Width && _y >= -image.Height &&
+                    clip_x < image.Width && clip_y < image.Height) {
+                    fixed (int* ptr = image.RawData) {
+                        for (int h = 1; h < image.Height + _y - clip_y + 1; h++) {
+                            Native.Movsd(VideoMemory + (Width * ((Y - _y) + h) + (X - _x)) + 1,
+                                         (uint*)(ptr + ((h - _y) * image.Width) + 1 - _x),
+                                         (ulong)(image.Width + _x - clip_x));
                         }
-                } else {
-                    int _x = 0;
-                    int _y = 0;
-                    int clip_x = 0;
-                    int clip_y = 0;
-
-                    if (X < 0) _x = X;
-                    if (Y < 0) _y = Y;
-                    if (X + image.Width >= Width) clip_x = X - (Width - image.Width - 1);
-                    if (Y + image.Height >= Height) clip_y = Y - (Height - image.Height - 1);
-                    if (
-                        _x! >= -image.Width &&
-                        _y! >= -image.Height &&
-
-                        clip_x < image.Width &&
-                        clip_y < image.Height
-                        )
-                        fixed (int* ptr = image.RawData)
-                            for (int h = 1; h < image.Height + _y - clip_y + 1; h++) {
-                                Native.Movsd(VideoMemory + (Width * ((Y - _y) + h) + (X - _x)) + 1, (uint*)(ptr + ((h - _y) * image.Width) + 1 - _x), (ulong)(image.Width + _x - clip_x));
-                            }
-                }
-            } finally {
-                if (cursorProbe) {
-                    global::Program.CursorImageProbeBreadcrumb("CURSOR_IMG_DRAWIMAGE_METHOD_EXIT");
+                    }
                 }
             }
         }

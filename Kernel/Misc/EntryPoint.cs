@@ -44,13 +44,6 @@ namespace guideXOS.Misc {
             _kMainWrapperAddr = (IntPtr)(delegate*<UefiBootInfo*, void>)&KMainWrapper;
         }
 
-        private static void SerialRawLine(string text) {
-            if (text == null) return;
-            for (int i = 0; i < text.Length; i++) {
-                Native.Out8(0x3F8, (byte)text[i]);
-            }
-            Native.Out8(0x3F8, (byte)'\n');
-        }
         /// <summary>
         /// NEW UEFI entry point called from UEFI bootloader
         /// This is the modern entry point that receives guideXOS::BootInfo
@@ -63,77 +56,21 @@ namespace guideXOS.Misc {
             // CRITICAL: Output RAW debug marker FIRST before any managed code
             // This proves we reached the kernel entry point successfully
             SerialDebugMarker();
-            Program.AbiLogCurrentRsp("KMAIN_BODY");
-            
-            // Simple framebuffer test - write colored pixels at top-left to prove we're alive
-            // This is RAW memory access with no C# overhead
-            ulong fbBase = bootInfo != null ? bootInfo->FramebufferBase : 0;
-            if (fbBase != 0 && !Program.IsUefiAbiDiagnosticActive()) {
-                // Write BRIGHT RED pixels at (0,0) to signal kernel entry
-                uint* fb0 = (uint*)fbBase;
-                for (int i = 0; i < 40; i++) {
-                    fb0[i] = 0x00FF0000; // RED = kernel entered!
-                }
-            }
             
             // Now it's safe to try BootConsole
             BootConsole.WriteLine("[KMAIN] INITIALIZE");
             BootConsole.WriteLine("[FRAMEBUFFER] INITIALIZE");
             
-            // Validate bootInfo pointer
-            if (bootInfo == null) {
-                // Write YELLOW pixels to show null bootInfo
-                if (fbBase != 0) {
-                    uint* fb0 = (uint*)fbBase;
-                    for (int i = 40; i < 80; i++) {
-                        fb0[i] = 0x00FFFF00; // YELLOW = null bootInfo
-                    }
-                }
-                for (;;) {
-                    Native.Hlt();
-                }
+            // Validate bootInfo and framebuffer before entering managed startup.
+            if (bootInfo == null || bootInfo->FramebufferBase == 0) {
+                for (;;) Native.Hlt();
             }
-            
-            // Validate framebuffer
-            if (bootInfo->FramebufferBase == 0) {
-                for (;;) {
-                    Native.Hlt();
-                }
-            }
-            
-            // Draw more pixels to show validation passed
-            if (fbBase != 0 && !Program.IsUefiAbiDiagnosticActive()) {
-                uint* fb0 = (uint*)fbBase;
-                // Skip first 40 pixels (already red), write white
-                fb0[40] = 0x00FFFFFF; // Write WHITE pixels at (40,0)
-                fb0[41] = 0x00FFFFFF;
-                fb0[42] = 0x00FFFFFF;
-                fb0[43] = 0x00FFFFFF;
-                fb0[44] = 0x00FFFFFF;
-            }
-            uint* fb = (uint*)bootInfo->FramebufferBase;
-            uint pitch = bootInfo->FramebufferPitch / 4;
-            if (BootConsole.DrawDebugLines)
-                for (uint x = 0; x < 200; x++)
-                    fb[100 * pitch + x] = 0x00FF00FF; // Draw magenta line at y=100
 
             BootConsole.WriteLine("[ALLOCATOR] INITIALIZE");
             Allocator.Initialize((IntPtr)0x4000000);
-            if (!Program.IsUefiAbiDiagnosticActive()) {
-                for (uint x = 0; x < 200; x++)
-                    fb[110 * pitch + x] = 0x0000FF00; // Draw green line
-            }
 
             BootConsole.WriteLine("[MOD] INITIALIZE");
-            IntPtr modulesPtr = GetModulesPointer(); // Get the module pointer from native code
-            ulong modAddr = (ulong)modulesPtr; // Print the module pointer for debugging
-            for (int shift = 28; shift >= 0; shift -= 4) { // Print 8 hex digits of the address
-                int nibble = (int)((modAddr >> shift) & 0xF);
-                char hexChar = (char)(nibble < 10 ? '0' + nibble : 'A' + nibble - 10);
-                while ((Native.In8(0x3FD) & 0x20) == 0) { }
-                Native.Out8(0x3F8, (byte)hexChar);
-            }
-            
+            IntPtr modulesPtr = GetModulesPointer();
             // NativeAOT GC statics and eager class constructors are required
             // in UEFI too.  Without this step, a GC-static field such as
             // Framebuffer.Graphics still contains its encoded EEType token
@@ -143,13 +80,7 @@ namespace guideXOS.Misc {
             // immediately above, so InitializeModules now has its required
             // object-storage owner before any managed static is used.
             StartupCodeHelpers.InitializeModules(modulesPtr);
-
-            if (BootConsole.DrawDebugLines) {
-                // Draw cyan line to show modules initialized
-                for (uint x = 0; x < 200; x++) {
-                    fb[120 * pitch + x] = 0x0000FFFF;
-                }
-            }
+            BootConsole.WriteLine("[NATIVEAOT] modules initialized");
 
             // Not yet Compatible with UEFI
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy)
@@ -172,7 +103,6 @@ namespace guideXOS.Misc {
             }
             BootConsole.WriteLine("[BS] INIT");
             BootSplash.Initialize("Team Nexgen", "guideXOS", "Version: 0.2 UEFI"); // Boot splash
-            Program.LogUefiGraphicsState("KMAIN_AFTER_BOOTSPLASH_INIT", Framebuffer.Graphics);
             
             // Try allocating a simple array to test if runtime works
             try {
@@ -187,18 +117,15 @@ namespace guideXOS.Misc {
 
             BootConsole.WriteLine("[CONS] INITIALIZE");
             Console.Setup();
-            Program.LogUefiGraphicsState("KMAIN_AFTER_CONSOLE_SETUP", Framebuffer.Graphics);
             
             BootConsole.WriteLine("[ARCH] INITIALIZE");
             DetectArchitecture();
-            Program.LogUefiGraphicsState("KMAIN_AFTER_ARCH", Framebuffer.Graphics);
             
             BootConsole.WriteLine("[IDT] INITIALIZE");
             IDT.Disable(); // Initialize GDT/IDT
             
             BootConsole.WriteLine("[GDT] INITIALIZE");
             GDT.Initialize();
-            Program.LogUefiGraphicsState("KMAIN_AFTER_GDT", Framebuffer.Graphics);
             BootConsole.WriteLine("[KERNEL] SET STACK SPACE");
             {
                 const ulong kStackSize = 64 * 1024;
@@ -209,11 +136,9 @@ namespace guideXOS.Misc {
             BootConsole.WriteLine("[IDT] INIT");
             IDT.Initialize();
             IDT.AllowUserSoftwareInterrupt(0x80);
-            Program.LogUefiGraphicsState("KMAIN_AFTER_IDT", Framebuffer.Graphics);
             
             BootConsole.WriteLine("[INTERRUPTS] INIT");
             Interrupts.Initialize();
-            Program.LogUefiGraphicsState("KMAIN_AFTER_INTERRUPTS", Framebuffer.Graphics);
             
             // Keep interrupts disabled until PIC is configured below.
             // IDT.Enable();
@@ -223,32 +148,26 @@ namespace guideXOS.Misc {
                 BootConsole.WriteLine("[ACPI] RSDP address available");
             }
 
-            // ACPI is required for APIC discovery in UEFI mode.
-            // Use the bootloader-provided RSDP under UEFI instead of legacy memory scanning.
-            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI && !Program.IsUefiAbiDiagnosticActive()) {
+            // UEFI uses the bootloader-provided RSDP after ExitBootServices.
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
                 if (bootInfo->AcpiRsdp != 0) {
                     ACPI.InitializeFromRsdp(bootInfo->AcpiRsdp);
                 } else {
                     BootConsole.WriteLine("[ACPI] WARNING: No RSDP provided by bootloader");
                 }
-            } else if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
-                BootConsole.WriteLine("[ACPI] SKIPPED (bounded ABI method probe)");
             } else {
                 ACPI.Initialize();
             }
+            BootConsole.WriteLine("[ACPI] initialized");
 #if UseAPIC
-            if (Program.IsUefiAbiDiagnosticActive()) {
-                BootConsole.WriteLine("[APIC] SKIPPED (bounded ABI method probe)");
-            } else {
-                BootConsole.WriteLine("[PIC] DISABLED");
-                PIC.Disable();
-                BootConsole.WriteLine("[Local APIC] INIT");
-                LocalAPIC.Initialize();
-                BootConsole.WriteLine("[Local APIC] INIT DONE");
-                BootConsole.WriteLine("[IO APIC] INIT");
-                IOAPIC.Initialize();
-                BootConsole.WriteLine("[IO APIC] INIT DONE");
-            }
+            BootConsole.WriteLine("[PIC] DISABLED");
+            PIC.Disable();
+            BootConsole.WriteLine("[Local APIC] INIT");
+            LocalAPIC.Initialize();
+            BootConsole.WriteLine("[Local APIC] INIT DONE");
+            BootConsole.WriteLine("[IO APIC] INIT");
+            IOAPIC.Initialize();
+            BootConsole.WriteLine("[IO APIC] INIT DONE");
 #else
             BootConsole.WriteLine("[PIC] ENABLED");
             PIC.Enable();
@@ -256,13 +175,11 @@ namespace guideXOS.Misc {
             
             BootConsole.WriteLine("[TIMER] INIT"); 
             Timer.Initialize();
-            Program.LogUefiGraphicsState("KMAIN_AFTER_TIMER", Framebuffer.Graphics);
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy)
                  Keyboard.Initialize();
 
             BootConsole.WriteLine("[SERIAL] INIT");
             Serial.Initialize();
-            Program.LogUefiGraphicsState("KMAIN_AFTER_SERIAL", Framebuffer.Graphics);
             
             // PS/2 Controller initialization moved to capability-based detection in Program.KMain
             // This prevents unconditional PS/2 access on UEFI systems without PS/2 hardware
@@ -272,42 +189,21 @@ namespace guideXOS.Misc {
             
             BootConsole.WriteLine("[VMWARE] INIT");
             VMwareTools.Initialize();
-            Program.LogUefiGraphicsState("KMAIN_AFTER_VMWARE", Framebuffer.Graphics);
 
             // Initialize UEFI mouse input if available (before other subsystems)
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
-                bool skipEarlyUefiInputInit = Program.ShouldSkipEarlyUefiInputInitialization();
-                // The UEFI bootloader exits boot services before entering KMain.
-                // Mark this before touching any firmware protocol pointers from BootInfo.
-                BootConsole.WriteLine("[EBS] Marking ExitBootServices as occurred");
-                ExitBootServicesRules.MarkExitBootServices();
+                // ExitBootServices has already occurred before this entry path.
+                // Keep firmware-owned input protocols out of the kernel recovery path.
                 BootConsole.WriteLine("[EBS] ExitBootServices marked");
-                Program.LogUefiGraphicsState("KMAIN_AFTER_EBS_MARK", Framebuffer.Graphics);
-
-                if (skipEarlyUefiInputInit) {
-                    BootConsole.WriteLine("[INPUT] Skipping early UEFI mouse input (safe/step/multi-frame probe)");
-                } else {
-                    BootConsole.WriteLine("[INPUT] Initializing UEFI mouse input");
-                    try {
-                        MouseInputManager.Initialize(bootInfo);
-                        if (MouseInputManager.IsInitialized) {
-                            BootConsole.WriteLine("[INPUT] MouseInputManager initialized");
-                        }
-                    } catch {
-                        BootConsole.WriteLine("[INPUT] MouseInputManager initialization failed");
-                    }
-                }
-
+                ExitBootServicesRules.MarkExitBootServices();
+                BootConsole.WriteLine("[INPUT] UEFI input disabled after ExitBootServices");
             }
 
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy)
                  SMBIOS.Initialize();
-            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI && Program.ShouldSkipEarlyUefiHardwareInitialization()) {
-                BootConsole.WriteLine("[PCI] SKIPPED (safe/step probe)");
-            } else {
-                BootConsole.WriteLine("[PCI] INIT");
-                PCI.Initialize();
-            }
+            BootConsole.WriteLine("[PCI] INIT");
+            PCI.Initialize();
+            BootConsole.WriteLine("[PCI] enumerated");
 
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy) {
                 IDE.Initialize();
@@ -332,7 +228,6 @@ namespace guideXOS.Misc {
             Native.Out8(0x3F8, (byte)'\n');
             
             BootConsole.WriteLine("[SCHED] ThreadPool.Initialize complete");
-            Program.LogUefiGraphicsState("KMAIN_AFTER_THREADPOOL", Framebuffer.Graphics);
 
 #if !UseAPIC
             // Enable only timer IRQ (IRQ0 -> vector 0x20 with PIC remap) for scheduling.
@@ -383,90 +278,24 @@ namespace guideXOS.Misc {
             
             // UEFI: Initialize ramdisk and filesystem for File API support (PNG loading, etc.)
             if (bootInfo->HasRamdisk && bootInfo->RamdiskBase != 0) {
-                BootConsole.WriteLine("[Initrd] Initializing Ramdisk");
-                
-                // Debug: Print ramdisk address
-                ulong rdAddr = bootInfo->RamdiskBase;
-                Native.Out8(0x3F8, (byte)'R');
-                Native.Out8(0x3F8, (byte)'D');
-                Native.Out8(0x3F8, (byte)'@');
-                for (int shift = 60; shift >= 0; shift -= 4) {
-                    int nibble = (int)((rdAddr >> shift) & 0xF);
-                    char hexChar = (char)(nibble < 10 ? '0' + nibble : 'A' + nibble - 10);
-                    Native.Out8(0x3F8, (byte)hexChar);
-                }
-                Native.Out8(0x3F8, (byte)'\n');
-                
-                // CRITICAL DEBUG: Read first 16 bytes directly from bootInfo->RamdiskBase
-                // This tests if the memory is correctly mapped BEFORE Ramdisk class is created
-                byte* directPtr = (byte*)rdAddr;
-                Native.Out8(0x3F8, (byte)'D');
-                Native.Out8(0x3F8, (byte)'I');
-                Native.Out8(0x3F8, (byte)'R');
-                Native.Out8(0x3F8, (byte)':');
-                for (int i = 0; i < 16; i++) {
-                    byte b = directPtr[i];
-                    char hi = (char)(((b >> 4) & 0xF) < 10 ? '0' + ((b >> 4) & 0xF) : 'A' + (((b >> 4) & 0xF) - 10));
-                    char lo = (char)((b & 0xF) < 10 ? '0' + (b & 0xF) : 'A' + ((b & 0xF) - 10));
-                    Native.Out8(0x3F8, (byte)hi);
-                    Native.Out8(0x3F8, (byte)lo);
-                }
-                Native.Out8(0x3F8, (byte)'\n');
-                
-                // Check if it's RDSK
-                if (directPtr[0] == (byte)'R' && directPtr[1] == (byte)'D' && 
-                    directPtr[2] == (byte)'S' && directPtr[3] == (byte)'K') {
-                    BootConsole.WriteLine("[Initrd] RDSK magic found directly!");
-                } else {
-                    BootConsole.WriteLine("[Initrd] WARNING: No RDSK magic at base address!");
-                    // Try printing what we see as ASCII
-                    Native.Out8(0x3F8, (byte)'A');
-                    Native.Out8(0x3F8, (byte)'S');
-                    Native.Out8(0x3F8, (byte)'C');
-                    Native.Out8(0x3F8, (byte)':');
-                    for (int i = 0; i < 4; i++) {
-                        byte b = directPtr[i];
-                        if (b >= 32 && b < 127) {
-                            Native.Out8(0x3F8, b);
-                        } else {
-                            Native.Out8(0x3F8, (byte)'.');
-                        }
-                    }
-                    Native.Out8(0x3F8, (byte)'\n');
-                }
-                
+                BootConsole.WriteLine("[Initrd] initializing");
                 try {
-                    // CRITICAL: Set Disk.Instance BEFORE filesystem init
                     Disk.Instance = new Ramdisk((IntPtr)bootInfo->RamdiskBase);
-                    BootConsole.WriteLine("[Initrd] Ramdisk initialized");
-                    
-                    // UEFI ramdisk uses custom RDSK format (not TAR)
-                    BootConsole.WriteLine("[FS] Mounting RdskFS");
-                    try {
-                        File.Instance = new RdskFS();
-                        BootConsole.WriteLine("[FS] RdskFS mounted");
-                    } catch {
-                        BootConsole.WriteLine("[FS] WARNING: RdskFS mount failed");
-                    }
+                    File.Instance = new RdskFS();
+                    BootConsole.WriteLine("[FS] mounted");
                 } catch {
-                    BootConsole.WriteLine("[Initrd] WARNING: Ramdisk initialization failed");
+                    BootConsole.WriteLine("[FS] mount failed");
                 }
             } else {
-                BootConsole.WriteLine("[Initrd] WARNING: No ramdisk loaded!");
+                BootConsole.WriteLine("[Initrd] unavailable");
             }
+
             // SKIP boot splash animation - Timer.Sleep() might not work with masked interrupts
             // for (int i = 0; i < 120; i++) {
             //     BootSplash.Tick();
             // }
             //BootConsole.WriteLine("BOOTSPLASH_CLEANUP");
-            SerialRawLine("POSTFS_A");
-            if (Program.IsUefiAbiDiagnosticActive()) {
-                SerialRawLine("POSTFS_BOOT_SPLASH_CLEANUP_SKIPPED");
-            } else {
-                BootSplash.Cleanup();
-            }
-            SerialRawLine("POSTFS_B");
-            Program.LogUefiGraphicsState("KMAIN_AFTER_POSTFS", Framebuffer.Graphics);
+            BootSplash.Cleanup();
 
             // SKIP uptime assignment - Timer.Ticks might not work with masked interrupts
             // and this might trigger static initialization that hangs
@@ -641,8 +470,6 @@ namespace guideXOS.Misc {
             Native.Out8(0x3F8, (byte)'A');
             Native.Out8(0x3F8, (byte)'W');
             Native.Out8(0x3F8, (byte)'\n');
-            Program.AbiLogCurrentRsp("KERNELMAIN_BODY");
-            Program.LogUefiGraphicsState("KERNELMAIN_BEFORE_PROGRAM_KMAIN", Framebuffer.Graphics);
             BootConsole.WriteLine("[KERNELMAIN]");
             BootConsole.NewLine();
             Program.KMain(); // Call the main OS initialization - this sets up GUI, drivers, etc.

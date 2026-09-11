@@ -109,284 +109,86 @@ namespace guideXOS.GUI {
             }
         }
 
-        private static void ProbeSerialBreadcrumb(string breadcrumb) {
-            if (breadcrumb == null) return;
-            for (int i = 0; i < breadcrumb.Length; i++) {
-                Native.Out8(0x3F8, (byte)breadcrumb[i]);
-            }
-            Native.Out8(0x3F8, (byte)'\n');
-        }
-
         /// <summary>
         /// Draw UEFI Taskbar
         /// </summary>
         private unsafe void DrawUEFITaskBar() {
-            bool abiProbe = Program.IsUefiAbiDiagnosticActive();
             guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
-            Program.LogUefiGraphicsState("TASKBAR_EXISTING_ENTRY", graphics);
-            if (Program.IsUefiAbiFreshGraphicsDiagnosticEnabled() && Framebuffer.VideoMemory != null && Framebuffer.Width > 0 && Framebuffer.Height > 0) {
-                // Keep this controlled probe independent of a recovered
-                // managed static object. The method body and its generated
-                // prologue remain the original path; only this diagnostic
-                // leaf receives a fresh concrete receiver.
-                graphics = new guideXOS.Graph.Graphics(
-                    Framebuffer.Width, Framebuffer.Height, Framebuffer.VideoMemory);
-                Program.LogUefiGraphicsState("TASKBAR_FRESH_LOCAL", graphics);
-            }
-            if (abiProbe) {
-                ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_BODY_ENTER");
-            }
-            if (graphics == null) {
-                if (abiProbe) ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_GRAPHICS_NULL");
-                return;
-            }
-            // Calculate taskbar position
+            if (graphics == null) return;
+
             int yTop = Framebuffer.Height - _barHeight;
-
-            // Draw simple dark taskbar background
             graphics.FillRectangle(0, yTop, Framebuffer.Width, _barHeight, 0xFF1A1A1A);
-            if (abiProbe) {
-                ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_BG_EXIT");
-            }
-
-            // Draw a simple line at top of taskbar
             graphics.FillRectangle(0, yTop, Framebuffer.Width, 1, 0xFF333333);
-            if (abiProbe) {
-                ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_LINE_EXIT");
-            }
 
-            // Draw clock using cached strings - this should be safe
-            // FIXED: Only regenerate time/date strings when the time actually changes
-            bool timeChanged = (RTC.Hour != _lastHour || RTC.Minute != _lastMinute);
-            bool dateChanged = (RTC.Day != _lastDay);
+            bool timeChanged = RTC.Hour != _lastHour || RTC.Minute != _lastMinute;
+            bool dateChanged = RTC.Day != _lastDay;
 
             if (_cachedTime == null || timeChanged) {
-                if (_cachedTime != null) {
-                    _cachedTime.Dispose();
-                }
-
+                if (_cachedTime != null) _cachedTime.Dispose();
                 if (_clockUse12Hour) {
                     bool isPM = RTC.Hour >= 12;
-                    int hour12 = (RTC.Hour % 12 == 0) ? 12 : (RTC.Hour % 12);
-                    string sfx = isPM ? " PM" : " AM";
-                    string min = RTC.Minute < 10 ? ("0" + RTC.Minute.ToString()) : RTC.Minute.ToString();
-                    string h12 = hour12.ToString();
-                    string temp = h12 + ":" + min;
-                    _cachedTime = temp + sfx;
-                    h12.Dispose();
-                    min.Dispose();
-                    temp.Dispose();
+                    int hour12 = RTC.Hour % 12 == 0 ? 12 : RTC.Hour % 12;
+                    string suffix = isPM ? " PM" : " AM";
+                    string minute = RTC.Minute < 10 ? "0" + RTC.Minute.ToString() : RTC.Minute.ToString();
+                    string hour = hour12.ToString();
+                    string temporary = hour + ":" + minute;
+                    _cachedTime = temporary + suffix;
+                    hour.Dispose();
+                    minute.Dispose();
+                    temporary.Dispose();
                 } else {
-                    string h = RTC.Hour < 10 ? ("0" + RTC.Hour.ToString()) : RTC.Hour.ToString();
-                    string m = RTC.Minute < 10 ? ("0" + RTC.Minute.ToString()) : RTC.Minute.ToString();
-                    _cachedTime = h + ":" + m;
-                    h.Dispose();
-                    m.Dispose();
+                    string hour = RTC.Hour < 10 ? "0" + RTC.Hour.ToString() : RTC.Hour.ToString();
+                    string minute = RTC.Minute < 10 ? "0" + RTC.Minute.ToString() : RTC.Minute.ToString();
+                    _cachedTime = hour + ":" + minute;
+                    hour.Dispose();
+                    minute.Dispose();
                 }
-
                 _lastHour = RTC.Hour;
                 _lastMinute = RTC.Minute;
             }
 
             if (_cachedDate == null || dateChanged) {
-                if (_cachedDate != null) {
-                    _cachedDate.Dispose();
-                }
-
-                string monthStr = RTC.Month.ToString();
-                string dayStr = RTC.Day.ToString();
-                string yearStr = RTC.Year.ToString();
-                string temp1 = monthStr + "/";
-                string temp2 = temp1 + dayStr;
-                string temp3 = temp2 + "/";
-                _cachedDate = temp3 + yearStr;
-                monthStr.Dispose();
-                dayStr.Dispose();
-                yearStr.Dispose();
-                temp1.Dispose();
-                temp2.Dispose();
-                temp3.Dispose();
-
+                if (_cachedDate != null) _cachedDate.Dispose();
+                string month = RTC.Month.ToString();
+                string day = RTC.Day.ToString();
+                string year = RTC.Year.ToString();
+                string first = month + "/";
+                string second = first + day;
+                string third = second + "/";
+                _cachedDate = third + year;
+                month.Dispose();
+                day.Dispose();
+                year.Dispose();
+                first.Dispose();
+                second.Dispose();
+                third.Dispose();
                 _lastDay = RTC.Day;
             }
 
-            // Draw time in upper right
             if (WindowManager.font != null && _cachedTime != null) {
-                if (Program.IsUefiAbiDiagnosticActive()) {
-                    ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_FONT_ENTER");
-                }
-                int timeW = WindowManager.font.MeasureString(_cachedTime);
-                int timeX = Framebuffer.Width - 12 - timeW;
-                int timeY = yTop + ((_barHeight - WindowManager.font.FontSize) / 2) - (WindowManager.font.FontSize / 2);
+                int timeWidth = WindowManager.font.MeasureString(_cachedTime);
+                int timeX = Framebuffer.Width - 12 - timeWidth;
+                int timeY = yTop + ((_barHeight - WindowManager.font.FontSize) / 2) -
+                            (WindowManager.font.FontSize / 2);
                 WindowManager.font.DrawString(timeX, timeY, _cachedTime);
-
-                // Date below time
                 if (_cachedDate != null) {
-                    int dateY = timeY + WindowManager.font.FontSize;
-                    WindowManager.font.DrawString(timeX, dateY, _cachedDate);
-                }
-                if (Program.IsUefiAbiDiagnosticActive()) {
-                    ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_FONT_EXIT");
+                    WindowManager.font.DrawString(timeX, timeY + WindowManager.font.FontSize,
+                                                _cachedDate);
                 }
             }
 
-            // Draw simple start button placeholder (square)
             int startX = 12;
             int startY = yTop + 4;
             int startSize = _barHeight - 8;
             graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2E);
             graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3E, 1);
-            if (abiProbe) {
-                ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_BUTTON_EXIT");
-            }
-
-            // Skip all the complex icon loading, Start Menu, workspace switcher, etc.
-            // This is MINIMAL BOOT MODE
-        }
-
-        /// <summary>
-        /// Bounded first-frame UEFI taskbar. Keep this primitive-only so the
-        /// one-frame compositor probe does not enter the large managed/RTC
-        /// taskbar frame before the UEFI desktop path is proven.
-        /// </summary>
-        private void DrawUefiBoundedFirstFrame() {
-            int width = Framebuffer.Width;
-            int height = Framebuffer.Height;
-            int yTop = height - _barHeight;
-            var graphics = Framebuffer.Graphics;
-            if (graphics == null || width <= 0 || height <= 0 || yTop < 0) return;
-
-            graphics.FillRectangle(0, yTop, width, _barHeight, 0xFF1A1A1Au);
-            graphics.FillRectangle(0, yTop, width, 1, 0xFF36C2B4u);
-
-            int startX = 12;
-            int startY = yTop + 4;
-            int startSize = _barHeight - 8;
-            graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2Eu);
-            graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3Eu, 1);
-        }
-
-        /// <summary>
-        /// UEFI taskbar probe that isolates background and start-button rendering.
-        /// </summary>
-        public void DrawUefiStepProbeBackground() {
-            int yTop = Framebuffer.Height - _barHeight;
-            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_DRAW_ENTER");
-            ProbeSerialBreadcrumb(Framebuffer.Graphics == null ? "NORM_STEP_007_GFX=NULL" : "NORM_STEP_007_GFX=OK");
-            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_RECT_ENTER");
-            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_RECT_CALLSITE=Framebuffer.Graphics.FillRectangle(0,yTop,Framebuffer.Width,_barHeight,0xFF1A1A1A)");
-            Framebuffer.Graphics.FillRectangle(0, yTop, Framebuffer.Width, _barHeight, 0xFF1A1A1A);
-            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_RECT_EXIT");
-            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_LINE_ENTER");
-            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_LINE_CALLSITE=Framebuffer.Graphics.FillRectangle(0,yTop,Framebuffer.Width,1,0xFF333333)");
-            Framebuffer.Graphics.FillRectangle(0, yTop, Framebuffer.Width, 1, 0xFF333333);
-            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_LINE_EXIT");
-            ProbeSerialBreadcrumb("NORM_STEP_007_TASKBAR_BG_DRAW_EXIT");
-        }
-
-        /// <summary>
-        /// UEFI taskbar probe that isolates the start-button/icon draw.
-        /// </summary>
-        public unsafe void DrawUefiStepProbeStartButton() {
-            int yTop = Framebuffer.Height - _barHeight;
-            int startX = 12;
-            int startY = yTop + 4;
-            int startSize = _barHeight - 8;
-            var graphics = Framebuffer.Graphics;
-            bool useStep8SafeBypass = Program.NORMAL_DESKTOP_UEFI_PROBE_BYPASS_STEP8_DRAWIMAGE;
-            bool useStep8SafeFillOnly = Program.NORMAL_DESKTOP_UEFI_PROBE_SAFE_PLACEHOLDERS_UNTIL_STEP10 || useStep8SafeBypass;
-
-            void LogButtonBorderDrawState(string phase, string callsite, string colorDescription) {
-                ProbeSerialBreadcrumb(phase + "_GFX_NULL=" + (graphics == null ? "YES" : "NO"));
-                ProbeSerialBreadcrumb(phase + "_GFX_WIDTH=" + (graphics != null ? graphics.Width.ToString() : "NULL"));
-                ProbeSerialBreadcrumb(phase + "_GFX_HEIGHT=" + (graphics != null ? graphics.Height.ToString() : "NULL"));
-                ProbeSerialBreadcrumb(phase + "_GFX_VIDEOMEMORY=" + (graphics != null && graphics.VideoMemory != null ? ((ulong)graphics.VideoMemory).ToString("x") : "NULL"));
-                ProbeSerialBreadcrumb(phase + "_COLOR=" + colorDescription);
-                ProbeSerialBreadcrumb(phase + "_CALLSITE=" + callsite);
-            }
-
-            ProbeSerialBreadcrumb("NORM_STEP_008_START_BUTTON_ENTER");
-            ProbeSerialBreadcrumb(_startIcon == null ? "NORM_STEP_008_START_ICON=NULL" : "NORM_STEP_008_START_ICON=OK");
-            ProbeSerialBreadcrumb(WindowManager.font == null ? "NORM_STEP_008_FONT=NULL" : "NORM_STEP_008_FONT=OK");
-            if (useStep8SafeBypass) {
-                ProbeSerialBreadcrumb("NORM_STEP_008_SAFE_BYPASS_ENTER");
-            }
-            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_ENTER");
-            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_CALLSITE=cached local graphics.FillRectangle(startX,startY,startSize,startSize,0xFF2E2E2E)");
-            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_A_ENTER");
-            if (useStep8SafeFillOnly) {
-                ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_CALLSITE=cached local graphics.FillRectangle four-side placeholder");
-                graphics.FillRectangle(startX, startY, startSize, 1, 0xFF3E3E3E);
-                graphics.FillRectangle(startX, startY, 1, startSize, 0xFF3E3E3E);
-                graphics.FillRectangle(startX + (startSize - 1), startY, 1, startSize, 0xFF3E3E3E);
-                graphics.FillRectangle(startX, startY + (startSize - 1), startSize, 1, 0xFF3E3E3E);
-            } else {
-                LogButtonBorderDrawState("NORM_STEP_008_BUTTON_BORDER_A", "cached local graphics.FillRectangle(startX,startY,startSize,startSize,0xFF2E2E2E)", "0xFF2E2E2E");
-                graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2E);
-            }
-            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_A_EXIT");
-            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_FILL_EXIT");
-            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_ENTER");
-            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_B_ENTER");
-            if (useStep8SafeFillOnly) {
-                ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_CALLSITE=cached local graphics.FillRectangle four-side placeholder (already rendered)");
-            } else {
-                ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_CALLSITE=cached local graphics.DrawRectangle(startX,startY,startSize,startSize,0xFF3E3E3E,1)");
-                LogButtonBorderDrawState("NORM_STEP_008_BUTTON_BORDER_B", "cached local graphics.DrawRectangle(startX,startY,startSize,startSize,0xFF3E3E3E,1)", "0xFF3E3E3E");
-                graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3E, 1);
-            }
-            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_B_EXIT");
-            ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_EXIT");
-
-            if (useStep8SafeBypass) {
-                ProbeSerialBreadcrumb("NORM_STEP_008_SAFE_BYPASS_EXIT");
-                ProbeSerialBreadcrumb("NORM_STEP_008_START_BUTTON_EXIT");
-                return;
-            }
-
-            ProbeSerialBreadcrumb("NORM_STEP_008_ICON_FACTORY_ENTER");
-            Image iconToShow = Icons.TaskbarIcon(32);
-            ProbeSerialBreadcrumb(iconToShow == null ? "NORM_STEP_008_ICON_FACTORY_NULL" : "NORM_STEP_008_ICON_FACTORY_OK");
-            ProbeSerialBreadcrumb("NORM_STEP_008_ICON_FACTORY_EXIT");
-
-            if (iconToShow != null) {
-                ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_ENTER");
-                ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_CALLSITE=cached local graphics.DrawImage(startX,startY,iconToShow)");
-                ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_C_ENTER");
-                LogButtonBorderDrawState("NORM_STEP_008_BUTTON_BORDER_C", "cached local graphics.DrawImage(startX,startY,iconToShow)", "N/A");
-                graphics.DrawImage(startX, startY, iconToShow);
-                ProbeSerialBreadcrumb("NORM_STEP_008_BUTTON_BORDER_C_EXIT");
-                ProbeSerialBreadcrumb("NORM_STEP_008_ICON_DRAW_EXIT");
-            }
-            ProbeSerialBreadcrumb("NORM_STEP_008_START_BUTTON_EXIT");
         }
 
         public void Draw() {
-            Program.LogUefiGraphicsState("TASKBAR_DRAW_ENTRY", Framebuffer.Graphics);
-            // Keep the recovered UEFI frame bounded at the caller while using
-            // the original taskbar implementation and canonical receiver.
-            if (BootConsole.CurrentMode == BootMode.UEFI) {
-                if (Program.IsUefiAbiDiagnosticActive()) {
-                    // The diagnostic mode intentionally reaches the original
-                    // UEFI implementation exactly once.
-                    Program.AbiLogCurrentRsp("TASKBAR_DRAW_BODY");
-                    DrawLegacy();
-                    return;
-                }
-                // The bounded first-frame compositor now uses the canonical
-                // framebuffer-backed receiver through the original taskbar
-                // implementation.  Keep the frame bounded at the caller;
-                // do not substitute a leaf-only graphics context here.
-                DrawLegacy();
-                return;
-            }
             DrawLegacy();
         }
 
         private void DrawLegacy() {
-            if (Program.IsUefiAbiDiagnosticActive()) {
-                Program.AbiLogCurrentRsp("TASKBAR_DRAWLEGACY_BODY");
-            }
             switch (BootConsole.CurrentMode) {
                 case BootMode.UEFI:
                     DrawUEFITaskBar();

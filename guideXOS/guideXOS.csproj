@@ -19,9 +19,7 @@
 		<DefineConstants>Kernel;NETWORK;X64;UseAPIC</DefineConstants>
 
 		<IlcSystemModule>guideXOS</IlcSystemModule>
-		<!-- CRITICAL: For UEFI boot, use KMainWrapper as the entry point -->
-		<!-- KMainWrapper is defined in native_stubs.asm and provides early debugging -->
-		<!-- before calling into managed KMain code -->
+		<!-- Keep the native wrapper symbol available for the UEFI entry integration. -->
 		<EntryPointSymbol>KMainWrapper</EntryPointSymbol>
 		<LinkerSubsystem>NATIVE</LinkerSubsystem>
 		<!--Make the code faster!-->
@@ -71,7 +69,7 @@
 	<ItemGroup>
 		<LinkerArg Include="/fixed /base:0x10000000 /map:Kernel.map" />
 		<LinkerArg Include="/FORCE:UNRESOLVED" />
-		<!-- Force include KMainWrapper from native_stubs.obj so it's not stripped -->
+		<!-- Force include KMainWrapper from native_stubs.obj so it is not stripped. -->
 		<LinkerArg Include="/INCLUDE:KMainWrapper" />
 	</ItemGroup>
 

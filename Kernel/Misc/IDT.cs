@@ -191,13 +191,13 @@ public static class IDT {
     private static unsafe void SerialWriteFaultBreadcrumbs(int irq, ulong errorCode, RegistersStack* regs, InterruptReturnStack* irs) {
         switch (irq) {
             case 14:
-                SerialWriteLineLiteral("UTINY_FAULT_PF");
+                SerialWriteLineLiteral("CPU_FAULT_PAGE_FAULT");
                 break;
             case 13:
-                SerialWriteLineLiteral("UTINY_FAULT_GP");
+                SerialWriteLineLiteral("CPU_FAULT_GENERAL_PROTECTION");
                 break;
             case 8:
-                SerialWriteLineLiteral("UTINY_FAULT_DF");
+                SerialWriteLineLiteral("CPU_FAULT_DOUBLE_FAULT");
                 break;
         }
 
@@ -258,26 +258,8 @@ public static class IDT {
 
             SerialWriteFaultBreadcrumbs(irq, actualErrorCode, &stack->rs, irs);
 
-            // Preserve the bounded desktop test's current frame/stage when a
-            // delayed CPU fault occurs. The normal fault breadcrumbs above
-            // still provide the architectural RIP/RSP/CR2/error details.
-            if ((irq == 13 || irq == 14) && Program.IsUefiMultiFrameActive()) {
+            if (Program.IsUefiMultiFrameActive()) {
                 Program.LogUefiMultiFrameFaultContext();
-            }
-
-            // A controlled ABI probe must stop after recording the CPU frame;
-            // do not enter the graphical panic path while its stack state is
-            // deliberately being examined.
-            if ((irq == 13 || irq == 14) && Program.IsUefiAbiDiagnosticActive()) {
-                for (; ; ) Native.Hlt();
-            }
-
-            if (irq == 14) {
-                BootConsole.WriteLine("UTINY_FAULT_PF");
-            } else if (irq == 13) {
-                BootConsole.WriteLine("UTINY_FAULT_GP");
-            } else if (irq == 8) {
-                BootConsole.WriteLine("UTINY_FAULT_DF");
             }
 
             // Display enhanced graphical panic screen

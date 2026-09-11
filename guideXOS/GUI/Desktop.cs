@@ -342,41 +342,26 @@ namespace guideXOS.GUI {
         /// <param name="audioIcon"></param>
         /// <param name="iconSize"></param>
         public static void Update(Image documentIcon, Image folderIcon, Image imageIcon, Image audioIcon, int iconSize) {
-            Program.LogUefiGraphicsState("DESKTOP_UPDATE_ENTRY", Framebuffer.Graphics);
             if (BootConsole.CurrentMode == BootMode.UEFI) {
-                UpdateUefiSafe(documentIcon, folderIcon, imageIcon, audioIcon, iconSize);
+                UpdateUefi(documentIcon, folderIcon, imageIcon, audioIcon, iconSize);
                 return;
             }
 
             UpdateLegacy(documentIcon, folderIcon, imageIcon, audioIcon, iconSize);
         }
 
-        private static unsafe void UpdateUefiSafe(Image documentIcon, Image folderIcon, Image imageIcon, Image audioIcon, int iconSize) {
+        private static unsafe void UpdateUefi(Image documentIcon, Image folderIcon, Image imageIcon, Image audioIcon, int iconSize) {
             var graphics = Framebuffer.Graphics;
-            Program.LogUefiGraphicsState("DESKTOP_UPDATE_UEFI", graphics);
-            if (graphics == null || graphics.VideoMemory == null || graphics.Width <= 0 || graphics.Height <= 0) {
-                Program.NormalDesktopFrameBreadcrumb("NORMAL_FRAME_DESKTOP_GRAPHICS_INVALID");
-                return;
-            }
+            if (graphics == null || graphics.VideoMemory == null ||
+                graphics.Width <= 0 || graphics.Height <= 0) return;
 
             SetIconSize(iconSize);
-            Program.NormalDesktopFrameBreadcrumb("NORMAL_FRAME_DESKTOP_ICONS_BEGIN");
             DrawUefiFallbackIcon(graphics, folderIcon, "FILES", 48, 96, 0xFF47D6C8u);
             DrawUefiFallbackIcon(graphics, documentIcon, "DOCS", 152, 96, 0xFFFFD166u);
             DrawUefiFallbackIcon(graphics, imageIcon, "IMAGES", 256, 96, 0xFFFF6B6Bu);
             DrawUefiFallbackIcon(graphics, audioIcon, "AUDIO", 360, 96, 0xFF9B8AFBu);
-            Program.NormalDesktopFrameBreadcrumb("NORMAL_FRAME_DESKTOP_ICONS_END");
 
-            // This is the real UEFI Taskbar.Draw() path. Its UEFI branch is
-            // already restricted to primitive drawing, cached RTC text, and a
-            // procedural start-button placeholder; it does not load PNG assets.
-            Program.NormalDesktopFrameBreadcrumb("NORMAL_FRAME_TASKBAR_BEGIN");
-            if (Taskbar != null) {
-                Taskbar.Draw();
-            } else {
-                Program.NormalDesktopFrameBreadcrumb("NORMAL_FRAME_TASKBAR_NULL");
-            }
-            Program.NormalDesktopFrameBreadcrumb("NORMAL_FRAME_TASKBAR_END");
+            if (Taskbar != null) Taskbar.Draw();
         }
 
         private static void DrawUefiFallbackIcon(guideXOS.Graph.Graphics graphics, Image icon, string label, int x, int y, uint accent) {
