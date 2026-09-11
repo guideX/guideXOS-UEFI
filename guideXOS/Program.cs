@@ -133,6 +133,29 @@ unsafe class Program {
     private static ulong _uefiMultiFrameFirstRsp = 0;
     private static ulong _uefiMultiFrameCanonicalGraphicsAddress = 0;
     private static ulong _uefiMultiFrameStartTicks = 0;
+    private static bool _uefiMultiFrameObservedGraphicsState = false;
+    private static UefiMultiFrameGraphicsState _uefiMultiFrameLastGraphicsState;
+    private static bool _uefiMultiFrameReassertDetailEmitted = false;
+    private static bool _uefiMultiFrameReassertAfterEnsureEmitted = false;
+    private static ulong _uefiMultiFrameMutationCount = 0;
+    private static ulong _uefiMultiFrameReassertRecoveryCount = 0;
+
+    private struct UefiMultiFrameGraphicsState {
+        public ulong GraphicsReference;
+        public ulong GraphicsMethodTable;
+        public ulong GraphicsVideoMemory;
+        public ulong GraphicsWidth;
+        public ulong GraphicsHeight;
+        public ulong FramebufferVideoMemory;
+        public ulong OriginalVideoMemory;
+        public ulong FramebufferWidth;
+        public ulong FramebufferHeight;
+        public ulong OriginalWidth;
+        public ulong OriginalHeight;
+        public ulong FirstBuffer;
+        public ulong SecondBuffer;
+        public ulong TripleBuffered;
+    }
 
     private const int UEFI_MULTIFRAME_STAGE_NONE = 0;
     private const int UEFI_MULTIFRAME_STAGE_GRAPHICS = 1;
@@ -142,6 +165,7 @@ unsafe class Program {
     private const int UEFI_MULTIFRAME_STAGE_CURSOR = 5;
     private const int UEFI_MULTIFRAME_STAGE_PRESENT = 6;
     private const int UEFI_MULTIFRAME_STAGE_COMPLETE = 7;
+    private const int UEFI_MULTIFRAME_STAGE_TASKBAR = 8;
 
     private sealed class SafeModeDiagnostics {
         public ulong FrameCounter;
@@ -402,6 +426,16 @@ unsafe class Program {
     // dispatch remains unchanged.
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
     private const int UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET = 120;
+    // Bounded diagnostic controls. The frame-boundary reassertion writes the
+    // three canonical Framebuffer fields below. 0 disables it, 1 performs it
+    // every frame, and N performs it every Nth frame. Frame1Only is useful for
+    // proving that later frames do not need the repair. EnsureGraphics is
+    // independently controlled because it can repair Graphics object fields or
+    // rebuild the Graphics reference in addition to the three direct writes.
+    private const int UEFI_MULTIFRAME_CANONICAL_REASSERT_INTERVAL = 0;
+    private const bool UEFI_MULTIFRAME_CANONICAL_REASSERT_FRAME1_ONLY = false;
+    private const bool UEFI_MULTIFRAME_ENSURE_GRAPHICS_EVERY_FRAME = false;
+    private const bool UEFI_MULTIFRAME_MUTATION_DIAGNOSTICS = true;
     // Bounded proof path: execute one real UEFI desktop frame, then halt or
     // return to UTINY. Keep this disabled in the normal recovery default.
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE = false;
@@ -2143,6 +2177,9 @@ unsafe class Program {
             case UEFI_MULTIFRAME_STAGE_COMPLETE:
                 SerialWriteLiteral("COMPLETE");
                 break;
+            case UEFI_MULTIFRAME_STAGE_TASKBAR:
+                SerialWriteLiteral("TASKBAR");
+                break;
             default:
                 SerialWriteLiteral("NONE");
                 break;
@@ -2151,6 +2188,215 @@ unsafe class Program {
 
     private static void SetUefiMultiFrameStage(int stage) {
         _uefiMultiFrameStage = stage;
+    }
+
+    private static unsafe void CaptureUefiMultiFrameGraphicsState(UefiMultiFrameGraphicsState* state) {
+        guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
+        state->GraphicsReference = GetManagedObjectAddress(graphics);
+        state->GraphicsMethodTable = 0;
+        if (state->GraphicsReference != 0) {
+            state->GraphicsMethodTable = ((ulong*)state->GraphicsReference)[0];
+        }
+        state->GraphicsVideoMemory = graphics == null ? 0UL : (ulong)graphics.VideoMemory;
+        state->GraphicsWidth = graphics == null ? 0UL : (ulong)(uint)graphics.Width;
+        state->GraphicsHeight = graphics == null ? 0UL : (ulong)(uint)graphics.Height;
+        state->FramebufferVideoMemory = (ulong)Framebuffer.VideoMemory;
+        state->OriginalVideoMemory = (ulong)Framebuffer.OriginalVideoMemory;
+        state->FramebufferWidth = Framebuffer.Width;
+        state->FramebufferHeight = Framebuffer.Height;
+        state->OriginalWidth = Framebuffer.OriginalWidth;
+        state->OriginalHeight = Framebuffer.OriginalHeight;
+        state->FirstBuffer = (ulong)Framebuffer.FirstBuffer;
+        state->SecondBuffer = (ulong)Framebuffer.SecondBuffer;
+        state->TripleBuffered = Framebuffer.TripleBuffered ? 1UL : 0UL;
+    }
+
+    private static unsafe void ObserveCurrentUefiMultiFrameGraphicsState(int frame, string stage) {
+        UefiMultiFrameGraphicsState state;
+        CaptureUefiMultiFrameGraphicsState(&state);
+        ObserveUefiMultiFrameGraphicsState(frame, stage, &state);
+    }
+
+    private static unsafe void EmitUefiMultiFrameState(string label, UefiMultiFrameGraphicsState* state) {
+        SerialBreadcrumb(label);
+        SerialWriteLiteral("GFX_REF="); SerialWriteHex(state->GraphicsReference); SerialChar('\n');
+        SerialWriteLiteral("GFX_MT="); SerialWriteHex(state->GraphicsMethodTable); SerialChar('\n');
+        SerialWriteLiteral("GFX_VM="); SerialWriteHex(state->GraphicsVideoMemory); SerialChar('\n');
+        SerialWriteLiteral("GFX_WIDTH="); SerialWriteUnsigned(state->GraphicsWidth); SerialChar('\n');
+        SerialWriteLiteral("GFX_HEIGHT="); SerialWriteUnsigned(state->GraphicsHeight); SerialChar('\n');
+        SerialWriteLiteral("FB_VM="); SerialWriteHex(state->FramebufferVideoMemory); SerialChar('\n');
+        SerialWriteLiteral("FB_ORIGINAL_VM="); SerialWriteHex(state->OriginalVideoMemory); SerialChar('\n');
+        SerialWriteLiteral("FB_WIDTH="); SerialWriteUnsigned(state->FramebufferWidth); SerialChar('\n');
+        SerialWriteLiteral("FB_HEIGHT="); SerialWriteUnsigned(state->FramebufferHeight); SerialChar('\n');
+        SerialWriteLiteral("FB_ORIGINAL_WIDTH="); SerialWriteUnsigned(state->OriginalWidth); SerialChar('\n');
+        SerialWriteLiteral("FB_ORIGINAL_HEIGHT="); SerialWriteUnsigned(state->OriginalHeight); SerialChar('\n');
+        SerialWriteLiteral("FIRST_BUFFER="); SerialWriteHex(state->FirstBuffer); SerialChar('\n');
+        SerialWriteLiteral("SECOND_BUFFER="); SerialWriteHex(state->SecondBuffer); SerialChar('\n');
+        SerialWriteLiteral("TRIPLE_BUFFERED="); SerialWriteUnsigned(state->TripleBuffered); SerialChar('\n');
+    }
+
+    private static void EmitUefiMultiFrameMutation(int frame, string stage, string field, ulong before, ulong after) {
+        _uefiMultiFrameMutationCount++;
+        if (_uefiMultiFrameMutationCount > 32UL) return;
+        SerialBreadcrumb("GFX_MUTATION_DETECTED");
+        SerialWriteLiteral("FRAME="); SerialWriteUnsigned((ulong)frame); SerialChar('\n');
+        SerialWriteLiteral("STAGE="); SerialWriteLiteral(stage); SerialChar('\n');
+        SerialWriteLiteral("FIELD="); SerialWriteLiteral(field); SerialChar('\n');
+        SerialWriteLiteral("BEFORE="); SerialWriteHex(before); SerialChar('\n');
+        SerialWriteLiteral("AFTER="); SerialWriteHex(after); SerialChar('\n');
+        SerialWriteLiteral("TIMER_TICKS="); SerialWriteUnsigned(Timer.Ticks); SerialChar('\n');
+        SerialBreadcrumb(ThreadPool.Initialized ? "SCHED_INITIALIZED=1" : "SCHED_INITIALIZED=0");
+        SerialBreadcrumb(ThreadPool.SchedulingEnabled ? "SCHED_ENABLED=1" : "SCHED_ENABLED=0");
+        SerialBreadcrumb(ThreadPool.Locked ? "SCHED_LOCKED=1" : "SCHED_LOCKED=0");
+        SerialWriteLiteral("SCHED_CPU="); SerialWriteUnsigned(SMP.ThisCPU); SerialChar('\n');
+        SerialWriteLiteral("ALLOC_IN_USE="); SerialWriteUnsigned(Allocator.MemoryInUse); SerialChar('\n');
+        SerialWriteLiteral("ALLOC_FREE_CALLS="); SerialWriteUnsigned(Allocator.FreeCallCount); SerialChar('\n');
+        SerialWriteLiteral("ALLOC_FREE_SUCCESS="); SerialWriteUnsigned(Allocator.FreeSuccessCount); SerialChar('\n');
+        UefiMultiFrameLogGraphicsRawAndAllocatorState();
+    }
+
+    private static unsafe void UefiMultiFrameLogGraphicsRawAndAllocatorState() {
+        ulong graphicsAddress = GetManagedObjectAddress(Framebuffer.Graphics);
+        if (graphicsAddress != 0) {
+            ulong* raw = (ulong*)graphicsAddress;
+            SerialWriteLiteral("GFX_RAW0="); SerialWriteHex(raw[0]); SerialChar('\n');
+            SerialWriteLiteral("GFX_RAW1="); SerialWriteHex(raw[1]); SerialChar('\n');
+            SerialWriteLiteral("GFX_RAW2="); SerialWriteHex(raw[2]); SerialChar('\n');
+            SerialWriteLiteral("GFX_RAW3="); SerialWriteHex(raw[3]); SerialChar('\n');
+            SerialWriteLiteral("GFX_RAW4="); SerialWriteHex(raw[4]); SerialChar('\n');
+            SerialWriteLiteral("GFX_RAW5="); SerialWriteHex(raw[5]); SerialChar('\n');
+            SerialWriteLiteral("GFX_RAW6="); SerialWriteHex(raw[6]); SerialChar('\n');
+            SerialWriteLiteral("GFX_RAW7="); SerialWriteHex(raw[7]); SerialChar('\n');
+            SerialWriteLiteral("GFX_RAW8="); SerialWriteHex(raw[8]); SerialChar('\n');
+        }
+
+        fixed (Allocator.Info* info = &Allocator._Info) {
+            ulong objectPageIndex = 0;
+            ulong start = (ulong)info->Start;
+            if (graphicsAddress >= start) {
+                objectPageIndex = (graphicsAddress - start) / Allocator.PageSize;
+            }
+            SerialWriteLiteral("ALLOC_GFX_PAGE_INDEX="); SerialWriteUnsigned(objectPageIndex); SerialChar('\n');
+            if (objectPageIndex < (ulong)Allocator.NumPages) {
+                SerialWriteLiteral("ALLOC_GFX_PAGE_RECORD="); SerialWriteUnsigned(info->Pages[(int)objectPageIndex]); SerialChar('\n');
+                SerialWriteLiteral("ALLOC_GFX_PAGE_TAG="); SerialWriteUnsigned(info->Tags[(int)objectPageIndex]); SerialChar('\n');
+                SerialWriteLiteral("ALLOC_GFX_PAGE_OWNER="); SerialWriteUnsigned((ulong)(uint)info->Owners[(int)objectPageIndex]); SerialChar('\n');
+            }
+        }
+    }
+
+    private static void EmitUefiMultiFrameReassertRecovery(int frame, string field, ulong before, ulong after) {
+        _uefiMultiFrameReassertRecoveryCount++;
+        if (_uefiMultiFrameReassertRecoveryCount > 32UL) return;
+        SerialBreadcrumb("GFX_REASSERT_RECOVERED");
+        SerialWriteLiteral("FRAME="); SerialWriteUnsigned((ulong)frame); SerialChar('\n');
+        SerialWriteLiteral("FIELD="); SerialWriteLiteral(field); SerialChar('\n');
+        SerialWriteLiteral("BEFORE="); SerialWriteHex(before); SerialChar('\n');
+        SerialWriteLiteral("AFTER="); SerialWriteHex(after); SerialChar('\n');
+    }
+
+    private static unsafe void ObserveUefiMultiFrameGraphicsState(int frame, string stage, UefiMultiFrameGraphicsState* state) {
+        if (!UEFI_MULTIFRAME_MUTATION_DIAGNOSTICS) return;
+        if (!_uefiMultiFrameObservedGraphicsState) {
+            _uefiMultiFrameLastGraphicsState.GraphicsReference = state->GraphicsReference;
+            _uefiMultiFrameLastGraphicsState.GraphicsMethodTable = state->GraphicsMethodTable;
+            _uefiMultiFrameLastGraphicsState.GraphicsVideoMemory = state->GraphicsVideoMemory;
+            _uefiMultiFrameLastGraphicsState.GraphicsWidth = state->GraphicsWidth;
+            _uefiMultiFrameLastGraphicsState.GraphicsHeight = state->GraphicsHeight;
+            _uefiMultiFrameLastGraphicsState.FramebufferVideoMemory = state->FramebufferVideoMemory;
+            _uefiMultiFrameLastGraphicsState.OriginalVideoMemory = state->OriginalVideoMemory;
+            _uefiMultiFrameLastGraphicsState.FramebufferWidth = state->FramebufferWidth;
+            _uefiMultiFrameLastGraphicsState.FramebufferHeight = state->FramebufferHeight;
+            _uefiMultiFrameLastGraphicsState.OriginalWidth = state->OriginalWidth;
+            _uefiMultiFrameLastGraphicsState.OriginalHeight = state->OriginalHeight;
+            _uefiMultiFrameLastGraphicsState.FirstBuffer = state->FirstBuffer;
+            _uefiMultiFrameLastGraphicsState.SecondBuffer = state->SecondBuffer;
+            _uefiMultiFrameLastGraphicsState.TripleBuffered = state->TripleBuffered;
+            _uefiMultiFrameObservedGraphicsState = true;
+            return;
+        }
+
+        fixed (UefiMultiFrameGraphicsState* before = &_uefiMultiFrameLastGraphicsState) {
+            bool anyChanged =
+                before->GraphicsReference != state->GraphicsReference ||
+                before->GraphicsMethodTable != state->GraphicsMethodTable ||
+                before->GraphicsVideoMemory != state->GraphicsVideoMemory ||
+                before->GraphicsWidth != state->GraphicsWidth ||
+                before->GraphicsHeight != state->GraphicsHeight ||
+                before->FramebufferVideoMemory != state->FramebufferVideoMemory ||
+                before->OriginalVideoMemory != state->OriginalVideoMemory ||
+                before->FramebufferWidth != state->FramebufferWidth ||
+                before->FramebufferHeight != state->FramebufferHeight ||
+                before->OriginalWidth != state->OriginalWidth ||
+                before->OriginalHeight != state->OriginalHeight ||
+                before->FirstBuffer != state->FirstBuffer ||
+                before->SecondBuffer != state->SecondBuffer ||
+                before->TripleBuffered != state->TripleBuffered;
+            if (anyChanged) {
+                EmitUefiMultiFrameState("GFX_MUTATION_SNAPSHOT_BEFORE", before);
+                EmitUefiMultiFrameState("GFX_MUTATION_SNAPSHOT_AFTER", state);
+            }
+            if (before->GraphicsReference != state->GraphicsReference) EmitUefiMultiFrameMutation(frame, stage, "Framebuffer.Graphics", before->GraphicsReference, state->GraphicsReference);
+            if (before->GraphicsMethodTable != state->GraphicsMethodTable) EmitUefiMultiFrameMutation(frame, stage, "Graphics.MethodTable", before->GraphicsMethodTable, state->GraphicsMethodTable);
+            if (before->GraphicsVideoMemory != state->GraphicsVideoMemory) EmitUefiMultiFrameMutation(frame, stage, "Graphics.VideoMemory", before->GraphicsVideoMemory, state->GraphicsVideoMemory);
+            if (before->GraphicsWidth != state->GraphicsWidth) EmitUefiMultiFrameMutation(frame, stage, "Graphics.Width", before->GraphicsWidth, state->GraphicsWidth);
+            if (before->GraphicsHeight != state->GraphicsHeight) EmitUefiMultiFrameMutation(frame, stage, "Graphics.Height", before->GraphicsHeight, state->GraphicsHeight);
+            if (before->FramebufferVideoMemory != state->FramebufferVideoMemory) EmitUefiMultiFrameMutation(frame, stage, "Framebuffer.VideoMemory", before->FramebufferVideoMemory, state->FramebufferVideoMemory);
+            if (before->OriginalVideoMemory != state->OriginalVideoMemory) EmitUefiMultiFrameMutation(frame, stage, "Framebuffer.OriginalVideoMemory", before->OriginalVideoMemory, state->OriginalVideoMemory);
+            if (before->FramebufferWidth != state->FramebufferWidth) EmitUefiMultiFrameMutation(frame, stage, "Framebuffer.Width", before->FramebufferWidth, state->FramebufferWidth);
+            if (before->FramebufferHeight != state->FramebufferHeight) EmitUefiMultiFrameMutation(frame, stage, "Framebuffer.Height", before->FramebufferHeight, state->FramebufferHeight);
+            if (before->OriginalWidth != state->OriginalWidth) EmitUefiMultiFrameMutation(frame, stage, "Framebuffer.OriginalWidth", before->OriginalWidth, state->OriginalWidth);
+            if (before->OriginalHeight != state->OriginalHeight) EmitUefiMultiFrameMutation(frame, stage, "Framebuffer.OriginalHeight", before->OriginalHeight, state->OriginalHeight);
+            if (before->FirstBuffer != state->FirstBuffer) EmitUefiMultiFrameMutation(frame, stage, "Framebuffer.FirstBuffer", before->FirstBuffer, state->FirstBuffer);
+            if (before->SecondBuffer != state->SecondBuffer) EmitUefiMultiFrameMutation(frame, stage, "Framebuffer.SecondBuffer", before->SecondBuffer, state->SecondBuffer);
+            if (before->TripleBuffered != state->TripleBuffered) EmitUefiMultiFrameMutation(frame, stage, "Framebuffer.TripleBuffered", before->TripleBuffered, state->TripleBuffered);
+            before->GraphicsReference = state->GraphicsReference;
+            before->GraphicsMethodTable = state->GraphicsMethodTable;
+            before->GraphicsVideoMemory = state->GraphicsVideoMemory;
+            before->GraphicsWidth = state->GraphicsWidth;
+            before->GraphicsHeight = state->GraphicsHeight;
+            before->FramebufferVideoMemory = state->FramebufferVideoMemory;
+            before->OriginalVideoMemory = state->OriginalVideoMemory;
+            before->FramebufferWidth = state->FramebufferWidth;
+            before->FramebufferHeight = state->FramebufferHeight;
+            before->OriginalWidth = state->OriginalWidth;
+            before->OriginalHeight = state->OriginalHeight;
+            before->FirstBuffer = state->FirstBuffer;
+            before->SecondBuffer = state->SecondBuffer;
+            before->TripleBuffered = state->TripleBuffered;
+        }
+    }
+
+    private static unsafe void EmitUefiMultiFrameReassertState(int frame, string phase, UefiMultiFrameGraphicsState* state) {
+        SerialWriteLiteral("MULTIFRAME_REASSERT_FRAME="); SerialWriteUnsigned((ulong)frame); SerialChar('\n');
+        SerialWriteLiteral("MULTIFRAME_REASSERT_PHASE="); SerialWriteLiteral(phase); SerialChar('\n');
+        EmitUefiMultiFrameState("MULTIFRAME_REASSERT_STATE", state);
+    }
+
+    private static unsafe void EmitUefiMultiFrameEnsureAdjustment(int frame, UefiMultiFrameGraphicsState* before, UefiMultiFrameGraphicsState* after) {
+        if (before->GraphicsReference == after->GraphicsReference &&
+            before->GraphicsMethodTable == after->GraphicsMethodTable &&
+            before->GraphicsVideoMemory == after->GraphicsVideoMemory &&
+            before->GraphicsWidth == after->GraphicsWidth &&
+            before->GraphicsHeight == after->GraphicsHeight &&
+            before->FramebufferVideoMemory == after->FramebufferVideoMemory &&
+            before->OriginalVideoMemory == after->OriginalVideoMemory &&
+            before->FramebufferWidth == after->FramebufferWidth &&
+            before->FramebufferHeight == after->FramebufferHeight &&
+            before->OriginalWidth == after->OriginalWidth &&
+            before->OriginalHeight == after->OriginalHeight &&
+            before->FirstBuffer == after->FirstBuffer &&
+            before->SecondBuffer == after->SecondBuffer &&
+            before->TripleBuffered == after->TripleBuffered) return;
+        SerialWriteLiteral("MULTIFRAME_ENSURE_ADJUSTMENT_FRAME="); SerialWriteUnsigned((ulong)frame); SerialChar('\n');
+        EmitUefiMultiFrameState("MULTIFRAME_ENSURE_BEFORE", before);
+        EmitUefiMultiFrameState("MULTIFRAME_ENSURE_AFTER", after);
+    }
+
+    private static bool ShouldReassertUefiCanonicalFramebuffer(int frame) {
+        if (UEFI_MULTIFRAME_CANONICAL_REASSERT_FRAME1_ONLY) return frame == 1;
+        return UEFI_MULTIFRAME_CANONICAL_REASSERT_INTERVAL > 0 &&
+               (frame % UEFI_MULTIFRAME_CANONICAL_REASSERT_INTERVAL) == 0;
     }
 
     private static bool ShouldEmitUefiMultiFrameMarker(int frame) {
@@ -2202,7 +2448,7 @@ unsafe class Program {
         EmitUefiMultiFrameFaultContext();
     }
 
-    private static void LogUefiMultiFrameCheckpoint(int frame) {
+    private static unsafe void LogUefiMultiFrameCheckpoint(int frame) {
         SerialBreadcrumb("MULTIFRAME_CHECKPOINT_BEGIN");
         MultiFrameFieldUnsigned("MULTIFRAME_CHECKPOINT_FRAME=", (ulong)frame);
 
@@ -2216,6 +2462,9 @@ unsafe class Program {
             _uefiMultiFrameCanonicalGraphicsAddress = graphicsAddress;
         }
         MultiFrameFieldHex("MULTIFRAME_GFX_OBJECT=", graphicsAddress);
+        UefiMultiFrameGraphicsState checkpointState;
+        CaptureUefiMultiFrameGraphicsState(&checkpointState);
+        MultiFrameFieldHex("MULTIFRAME_GFX_METHOD_TABLE=", checkpointState.GraphicsMethodTable);
         bool graphicsIdentitySame = graphicsAddress == _uefiMultiFrameCanonicalGraphicsAddress;
         SerialBreadcrumb(graphicsIdentitySame ? "MULTIFRAME_GFX_IDENTITY_SAME=1" : "MULTIFRAME_GFX_IDENTITY_SAME=0");
         SerialBreadcrumb(graphicsIdentitySame ? "MULTIFRAME_GFX_IDENTITY_CHANGED=0" : "MULTIFRAME_GFX_IDENTITY_CHANGED=1");
@@ -2251,6 +2500,8 @@ unsafe class Program {
         MultiFrameFieldUnsigned("MULTIFRAME_FREE_FAIL_NOPAGES=", Allocator.FreeFailNoPages);
         MultiFrameFieldUnsigned("MULTIFRAME_FREE_FAIL_CORRUPT=", Allocator.FreeFailCorruptRun);
         MultiFrameFieldUnsigned("MULTIFRAME_TIMER_TICKS=", Timer.Ticks);
+        MultiFrameFieldUnsigned("MULTIFRAME_GFX_MUTATION_COUNT=", _uefiMultiFrameMutationCount);
+        MultiFrameFieldUnsigned("MULTIFRAME_REASSERT_RECOVERY_COUNT=", _uefiMultiFrameReassertRecoveryCount);
 
         if (TryGetUefiFramebufferInfo(out uint* fb, out int fbW, out int fbH, out int pitchPixels, out ulong maxPixels)) {
             MultiFrameFieldUnsigned("MULTIFRAME_FB_PITCH_PIXELS=", (ulong)pitchPixels);
@@ -3791,7 +4042,7 @@ unsafe class Program {
     /// separate from both the normal unrestricted loop and the one-frame probe
     /// so the recovery default and earlier diagnostics remain unchanged.
     /// </summary>
-    private static void RenderLoopUefiNormalDesktopBounded() {
+    private static unsafe void RenderLoopUefiNormalDesktopBounded() {
         int target = UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET;
         if (target <= 0) {
             SerialBreadcrumb("MULTIFRAME_FAULT=INVALID_TARGET");
@@ -3806,10 +4057,19 @@ unsafe class Program {
         _uefiMultiFrameFirstRsp = 0;
         _uefiMultiFrameCanonicalGraphicsAddress = 0;
         _uefiMultiFrameStartTicks = Timer.Ticks;
+        _uefiMultiFrameObservedGraphicsState = false;
+        _uefiMultiFrameReassertDetailEmitted = false;
+        _uefiMultiFrameReassertAfterEnsureEmitted = false;
+        _uefiMultiFrameMutationCount = 0;
+        _uefiMultiFrameReassertRecoveryCount = 0;
 
         SerialBreadcrumb("MULTIFRAME_BEGIN");
         MultiFrameFieldUnsigned("MULTIFRAME_TARGET=", (ulong)target);
         MultiFrameFieldUnsigned("MULTIFRAME_TIMER_START=", _uefiMultiFrameStartTicks);
+        MultiFrameFieldUnsigned("MULTIFRAME_REASSERT_INTERVAL=", (ulong)(uint)UEFI_MULTIFRAME_CANONICAL_REASSERT_INTERVAL);
+        SerialBreadcrumb(UEFI_MULTIFRAME_CANONICAL_REASSERT_FRAME1_ONLY ? "MULTIFRAME_REASSERT_FRAME1_ONLY=1" : "MULTIFRAME_REASSERT_FRAME1_ONLY=0");
+        SerialBreadcrumb(UEFI_MULTIFRAME_ENSURE_GRAPHICS_EVERY_FRAME ? "MULTIFRAME_ENSURE_EVERY_FRAME=1" : "MULTIFRAME_ENSURE_EVERY_FRAME=0");
+        SerialBreadcrumb(UEFI_MULTIFRAME_MUTATION_DIAGNOSTICS ? "MULTIFRAME_MUTATION_DIAGNOSTICS=1" : "MULTIFRAME_MUTATION_DIAGNOSTICS=0");
 
         for (int frame = 1; frame <= target; frame++) {
             _uefiMultiFrameCurrentFrame = frame;
@@ -3817,14 +4077,67 @@ unsafe class Program {
 
             try {
                 SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_GRAPHICS);
-                // Reassert the immutable UEFI framebuffer contract at each
-                // frame boundary.  This is intentionally scoped to the
-                // bounded proof path: the production/default dispatch keeps
-                // the existing recovery behavior unchanged.
-                if (Framebuffer.OriginalWidth != 0) Framebuffer.Width = Framebuffer.OriginalWidth;
-                if (Framebuffer.OriginalHeight != 0) Framebuffer.Height = Framebuffer.OriginalHeight;
-                if ((ulong)Framebuffer.OriginalVideoMemory != 0) Framebuffer.VideoMemory = Framebuffer.OriginalVideoMemory;
-                Framebuffer.EnsureGraphics();
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "FRAME_ENTER");
+
+                bool reassertCanonical = ShouldReassertUefiCanonicalFramebuffer(frame);
+                bool ensureGraphics = frame == 1 || UEFI_MULTIFRAME_ENSURE_GRAPHICS_EVERY_FRAME;
+                UefiMultiFrameGraphicsState reassertBefore = default;
+                UefiMultiFrameGraphicsState reassertAfterDirect = default;
+                if (reassertCanonical) {
+                    CaptureUefiMultiFrameGraphicsState(&reassertBefore);
+                    // Exact direct reassertion contract: these are the only
+                    // fields written by this block. Graphics object fields are
+                    // handled separately by EnsureGraphics() below.
+                    if (Framebuffer.OriginalWidth != 0) Framebuffer.Width = Framebuffer.OriginalWidth;
+                    if (Framebuffer.OriginalHeight != 0) Framebuffer.Height = Framebuffer.OriginalHeight;
+                    if ((ulong)Framebuffer.OriginalVideoMemory != 0) Framebuffer.VideoMemory = Framebuffer.OriginalVideoMemory;
+                    CaptureUefiMultiFrameGraphicsState(&reassertAfterDirect);
+                    if (reassertBefore.FramebufferWidth != reassertAfterDirect.FramebufferWidth)
+                        EmitUefiMultiFrameReassertRecovery(frame, "Framebuffer.Width", reassertBefore.FramebufferWidth, reassertAfterDirect.FramebufferWidth);
+                    if (reassertBefore.FramebufferHeight != reassertAfterDirect.FramebufferHeight)
+                        EmitUefiMultiFrameReassertRecovery(frame, "Framebuffer.Height", reassertBefore.FramebufferHeight, reassertAfterDirect.FramebufferHeight);
+                    if (reassertBefore.FramebufferVideoMemory != reassertAfterDirect.FramebufferVideoMemory)
+                        EmitUefiMultiFrameReassertRecovery(frame, "Framebuffer.VideoMemory", reassertBefore.FramebufferVideoMemory, reassertAfterDirect.FramebufferVideoMemory);
+                    if (!_uefiMultiFrameReassertDetailEmitted) {
+                        EmitUefiMultiFrameReassertState(frame, "BEFORE_DIRECT_WRITES", &reassertBefore);
+                        SerialBreadcrumb(Framebuffer.OriginalWidth != 0 ? "MULTIFRAME_REASSERT_WRITES_WIDTH=1" : "MULTIFRAME_REASSERT_WRITES_WIDTH=0");
+                        SerialBreadcrumb(Framebuffer.OriginalHeight != 0 ? "MULTIFRAME_REASSERT_WRITES_HEIGHT=1" : "MULTIFRAME_REASSERT_WRITES_HEIGHT=0");
+                        SerialBreadcrumb((ulong)Framebuffer.OriginalVideoMemory != 0 ? "MULTIFRAME_REASSERT_WRITES_VIDEO_MEMORY=1" : "MULTIFRAME_REASSERT_WRITES_VIDEO_MEMORY=0");
+                        EmitUefiMultiFrameReassertState(frame, "AFTER_DIRECT_WRITES", &reassertAfterDirect);
+                        _uefiMultiFrameReassertDetailEmitted = true;
+                    }
+                }
+
+                if (ensureGraphics) {
+                    UefiMultiFrameGraphicsState ensureBefore;
+                    CaptureUefiMultiFrameGraphicsState(&ensureBefore);
+                    Framebuffer.EnsureGraphics();
+                    UefiMultiFrameGraphicsState ensureAfter;
+                    CaptureUefiMultiFrameGraphicsState(&ensureAfter);
+                    EmitUefiMultiFrameEnsureAdjustment(frame, &ensureBefore, &ensureAfter);
+                    if (reassertCanonical && !_uefiMultiFrameReassertAfterEnsureEmitted) {
+                        EmitUefiMultiFrameReassertState(frame, "AFTER_ENSURE_GRAPHICS", &ensureAfter);
+                        _uefiMultiFrameReassertAfterEnsureEmitted = true;
+                    }
+                    _uefiMultiFrameLastGraphicsState.GraphicsReference = ensureAfter.GraphicsReference;
+                    _uefiMultiFrameLastGraphicsState.GraphicsMethodTable = ensureAfter.GraphicsMethodTable;
+                    _uefiMultiFrameLastGraphicsState.GraphicsVideoMemory = ensureAfter.GraphicsVideoMemory;
+                    _uefiMultiFrameLastGraphicsState.GraphicsWidth = ensureAfter.GraphicsWidth;
+                    _uefiMultiFrameLastGraphicsState.GraphicsHeight = ensureAfter.GraphicsHeight;
+                    _uefiMultiFrameLastGraphicsState.FramebufferVideoMemory = ensureAfter.FramebufferVideoMemory;
+                    _uefiMultiFrameLastGraphicsState.OriginalVideoMemory = ensureAfter.OriginalVideoMemory;
+                    _uefiMultiFrameLastGraphicsState.FramebufferWidth = ensureAfter.FramebufferWidth;
+                    _uefiMultiFrameLastGraphicsState.FramebufferHeight = ensureAfter.FramebufferHeight;
+                    _uefiMultiFrameLastGraphicsState.OriginalWidth = ensureAfter.OriginalWidth;
+                    _uefiMultiFrameLastGraphicsState.OriginalHeight = ensureAfter.OriginalHeight;
+                    _uefiMultiFrameLastGraphicsState.FirstBuffer = ensureAfter.FirstBuffer;
+                    _uefiMultiFrameLastGraphicsState.SecondBuffer = ensureAfter.SecondBuffer;
+                    _uefiMultiFrameLastGraphicsState.TripleBuffered = ensureAfter.TripleBuffered;
+                    _uefiMultiFrameObservedGraphicsState = true;
+                } else {
+                    ObserveCurrentUefiMultiFrameGraphicsState(frame, "GRAPHICS");
+                }
+
                 guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
                 if (graphics == null) {
                     SerialBreadcrumb("MULTIFRAME_FAULT_INVALID_REASON=GFX_NULL");
@@ -3863,22 +4176,36 @@ unsafe class Program {
                 }
 
                 SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_BACKGROUND);
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "BACKGROUND_BEGIN");
                 BackgroundRotationManager.DrawBackground();
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "BACKGROUND_END");
 
                 SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_DESKTOP);
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "DESKTOP_BEGIN");
                 Desktop.Update(_cachedDocumentIcon, _cachedFolderIcon, _cachedImageIcon, _cachedAudioIcon, 48);
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "DESKTOP_END");
+
+                SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_TASKBAR);
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "TASKBAR_BEGIN");
+                if (Desktop.Taskbar != null) Desktop.Taskbar.DrawWorkspaceSwitcher();
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "TASKBAR_END");
 
                 SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_WINDOWS);
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "WINDOWS_BEGIN");
                 WindowManager.DrawAllExceptTaskManager();
-                if (Desktop.Taskbar != null) Desktop.Taskbar.DrawWorkspaceSwitcher();
                 WindowManager.DrawTaskManager();
                 WindowManager.CleanupClosedWindows();
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "WINDOWS_END");
 
                 SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_CURSOR);
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "CURSOR_BEGIN");
                 DrawUefiCursor();
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "CURSOR_END");
 
                 SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_PRESENT);
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "PRESENT_BEGIN");
                 Framebuffer.Update();
+                ObserveCurrentUefiMultiFrameGraphicsState(frame, "PRESENT_END");
 
                 SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_COMPLETE);
                 _uefiMultiFrameLastCompletedFrame = frame;

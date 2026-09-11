@@ -7,6 +7,11 @@ param(
     [switch]$GuiVisible,
     [int]$CaptureSeconds = 120,
     [switch]$SafeCursorImageFallback,
+    [ValidateSet(0, 1, 2, 10)]
+    [int]$ReassertEvery = 0,
+    [switch]$ReassertFrame1Only,
+    [switch]$NoEnsureGraphicsAfterFrame1,
+    [switch]$EnsureGraphicsEveryFrame,
     [string]$ScreenshotPath
 )
 
@@ -423,6 +428,20 @@ try {
             -New 'private const int UEFI_ABI_PROBE_TARGET = 2;' `
             -Label 'UEFI_ABI_PROBE_TARGET_CURSOR'
     }
+    $frame1OnlyValue = if ($ReassertFrame1Only) { 'true' } else { 'false' }
+    $ensureEveryFrameValue = if ($EnsureGraphicsEveryFrame -and -not $NoEnsureGraphicsAfterFrame1) { 'true' } else { 'false' }
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const int UEFI_MULTIFRAME_CANONICAL_REASSERT_INTERVAL = 0;' `
+        -New "private const int UEFI_MULTIFRAME_CANONICAL_REASSERT_INTERVAL = $ReassertEvery;" `
+        -Label 'UEFI_MULTIFRAME_CANONICAL_REASSERT_INTERVAL'
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_MULTIFRAME_CANONICAL_REASSERT_FRAME1_ONLY = false;' `
+        -New "private const bool UEFI_MULTIFRAME_CANONICAL_REASSERT_FRAME1_ONLY = $frame1OnlyValue;" `
+        -Label 'UEFI_MULTIFRAME_CANONICAL_REASSERT_FRAME1_ONLY'
+    $patched = Assert-SingleReplacement -Text $patched `
+        -Old 'private const bool UEFI_MULTIFRAME_ENSURE_GRAPHICS_EVERY_FRAME = false;' `
+        -New "private const bool UEFI_MULTIFRAME_ENSURE_GRAPHICS_EVERY_FRAME = $ensureEveryFrameValue;" `
+        -Label 'UEFI_MULTIFRAME_ENSURE_GRAPHICS_EVERY_FRAME'
     $safeCursorImageFallbackValue = if ($SafeCursorImageFallback) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
         -Old 'private const bool UEFI_SAFE_CURSOR_IMAGE_FALLBACK = false;' `
@@ -436,6 +455,9 @@ try {
     Write-Host "[uefi-run] Mode: $Mode" -ForegroundColor Cyan
     Write-Host "[uefi-run] Frame target: $FrameTarget" -ForegroundColor Cyan
     Write-Host "[uefi-run] Safe cursor image fallback: $SafeCursorImageFallback" -ForegroundColor Cyan
+    Write-Host "[uefi-run] Canonical reassert every: $ReassertEvery" -ForegroundColor Cyan
+    Write-Host "[uefi-run] Canonical reassert frame 1 only: $ReassertFrame1Only" -ForegroundColor Cyan
+    Write-Host "[uefi-run] EnsureGraphics after frame 1: $($EnsureGraphicsEveryFrame -and -not $NoEnsureGraphicsAfterFrame1)" -ForegroundColor Cyan
     Write-Host "[uefi-run] Expected dispatch reason: $modeLabel" -ForegroundColor Cyan
     Write-Host "[uefi-run] Screenshot capture requested: $CaptureScreenshot" -ForegroundColor Cyan
     Write-Host "[uefi-run] Screenshot path: $ScreenshotPath" -ForegroundColor Cyan
@@ -602,6 +624,9 @@ try {
     $multiFrameTimerStalled = $serialText.Contains('MULTIFRAME_TIMER_TICKING=0')
     $multiFrameTimerAdvanced = $serialText.Contains('MULTIFRAME_TIMER_TICKING=1')
     $multiFramePixelInvalid = $serialText.Contains('MULTIFRAME_PIXEL_SAMPLE_VALID=0')
+    $graphicsMutationLines = @($serialLines | Where-Object { $_ -eq 'GFX_MUTATION_DETECTED' })
+    $reassertRecoveryLines = @($serialLines | Where-Object { $_ -eq 'GFX_REASSERT_RECOVERED' })
+    $ensureAdjustmentLines = @($serialLines | Where-Object { $_ -match '^MULTIFRAME_ENSURE_ADJUSTMENT_FRAME=' })
     $multiFrameLastCompletedLine = Get-LastMatchingLine -Text $serialText -Pattern 'MULTIFRAME_LAST_COMPLETED_FRAME='
     $multiFrameFaultStageLine = Get-LastMatchingLine -Text $serialText -Pattern 'FRAME_STAGE='
     $acpiInitialized = $serialText.Contains('[ACPI] ACPI Initialized')
@@ -684,6 +709,9 @@ try {
     Write-Host "[uefi-run]   MULTIFRAME timer stalled: $multiFrameTimerStalled" -ForegroundColor Cyan
     Write-Host "[uefi-run]   MULTIFRAME timer advanced: $multiFrameTimerAdvanced" -ForegroundColor Cyan
     Write-Host "[uefi-run]   MULTIFRAME pixel sample invalid: $multiFramePixelInvalid" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   GFX mutation diagnostics: $($graphicsMutationLines.Count)" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   GFX reassert recoveries: $($reassertRecoveryLines.Count)" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   EnsureGraphics adjustments: $($ensureAdjustmentLines.Count)" -ForegroundColor Cyan
     Write-Host "[uefi-run]   MULTIFRAME last completed line: $multiFrameLastCompletedLine" -ForegroundColor Cyan
      Write-Host "[uefi-run]   MULTIFRAME fault stage line: $multiFrameFaultStageLine" -ForegroundColor Cyan
      Write-Host "[uefi-run]   ACPI initialized: $acpiInitialized" -ForegroundColor Cyan
@@ -741,6 +769,9 @@ try {
         "MULTIFRAME_TIMER_STALLED=$multiFrameTimerStalled"
         "MULTIFRAME_TIMER_ADVANCED=$multiFrameTimerAdvanced"
         "MULTIFRAME_PIXEL_SAMPLE_INVALID=$multiFramePixelInvalid"
+        "GFX_MUTATION_DIAGNOSTICS=$($graphicsMutationLines.Count)"
+        "GFX_REASSERT_RECOVERIES=$($reassertRecoveryLines.Count)"
+        "ENSURE_GRAPHICS_ADJUSTMENTS=$($ensureAdjustmentLines.Count)"
         "MULTIFRAME_LAST_COMPLETED_LINE=$multiFrameLastCompletedLine"
          "MULTIFRAME_FAULT_STAGE_LINE=$multiFrameFaultStageLine"
          "ACPI_INITIALIZED=$acpiInitialized"
