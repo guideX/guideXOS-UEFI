@@ -258,6 +258,13 @@ public static class IDT {
 
             SerialWriteFaultBreadcrumbs(irq, actualErrorCode, &stack->rs, irs);
 
+            // Preserve the bounded desktop test's current frame/stage when a
+            // delayed CPU fault occurs. The normal fault breadcrumbs above
+            // still provide the architectural RIP/RSP/CR2/error details.
+            if ((irq == 13 || irq == 14) && Program.IsUefiMultiFrameActive()) {
+                Program.LogUefiMultiFrameFaultContext();
+            }
+
             // A controlled ABI probe must stop after recording the CPU frame;
             // do not enter the graphical panic path while its stack state is
             // deliberately being examined.

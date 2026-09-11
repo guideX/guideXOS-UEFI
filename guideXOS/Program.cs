@@ -123,6 +123,26 @@ unsafe class Program {
     private static bool _uefiUnknownKeySeen = false;
     private static bool _cursorImageDrawProbeActive = false;
 
+    // Compact state exported by the bounded desktop test and consumed by the
+    // exception path if a delayed CPU fault occurs. Keep these value fields
+    // free of per-frame object allocation.
+    private static bool _uefiMultiFrameActive = false;
+    private static int _uefiMultiFrameCurrentFrame = 0;
+    private static int _uefiMultiFrameLastCompletedFrame = 0;
+    private static int _uefiMultiFrameStage = 0;
+    private static ulong _uefiMultiFrameFirstRsp = 0;
+    private static ulong _uefiMultiFrameCanonicalGraphicsAddress = 0;
+    private static ulong _uefiMultiFrameStartTicks = 0;
+
+    private const int UEFI_MULTIFRAME_STAGE_NONE = 0;
+    private const int UEFI_MULTIFRAME_STAGE_GRAPHICS = 1;
+    private const int UEFI_MULTIFRAME_STAGE_BACKGROUND = 2;
+    private const int UEFI_MULTIFRAME_STAGE_DESKTOP = 3;
+    private const int UEFI_MULTIFRAME_STAGE_WINDOWS = 4;
+    private const int UEFI_MULTIFRAME_STAGE_CURSOR = 5;
+    private const int UEFI_MULTIFRAME_STAGE_PRESENT = 6;
+    private const int UEFI_MULTIFRAME_STAGE_COMPLETE = 7;
+
     private sealed class SafeModeDiagnostics {
         public ulong FrameCounter;
         public ulong LastCompletedFrame;
@@ -377,6 +397,11 @@ unsafe class Program {
     // of the full render loop.  UEFI_STEADY_STATE_SERIAL_ONLY must be false.
     private const bool UEFI_STEADY_STATE_MINIMAL_RENDER = true;
     private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = false;
+    // Bounded multi-frame proof path. The runner enables this temporarily for
+    // a requested target (120 first, then 300); the production/default UEFI
+    // dispatch remains unchanged.
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
+    private const int UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET = 120;
     // Bounded proof path: execute one real UEFI desktop frame, then halt or
     // return to UTINY. Keep this disabled in the normal recovery default.
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE = false;
@@ -558,6 +583,12 @@ unsafe class Program {
                UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE;
     }
 
+    private static bool UseUefiNormalDesktopBoundedMode() {
+        return BootConsole.CurrentMode == guideXOS.BootMode.UEFI &&
+               UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH &&
+               UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED;
+    }
+
     internal static bool IsUefiAbiDiagnosticActive() {
         return BootConsole.CurrentMode == guideXOS.BootMode.UEFI &&
                UEFI_ABI_PROBE_TARGET != 0;
@@ -652,6 +683,14 @@ unsafe class Program {
                 UseUefiNormalDesktopFirstFrameProbeMode() ||
                 IsUefiAbiDiagnosticActive() ||
                 (UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && NORMAL_DESKTOP_UEFI_STEP_PROBE));
+    }
+
+    // The bounded desktop proof deliberately keeps firmware input disabled
+    // after ExitBootServices, but does not suppress PCI enumeration.  This
+    // allows the repaired ACPI/MCFG path to remain part of the acceptance run.
+    internal static bool ShouldSkipEarlyUefiInputInitialization() {
+        return ShouldSkipEarlyUefiHardwareInitialization() ||
+               UseUefiNormalDesktopBoundedMode();
     }
 
     private static bool SafeModeKeyboardEnabled =>
@@ -1257,10 +1296,11 @@ unsafe class Program {
         if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
             bool useSafeNormalDesktopUefi = UseSafeNormalDesktopUefiMode();
             bool useUefiNormalDesktopFirstFrameProbe = UseUefiNormalDesktopFirstFrameProbeMode();
+            bool useUefiNormalDesktopBounded = UseUefiNormalDesktopBoundedMode();
             // In UEFI mode, disable debug lines to prevent graphical corruption
             BootConsole.DrawDebugLines = false;
             BootConsole.WriteLine("[BOOT_MODE] UEFI");
-            bool skipUefiInputHardware = useSafeNormalDesktopUefi || useUefiNormalDesktopFirstFrameProbe || IsUefiAbiDiagnosticActive();
+            bool skipUefiInputHardware = useSafeNormalDesktopUefi || useUefiNormalDesktopFirstFrameProbe || useUefiNormalDesktopBounded || IsUefiAbiDiagnosticActive();
             if (!skipUefiInputHardware) {
                 BootConsole.WriteLine("[MOUSE_CAPABILITIES] INITIALIZE");
                 // UEFI mode: mark uefi=true and disable PS/2 fallback.
@@ -1309,6 +1349,8 @@ unsafe class Program {
                 BootConsole.WriteLine("[INPUT] Mouse enabled: " + MouseCapabilityDetector.MouseEnabled);
             } else if (useUefiNormalDesktopFirstFrameProbe) {
                 BootConsole.WriteLine("[SMAIN] Bounded normal desktop first-frame probe - skipping mouse, keyboard, and USB initialization");
+            } else if (useUefiNormalDesktopBounded) {
+                BootConsole.WriteLine("[SMAIN] Bounded normal desktop multi-frame test - skipping mouse, keyboard, and USB initialization");
             } else if (IsUefiAbiDiagnosticActive()) {
                 BootConsole.WriteLine("[SMAIN] Bounded ABI method probe - skipping mouse, keyboard, and USB initialization");
             } else {
@@ -1599,14 +1641,16 @@ unsafe class Program {
         bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
         bool useSafeNormalUefiDesktop = isUefi && UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME;
         bool useUefiAbiProbe = isUefi && UEFI_ABI_PROBE_TARGET != 0;
-        bool useNormalUefiDesktopFirstFrame = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE;
-        bool useTinyUefi = isUefi && UEFI_USE_TINY_RENDER_LOOP_BYPASS && !useSafeNormalUefiDesktop && !useUefiAbiProbe && !useNormalUefiDesktopFirstFrame && !UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
-        bool useNormalUefiDesktopStepProbe = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && !useNormalUefiDesktopFirstFrame && NORMAL_DESKTOP_UEFI_STEP_PROBE;
-        bool useNormalUefiDesktop = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && !useNormalUefiDesktopFirstFrame && !NORMAL_DESKTOP_UEFI_STEP_PROBE;
-        LogUefiRenderDispatchGateDiagnostics(isUefi, useSafeNormalUefiDesktop, useNormalUefiDesktopFirstFrame, useTinyUefi, useNormalUefiDesktopStepProbe, useNormalUefiDesktop);
-        LogUefiRenderDispatchDiagnostics(useNormalUefiDesktopStepProbe, useTinyUefi, useSafeNormalUefiDesktop, useNormalUefiDesktopFirstFrame, useNormalUefiDesktop);
+        bool useNormalUefiDesktopBounded = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED;
+        bool useNormalUefiDesktopFirstFrame = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && !useNormalUefiDesktopBounded && UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE;
+        bool useTinyUefi = isUefi && UEFI_USE_TINY_RENDER_LOOP_BYPASS && !useSafeNormalUefiDesktop && !useUefiAbiProbe && !useNormalUefiDesktopFirstFrame && !useNormalUefiDesktopBounded && !UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
+        bool useNormalUefiDesktopStepProbe = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && !useNormalUefiDesktopFirstFrame && !useNormalUefiDesktopBounded && NORMAL_DESKTOP_UEFI_STEP_PROBE;
+        bool useNormalUefiDesktop = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && !useNormalUefiDesktopFirstFrame && !useNormalUefiDesktopBounded && !NORMAL_DESKTOP_UEFI_STEP_PROBE;
+        LogUefiRenderDispatchGateDiagnostics(isUefi, useSafeNormalUefiDesktop, useNormalUefiDesktopBounded, useNormalUefiDesktopFirstFrame, useTinyUefi, useNormalUefiDesktopStepProbe, useNormalUefiDesktop);
+        LogUefiRenderDispatchDiagnostics(useNormalUefiDesktopStepProbe, useTinyUefi, useSafeNormalUefiDesktop, useNormalUefiDesktopBounded, useNormalUefiDesktopFirstFrame, useNormalUefiDesktop);
         SerialBreadcrumb(useSafeNormalUefiDesktop ? "SMAIN_DISPATCH_REASON=SAFE_NORMAL_DESKTOP_UEFI" :
                          useUefiAbiProbe ? "SMAIN_DISPATCH_REASON=UEFI_ABI_PROBE" :
+                         useNormalUefiDesktopBounded ? "SMAIN_DISPATCH_REASON=MULTIFRAME_NORMAL_DESKTOP_UEFI" :
                          useNormalUefiDesktopFirstFrame ? "SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI_FIRST_FRAME" :
                          useTinyUefi ? "SMAIN_DISPATCH_REASON=TINY_UEFI" :
                          useNormalUefiDesktopStepProbe ? "SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI_STEP_PROBE" :
@@ -1623,6 +1667,9 @@ unsafe class Program {
         } else if (useNormalUefiDesktopFirstFrame) {
             SerialBreadcrumb("SMAIN_DISPATCH_NORMAL_DESKTOP_UEFI_FIRST_FRAME");
             RenderLoopUefiNormalDesktopFirstFrame();
+        } else if (useNormalUefiDesktopBounded) {
+            SerialBreadcrumb("SMAIN_DISPATCH_MULTIFRAME_NORMAL_DESKTOP_UEFI");
+            RenderLoopUefiNormalDesktopBounded();
         } else if (useTinyUefi) {
             SerialBreadcrumb("SMAIN_DISPATCH_TINY_UEFI");
             RenderLoopUefiTinyBypass();
@@ -2059,6 +2106,168 @@ unsafe class Program {
                 SerialChar((char)(nibble < 10 ? '0' + nibble : 'A' + (nibble - 10)));
             }
         }
+    }
+
+    private static void MultiFrameFieldUnsigned(string label, ulong value) {
+        SerialWriteLiteral(label);
+        SerialWriteUnsigned(value);
+        SerialChar('\n');
+    }
+
+    private static void MultiFrameFieldHex(string label, ulong value) {
+        SerialWriteLiteral(label);
+        SerialWriteHex(value);
+        SerialChar('\n');
+    }
+
+    private static void WriteUefiMultiFrameStageName(int stage) {
+        switch (stage) {
+            case UEFI_MULTIFRAME_STAGE_GRAPHICS:
+                SerialWriteLiteral("GRAPHICS");
+                break;
+            case UEFI_MULTIFRAME_STAGE_BACKGROUND:
+                SerialWriteLiteral("BACKGROUND");
+                break;
+            case UEFI_MULTIFRAME_STAGE_DESKTOP:
+                SerialWriteLiteral("DESKTOP");
+                break;
+            case UEFI_MULTIFRAME_STAGE_WINDOWS:
+                SerialWriteLiteral("WINDOWS");
+                break;
+            case UEFI_MULTIFRAME_STAGE_CURSOR:
+                SerialWriteLiteral("CURSOR");
+                break;
+            case UEFI_MULTIFRAME_STAGE_PRESENT:
+                SerialWriteLiteral("PRESENT");
+                break;
+            case UEFI_MULTIFRAME_STAGE_COMPLETE:
+                SerialWriteLiteral("COMPLETE");
+                break;
+            default:
+                SerialWriteLiteral("NONE");
+                break;
+        }
+    }
+
+    private static void SetUefiMultiFrameStage(int stage) {
+        _uefiMultiFrameStage = stage;
+    }
+
+    private static bool ShouldEmitUefiMultiFrameMarker(int frame) {
+        return frame <= 3 || frame == 10 || frame == 30 || frame == 60 ||
+               frame == 90 || frame == 120 || frame == 180 || frame == 240 ||
+               frame == UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET;
+    }
+
+    private static void EmitUefiMultiFrameMarker(int frame) {
+        if (!ShouldEmitUefiMultiFrameMarker(frame)) return;
+        SerialWriteLiteral("FRAME=");
+        SerialWriteUnsigned((ulong)frame);
+        SerialChar('\n');
+    }
+
+    private static void EmitUefiMultiFrameFaultContext() {
+        if (!_uefiMultiFrameActive) return;
+
+        SerialBreadcrumb("MULTIFRAME_FAULT_CONTEXT");
+        MultiFrameFieldUnsigned("MULTIFRAME_CURRENT_FRAME=", (ulong)_uefiMultiFrameCurrentFrame);
+        MultiFrameFieldUnsigned("MULTIFRAME_LAST_COMPLETED_FRAME=", (ulong)_uefiMultiFrameLastCompletedFrame);
+        SerialWriteLiteral("FRAME_STAGE=");
+        WriteUefiMultiFrameStageName(_uefiMultiFrameStage);
+        SerialChar('\n');
+        ulong rsp = Native.ReadRSP() + 8UL;
+        MultiFrameFieldHex("MULTIFRAME_FAULT_RSP=", rsp);
+        MultiFrameFieldUnsigned("MULTIFRAME_FAULT_RSP_MOD16=", rsp & 0xFUL);
+        MultiFrameFieldHex("MULTIFRAME_FAULT_GFX_OBJECT=", GetManagedObjectAddress(Framebuffer.Graphics));
+        MultiFrameFieldHex("MULTIFRAME_FAULT_GFX_VM=", Framebuffer.Graphics == null ? 0UL : (ulong)Framebuffer.Graphics.VideoMemory);
+        MultiFrameFieldUnsigned("MULTIFRAME_FAULT_GFX_WIDTH=", Framebuffer.Graphics == null ? 0UL : (ulong)(uint)Framebuffer.Graphics.Width);
+        MultiFrameFieldUnsigned("MULTIFRAME_FAULT_GFX_HEIGHT=", Framebuffer.Graphics == null ? 0UL : (ulong)(uint)Framebuffer.Graphics.Height);
+        MultiFrameFieldUnsigned("MULTIFRAME_FAULT_FB_WIDTH=", Framebuffer.Width);
+        MultiFrameFieldUnsigned("MULTIFRAME_FAULT_FB_HEIGHT=", Framebuffer.Height);
+        MultiFrameFieldHex("MULTIFRAME_FAULT_FB_VM=", (ulong)Framebuffer.VideoMemory);
+        MultiFrameFieldHex("MULTIFRAME_FAULT_ORIGINAL_FB_VM=", (ulong)Framebuffer.OriginalVideoMemory);
+        MultiFrameFieldUnsigned("MULTIFRAME_FAULT_ALLOC_BYTES=", Allocator.MemoryInUse);
+        MultiFrameFieldUnsigned("MULTIFRAME_FAULT_FREE_CALLS=", Allocator.FreeCallCount);
+        MultiFrameFieldUnsigned("MULTIFRAME_FAULT_FREE_SUCCESS=", Allocator.FreeSuccessCount);
+    }
+
+    // Called by the IDT fault path while the bounded experiment is active.
+    // It intentionally reports only raw/value state so delayed #PF/#GP faults
+    // retain their frame and stage context before the normal panic halt.
+    internal static bool IsUefiMultiFrameActive() {
+        return _uefiMultiFrameActive;
+    }
+
+    internal static void LogUefiMultiFrameFaultContext() {
+        EmitUefiMultiFrameFaultContext();
+    }
+
+    private static void LogUefiMultiFrameCheckpoint(int frame) {
+        SerialBreadcrumb("MULTIFRAME_CHECKPOINT_BEGIN");
+        MultiFrameFieldUnsigned("MULTIFRAME_CHECKPOINT_FRAME=", (ulong)frame);
+
+        guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
+        ulong graphicsAddress = GetManagedObjectAddress(graphics);
+        MultiFrameFieldUnsigned("MULTIFRAME_LAST_COMPLETED_FRAME=", (ulong)_uefiMultiFrameLastCompletedFrame);
+        SerialWriteLiteral("FRAME_STAGE=");
+        WriteUefiMultiFrameStageName(_uefiMultiFrameStage);
+        SerialChar('\n');
+        if (_uefiMultiFrameCanonicalGraphicsAddress == 0) {
+            _uefiMultiFrameCanonicalGraphicsAddress = graphicsAddress;
+        }
+        MultiFrameFieldHex("MULTIFRAME_GFX_OBJECT=", graphicsAddress);
+        bool graphicsIdentitySame = graphicsAddress == _uefiMultiFrameCanonicalGraphicsAddress;
+        SerialBreadcrumb(graphicsIdentitySame ? "MULTIFRAME_GFX_IDENTITY_SAME=1" : "MULTIFRAME_GFX_IDENTITY_SAME=0");
+        SerialBreadcrumb(graphicsIdentitySame ? "MULTIFRAME_GFX_IDENTITY_CHANGED=0" : "MULTIFRAME_GFX_IDENTITY_CHANGED=1");
+        MultiFrameFieldUnsigned("MULTIFRAME_GFX_WIDTH=", graphics == null ? 0UL : (ulong)(uint)graphics.Width);
+        MultiFrameFieldUnsigned("MULTIFRAME_GFX_HEIGHT=", graphics == null ? 0UL : (ulong)(uint)graphics.Height);
+        MultiFrameFieldHex("MULTIFRAME_GFX_VM=", graphics == null ? 0UL : (ulong)graphics.VideoMemory);
+        MultiFrameFieldUnsigned("MULTIFRAME_FB_WIDTH=", Framebuffer.Width);
+        MultiFrameFieldUnsigned("MULTIFRAME_FB_HEIGHT=", Framebuffer.Height);
+        MultiFrameFieldHex("MULTIFRAME_FB_VM=", (ulong)Framebuffer.VideoMemory);
+        MultiFrameFieldHex("MULTIFRAME_ORIGINAL_FB_VM=", (ulong)Framebuffer.OriginalVideoMemory);
+        MultiFrameFieldHex("MULTIFRAME_FIRST_BUFFER=", (ulong)Framebuffer.FirstBuffer);
+        MultiFrameFieldHex("MULTIFRAME_SECOND_BUFFER=", (ulong)Framebuffer.SecondBuffer);
+        SerialBreadcrumb(graphics != null && graphics.VideoMemory != null &&
+                         graphics.Width == Framebuffer.Width && graphics.Height == Framebuffer.Height &&
+                         (ulong)graphics.VideoMemory == (ulong)Framebuffer.OriginalVideoMemory
+            ? "MULTIFRAME_CANONICAL_GFX_VALID=1"
+            : "MULTIFRAME_CANONICAL_GFX_VALID=0");
+
+        ulong rsp = Native.ReadRSP() + 8UL;
+        if (_uefiMultiFrameFirstRsp == 0) _uefiMultiFrameFirstRsp = rsp;
+        ulong rspDelta = rsp >= _uefiMultiFrameFirstRsp ? rsp - _uefiMultiFrameFirstRsp : _uefiMultiFrameFirstRsp - rsp;
+        MultiFrameFieldHex("MULTIFRAME_RSP=", rsp);
+        MultiFrameFieldUnsigned("MULTIFRAME_RSP_MOD16=", rsp & 0xFUL);
+        MultiFrameFieldUnsigned("MULTIFRAME_RSP_DELTA_FROM_FIRST=", rspDelta);
+        SerialBreadcrumb(rspDelta == 0 ? "MULTIFRAME_STACK_DRIFT=0" : "MULTIFRAME_STACK_DRIFT=1");
+
+        MultiFrameFieldUnsigned("MULTIFRAME_ALLOC_BYTES=", Allocator.MemoryInUse);
+        MultiFrameFieldUnsigned("MULTIFRAME_ALLOC_PAGES=", Allocator._Info.PageInUse);
+        MultiFrameFieldUnsigned("MULTIFRAME_ALLOC_FREE_BYTES=", Allocator.MemorySize - Allocator.MemoryInUse);
+        MultiFrameFieldUnsigned("MULTIFRAME_FREE_CALLS=", Allocator.FreeCallCount);
+        MultiFrameFieldUnsigned("MULTIFRAME_FREE_SUCCESS=", Allocator.FreeSuccessCount);
+        MultiFrameFieldUnsigned("MULTIFRAME_FREE_FAIL_INVALID=", Allocator.FreeFailInvalidPtr);
+        MultiFrameFieldUnsigned("MULTIFRAME_FREE_FAIL_NOPAGES=", Allocator.FreeFailNoPages);
+        MultiFrameFieldUnsigned("MULTIFRAME_FREE_FAIL_CORRUPT=", Allocator.FreeFailCorruptRun);
+        MultiFrameFieldUnsigned("MULTIFRAME_TIMER_TICKS=", Timer.Ticks);
+
+        if (TryGetUefiFramebufferInfo(out uint* fb, out int fbW, out int fbH, out int pitchPixels, out ulong maxPixels)) {
+            MultiFrameFieldUnsigned("MULTIFRAME_FB_PITCH_PIXELS=", (ulong)pitchPixels);
+            MultiFrameFieldHex("MULTIFRAME_PIXEL_TOPLEFT=", fb[0]);
+            int taskbarY = fbH > 20 ? fbH - 20 : 0;
+            int iconX = fbW > 48 ? 48 : 0;
+            int iconY = fbH > 110 ? 110 : 0;
+            ulong taskbarOffset = (ulong)(uint)taskbarY * (ulong)(uint)pitchPixels + 10UL;
+            ulong iconOffset = (ulong)(uint)iconY * (ulong)(uint)pitchPixels + (ulong)(uint)iconX;
+            MultiFrameFieldHex("MULTIFRAME_PIXEL_TASKBAR=", maxPixels == 0 || taskbarOffset < maxPixels ? fb[(int)taskbarOffset] : 0U);
+            MultiFrameFieldHex("MULTIFRAME_PIXEL_ICON=", maxPixels == 0 || iconOffset < maxPixels ? fb[(int)iconOffset] : 0U);
+            SerialBreadcrumb("MULTIFRAME_PIXEL_SAMPLE_VALID=1");
+        } else {
+            SerialBreadcrumb("MULTIFRAME_PIXEL_SAMPLE_VALID=0");
+        }
+
+        SerialBreadcrumb("MULTIFRAME_CHECKPOINT_END");
     }
 
     internal static void CursorImageProbeBreadcrumb(string breadcrumb) {
@@ -2719,15 +2928,18 @@ unsafe class Program {
         SerialChar('\n');
     }
 
-    private static void LogUefiRenderDispatchGateDiagnostics(bool isUefi, bool useSafeNormalDesktopUefi, bool useNormalUefiDesktopFirstFrame, bool useTinyUefi, bool useNormalUefiDesktopStepProbe, bool useNormalUefiDesktop) {
+    private static void LogUefiRenderDispatchGateDiagnostics(bool isUefi, bool useSafeNormalDesktopUefi, bool useNormalUefiDesktopBounded, bool useNormalUefiDesktopFirstFrame, bool useTinyUefi, bool useNormalUefiDesktopStepProbe, bool useNormalUefiDesktop) {
         SerialBreadcrumb("SMAIN_DISPATCH_GATE_ENTER");
         SerialBreadcrumb(isUefi ? "SMAIN_DISPATCH_GATE_BOOT_MODE_UEFI_TRUE" : "SMAIN_DISPATCH_GATE_BOOT_MODE_UEFI_FALSE");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_STEP_PROBE ? "SMAIN_DISPATCH_GATE_NORMAL_STEP_PROBE_TRUE" : "SMAIN_DISPATCH_GATE_NORMAL_STEP_PROBE_FALSE");
         SerialBreadcrumb(UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH ? "SMAIN_DISPATCH_GATE_ALLOW_NORMAL_TRUE" : "SMAIN_DISPATCH_GATE_ALLOW_NORMAL_FALSE");
         SerialBreadcrumb(UEFI_USE_TINY_RENDER_LOOP_BYPASS ? "SMAIN_DISPATCH_GATE_TINY_BYPASS_TRUE" : "SMAIN_DISPATCH_GATE_TINY_BYPASS_FALSE");
         SerialBreadcrumb(UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME ? "SMAIN_DISPATCH_GATE_SAFE_NORMAL_TRUE" : "SMAIN_DISPATCH_GATE_SAFE_NORMAL_FALSE");
+        SerialBreadcrumb(UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED ? "SMAIN_DISPATCH_GATE_MULTIFRAME_TRUE" : "SMAIN_DISPATCH_GATE_MULTIFRAME_FALSE");
         SerialBreadcrumb(UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE ? "SMAIN_DISPATCH_GATE_FIRST_FRAME_PROBE_TRUE" : "SMAIN_DISPATCH_GATE_FIRST_FRAME_PROBE_FALSE");
-        if (useNormalUefiDesktopFirstFrame) {
+        if (useNormalUefiDesktopBounded) {
+            SerialBreadcrumb("SMAIN_DISPATCH_GATE_MULTIFRAME_SELECTED");
+        } else if (useNormalUefiDesktopFirstFrame) {
             SerialBreadcrumb("SMAIN_DISPATCH_GATE_FIRST_FRAME_PROBE_SELECTED");
         } else if (useNormalUefiDesktopStepProbe) {
             SerialBreadcrumb("SMAIN_DISPATCH_GATE_STEP_PROBE_SELECTED");
@@ -2736,7 +2948,7 @@ unsafe class Program {
         }
     }
 
-    private static void LogUefiRenderDispatchDiagnostics(bool emitVerbose, bool useTinyUefi, bool useSafeNormalDesktopUefi, bool useNormalUefiDesktopFirstFrame, bool useNormalUefiDesktop) {
+    private static void LogUefiRenderDispatchDiagnostics(bool emitVerbose, bool useTinyUefi, bool useSafeNormalDesktopUefi, bool useNormalUefiDesktopBounded, bool useNormalUefiDesktopFirstFrame, bool useNormalUefiDesktop) {
         bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
         // Use the recovered framebuffer state directly here so step-probe runs
         // do not depend on the original UEFI boot-info pointer staying valid.
@@ -2752,12 +2964,13 @@ unsafe class Program {
         SerialBreadcrumb(UEFI_STEADY_STATE_MINIMAL_RENDER ? "SMAIN_DIAG_SAFE_MINIMAL_RENDER=1" : "SMAIN_DIAG_SAFE_MINIMAL_RENDER=0");
         SerialBreadcrumb(UEFI_USE_TINY_RENDER_LOOP_BYPASS ? "SMAIN_DIAG_TINY_BYPASS=1" : "SMAIN_DIAG_TINY_BYPASS=0");
         SerialBreadcrumb(UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH ? "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=1" : "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=0");
+        SerialBreadcrumb(UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED ? "SMAIN_DIAG_MULTIFRAME=1" : "SMAIN_DIAG_MULTIFRAME=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_STEP_PROBE ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=0");
         SerialBreadcrumb(useSafeNormalDesktopUefi ? "SMAIN_DIAG_SAFE_NORMAL_DESKTOP_FIRST_FRAME=1" : "SMAIN_DIAG_SAFE_NORMAL_DESKTOP_FIRST_FRAME=0");
         SerialBreadcrumb(useNormalUefiDesktopFirstFrame ? "SMAIN_DIAG_NORMAL_DESKTOP_FIRST_FRAME_PROBE=1" : "SMAIN_DIAG_NORMAL_DESKTOP_FIRST_FRAME_PROBE=0");
         SerialBreadcrumb(emitVerbose ? "SMAIN_DIAG_VERBOSE=1" : "SMAIN_DIAG_VERBOSE=0");
         if (!emitVerbose) {
-            SerialBreadcrumb(useTinyUefi ? "SMAIN_DIAG_REASON_TINY" : useSafeNormalDesktopUefi ? "SMAIN_DIAG_REASON_SAFE_NORMAL_DESKTOP" : useNormalUefiDesktopFirstFrame ? "SMAIN_DIAG_REASON_NORMAL_DESKTOP_FIRST_FRAME" : useNormalUefiDesktop ? "SMAIN_DIAG_REASON_NORMAL_UefiDesktop" : isUefi ? "SMAIN_DIAG_REASON_FULL_UEFI" : "SMAIN_DIAG_REASON_LEGACY");
+            SerialBreadcrumb(useTinyUefi ? "SMAIN_DIAG_REASON_TINY" : useSafeNormalDesktopUefi ? "SMAIN_DIAG_REASON_SAFE_NORMAL_DESKTOP" : useNormalUefiDesktopBounded ? "SMAIN_DIAG_REASON_MULTIFRAME_NORMAL_DESKTOP" : useNormalUefiDesktopFirstFrame ? "SMAIN_DIAG_REASON_NORMAL_DESKTOP_FIRST_FRAME" : useNormalUefiDesktop ? "SMAIN_DIAG_REASON_NORMAL_UefiDesktop" : isUefi ? "SMAIN_DIAG_REASON_FULL_UEFI" : "SMAIN_DIAG_REASON_LEGACY");
             SerialBreadcrumb("SMAIN_DIAG_END");
             return;
         }
@@ -2818,6 +3031,7 @@ unsafe class Program {
 
         SerialBreadcrumb(useTinyUefi ? "SMAIN_DIAG_REASON_TINY" :
                          useSafeNormalDesktopUefi ? "SMAIN_DIAG_REASON_SAFE_NORMAL_DESKTOP" :
+                         useNormalUefiDesktopBounded ? "SMAIN_DIAG_REASON_MULTIFRAME_NORMAL_DESKTOP" :
                          useNormalUefiDesktopFirstFrame ? "SMAIN_DIAG_REASON_NORMAL_DESKTOP_FIRST_FRAME" :
                          useNormalUefiDesktop ? "SMAIN_DIAG_REASON_NORMAL_DESKTOP_UEFI" :
                          isUefi ? "SMAIN_DIAG_REASON_FULL_UEFI" :
@@ -3569,6 +3783,134 @@ unsafe class Program {
         } catch {
             SerialBreadcrumb("NORMAL_FRAME_FAULT=MANAGED_EXCEPTION");
             HaltAfterNormalDesktopFirstFrame();
+        }
+    }
+
+    /// <summary>
+    /// Execute a bounded number of genuine UEFI desktop frames. This is kept
+    /// separate from both the normal unrestricted loop and the one-frame probe
+    /// so the recovery default and earlier diagnostics remain unchanged.
+    /// </summary>
+    private static void RenderLoopUefiNormalDesktopBounded() {
+        int target = UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET;
+        if (target <= 0) {
+            SerialBreadcrumb("MULTIFRAME_FAULT=INVALID_TARGET");
+            SerialBreadcrumb("MULTIFRAME_HALT_ENTER");
+            for (; ; ) Native.Hlt();
+        }
+
+        _uefiMultiFrameActive = true;
+        _uefiMultiFrameCurrentFrame = 0;
+        _uefiMultiFrameLastCompletedFrame = 0;
+        _uefiMultiFrameStage = UEFI_MULTIFRAME_STAGE_NONE;
+        _uefiMultiFrameFirstRsp = 0;
+        _uefiMultiFrameCanonicalGraphicsAddress = 0;
+        _uefiMultiFrameStartTicks = Timer.Ticks;
+
+        SerialBreadcrumb("MULTIFRAME_BEGIN");
+        MultiFrameFieldUnsigned("MULTIFRAME_TARGET=", (ulong)target);
+        MultiFrameFieldUnsigned("MULTIFRAME_TIMER_START=", _uefiMultiFrameStartTicks);
+
+        for (int frame = 1; frame <= target; frame++) {
+            _uefiMultiFrameCurrentFrame = frame;
+            EmitUefiMultiFrameMarker(frame);
+
+            try {
+                SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_GRAPHICS);
+                // Reassert the immutable UEFI framebuffer contract at each
+                // frame boundary.  This is intentionally scoped to the
+                // bounded proof path: the production/default dispatch keeps
+                // the existing recovery behavior unchanged.
+                if (Framebuffer.OriginalWidth != 0) Framebuffer.Width = Framebuffer.OriginalWidth;
+                if (Framebuffer.OriginalHeight != 0) Framebuffer.Height = Framebuffer.OriginalHeight;
+                if ((ulong)Framebuffer.OriginalVideoMemory != 0) Framebuffer.VideoMemory = Framebuffer.OriginalVideoMemory;
+                Framebuffer.EnsureGraphics();
+                guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
+                if (graphics == null) {
+                    SerialBreadcrumb("MULTIFRAME_FAULT_INVALID_REASON=GFX_NULL");
+                    SerialBreadcrumb("MULTIFRAME_FAULT=FRAMEBUFFER_INVALID");
+                    EmitUefiMultiFrameFaultContext();
+                    HaltAfterUefiMultiFrame();
+                    return;
+                }
+                if (graphics.VideoMemory == null) {
+                    SerialBreadcrumb("MULTIFRAME_FAULT_INVALID_REASON=GFX_VM_NULL");
+                    SerialBreadcrumb("MULTIFRAME_FAULT=FRAMEBUFFER_INVALID");
+                    EmitUefiMultiFrameFaultContext();
+                    HaltAfterUefiMultiFrame();
+                    return;
+                }
+                if (Framebuffer.Width <= 0 || Framebuffer.Height <= 0) {
+                    SerialBreadcrumb("MULTIFRAME_FAULT_INVALID_REASON=FB_DIMENSIONS_ZERO");
+                    SerialBreadcrumb("MULTIFRAME_FAULT=FRAMEBUFFER_INVALID");
+                    EmitUefiMultiFrameFaultContext();
+                    HaltAfterUefiMultiFrame();
+                    return;
+                }
+                if (graphics.Width != Framebuffer.Width || graphics.Height != Framebuffer.Height) {
+                    SerialBreadcrumb("MULTIFRAME_FAULT_INVALID_REASON=GFX_DIMENSIONS_MISMATCH");
+                    SerialBreadcrumb("MULTIFRAME_FAULT=FRAMEBUFFER_INVALID");
+                    EmitUefiMultiFrameFaultContext();
+                    HaltAfterUefiMultiFrame();
+                    return;
+                }
+                if ((ulong)graphics.VideoMemory != (ulong)Framebuffer.OriginalVideoMemory) {
+                    SerialBreadcrumb("MULTIFRAME_FAULT_INVALID_REASON=GFX_VM_MISMATCH");
+                    SerialBreadcrumb("MULTIFRAME_FAULT=FRAMEBUFFER_INVALID");
+                    EmitUefiMultiFrameFaultContext();
+                    HaltAfterUefiMultiFrame();
+                    return;
+                }
+
+                SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_BACKGROUND);
+                BackgroundRotationManager.DrawBackground();
+
+                SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_DESKTOP);
+                Desktop.Update(_cachedDocumentIcon, _cachedFolderIcon, _cachedImageIcon, _cachedAudioIcon, 48);
+
+                SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_WINDOWS);
+                WindowManager.DrawAllExceptTaskManager();
+                if (Desktop.Taskbar != null) Desktop.Taskbar.DrawWorkspaceSwitcher();
+                WindowManager.DrawTaskManager();
+                WindowManager.CleanupClosedWindows();
+
+                SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_CURSOR);
+                DrawUefiCursor();
+
+                SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_PRESENT);
+                Framebuffer.Update();
+
+                SetUefiMultiFrameStage(UEFI_MULTIFRAME_STAGE_COMPLETE);
+                _uefiMultiFrameLastCompletedFrame = frame;
+                if (ShouldEmitUefiMultiFrameMarker(frame)) {
+                    LogUefiMultiFrameCheckpoint(frame);
+                }
+
+                // Exercise the active Local APIC timer/scheduler path between
+                // frames while keeping the experiment strictly bounded.
+                Thread.Sleep(16);
+            } catch {
+                SerialBreadcrumb("MULTIFRAME_FAULT=MANAGED_EXCEPTION");
+                EmitUefiMultiFrameFaultContext();
+                HaltAfterUefiMultiFrame();
+                return;
+            }
+        }
+
+        ulong timerEnd = Timer.Ticks;
+        MultiFrameFieldUnsigned("MULTIFRAME_TIMER_END=", timerEnd);
+        MultiFrameFieldUnsigned("MULTIFRAME_TIMER_DELTA=", timerEnd >= _uefiMultiFrameStartTicks ? timerEnd - _uefiMultiFrameStartTicks : 0UL);
+        SerialBreadcrumb(timerEnd > _uefiMultiFrameStartTicks ? "MULTIFRAME_TIMER_TICKING=1" : "MULTIFRAME_TIMER_TICKING=0");
+        SerialBreadcrumb("MULTIFRAME_COMPLETE");
+        _uefiMultiFrameActive = false;
+        HaltAfterUefiMultiFrame();
+    }
+
+    private static void HaltAfterUefiMultiFrame() {
+        SerialBreadcrumb("MULTIFRAME_HALT_ENTER");
+        for (; ; ) {
+            Native.Out8(0x3F8, (byte)'!');
+            Thread.Sleep(1000);
         }
     }
 

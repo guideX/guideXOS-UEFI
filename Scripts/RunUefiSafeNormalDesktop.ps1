@@ -1,6 +1,8 @@
 param(
-    [ValidateSet('Default', 'SafeNormalDesktop', 'NormalDesktopFirstFrame', 'AbiTaskbar', 'AbiCursor')]
+    [ValidateSet('Default', 'SafeNormalDesktop', 'NormalDesktopFirstFrame', 'MultiFrameNormalDesktop', 'AbiTaskbar', 'AbiCursor')]
     [string]$Mode = 'Default',
+    [ValidateSet(120, 300)]
+    [int]$FrameTarget = 120,
     [switch]$CaptureScreenshot,
     [switch]$GuiVisible,
     [int]$CaptureSeconds = 120,
@@ -87,6 +89,27 @@ function Get-LastMatchingLine {
     }
 
     return $null
+}
+
+function Read-SharedText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $stream = [System.IO.File]::Open(
+        $Path,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::ReadWrite
+    )
+    $reader = New-Object System.IO.StreamReader($stream)
+    try {
+        return $reader.ReadToEnd()
+    } finally {
+        $reader.Dispose()
+        $stream.Dispose()
+    }
 }
 
 function Ensure-NativeScreenshotHelpers {
@@ -312,6 +335,8 @@ $modeLabel = if ($Mode -eq 'SafeNormalDesktop') {
     'UEFI_ABI_PROBE_TASKBAR'
 } elseif ($Mode -eq 'AbiCursor') {
     'UEFI_ABI_PROBE_CURSOR'
+} elseif ($Mode -eq 'MultiFrameNormalDesktop') {
+    'MULTIFRAME_NORMAL_DESKTOP_UEFI'
 } else {
     'TINY_UEFI'
 }
@@ -370,6 +395,23 @@ try {
             -Old 'private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE = false;' `
             -New 'private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE = true;' `
             -Label 'UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE'
+    } elseif ($Mode -eq 'MultiFrameNormalDesktop') {
+        $patched = Assert-SingleReplacement -Text $patched `
+            -Old 'private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = false;' `
+            -New 'private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = true;' `
+            -Label 'UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH'
+        $patched = Assert-SingleReplacement -Text $patched `
+            -Old 'private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;' `
+            -New 'private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = false;' `
+            -Label 'UEFI_USE_TINY_RENDER_LOOP_BYPASS'
+        $patched = Assert-SingleReplacement -Text $patched `
+            -Old 'private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;' `
+            -New 'private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = true;' `
+            -Label 'UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED'
+        $patched = Assert-SingleReplacement -Text $patched `
+            -Old 'private const int UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET = 120;' `
+            -New "private const int UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET = $FrameTarget;" `
+            -Label 'UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET'
     } elseif ($Mode -eq 'AbiTaskbar') {
         $patched = Assert-SingleReplacement -Text $patched `
             -Old 'private const int UEFI_ABI_PROBE_TARGET = 0;' `
@@ -392,6 +434,7 @@ try {
 
     Write-Host "[uefi-run] Run ID: $runId" -ForegroundColor Cyan
     Write-Host "[uefi-run] Mode: $Mode" -ForegroundColor Cyan
+    Write-Host "[uefi-run] Frame target: $FrameTarget" -ForegroundColor Cyan
     Write-Host "[uefi-run] Safe cursor image fallback: $SafeCursorImageFallback" -ForegroundColor Cyan
     Write-Host "[uefi-run] Expected dispatch reason: $modeLabel" -ForegroundColor Cyan
     Write-Host "[uefi-run] Screenshot capture requested: $CaptureScreenshot" -ForegroundColor Cyan
@@ -465,6 +508,20 @@ try {
             break
         }
 
+        if (Test-Path -LiteralPath $serialLog) {
+            try {
+                $liveSerial = Read-SharedText -Path $serialLog
+                if ($liveSerial.Contains('MULTIFRAME_HALT_ENTER') -or
+                    $liveSerial.Contains('NORMAL_FRAME_HALT_ENTER') -or
+                    $liveSerial.Contains('SAFE_NORMAL_DESKTOP_LOOP_ENTER')) {
+                    break
+                }
+            } catch {
+                # The serial writer can briefly hold the file exclusively;
+                # leave the next poll to retry without affecting QEMU.
+            }
+        }
+
         Start-Sleep -Milliseconds 500
     }
 
@@ -517,6 +574,8 @@ try {
         'SMAIN_DISPATCH_REASON=SAFE_NORMAL_DESKTOP_UEFI'
     } elseif ($Mode -eq 'NormalDesktopFirstFrame') {
         'SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI_FIRST_FRAME'
+    } elseif ($Mode -eq 'MultiFrameNormalDesktop') {
+        'SMAIN_DISPATCH_REASON=MULTIFRAME_NORMAL_DESKTOP_UEFI'
     } elseif ($Mode -eq 'AbiTaskbar' -or $Mode -eq 'AbiCursor') {
         'SMAIN_DISPATCH_REASON=UEFI_ABI_PROBE'
     } else {
@@ -529,6 +588,24 @@ try {
     $normalFrameComplete = $serialText.Contains('NORMAL_FRAME_COMPLETE')
     $normalFrameHalt = $serialText.Contains('NORMAL_FRAME_HALT_ENTER')
     $normalFrameFault = $serialLines | Where-Object { $_ -match 'NORMAL_FRAME_FAULT=' }
+    $multiFrameBegin = $serialText.Contains('MULTIFRAME_BEGIN')
+    $multiFrameTargetLine = Get-LastMatchingLine -Text $serialText -Pattern 'MULTIFRAME_TARGET='
+    $multiFrameTargetPresent = $serialText.Contains("MULTIFRAME_TARGET=$FrameTarget")
+    $multiFrameComplete = $serialText.Contains('MULTIFRAME_COMPLETE')
+    $multiFrameHalt = $serialText.Contains('MULTIFRAME_HALT_ENTER')
+    $multiFrameFault = $serialLines | Where-Object { $_ -match '^MULTIFRAME_FAULT=' }
+    $multiFrameMarkers = @($serialLines | Where-Object { $_ -match '^FRAME=\d+$' })
+    $multiFrameCheckpointLines = @($serialLines | Where-Object { $_ -match '^MULTIFRAME_CHECKPOINT_FRAME=' })
+    $multiFrameIdentityChanged = $serialText.Contains('MULTIFRAME_GFX_IDENTITY_CHANGED=1')
+    $multiFrameCanonicalInvalid = $serialText.Contains('MULTIFRAME_CANONICAL_GFX_VALID=0')
+    $multiFrameStackDrift = $serialText.Contains('MULTIFRAME_STACK_DRIFT=1')
+    $multiFrameTimerStalled = $serialText.Contains('MULTIFRAME_TIMER_TICKING=0')
+    $multiFrameTimerAdvanced = $serialText.Contains('MULTIFRAME_TIMER_TICKING=1')
+    $multiFramePixelInvalid = $serialText.Contains('MULTIFRAME_PIXEL_SAMPLE_VALID=0')
+    $multiFrameLastCompletedLine = Get-LastMatchingLine -Text $serialText -Pattern 'MULTIFRAME_LAST_COMPLETED_FRAME='
+    $multiFrameFaultStageLine = Get-LastMatchingLine -Text $serialText -Pattern 'FRAME_STAGE='
+    $acpiInitialized = $serialText.Contains('[ACPI] ACPI Initialized')
+    $pciEnumerated = $serialText.Contains('[PCI] Devices enumerated')
     $abiProbeMode = $Mode -eq 'AbiTaskbar' -or $Mode -eq 'AbiCursor'
     $abiProbeStarted = $serialText.Contains('SMAIN_DISPATCH_UEFI_ABI_PROBE')
     $abiProbeSuccess = if ($Mode -eq 'AbiTaskbar') {
@@ -553,6 +630,30 @@ try {
         $validRun = $validRun -and $safeFrameComplete -and $safeLoopEnter -and -not $safeFaultFramebufferInvalid -and -not $safeFaultException
     } elseif ($Mode -eq 'NormalDesktopFirstFrame') {
         $validRun = $validRun -and $normalFrameComplete -and $normalFrameHalt -and ($normalFrameFault.Count -eq 0)
+    } elseif ($Mode -eq 'MultiFrameNormalDesktop') {
+        $expectedFrameMarkers = @(1, 2, 3, 10, 30, 60, 90, 120, 180, 240, $FrameTarget) |
+            Where-Object { $_ -le $FrameTarget } | Select-Object -Unique
+        $frameMarkersPresent = $true
+        foreach ($expectedFrame in $expectedFrameMarkers) {
+            if (-not ($serialText.Contains("FRAME=$expectedFrame`r`n") -or $serialText.Contains("FRAME=$expectedFrame`n"))) {
+                $frameMarkersPresent = $false
+            }
+        }
+        $expectedCheckpointFrames = @(1, 10, 60, $FrameTarget) | Select-Object -Unique
+        $checkpointsPresent = $true
+        foreach ($checkpointFrame in $expectedCheckpointFrames) {
+            if (-not ($serialText.Contains("MULTIFRAME_CHECKPOINT_FRAME=$checkpointFrame"))) {
+                $checkpointsPresent = $false
+            }
+        }
+        $validRun = $validRun -and $multiFrameBegin -and $multiFrameTargetPresent -and
+            $multiFrameComplete -and $multiFrameHalt -and ($multiFrameFault.Count -eq 0) -and
+             $frameMarkersPresent -and $checkpointsPresent -and
+             $serialText.Contains("MULTIFRAME_LAST_COMPLETED_FRAME=$FrameTarget") -and
+             $acpiInitialized -and $pciEnumerated -and
+             $multiFrameTimerAdvanced -and -not $multiFramePixelInvalid -and
+            -not $multiFrameIdentityChanged -and -not $multiFrameCanonicalInvalid -and
+            -not $multiFrameStackDrift -and -not $multiFrameTimerStalled
     }
 
     Write-Host "[uefi-run] Validation:" -ForegroundColor Cyan
@@ -568,6 +669,25 @@ try {
     Write-Host "[uefi-run]   NORMAL_FRAME_COMPLETE: $normalFrameComplete" -ForegroundColor Cyan
     Write-Host "[uefi-run]   NORMAL_FRAME_HALT_ENTER: $normalFrameHalt" -ForegroundColor Cyan
     Write-Host "[uefi-run]   NORMAL_FRAME_FAULT lines: $($normalFrameFault.Count)" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME_BEGIN: $multiFrameBegin" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME_TARGET=${FrameTarget}: $multiFrameTargetPresent" -ForegroundColor Cyan
+     Write-Host "[uefi-run]   MULTIFRAME frame markers: $($multiFrameMarkers.Count)" -ForegroundColor Cyan
+     Write-Host "[uefi-run]   MULTIFRAME checkpoints: $($multiFrameCheckpointLines.Count)" -ForegroundColor Cyan
+     Write-Host "[uefi-run]   MULTIFRAME expected frame markers present: $frameMarkersPresent" -ForegroundColor Cyan
+     Write-Host "[uefi-run]   MULTIFRAME expected checkpoints present: $checkpointsPresent" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME_COMPLETE: $multiFrameComplete" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME_HALT_ENTER: $multiFrameHalt" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME fault lines: $($multiFrameFault.Count)" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME identity changed: $multiFrameIdentityChanged" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME canonical graphics invalid: $multiFrameCanonicalInvalid" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME stack drift: $multiFrameStackDrift" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME timer stalled: $multiFrameTimerStalled" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME timer advanced: $multiFrameTimerAdvanced" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME pixel sample invalid: $multiFramePixelInvalid" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   MULTIFRAME last completed line: $multiFrameLastCompletedLine" -ForegroundColor Cyan
+     Write-Host "[uefi-run]   MULTIFRAME fault stage line: $multiFrameFaultStageLine" -ForegroundColor Cyan
+     Write-Host "[uefi-run]   ACPI initialized: $acpiInitialized" -ForegroundColor Cyan
+     Write-Host "[uefi-run]   PCI devices enumerated: $pciEnumerated" -ForegroundColor Cyan
     Write-Host "[uefi-run]   ABI probe started: $abiProbeStarted" -ForegroundColor Cyan
     Write-Host "[uefi-run]   ABI probe success: $abiProbeSuccess" -ForegroundColor Cyan
     Write-Host "[uefi-run]   Fault VEC lines: $($vecLines.Count)" -ForegroundColor Cyan
@@ -606,6 +726,25 @@ try {
         "NORMAL_FRAME_COMPLETE=$normalFrameComplete"
         "NORMAL_FRAME_HALT_ENTER=$normalFrameHalt"
         "NORMAL_FRAME_FAULT_LINES=$($normalFrameFault.Count)"
+        "FRAME_TARGET=$FrameTarget"
+        "MULTIFRAME_BEGIN=$multiFrameBegin"
+        "MULTIFRAME_TARGET_PRESENT=$multiFrameTargetPresent"
+        "MULTIFRAME_TARGET_LINE=$multiFrameTargetLine"
+        "MULTIFRAME_FRAME_MARKERS=$($multiFrameMarkers.Count)"
+        "MULTIFRAME_CHECKPOINTS=$($multiFrameCheckpointLines.Count)"
+        "MULTIFRAME_COMPLETE=$multiFrameComplete"
+        "MULTIFRAME_HALT_ENTER=$multiFrameHalt"
+        "MULTIFRAME_FAULT_LINES=$($multiFrameFault.Count)"
+        "MULTIFRAME_GFX_IDENTITY_CHANGED=$multiFrameIdentityChanged"
+        "MULTIFRAME_CANONICAL_GFX_INVALID=$multiFrameCanonicalInvalid"
+        "MULTIFRAME_STACK_DRIFT=$multiFrameStackDrift"
+        "MULTIFRAME_TIMER_STALLED=$multiFrameTimerStalled"
+        "MULTIFRAME_TIMER_ADVANCED=$multiFrameTimerAdvanced"
+        "MULTIFRAME_PIXEL_SAMPLE_INVALID=$multiFramePixelInvalid"
+        "MULTIFRAME_LAST_COMPLETED_LINE=$multiFrameLastCompletedLine"
+         "MULTIFRAME_FAULT_STAGE_LINE=$multiFrameFaultStageLine"
+         "ACPI_INITIALIZED=$acpiInitialized"
+         "PCI_ENUMERATED=$pciEnumerated"
         "ABI_PROBE_STARTED=$abiProbeStarted"
         "ABI_PROBE_SUCCESS=$abiProbeSuccess"
         "FAULT_VEC_LINES=$($vecLines.Count)"

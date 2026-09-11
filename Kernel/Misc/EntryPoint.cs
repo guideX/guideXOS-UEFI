@@ -276,7 +276,7 @@ namespace guideXOS.Misc {
 
             // Initialize UEFI mouse input if available (before other subsystems)
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
-                bool skipEarlyUefiHardwareInit = Program.ShouldSkipEarlyUefiHardwareInitialization();
+                bool skipEarlyUefiInputInit = Program.ShouldSkipEarlyUefiInputInitialization();
                 // The UEFI bootloader exits boot services before entering KMain.
                 // Mark this before touching any firmware protocol pointers from BootInfo.
                 BootConsole.WriteLine("[EBS] Marking ExitBootServices as occurred");
@@ -284,8 +284,8 @@ namespace guideXOS.Misc {
                 BootConsole.WriteLine("[EBS] ExitBootServices marked");
                 Program.LogUefiGraphicsState("KMAIN_AFTER_EBS_MARK", Framebuffer.Graphics);
 
-                if (skipEarlyUefiHardwareInit) {
-                    BootConsole.WriteLine("[INPUT] Skipping early UEFI mouse input and PCI init (safe/step probe)");
+                if (skipEarlyUefiInputInit) {
+                    BootConsole.WriteLine("[INPUT] Skipping early UEFI mouse input (safe/step/multi-frame probe)");
                 } else {
                     BootConsole.WriteLine("[INPUT] Initializing UEFI mouse input");
                     try {
