@@ -63,11 +63,12 @@ namespace guideXOS.Misc {
             // CRITICAL: Output RAW debug marker FIRST before any managed code
             // This proves we reached the kernel entry point successfully
             SerialDebugMarker();
+            Program.AbiLogCurrentRsp("KMAIN_BODY");
             
             // Simple framebuffer test - write colored pixels at top-left to prove we're alive
             // This is RAW memory access with no C# overhead
             ulong fbBase = bootInfo != null ? bootInfo->FramebufferBase : 0;
-            if (fbBase != 0) {
+            if (fbBase != 0 && !Program.IsUefiAbiDiagnosticActive()) {
                 // Write BRIGHT RED pixels at (0,0) to signal kernel entry
                 uint* fb0 = (uint*)fbBase;
                 for (int i = 0; i < 40; i++) {
@@ -101,7 +102,7 @@ namespace guideXOS.Misc {
             }
             
             // Draw more pixels to show validation passed
-            if (fbBase != 0) {
+            if (fbBase != 0 && !Program.IsUefiAbiDiagnosticActive()) {
                 uint* fb0 = (uint*)fbBase;
                 // Skip first 40 pixels (already red), write white
                 fb0[40] = 0x00FFFFFF; // Write WHITE pixels at (40,0)
@@ -118,8 +119,10 @@ namespace guideXOS.Misc {
 
             BootConsole.WriteLine("[ALLOCATOR] INITIALIZE");
             Allocator.Initialize((IntPtr)0x4000000);
-            for (uint x = 0; x < 200; x++) 
-                fb[110 * pitch + x] = 0x0000FF00; // Draw green line
+            if (!Program.IsUefiAbiDiagnosticActive()) {
+                for (uint x = 0; x < 200; x++)
+                    fb[110 * pitch + x] = 0x0000FF00; // Draw green line
+            }
 
             BootConsole.WriteLine("[MOD] INITIALIZE");
             IntPtr modulesPtr = GetModulesPointer(); // Get the module pointer from native code
@@ -131,9 +134,15 @@ namespace guideXOS.Misc {
                 Native.Out8(0x3F8, (byte)hexChar);
             }
             
-            // Not yet Compatible with UEFI
-            if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy)
-                StartupCodeHelpers.InitializeModules(modulesPtr);
+            // NativeAOT GC statics and eager class constructors are required
+            // in UEFI too.  Without this step, a GC-static field such as
+            // Framebuffer.Graphics still contains its encoded EEType token
+            // instead of an allocator-owned static base.  Early writes can
+            // look valid, but later static initialization then aliases and
+            // overwrites the image metadata.  The allocator is initialized
+            // immediately above, so InitializeModules now has its required
+            // object-storage owner before any managed static is used.
+            StartupCodeHelpers.InitializeModules(modulesPtr);
 
             if (BootConsole.DrawDebugLines) {
                 // Draw cyan line to show modules initialized
@@ -163,6 +172,7 @@ namespace guideXOS.Misc {
             }
             BootConsole.WriteLine("[BS] INIT");
             BootSplash.Initialize("Team Nexgen", "guideXOS", "Version: 0.2 UEFI"); // Boot splash
+            Program.LogUefiGraphicsState("KMAIN_AFTER_BOOTSPLASH_INIT", Framebuffer.Graphics);
             
             // Try allocating a simple array to test if runtime works
             try {
@@ -177,15 +187,18 @@ namespace guideXOS.Misc {
 
             BootConsole.WriteLine("[CONS] INITIALIZE");
             Console.Setup();
+            Program.LogUefiGraphicsState("KMAIN_AFTER_CONSOLE_SETUP", Framebuffer.Graphics);
             
             BootConsole.WriteLine("[ARCH] INITIALIZE");
             DetectArchitecture();
+            Program.LogUefiGraphicsState("KMAIN_AFTER_ARCH", Framebuffer.Graphics);
             
             BootConsole.WriteLine("[IDT] INITIALIZE");
             IDT.Disable(); // Initialize GDT/IDT
             
             BootConsole.WriteLine("[GDT] INITIALIZE");
             GDT.Initialize();
+            Program.LogUefiGraphicsState("KMAIN_AFTER_GDT", Framebuffer.Graphics);
             BootConsole.WriteLine("[KERNEL] SET STACK SPACE");
             {
                 const ulong kStackSize = 64 * 1024;
@@ -196,9 +209,11 @@ namespace guideXOS.Misc {
             BootConsole.WriteLine("[IDT] INIT");
             IDT.Initialize();
             IDT.AllowUserSoftwareInterrupt(0x80);
+            Program.LogUefiGraphicsState("KMAIN_AFTER_IDT", Framebuffer.Graphics);
             
             BootConsole.WriteLine("[INTERRUPTS] INIT");
             Interrupts.Initialize();
+            Program.LogUefiGraphicsState("KMAIN_AFTER_INTERRUPTS", Framebuffer.Graphics);
             
             // Keep interrupts disabled until PIC is configured below.
             // IDT.Enable();
@@ -210,24 +225,30 @@ namespace guideXOS.Misc {
 
             // ACPI is required for APIC discovery in UEFI mode.
             // Use the bootloader-provided RSDP under UEFI instead of legacy memory scanning.
-            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI && !Program.IsUefiAbiDiagnosticActive()) {
                 if (bootInfo->AcpiRsdp != 0) {
                     ACPI.InitializeFromRsdp(bootInfo->AcpiRsdp);
                 } else {
                     BootConsole.WriteLine("[ACPI] WARNING: No RSDP provided by bootloader");
                 }
+            } else if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                BootConsole.WriteLine("[ACPI] SKIPPED (bounded ABI method probe)");
             } else {
                 ACPI.Initialize();
             }
 #if UseAPIC
-            BootConsole.WriteLine("[PIC] DISABLED");
-            PIC.Disable();
-            BootConsole.WriteLine("[Local APIC] INIT");
-            LocalAPIC.Initialize();
-            BootConsole.WriteLine("[Local APIC] INIT DONE");
-            BootConsole.WriteLine("[IO APIC] INIT");
-            IOAPIC.Initialize();
-            BootConsole.WriteLine("[IO APIC] INIT DONE");
+            if (Program.IsUefiAbiDiagnosticActive()) {
+                BootConsole.WriteLine("[APIC] SKIPPED (bounded ABI method probe)");
+            } else {
+                BootConsole.WriteLine("[PIC] DISABLED");
+                PIC.Disable();
+                BootConsole.WriteLine("[Local APIC] INIT");
+                LocalAPIC.Initialize();
+                BootConsole.WriteLine("[Local APIC] INIT DONE");
+                BootConsole.WriteLine("[IO APIC] INIT");
+                IOAPIC.Initialize();
+                BootConsole.WriteLine("[IO APIC] INIT DONE");
+            }
 #else
             BootConsole.WriteLine("[PIC] ENABLED");
             PIC.Enable();
@@ -235,11 +256,13 @@ namespace guideXOS.Misc {
             
             BootConsole.WriteLine("[TIMER] INIT"); 
             Timer.Initialize();
+            Program.LogUefiGraphicsState("KMAIN_AFTER_TIMER", Framebuffer.Graphics);
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy)
                  Keyboard.Initialize();
 
             BootConsole.WriteLine("[SERIAL] INIT");
             Serial.Initialize();
+            Program.LogUefiGraphicsState("KMAIN_AFTER_SERIAL", Framebuffer.Graphics);
             
             // PS/2 Controller initialization moved to capability-based detection in Program.KMain
             // This prevents unconditional PS/2 access on UEFI systems without PS/2 hardware
@@ -249,6 +272,7 @@ namespace guideXOS.Misc {
             
             BootConsole.WriteLine("[VMWARE] INIT");
             VMwareTools.Initialize();
+            Program.LogUefiGraphicsState("KMAIN_AFTER_VMWARE", Framebuffer.Graphics);
 
             // Initialize UEFI mouse input if available (before other subsystems)
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
@@ -258,6 +282,7 @@ namespace guideXOS.Misc {
                 BootConsole.WriteLine("[EBS] Marking ExitBootServices as occurred");
                 ExitBootServicesRules.MarkExitBootServices();
                 BootConsole.WriteLine("[EBS] ExitBootServices marked");
+                Program.LogUefiGraphicsState("KMAIN_AFTER_EBS_MARK", Framebuffer.Graphics);
 
                 if (skipEarlyUefiHardwareInit) {
                     BootConsole.WriteLine("[INPUT] Skipping early UEFI mouse input and PCI init (safe/step probe)");
@@ -307,6 +332,7 @@ namespace guideXOS.Misc {
             Native.Out8(0x3F8, (byte)'\n');
             
             BootConsole.WriteLine("[SCHED] ThreadPool.Initialize complete");
+            Program.LogUefiGraphicsState("KMAIN_AFTER_THREADPOOL", Framebuffer.Graphics);
 
 #if !UseAPIC
             // Enable only timer IRQ (IRQ0 -> vector 0x20 with PIC remap) for scheduling.
@@ -434,8 +460,13 @@ namespace guideXOS.Misc {
             // }
             //BootConsole.WriteLine("BOOTSPLASH_CLEANUP");
             SerialRawLine("POSTFS_A");
-            BootSplash.Cleanup();
+            if (Program.IsUefiAbiDiagnosticActive()) {
+                SerialRawLine("POSTFS_BOOT_SPLASH_CLEANUP_SKIPPED");
+            } else {
+                BootSplash.Cleanup();
+            }
             SerialRawLine("POSTFS_B");
+            Program.LogUefiGraphicsState("KMAIN_AFTER_POSTFS", Framebuffer.Graphics);
 
             // SKIP uptime assignment - Timer.Ticks might not work with masked interrupts
             // and this might trigger static initialization that hangs
@@ -610,6 +641,8 @@ namespace guideXOS.Misc {
             Native.Out8(0x3F8, (byte)'A');
             Native.Out8(0x3F8, (byte)'W');
             Native.Out8(0x3F8, (byte)'\n');
+            Program.AbiLogCurrentRsp("KERNELMAIN_BODY");
+            Program.LogUefiGraphicsState("KERNELMAIN_BEFORE_PROGRAM_KMAIN", Framebuffer.Graphics);
             BootConsole.WriteLine("[KERNELMAIN]");
             BootConsole.NewLine();
             Program.KMain(); // Call the main OS initialization - this sets up GUI, drivers, etc.

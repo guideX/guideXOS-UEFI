@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Default', 'SafeNormalDesktop')]
+    [ValidateSet('Default', 'SafeNormalDesktop', 'NormalDesktopFirstFrame', 'AbiTaskbar', 'AbiCursor')]
     [string]$Mode = 'Default',
     [switch]$CaptureScreenshot,
     [switch]$GuiVisible,
@@ -304,7 +304,17 @@ $qemuFirmwareCodeSource = 'C:\Program Files\qemu\share\edk2-x86_64-code.fd'
 $qemuFirmwareVarsSource = 'C:\Program Files\qemu\share\edk2-i386-vars.fd'
 $runStamp = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
 $runId = "UEFI_RUN_ID_${runStamp}_PID$PID"
-$modeLabel = if ($Mode -eq 'SafeNormalDesktop') { 'SAFE_NORMAL_DESKTOP_UEFI' } else { 'TINY_UEFI' }
+$modeLabel = if ($Mode -eq 'SafeNormalDesktop') {
+    'SAFE_NORMAL_DESKTOP_UEFI'
+} elseif ($Mode -eq 'NormalDesktopFirstFrame') {
+    'NORMAL_DESKTOP_UEFI_FIRST_FRAME'
+} elseif ($Mode -eq 'AbiTaskbar') {
+    'UEFI_ABI_PROBE_TASKBAR'
+} elseif ($Mode -eq 'AbiCursor') {
+    'UEFI_ABI_PROBE_CURSOR'
+} else {
+    'TINY_UEFI'
+}
 $serialLog = Join-Path $logRoot "serial_$runId.txt"
 $stderrLog = Join-Path $logRoot "qemu_stderr_$runId.txt"
 $summaryLog = Join-Path $logRoot "summary_$runId.txt"
@@ -347,6 +357,29 @@ try {
             -Old 'private const bool UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME = false;' `
             -New 'private const bool UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME = true;' `
             -Label 'UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME'
+    } elseif ($Mode -eq 'NormalDesktopFirstFrame') {
+        $patched = Assert-SingleReplacement -Text $patched `
+            -Old 'private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = false;' `
+            -New 'private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = true;' `
+            -Label 'UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH'
+        $patched = Assert-SingleReplacement -Text $patched `
+            -Old 'private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = true;' `
+            -New 'private const bool UEFI_USE_TINY_RENDER_LOOP_BYPASS = false;' `
+            -Label 'UEFI_USE_TINY_RENDER_LOOP_BYPASS'
+        $patched = Assert-SingleReplacement -Text $patched `
+            -Old 'private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE = false;' `
+            -New 'private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE = true;' `
+            -Label 'UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE'
+    } elseif ($Mode -eq 'AbiTaskbar') {
+        $patched = Assert-SingleReplacement -Text $patched `
+            -Old 'private const int UEFI_ABI_PROBE_TARGET = 0;' `
+            -New 'private const int UEFI_ABI_PROBE_TARGET = 1;' `
+            -Label 'UEFI_ABI_PROBE_TARGET_TASKBAR'
+    } elseif ($Mode -eq 'AbiCursor') {
+        $patched = Assert-SingleReplacement -Text $patched `
+            -Old 'private const int UEFI_ABI_PROBE_TARGET = 0;' `
+            -New 'private const int UEFI_ABI_PROBE_TARGET = 2;' `
+            -Label 'UEFI_ABI_PROBE_TARGET_CURSOR'
     }
     $safeCursorImageFallbackValue = if ($SafeCursorImageFallback) { 'true' } else { 'false' }
     $patched = Assert-SingleReplacement -Text $patched `
@@ -482,6 +515,10 @@ try {
 
     $expectedDispatchReason = if ($Mode -eq 'SafeNormalDesktop') {
         'SMAIN_DISPATCH_REASON=SAFE_NORMAL_DESKTOP_UEFI'
+    } elseif ($Mode -eq 'NormalDesktopFirstFrame') {
+        'SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI_FIRST_FRAME'
+    } elseif ($Mode -eq 'AbiTaskbar' -or $Mode -eq 'AbiCursor') {
+        'SMAIN_DISPATCH_REASON=UEFI_ABI_PROBE'
     } else {
         'SMAIN_DISPATCH_REASON=TINY_UEFI'
     }
@@ -489,12 +526,33 @@ try {
     $safeLoopEnter = $serialText.Contains('SAFE_NORMAL_DESKTOP_LOOP_ENTER')
     $safeFaultFramebufferInvalid = $serialText.Contains('SAFE_NORMAL_DESKTOP_FAULT=FRAMEBUFFER_INVALID')
     $safeFaultException = $serialText.Contains('SAFE_NORMAL_DESKTOP_FAULT=EXCEPTION')
+    $normalFrameComplete = $serialText.Contains('NORMAL_FRAME_COMPLETE')
+    $normalFrameHalt = $serialText.Contains('NORMAL_FRAME_HALT_ENTER')
+    $normalFrameFault = $serialLines | Where-Object { $_ -match 'NORMAL_FRAME_FAULT=' }
+    $abiProbeMode = $Mode -eq 'AbiTaskbar' -or $Mode -eq 'AbiCursor'
+    $abiProbeStarted = $serialText.Contains('SMAIN_DISPATCH_UEFI_ABI_PROBE')
+    $abiProbeSuccess = if ($Mode -eq 'AbiTaskbar') {
+        $serialText.Contains('ABI_PROBE_TASKBAR_SUCCESS')
+    } elseif ($Mode -eq 'AbiCursor') {
+        $serialText.Contains('ABI_PROBE_CURSOR_SUCCESS')
+    } else {
+        $false
+    }
     $dispatchReasonPresent = $serialText.Contains($expectedDispatchReason)
     $runIdPresent = $serialText.Contains($runId)
 
     $validRun = $runIdPresent -and $dispatchReasonPresent -and ($faultLines.Count -eq 0)
+    if ($abiProbeMode) {
+        # A pre-repair ABI fault is an expected forensic result. Require the
+        # probe to reach its dispatch point and record either success or a
+        # CPU fault frame; do not turn the controlled reproduction into a
+        # failed script invocation.
+        $validRun = $runIdPresent -and $dispatchReasonPresent -and $abiProbeStarted -and ($abiProbeSuccess -or $faultLines.Count -gt 0)
+    }
     if ($Mode -eq 'SafeNormalDesktop') {
         $validRun = $validRun -and $safeFrameComplete -and $safeLoopEnter -and -not $safeFaultFramebufferInvalid -and -not $safeFaultException
+    } elseif ($Mode -eq 'NormalDesktopFirstFrame') {
+        $validRun = $validRun -and $normalFrameComplete -and $normalFrameHalt -and ($normalFrameFault.Count -eq 0)
     }
 
     Write-Host "[uefi-run] Validation:" -ForegroundColor Cyan
@@ -502,10 +560,16 @@ try {
     Write-Host "[uefi-run]   Dispatch reason present: $dispatchReasonPresent" -ForegroundColor Cyan
     Write-Host "[uefi-run]   SMAIN_DISPATCH_REASON=TINY_UEFI: $($serialText.Contains('SMAIN_DISPATCH_REASON=TINY_UEFI'))" -ForegroundColor Cyan
     Write-Host "[uefi-run]   SMAIN_DISPATCH_REASON=SAFE_NORMAL_DESKTOP_UEFI: $($serialText.Contains('SMAIN_DISPATCH_REASON=SAFE_NORMAL_DESKTOP_UEFI'))" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI_FIRST_FRAME: $($serialText.Contains('SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI_FIRST_FRAME'))" -ForegroundColor Cyan
     Write-Host "[uefi-run]   SAFE_NORMAL_DESKTOP_FRAME_COMPLETE: $safeFrameComplete" -ForegroundColor Cyan
     Write-Host "[uefi-run]   SAFE_NORMAL_DESKTOP_LOOP_ENTER: $safeLoopEnter" -ForegroundColor Cyan
     Write-Host "[uefi-run]   SAFE_NORMAL_DESKTOP_FAULT=FRAMEBUFFER_INVALID: $safeFaultFramebufferInvalid" -ForegroundColor Cyan
     Write-Host "[uefi-run]   SAFE_NORMAL_DESKTOP_FAULT=EXCEPTION: $safeFaultException" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   NORMAL_FRAME_COMPLETE: $normalFrameComplete" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   NORMAL_FRAME_HALT_ENTER: $normalFrameHalt" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   NORMAL_FRAME_FAULT lines: $($normalFrameFault.Count)" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   ABI probe started: $abiProbeStarted" -ForegroundColor Cyan
+    Write-Host "[uefi-run]   ABI probe success: $abiProbeSuccess" -ForegroundColor Cyan
     Write-Host "[uefi-run]   Fault VEC lines: $($vecLines.Count)" -ForegroundColor Cyan
     Write-Host "[uefi-run]   Fault ERR lines: $($errLines.Count)" -ForegroundColor Cyan
     Write-Host "[uefi-run]   Fault CR2 lines: $($cr2Lines.Count)" -ForegroundColor Cyan
@@ -534,10 +598,16 @@ try {
         "DISPATCH_REASON_PRESENT=$dispatchReasonPresent"
         "TINY_UEFI_PRESENT=$($serialText.Contains('SMAIN_DISPATCH_REASON=TINY_UEFI'))"
         "SAFE_NORMAL_DESKTOP_PRESENT=$($serialText.Contains('SMAIN_DISPATCH_REASON=SAFE_NORMAL_DESKTOP_UEFI'))"
+        "NORMAL_DESKTOP_UEFI_FIRST_FRAME_PRESENT=$($serialText.Contains('SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI_FIRST_FRAME'))"
         "SAFE_NORMAL_DESKTOP_FRAME_COMPLETE=$safeFrameComplete"
         "SAFE_NORMAL_DESKTOP_LOOP_ENTER=$safeLoopEnter"
         "SAFE_NORMAL_DESKTOP_FAULT_FRAMEBUFFER_INVALID=$safeFaultFramebufferInvalid"
         "SAFE_NORMAL_DESKTOP_FAULT_EXCEPTION=$safeFaultException"
+        "NORMAL_FRAME_COMPLETE=$normalFrameComplete"
+        "NORMAL_FRAME_HALT_ENTER=$normalFrameHalt"
+        "NORMAL_FRAME_FAULT_LINES=$($normalFrameFault.Count)"
+        "ABI_PROBE_STARTED=$abiProbeStarted"
+        "ABI_PROBE_SUCCESS=$abiProbeSuccess"
         "FAULT_VEC_LINES=$($vecLines.Count)"
         "FAULT_ERR_LINES=$($errLines.Count)"
         "FAULT_CR2_LINES=$($cr2Lines.Count)"

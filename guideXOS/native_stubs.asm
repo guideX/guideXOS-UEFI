@@ -9,6 +9,14 @@ default rel
 
 section .text
 
+; Return the caller-visible RSP without creating a frame.  This is used only
+; by bounded ABI diagnostics; keeping the helper frame-less makes the value
+; the exact RSP at the managed call site after the helper returns.
+global ReadRSP
+ReadRSP:
+    mov rax, rsp
+    ret
+
 ; Module pointer accessor for UEFI boot
 ; Returns the address of the __Module symbol (module table)
 ; This is used by KMain to initialize the NativeAOT runtime

@@ -8,8 +8,10 @@
 ;   - cli
 ;   - Save parameters BEFORE any stack/CR3 changes
 ;   - Load cr3 = pml4Phys (BEFORE stack switch, since trampoline must be mapped)
-;   - rsp = stackTop (16-byte aligned)
-;   - jmp kernelEntry(bootInfo) using MS x64 ABI (RCX=bootInfo, 32-byte shadow space)
+;   - rsp = stackTop (16-byte aligned), then reserve 0x28 bytes
+;     (32-byte home space plus an 8-byte synthetic CALL return slot)
+;   - jmp kernelEntry(bootInfo) using MS x64 ABI (RCX=bootInfo), presenting
+;     the same RSP%16==8 callee entry state as a normal CALL
 ;
 ; CRITICAL: The trampoline code AND the new stack must both be identity-mapped
 ;           in the new page tables before calling this function!
@@ -23,6 +25,119 @@ global GetTrampolineCodeSize
 
 section .text
 
+; Bounded ABI diagnostics.  These helpers have no net stack effect and do
+; not issue CALL/RET, so each checkpoint reports the trampoline's real RSP at
+; the named boundary.  The balanced push/pop in the byte emitter preserves
+; the value while polling the UART line-status register.
+%macro ABI_SERIAL_EMIT_AL 0
+    push rax
+    mov dx, 03FDh
+%%wait:
+    in al, dx
+    test al, 20h
+    jz %%wait
+    pop rax
+    mov dx, 03F8h
+    out dx, al
+%endmacro
+
+%macro ABI_SERIAL_CHAR 1
+    mov al, %1
+    ABI_SERIAL_EMIT_AL
+%endmacro
+
+%macro ABI_SERIAL_HEX64 1
+    mov r10, %1
+    mov r11d, 16
+%%hex:
+    rol r10, 4
+    mov al, r10b
+    and al, 0Fh
+    add al, '0'
+    cmp al, '9'
+    jbe %%digit
+    add al, 7
+%%digit:
+    ABI_SERIAL_EMIT_AL
+    dec r11d
+    jnz %%hex
+%endmacro
+
+%macro ABI_SERIAL_NIBBLE 1
+    mov r10, %1
+    and r10d, 0Fh
+    mov al, r10b
+    add al, '0'
+    cmp al, '9'
+    jbe %%digit
+    add al, 7
+%%digit:
+    ABI_SERIAL_EMIT_AL
+%endmacro
+
+%macro ABI_SERIAL_MOD32 1
+    mov r10, %1
+    and r10d, 1Fh
+    mov al, r10b
+    shr al, 4
+    add al, '0'
+    ABI_SERIAL_EMIT_AL
+    mov al, r10b
+    and al, 0Fh
+    add al, '0'
+    cmp al, '9'
+    jbe %%digit
+    add al, 7
+%%digit:
+    ABI_SERIAL_EMIT_AL
+%endmacro
+
+%macro ABI_RSP_CHECKPOINT 1
+    ABI_SERIAL_CHAR 'A'
+    ABI_SERIAL_CHAR 'B'
+    ABI_SERIAL_CHAR 'I'
+    ABI_SERIAL_CHAR '_'
+    ABI_SERIAL_CHAR 'R'
+    ABI_SERIAL_CHAR 'S'
+    ABI_SERIAL_CHAR 'P'
+    ABI_SERIAL_CHAR '_'
+    ABI_SERIAL_CHAR %1
+    ABI_SERIAL_CHAR ' '
+    ABI_SERIAL_CHAR 'R'
+    ABI_SERIAL_CHAR 'S'
+    ABI_SERIAL_CHAR 'P'
+    ABI_SERIAL_CHAR '='
+    ABI_SERIAL_CHAR '0'
+    ABI_SERIAL_CHAR 'x'
+    ABI_SERIAL_HEX64 rsp
+    ABI_SERIAL_CHAR ' '
+    ABI_SERIAL_CHAR 'R'
+    ABI_SERIAL_CHAR 'S'
+    ABI_SERIAL_CHAR 'P'
+    ABI_SERIAL_CHAR '_'
+    ABI_SERIAL_CHAR 'M'
+    ABI_SERIAL_CHAR 'O'
+    ABI_SERIAL_CHAR 'D'
+    ABI_SERIAL_CHAR '1'
+    ABI_SERIAL_CHAR '6'
+    ABI_SERIAL_CHAR '='
+    ABI_SERIAL_NIBBLE rsp
+    ABI_SERIAL_CHAR ' '
+    ABI_SERIAL_CHAR 'R'
+    ABI_SERIAL_CHAR 'S'
+    ABI_SERIAL_CHAR 'P'
+    ABI_SERIAL_CHAR '_'
+    ABI_SERIAL_CHAR 'M'
+    ABI_SERIAL_CHAR 'O'
+    ABI_SERIAL_CHAR 'D'
+    ABI_SERIAL_CHAR '3'
+    ABI_SERIAL_CHAR '2'
+    ABI_SERIAL_CHAR '='
+    ABI_SERIAL_MOD32 rsp
+    ABI_SERIAL_CHAR 0Dh
+    ABI_SERIAL_CHAR 0Ah
+%endmacro
+
 ; void BootHandoffTrampoline(void* kernelEntry, void* bootInfo, void* stackTop, void* pml4Phys);
 BootHandoffTrampoline:
     ; Windows x64 calling convention on entry:
@@ -34,11 +149,15 @@ BootHandoffTrampoline:
     cli                         ; Disable interrupts - no going back
 
     ; === Stage 1: Save all parameters in non-volatile registers FIRST ===
-    ; We must do this BEFORE touching stack or CR3!
+    ; We must do this BEFORE touching stack, CR3, or the serial logger. The
+    ; logger uses DX as a UART port register, so logging before this capture
+    ; would corrupt the low 16 bits of the bootInfo argument in RDX.
     mov r12, rcx                ; r12 = kernelEntry
     mov r13, rdx                ; r13 = bootInfo
     mov r14, r8                 ; r14 = stackTop
     mov r15, r9                 ; r15 = pml4Phys
+
+    ABI_RSP_CHECKPOINT 'T'       ; Exact trampoline-entry RSP
 
     ; --- Breadcrumb: 'T' = Trampoline entry ---
     mov dx, 03F8h
@@ -73,10 +192,12 @@ BootHandoffTrampoline:
 
 .skip_cr3:
     ; === Stage 3: Switch to new stack ===
+    ABI_RSP_CHECKPOINT 'B'       ; RSP immediately before stack switch
     ; Now that we have new page tables, switch to the new stack
     ; (which must be mapped in the new page tables)
     mov rsp, r14                ; rsp = stackTop
     and rsp, ~0Fh               ; Ensure 16-byte alignment
+    ABI_RSP_CHECKPOINT 'S'       ; RSP immediately after stack alignment
 
     ; --- Breadcrumb: 'S' = Stack switched ---
     mov dx, 03F8h
@@ -93,9 +214,12 @@ BootHandoffTrampoline:
     ; MS x64 ABI: RCX = first parameter (bootInfo)
     mov rcx, r13                ; rcx = bootInfo
 
-    ; Allocate 32-byte shadow space (required by MS x64 ABI)
-    ; Stack is 16-byte aligned, sub 32 keeps it aligned
-    sub rsp, 20h
+    ; A normal MS x64 CALL presents the callee with RSP%16==8 because CALL
+    ; pushes an 8-byte return address. This transition uses JMP, so reserve
+    ; that slot explicitly, in addition to the required 32-byte home space.
+    ; The slot is intentionally not populated: KMain is non-returning.
+    ; Aligned stackTop (RSP%16==0) - 0x28 => NativeAOT callee entry RSP%16==8.
+    sub rsp, 28h
 
     ; Clear other parameter registers (not strictly necessary but clean)
     xor rdx, rdx
@@ -920,13 +1044,17 @@ BootHandoffTrampoline:
     mov dx, 03F8h
     mov al, 0Ah
     out dx, al
+
+    ABI_RSP_CHECKPOINT 'J'       ; RSP immediately before the JMP entry
     
     ; === FINAL JUMP TO KERNEL ===
     ; RCX = bootInfo pointer (MS x64 ABI first argument)
-    ; Stack is 16-byte aligned (we're using the new stack from r14)
+    ; RSP is 8 mod 16 at this exact boundary: the JMP supplies no return
+    ; address, so the reserved 0x28 presents normal CALL-callee alignment.
     ; Page tables are loaded in CR3
     ;
-    ; Use JMP instead of CALL to avoid any stack issues
+    ; Use JMP instead of CALL because KMain is non-returning; the explicit
+    ; 0x28 reservation above supplies the normal callee entry geometry.
     jmp r12
     
 .kernel_returned:

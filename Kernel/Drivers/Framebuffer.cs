@@ -79,6 +79,7 @@ namespace guideXOS.Kernel.Drivers {
         /// framebuffer address.
         /// </summary>
         public static void EnsureGraphics() {
+            Program.LogUefiGraphicsState("ENSURE_ENTRY", Graphics);
             RecoverUefiState();
             // STEP 1: If OriginalVideoMemory is set, always trust it over VideoMemory.
             // VideoMemory can get corrupted in UEFI mode; OriginalVideoMemory never changes.
@@ -98,7 +99,10 @@ namespace guideXOS.Kernel.Drivers {
                 }
             }
             // STEP 2: If Graphics survived and already points at VideoMemory, we're done.
-            if (Graphics != null && (ulong)Graphics.VideoMemory == (ulong)VideoMemory) return;
+            if (Graphics != null && (ulong)Graphics.VideoMemory == (ulong)VideoMemory) {
+                Program.LogUefiGraphicsState("ENSURE_EXIT_MATCH", Graphics);
+                return;
+            }
             // STEP 3: If Graphics exists but points elsewhere, fix it.
             if (Graphics != null && (ulong)VideoMemory != 0) {
                 Graphics.VideoMemory = VideoMemory;
@@ -108,11 +112,16 @@ namespace guideXOS.Kernel.Drivers {
                 if (Height != 0 && Graphics.Height != Height) {
                     Graphics.Height = Height;
                 }
+                Program.LogUefiGraphicsState("ENSURE_EXIT_FIXED", Graphics);
                 return;
             }
             // STEP 4: Recreate Graphics from scratch.
-            if ((ulong)VideoMemory == 0 || Width == 0 || Height == 0) return;
+            if ((ulong)VideoMemory == 0 || Width == 0 || Height == 0) {
+                Program.LogUefiGraphicsState("ENSURE_EXIT_INVALID", Graphics);
+                return;
+            }
             Graphics = new Graphics(Width, Height, VideoMemory);
+            Program.LogUefiGraphicsState("ENSURE_REBUILT", Graphics);
         }
 
         public static void SetBootInfo(UefiBootInfo* bootInfo) {
@@ -180,7 +189,9 @@ namespace guideXOS.Kernel.Drivers {
             Control.MousePosition.X = XRes / 2;
             Control.MousePosition.Y = YRes / 2;
             Graphics = new Graphics(Width, Height, FB); // Ensure Graphics is created ONLY here
+            Program.LogUefiGraphicsState("KMAIN_AFTER_FB_INIT", Graphics);
             Console.Clear();
+            Program.LogUefiGraphicsState("KMAIN_AFTER_FB_CONSOLE_CLEAR", Graphics);
         }
     }
 }

@@ -31,6 +31,10 @@ namespace guideXOS.Graph {
             }
         }
         public virtual void FillRectangle(int X, int Y, int Width, int Height, uint Color) {
+            bool abiProbe = global::Program.IsUefiAbiDiagnosticActive();
+            if (abiProbe) {
+                global::Program.AbiLogCurrentRsp("GRAPHICS_FILL_BODY");
+            }
             if (VideoMemory == null || this.Width <= 0 || this.Height <= 0 || Width <= 0 || Height <= 0) return;
             int x0 = X;
             int y0 = Y;
@@ -45,7 +49,13 @@ namespace guideXOS.Graph {
 
             ulong rowPixels = (ulong)(x1 - x0);
             for (int y = y0; y < y1; y++) {
+                if (abiProbe && y == y0) {
+                    global::Program.AbiLogCurrentRsp("GRAPHICS_FILL_BEFORE_STOSD");
+                }
                 Native.Stosd(VideoMemory + (this.Width * y) + x0, Color, rowPixels);
+            }
+            if (abiProbe) {
+                global::Program.AbiLogCurrentRsp("GRAPHICS_FILL_AFTER_STOSD");
             }
         }
         public virtual void AFillRectangle(int X, int Y, int Width, int Height, uint Color) {

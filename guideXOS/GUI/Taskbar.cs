@@ -120,15 +120,40 @@ namespace guideXOS.GUI {
         /// <summary>
         /// Draw UEFI Taskbar
         /// </summary>
-        private void DrawUEFITaskBar() {
+        private unsafe void DrawUEFITaskBar() {
+            bool abiProbe = Program.IsUefiAbiDiagnosticActive();
+            guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
+            Program.LogUefiGraphicsState("TASKBAR_EXISTING_ENTRY", graphics);
+            if (Program.IsUefiAbiFreshGraphicsDiagnosticEnabled() && Framebuffer.VideoMemory != null && Framebuffer.Width > 0 && Framebuffer.Height > 0) {
+                // Keep this controlled probe independent of a recovered
+                // managed static object. The method body and its generated
+                // prologue remain the original path; only this diagnostic
+                // leaf receives a fresh concrete receiver.
+                graphics = new guideXOS.Graph.Graphics(
+                    Framebuffer.Width, Framebuffer.Height, Framebuffer.VideoMemory);
+                Program.LogUefiGraphicsState("TASKBAR_FRESH_LOCAL", graphics);
+            }
+            if (abiProbe) {
+                ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_BODY_ENTER");
+            }
+            if (graphics == null) {
+                if (abiProbe) ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_GRAPHICS_NULL");
+                return;
+            }
             // Calculate taskbar position
             int yTop = Framebuffer.Height - _barHeight;
 
             // Draw simple dark taskbar background
-            Framebuffer.Graphics.FillRectangle(0, yTop, Framebuffer.Width, _barHeight, 0xFF1A1A1A);
+            graphics.FillRectangle(0, yTop, Framebuffer.Width, _barHeight, 0xFF1A1A1A);
+            if (abiProbe) {
+                ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_BG_EXIT");
+            }
 
             // Draw a simple line at top of taskbar
-            Framebuffer.Graphics.FillRectangle(0, yTop, Framebuffer.Width, 1, 0xFF333333);
+            graphics.FillRectangle(0, yTop, Framebuffer.Width, 1, 0xFF333333);
+            if (abiProbe) {
+                ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_LINE_EXIT");
+            }
 
             // Draw clock using cached strings - this should be safe
             // FIXED: Only regenerate time/date strings when the time actually changes
@@ -187,6 +212,9 @@ namespace guideXOS.GUI {
 
             // Draw time in upper right
             if (WindowManager.font != null && _cachedTime != null) {
+                if (Program.IsUefiAbiDiagnosticActive()) {
+                    ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_FONT_ENTER");
+                }
                 int timeW = WindowManager.font.MeasureString(_cachedTime);
                 int timeX = Framebuffer.Width - 12 - timeW;
                 int timeY = yTop + ((_barHeight - WindowManager.font.FontSize) / 2) - (WindowManager.font.FontSize / 2);
@@ -197,17 +225,45 @@ namespace guideXOS.GUI {
                     int dateY = timeY + WindowManager.font.FontSize;
                     WindowManager.font.DrawString(timeX, dateY, _cachedDate);
                 }
+                if (Program.IsUefiAbiDiagnosticActive()) {
+                    ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_FONT_EXIT");
+                }
             }
 
             // Draw simple start button placeholder (square)
             int startX = 12;
             int startY = yTop + 4;
             int startSize = _barHeight - 8;
-            Framebuffer.Graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2E);
-            Framebuffer.Graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3E, 1);
+            graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2E);
+            graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3E, 1);
+            if (abiProbe) {
+                ProbeSerialBreadcrumb("ABI_TASKBAR_UEFI_BUTTON_EXIT");
+            }
 
             // Skip all the complex icon loading, Start Menu, workspace switcher, etc.
             // This is MINIMAL BOOT MODE
+        }
+
+        /// <summary>
+        /// Bounded first-frame UEFI taskbar. Keep this primitive-only so the
+        /// one-frame compositor probe does not enter the large managed/RTC
+        /// taskbar frame before the UEFI desktop path is proven.
+        /// </summary>
+        private void DrawUefiBoundedFirstFrame() {
+            int width = Framebuffer.Width;
+            int height = Framebuffer.Height;
+            int yTop = height - _barHeight;
+            var graphics = Framebuffer.Graphics;
+            if (graphics == null || width <= 0 || height <= 0 || yTop < 0) return;
+
+            graphics.FillRectangle(0, yTop, width, _barHeight, 0xFF1A1A1Au);
+            graphics.FillRectangle(0, yTop, width, 1, 0xFF36C2B4u);
+
+            int startX = 12;
+            int startY = yTop + 4;
+            int startSize = _barHeight - 8;
+            graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2Eu);
+            graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3Eu, 1);
         }
 
         /// <summary>
@@ -306,6 +362,31 @@ namespace guideXOS.GUI {
         }
 
         public void Draw() {
+            Program.LogUefiGraphicsState("TASKBAR_DRAW_ENTRY", Framebuffer.Graphics);
+            // Keep the recovered UEFI frame bounded at the caller while using
+            // the original taskbar implementation and canonical receiver.
+            if (BootConsole.CurrentMode == BootMode.UEFI) {
+                if (Program.IsUefiAbiDiagnosticActive()) {
+                    // The diagnostic mode intentionally reaches the original
+                    // UEFI implementation exactly once.
+                    Program.AbiLogCurrentRsp("TASKBAR_DRAW_BODY");
+                    DrawLegacy();
+                    return;
+                }
+                // The bounded first-frame compositor now uses the canonical
+                // framebuffer-backed receiver through the original taskbar
+                // implementation.  Keep the frame bounded at the caller;
+                // do not substitute a leaf-only graphics context here.
+                DrawLegacy();
+                return;
+            }
+            DrawLegacy();
+        }
+
+        private void DrawLegacy() {
+            if (Program.IsUefiAbiDiagnosticActive()) {
+                Program.AbiLogCurrentRsp("TASKBAR_DRAWLEGACY_BODY");
+            }
             switch (BootConsole.CurrentMode) {
                 case BootMode.UEFI:
                     DrawUEFITaskBar();

@@ -377,6 +377,20 @@ unsafe class Program {
     // of the full render loop.  UEFI_STEADY_STATE_SERIAL_ONLY must be false.
     private const bool UEFI_STEADY_STATE_MINIMAL_RENDER = true;
     private const bool UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH = false;
+    // Bounded proof path: execute one real UEFI desktop frame, then halt or
+    // return to UTINY. Keep this disabled in the normal recovery default.
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE = false;
+    private const bool UEFI_NORMAL_DESKTOP_FIRST_FRAME_HALT = true;
+
+    // Bounded ABI probes. 0 keeps the normal recovery path unchanged; 1
+    // invokes the original UEFI taskbar method once; 2 invokes the original
+    // UEFI cursor method once. The run script patches this constant only for
+    // a controlled diagnostic build and restores the source afterward.
+    private const int UEFI_ABI_PROBE_TARGET = 0;
+    // Diagnostic-only comparison switch. When enabled, the ABI probe rebuilds
+    // the canonical receiver once and records both receiver states. Normal
+    // recovery leaves this false and exercises the recovered receiver.
+    private const bool UEFI_ABI_PROBE_REBUILD_GRAPHICS = false;
 
     // When true, DrawUefiSafeModeDiagnostics() is restricted to frame 1 only.
     // Default: true (safe).  Set false only for targeted diagnostics sessions.
@@ -539,9 +553,104 @@ unsafe class Program {
                UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME;
     }
 
+    private static bool UseUefiNormalDesktopFirstFrameProbeMode() {
+        return BootConsole.CurrentMode == guideXOS.BootMode.UEFI &&
+               UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE;
+    }
+
+    internal static bool IsUefiAbiDiagnosticActive() {
+        return BootConsole.CurrentMode == guideXOS.BootMode.UEFI &&
+               UEFI_ABI_PROBE_TARGET != 0;
+    }
+
+    internal static bool IsUefiAbiFreshGraphicsDiagnosticEnabled() {
+        return IsUefiAbiDiagnosticActive() && UEFI_ABI_PROBE_REBUILD_GRAPHICS;
+    }
+
+    private static unsafe ulong GetManagedObjectAddress(object value) {
+        if (value == null) return 0;
+        object copy = value;
+        return (ulong)(*(IntPtr*)Internal.Runtime.CompilerServices.Unsafe.AsPointer(ref copy));
+    }
+
+    internal static unsafe void LogUefiGraphicsState(string label, guideXOS.Graph.Graphics receiver) {
+        if (!IsUefiAbiDiagnosticActive() || label == null) return;
+
+        SerialBreadcrumb("GFX_STATE_" + label);
+        SerialBreadcrumb("GFX_STATE_RECEIVER_ADDR");
+        ulong receiverAddress = GetManagedObjectAddress(receiver);
+        SerialWriteHex(receiverAddress);
+        SerialChar('\n');
+        SerialBreadcrumb(receiver == null ? "GFX_STATE_RECEIVER_NULL=1" : "GFX_STATE_RECEIVER_NULL=0");
+        SerialBreadcrumb(receiver == Framebuffer.Graphics ? "GFX_STATE_RECEIVER_IS_CANONICAL=1" : "GFX_STATE_RECEIVER_IS_CANONICAL=0");
+
+        // The object layout is intentionally reported as raw words only for
+        // this bounded probe. The first word is the NativeAOT method-table
+        // pointer; the actual receiver fields are logged below by name.
+        if (receiverAddress != 0) {
+            ulong* raw = (ulong*)receiverAddress;
+            SerialBreadcrumb("GFX_STATE_METHOD_TABLE");
+            SerialWriteHex(raw[0]);
+            SerialChar('\n');
+        }
+
+        SerialBreadcrumb("GFX_STATE_RECEIVER_WIDTH");
+        SerialWriteUnsigned(receiver == null ? 0UL : (ulong)(uint)receiver.Width);
+        SerialChar('\n');
+        SerialBreadcrumb("GFX_STATE_RECEIVER_HEIGHT");
+        SerialWriteUnsigned(receiver == null ? 0UL : (ulong)(uint)receiver.Height);
+        SerialChar('\n');
+        SerialBreadcrumb("GFX_STATE_RECEIVER_VM");
+        SerialWriteHex(receiver == null ? 0UL : (ulong)receiver.VideoMemory);
+        SerialChar('\n');
+
+        SerialBreadcrumb("GFX_STATE_FB_WIDTH");
+        SerialWriteUnsigned(Framebuffer.Width);
+        SerialChar('\n');
+        SerialBreadcrumb("GFX_STATE_FB_HEIGHT");
+        SerialWriteUnsigned(Framebuffer.Height);
+        SerialChar('\n');
+        SerialBreadcrumb("GFX_STATE_FB_VM");
+        SerialWriteHex((ulong)Framebuffer.VideoMemory);
+        SerialChar('\n');
+        SerialBreadcrumb("GFX_STATE_FB_ORIGINAL_VM");
+        SerialWriteHex((ulong)Framebuffer.OriginalVideoMemory);
+        SerialChar('\n');
+        SerialBreadcrumb("GFX_STATE_FB_FIRST_BUFFER");
+        SerialWriteHex((ulong)Framebuffer.FirstBuffer);
+        SerialChar('\n');
+        SerialBreadcrumb("GFX_STATE_FB_SECOND_BUFFER");
+        SerialWriteHex((ulong)Framebuffer.SecondBuffer);
+        SerialChar('\n');
+
+        UefiBootInfo* bootInfo = Framebuffer.OriginalBootInfo;
+        SerialBreadcrumb("GFX_STATE_BOOTINFO");
+        SerialWriteHex((ulong)bootInfo);
+        SerialChar('\n');
+        if (bootInfo != null) {
+            SerialBreadcrumb("GFX_STATE_BOOTINFO_FB_BASE");
+            SerialWriteHex(bootInfo->FramebufferBase);
+            SerialChar('\n');
+            SerialBreadcrumb("GFX_STATE_BOOTINFO_FB_WIDTH");
+            SerialWriteUnsigned(bootInfo->FramebufferWidth);
+            SerialChar('\n');
+            SerialBreadcrumb("GFX_STATE_BOOTINFO_FB_HEIGHT");
+            SerialWriteUnsigned(bootInfo->FramebufferHeight);
+            SerialChar('\n');
+            SerialBreadcrumb("GFX_STATE_BOOTINFO_FB_PITCH");
+            SerialWriteUnsigned(bootInfo->FramebufferPitch);
+            SerialChar('\n');
+            SerialBreadcrumb("GFX_STATE_BOOTINFO_FB_BPP");
+            SerialWriteUnsigned(32);
+            SerialChar('\n');
+        }
+    }
+
     internal static bool ShouldSkipEarlyUefiHardwareInitialization() {
         return BootConsole.CurrentMode == guideXOS.BootMode.UEFI &&
                (UseSafeNormalDesktopUefiMode() ||
+                UseUefiNormalDesktopFirstFrameProbeMode() ||
+                IsUefiAbiDiagnosticActive() ||
                 (UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && NORMAL_DESKTOP_UEFI_STEP_PROBE));
     }
 
@@ -1143,13 +1252,16 @@ unsafe class Program {
     /// KMain
     /// </summary>
     public static void KMain() {
+        LogUefiGraphicsState("PROGRAM_KMAIN_ENTRY", Framebuffer.Graphics);
         string customCharset = null;
         if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
             bool useSafeNormalDesktopUefi = UseSafeNormalDesktopUefiMode();
+            bool useUefiNormalDesktopFirstFrameProbe = UseUefiNormalDesktopFirstFrameProbeMode();
             // In UEFI mode, disable debug lines to prevent graphical corruption
             BootConsole.DrawDebugLines = false;
             BootConsole.WriteLine("[BOOT_MODE] UEFI");
-            if (!useSafeNormalDesktopUefi) {
+            bool skipUefiInputHardware = useSafeNormalDesktopUefi || useUefiNormalDesktopFirstFrameProbe || IsUefiAbiDiagnosticActive();
+            if (!skipUefiInputHardware) {
                 BootConsole.WriteLine("[MOUSE_CAPABILITIES] INITIALIZE");
                 // UEFI mode: mark uefi=true and disable PS/2 fallback.
                 MouseCapabilityDetector.DetectAndInitialize(null, true, false);
@@ -1195,6 +1307,10 @@ unsafe class Program {
                 // Log final mouse detection result
                 BootConsole.WriteLine("[INPUT] Mouse detection complete");
                 BootConsole.WriteLine("[INPUT] Mouse enabled: " + MouseCapabilityDetector.MouseEnabled);
+            } else if (useUefiNormalDesktopFirstFrameProbe) {
+                BootConsole.WriteLine("[SMAIN] Bounded normal desktop first-frame probe - skipping mouse, keyboard, and USB initialization");
+            } else if (IsUefiAbiDiagnosticActive()) {
+                BootConsole.WriteLine("[SMAIN] Bounded ABI method probe - skipping mouse, keyboard, and USB initialization");
             } else {
                 BootConsole.WriteLine("[SMAIN] SAFE normal desktop mode - skipping mouse, keyboard, and USB initialization");
             }
@@ -1204,27 +1320,34 @@ unsafe class Program {
             // Ramdisk.Instance) get zeroed between EntryPoint.KMain and Program.KMain.
             // However, Ramdisk.RawBasePointer (a static byte*) survives because it's a
             // value type, not a managed reference. Use it to reconstruct everything.
-            BootConsole.WriteLine("[FS] Re-mounting filesystem for UEFI");
-            BootConsole.WriteLine("[FS] RawBasePointer = " + ((ulong)Ramdisk.RawBasePointer).ToString("x"));
-            if (Ramdisk.RawBasePointer != null) {
-                try {
-                    // Reconstruct Ramdisk from surviving raw pointer
-                    if (Disk.Instance == null) {
-                        BootConsole.WriteLine("[FS] Reconstructing Ramdisk from RawBasePointer");
-                        new Ramdisk((System.IntPtr)Ramdisk.RawBasePointer);
-                        BootConsole.WriteLine("[FS] Ramdisk reconstructed");
-                    }
-                    // Now mount RdskFS (uses RawBasePointer directly)
-                    File.Instance = new RdskFS();
-                    BootConsole.WriteLine("[FS] Filesystem re-mounted OK");
-                } catch {
-                    BootConsole.WriteLine("[FS] Filesystem re-mount FAILED");
-                }
+            // The ABI probes intentionally omit this unrelated recovery work: KMain has
+            // already initialized the framebuffer/desktop objects needed by the one
+            // target call, and the normal recovery path remains unchanged.
+            if (UEFI_ABI_PROBE_TARGET != 0) {
+                BootConsole.WriteLine("[FS] SKIPPED (bounded ABI method probe)");
             } else {
-                BootConsole.WriteLine("[FS] FATAL: RawBasePointer is NULL - no ramdisk!");
+                BootConsole.WriteLine("[FS] Re-mounting filesystem for UEFI");
+                BootConsole.WriteLine("[FS] RawBasePointer = " + ((ulong)Ramdisk.RawBasePointer).ToString("x"));
+                if (Ramdisk.RawBasePointer != null) {
+                    try {
+                        // Reconstruct Ramdisk from surviving raw pointer
+                        if (Disk.Instance == null) {
+                            BootConsole.WriteLine("[FS] Reconstructing Ramdisk from RawBasePointer");
+                            new Ramdisk((System.IntPtr)Ramdisk.RawBasePointer);
+                            BootConsole.WriteLine("[FS] Ramdisk reconstructed");
+                        }
+                        // Now mount RdskFS (uses RawBasePointer directly)
+                        File.Instance = new RdskFS();
+                        BootConsole.WriteLine("[FS] Filesystem re-mounted OK");
+                    } catch {
+                        BootConsole.WriteLine("[FS] Filesystem re-mount FAILED");
+                    }
+                } else {
+                    BootConsole.WriteLine("[FS] FATAL: RawBasePointer is NULL - no ramdisk!");
+                }
             }
 
-            if (!useSafeNormalDesktopUefi) {
+            if (!useSafeNormalDesktopUefi && !IsUefiAbiDiagnosticActive()) {
                 BootConsole.WriteLine("[CURSOR] Creating cursor images");
                 // Debug: Verify we're still in UEFI mode
                 Native.Out8(0x3F8, (byte)'[');
@@ -1252,6 +1375,25 @@ unsafe class Program {
                     BootConsole.WriteLine("[WM] INIT FAILED!");
                 }
                 
+                BootConsole.WriteLine("[DESKTOP] INIT");
+                try {
+                    Desktop.Initialize();
+                    BootConsole.WriteLine("[DESKTOP] INIT complete");
+                } catch {
+                    BootConsole.WriteLine("[DESKTOP] INIT FAILED!");
+                }
+            } else if (IsUefiAbiDiagnosticActive()) {
+                // The cursor image constructor is outside this probe's scope.
+                // Initialize only the objects required by the original method
+                // under test; DrawUefiCursor is procedural and needs no Image.
+                BootConsole.WriteLine("[CURSOR] SKIPPED (bounded ABI method probe)");
+                BootConsole.WriteLine("[WM] INIT");
+                try {
+                    WindowManager.Initialize();
+                    BootConsole.WriteLine("[WM] INIT complete");
+                } catch {
+                    BootConsole.WriteLine("[WM] INIT FAILED!");
+                }
                 BootConsole.WriteLine("[DESKTOP] INIT");
                 try {
                     Desktop.Initialize();
@@ -1414,6 +1556,9 @@ unsafe class Program {
 
 
     public static void SMain() {
+        AbiLogCurrentRsp("SMAIN_BODY");
+        LogUefiGraphicsState("SMAIN_ENTRY", Framebuffer.Graphics);
+
         // CRITICAL: RAW serial output FIRST to prove we entered SMain
         // Use direct port I/O to bypass any potential issues with BootConsole
         Native.Out8(0x3F8, (byte)'[');
@@ -1425,8 +1570,15 @@ unsafe class Program {
         Native.Out8(0x3F8, (byte)']');
         Native.Out8(0x3F8, (byte)'\n');
 
-        // Run setup in a separate method to keep SMain's stack frame minimal
-        SMainSetup();
+        // Run setup in a separate method to keep SMain's stack frame minimal.
+        // The ABI probe deliberately skips setup: its target is the exact
+        // managed method call, not a second copy of the recovered desktop
+        // initialization sequence.
+        if (IsUefiAbiDiagnosticActive()) {
+            BootConsole.WriteLine("[SMAIN] Setup skipped (bounded ABI method probe)");
+        } else {
+            SMainSetup();
+        }
 
         BootConsole.WriteLine("[SMAIN] Setup complete - entering main loop");
 
@@ -1446,21 +1598,31 @@ unsafe class Program {
         // Enter the main render loop (in a separate method to keep stack frames small)
         bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
         bool useSafeNormalUefiDesktop = isUefi && UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME;
-        bool useTinyUefi = isUefi && UEFI_USE_TINY_RENDER_LOOP_BYPASS && !useSafeNormalUefiDesktop && !UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
-        bool useNormalUefiDesktopStepProbe = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && NORMAL_DESKTOP_UEFI_STEP_PROBE;
-        bool useNormalUefiDesktop = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && !NORMAL_DESKTOP_UEFI_STEP_PROBE;
-        LogUefiRenderDispatchGateDiagnostics(isUefi, useSafeNormalUefiDesktop, useTinyUefi, useNormalUefiDesktopStepProbe, useNormalUefiDesktop);
-        LogUefiRenderDispatchDiagnostics(useNormalUefiDesktopStepProbe, useTinyUefi, useSafeNormalUefiDesktop, useNormalUefiDesktop);
+        bool useUefiAbiProbe = isUefi && UEFI_ABI_PROBE_TARGET != 0;
+        bool useNormalUefiDesktopFirstFrame = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE;
+        bool useTinyUefi = isUefi && UEFI_USE_TINY_RENDER_LOOP_BYPASS && !useSafeNormalUefiDesktop && !useUefiAbiProbe && !useNormalUefiDesktopFirstFrame && !UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH;
+        bool useNormalUefiDesktopStepProbe = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && !useNormalUefiDesktopFirstFrame && NORMAL_DESKTOP_UEFI_STEP_PROBE;
+        bool useNormalUefiDesktop = isUefi && UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH && !useNormalUefiDesktopFirstFrame && !NORMAL_DESKTOP_UEFI_STEP_PROBE;
+        LogUefiRenderDispatchGateDiagnostics(isUefi, useSafeNormalUefiDesktop, useNormalUefiDesktopFirstFrame, useTinyUefi, useNormalUefiDesktopStepProbe, useNormalUefiDesktop);
+        LogUefiRenderDispatchDiagnostics(useNormalUefiDesktopStepProbe, useTinyUefi, useSafeNormalUefiDesktop, useNormalUefiDesktopFirstFrame, useNormalUefiDesktop);
         SerialBreadcrumb(useSafeNormalUefiDesktop ? "SMAIN_DISPATCH_REASON=SAFE_NORMAL_DESKTOP_UEFI" :
+                         useUefiAbiProbe ? "SMAIN_DISPATCH_REASON=UEFI_ABI_PROBE" :
+                         useNormalUefiDesktopFirstFrame ? "SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI_FIRST_FRAME" :
                          useTinyUefi ? "SMAIN_DISPATCH_REASON=TINY_UEFI" :
                          useNormalUefiDesktopStepProbe ? "SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI_STEP_PROBE" :
                          useNormalUefiDesktop ? "SMAIN_DISPATCH_REASON=NORMAL_DESKTOP_UEFI" :
                          isUefi ? "SMAIN_DISPATCH_REASON=FULL_UEFI" :
                          "SMAIN_DISPATCH_REASON=LEGACY");
 
-        if (useSafeNormalUefiDesktop) {
+        if (useUefiAbiProbe) {
+            SerialBreadcrumb("SMAIN_DISPATCH_UEFI_ABI_PROBE");
+            RenderLoopUefiAbiProbe();
+        } else if (useSafeNormalUefiDesktop) {
             SerialBreadcrumb("SMAIN_DISPATCH_SAFE_NORMAL_DESKTOP_UEFI");
             RenderLoopSafeNormalDesktopFirstFrame();
+        } else if (useNormalUefiDesktopFirstFrame) {
+            SerialBreadcrumb("SMAIN_DISPATCH_NORMAL_DESKTOP_UEFI_FIRST_FRAME");
+            RenderLoopUefiNormalDesktopFirstFrame();
         } else if (useTinyUefi) {
             SerialBreadcrumb("SMAIN_DISPATCH_TINY_UEFI");
             RenderLoopUefiTinyBypass();
@@ -1844,6 +2006,33 @@ unsafe class Program {
         for (int i = 0; i < breadcrumb.Length; i++) {
             SerialChar(breadcrumb[i]);
         }
+        SerialChar('\n');
+    }
+
+    internal static void NormalDesktopFrameBreadcrumb(string breadcrumb) {
+        SerialBreadcrumb(breadcrumb);
+    }
+
+    private static void SerialWriteLiteral(string text) {
+        if (text == null) return;
+        for (int i = 0; i < text.Length; i++) {
+            SerialChar(text[i]);
+        }
+    }
+
+    internal static void AbiLogCurrentRsp(string checkpoint) {
+        // ReadRSP is called normally, so its entry RSP is the caller's RSP
+        // minus the return-address push. Add that 8-byte call effect back to
+        // report the caller's actual current RSP.
+        ulong rsp = Native.ReadRSP() + 8UL;
+        SerialWriteLiteral("ABI_CHECKPOINT=");
+        SerialWriteLiteral(checkpoint);
+        SerialWriteLiteral(" RSP=");
+        SerialWriteHex(rsp);
+        SerialWriteLiteral(" RSP_MOD16=");
+        SerialWriteUnsigned(rsp & 0xFUL);
+        SerialWriteLiteral(" RSP_MOD32=");
+        SerialWriteUnsigned(rsp & 0x1FUL);
         SerialChar('\n');
     }
 
@@ -2530,21 +2719,24 @@ unsafe class Program {
         SerialChar('\n');
     }
 
-    private static void LogUefiRenderDispatchGateDiagnostics(bool isUefi, bool useSafeNormalDesktopUefi, bool useTinyUefi, bool useNormalUefiDesktopStepProbe, bool useNormalUefiDesktop) {
+    private static void LogUefiRenderDispatchGateDiagnostics(bool isUefi, bool useSafeNormalDesktopUefi, bool useNormalUefiDesktopFirstFrame, bool useTinyUefi, bool useNormalUefiDesktopStepProbe, bool useNormalUefiDesktop) {
         SerialBreadcrumb("SMAIN_DISPATCH_GATE_ENTER");
         SerialBreadcrumb(isUefi ? "SMAIN_DISPATCH_GATE_BOOT_MODE_UEFI_TRUE" : "SMAIN_DISPATCH_GATE_BOOT_MODE_UEFI_FALSE");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_STEP_PROBE ? "SMAIN_DISPATCH_GATE_NORMAL_STEP_PROBE_TRUE" : "SMAIN_DISPATCH_GATE_NORMAL_STEP_PROBE_FALSE");
         SerialBreadcrumb(UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH ? "SMAIN_DISPATCH_GATE_ALLOW_NORMAL_TRUE" : "SMAIN_DISPATCH_GATE_ALLOW_NORMAL_FALSE");
         SerialBreadcrumb(UEFI_USE_TINY_RENDER_LOOP_BYPASS ? "SMAIN_DISPATCH_GATE_TINY_BYPASS_TRUE" : "SMAIN_DISPATCH_GATE_TINY_BYPASS_FALSE");
         SerialBreadcrumb(UEFI_ENABLE_SAFE_NORMAL_DESKTOP_FIRST_FRAME ? "SMAIN_DISPATCH_GATE_SAFE_NORMAL_TRUE" : "SMAIN_DISPATCH_GATE_SAFE_NORMAL_FALSE");
-        if (useNormalUefiDesktopStepProbe) {
+        SerialBreadcrumb(UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME_PROBE ? "SMAIN_DISPATCH_GATE_FIRST_FRAME_PROBE_TRUE" : "SMAIN_DISPATCH_GATE_FIRST_FRAME_PROBE_FALSE");
+        if (useNormalUefiDesktopFirstFrame) {
+            SerialBreadcrumb("SMAIN_DISPATCH_GATE_FIRST_FRAME_PROBE_SELECTED");
+        } else if (useNormalUefiDesktopStepProbe) {
             SerialBreadcrumb("SMAIN_DISPATCH_GATE_STEP_PROBE_SELECTED");
         } else if (!useSafeNormalDesktopUefi && !useTinyUefi && !useNormalUefiDesktop) {
             SerialBreadcrumb("SMAIN_DISPATCH_GATE_LEGACY_SELECTED");
         }
     }
 
-    private static void LogUefiRenderDispatchDiagnostics(bool emitVerbose, bool useTinyUefi, bool useSafeNormalDesktopUefi, bool useNormalUefiDesktop) {
+    private static void LogUefiRenderDispatchDiagnostics(bool emitVerbose, bool useTinyUefi, bool useSafeNormalDesktopUefi, bool useNormalUefiDesktopFirstFrame, bool useNormalUefiDesktop) {
         bool isUefi = BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
         // Use the recovered framebuffer state directly here so step-probe runs
         // do not depend on the original UEFI boot-info pointer staying valid.
@@ -2562,9 +2754,10 @@ unsafe class Program {
         SerialBreadcrumb(UEFI_ALLOW_NORMAL_DESKTOP_RENDER_PATH ? "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=1" : "SMAIN_DIAG_NORMAL_DESKTOP_GUARD=0");
         SerialBreadcrumb(NORMAL_DESKTOP_UEFI_STEP_PROBE ? "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=1" : "SMAIN_DIAG_NORMAL_DESKTOP_STEP_PROBE=0");
         SerialBreadcrumb(useSafeNormalDesktopUefi ? "SMAIN_DIAG_SAFE_NORMAL_DESKTOP_FIRST_FRAME=1" : "SMAIN_DIAG_SAFE_NORMAL_DESKTOP_FIRST_FRAME=0");
+        SerialBreadcrumb(useNormalUefiDesktopFirstFrame ? "SMAIN_DIAG_NORMAL_DESKTOP_FIRST_FRAME_PROBE=1" : "SMAIN_DIAG_NORMAL_DESKTOP_FIRST_FRAME_PROBE=0");
         SerialBreadcrumb(emitVerbose ? "SMAIN_DIAG_VERBOSE=1" : "SMAIN_DIAG_VERBOSE=0");
         if (!emitVerbose) {
-            SerialBreadcrumb(useTinyUefi ? "SMAIN_DIAG_REASON_TINY" : useSafeNormalDesktopUefi ? "SMAIN_DIAG_REASON_SAFE_NORMAL_DESKTOP" : useNormalUefiDesktop ? "SMAIN_DIAG_REASON_NORMAL_UefiDesktop" : isUefi ? "SMAIN_DIAG_REASON_FULL_UEFI" : "SMAIN_DIAG_REASON_LEGACY");
+            SerialBreadcrumb(useTinyUefi ? "SMAIN_DIAG_REASON_TINY" : useSafeNormalDesktopUefi ? "SMAIN_DIAG_REASON_SAFE_NORMAL_DESKTOP" : useNormalUefiDesktopFirstFrame ? "SMAIN_DIAG_REASON_NORMAL_DESKTOP_FIRST_FRAME" : useNormalUefiDesktop ? "SMAIN_DIAG_REASON_NORMAL_UefiDesktop" : isUefi ? "SMAIN_DIAG_REASON_FULL_UEFI" : "SMAIN_DIAG_REASON_LEGACY");
             SerialBreadcrumb("SMAIN_DIAG_END");
             return;
         }
@@ -2625,6 +2818,7 @@ unsafe class Program {
 
         SerialBreadcrumb(useTinyUefi ? "SMAIN_DIAG_REASON_TINY" :
                          useSafeNormalDesktopUefi ? "SMAIN_DIAG_REASON_SAFE_NORMAL_DESKTOP" :
+                         useNormalUefiDesktopFirstFrame ? "SMAIN_DIAG_REASON_NORMAL_DESKTOP_FIRST_FRAME" :
                          useNormalUefiDesktop ? "SMAIN_DIAG_REASON_NORMAL_DESKTOP_UEFI" :
                          isUefi ? "SMAIN_DIAG_REASON_FULL_UEFI" :
                          "SMAIN_DIAG_REASON_LEGACY");
@@ -3318,6 +3512,117 @@ unsafe class Program {
                 fb[y * fbW + x] = color;
             }
         }
+    }
+
+    /// <summary>
+    /// Execute exactly one real UEFI desktop frame using the initialized
+    /// Desktop/WindowManager paths and the existing procedural cursor. This is
+    /// deliberately separate from RenderLoop(): that loop still contains the
+    /// serial-only/minimal UEFI steady-state shortcuts.
+    /// </summary>
+    private static void RenderLoopUefiNormalDesktopFirstFrame() {
+        try {
+            SerialBreadcrumb("NORMAL_FRAME_ENTER");
+
+            SerialBreadcrumb("NORMAL_FRAME_GRAPHICS_BEGIN");
+            Framebuffer.EnsureGraphics();
+            if (Framebuffer.Graphics == null || Framebuffer.Graphics.VideoMemory == null ||
+                Framebuffer.Width <= 0 || Framebuffer.Height <= 0) {
+                SerialBreadcrumb("NORMAL_FRAME_FAULT=FRAMEBUFFER_INVALID");
+                HaltAfterNormalDesktopFirstFrame();
+                return;
+            }
+            if (Framebuffer.Graphics.Width != Framebuffer.Width) Framebuffer.Graphics.Width = Framebuffer.Width;
+            if (Framebuffer.Graphics.Height != Framebuffer.Height) Framebuffer.Graphics.Height = Framebuffer.Height;
+            SerialBreadcrumb("NORMAL_FRAME_GRAPHICS_END");
+
+            SerialBreadcrumb("NORMAL_FRAME_BACKGROUND_BEGIN");
+            BackgroundRotationManager.DrawBackground();
+            SerialBreadcrumb("NORMAL_FRAME_BACKGROUND_END");
+
+            SerialBreadcrumb("NORMAL_FRAME_DESKTOP_BEGIN");
+            Desktop.Update(_cachedDocumentIcon, _cachedFolderIcon, _cachedImageIcon, _cachedAudioIcon, 48);
+            SerialBreadcrumb("NORMAL_FRAME_DESKTOP_END");
+
+            SerialBreadcrumb("NORMAL_FRAME_WINDOWS_BEGIN");
+            WindowManager.DrawAllExceptTaskManager();
+            if (Desktop.Taskbar != null) Desktop.Taskbar.DrawWorkspaceSwitcher();
+            WindowManager.DrawTaskManager();
+            WindowManager.CleanupClosedWindows();
+            SerialBreadcrumb("NORMAL_FRAME_WINDOWS_END");
+
+            SerialBreadcrumb("NORMAL_FRAME_CURSOR_BEGIN");
+            DrawUefiCursor();
+            SerialBreadcrumb("NORMAL_FRAME_CURSOR_END");
+
+            SerialBreadcrumb("NORMAL_FRAME_PRESENT_BEGIN");
+            Framebuffer.Update();
+            SerialBreadcrumb("NORMAL_FRAME_PRESENT_END");
+
+            SerialBreadcrumb("NORMAL_FRAME_COMPLETE");
+            if (UEFI_NORMAL_DESKTOP_FIRST_FRAME_HALT) {
+                HaltAfterNormalDesktopFirstFrame();
+            } else {
+                SerialBreadcrumb("NORMAL_FRAME_RETURN_TO_UTINY");
+                RenderLoopUefiTinyBypass();
+            }
+        } catch {
+            SerialBreadcrumb("NORMAL_FRAME_FAULT=MANAGED_EXCEPTION");
+            HaltAfterNormalDesktopFirstFrame();
+        }
+    }
+
+    private static void HaltAfterNormalDesktopFirstFrame() {
+        SerialBreadcrumb("NORMAL_FRAME_HALT_ENTER");
+        for (; ; ) {
+            Native.Out8(0x3F8, (byte)'!');
+            Thread.Sleep(1000);
+        }
+    }
+
+    /// <summary>
+    /// Invoke one previously failing managed UEFI method and halt. This is a
+    /// diagnostic-only path; it must never become the unrestricted render loop.
+    /// </summary>
+    private static void RenderLoopUefiAbiProbe() {
+        AbiLogCurrentRsp("SMAIN_PROBE_BODY");
+        LogUefiGraphicsState("ABI_EXISTING_BEFORE_REBUILD", Framebuffer.Graphics);
+
+        // Re-establish the same authoritative framebuffer invariant used by
+        // normal UEFI setup before exercising a real managed draw method.
+        Framebuffer.EnsureGraphics();
+        if (IsUefiAbiFreshGraphicsDiagnosticEnabled() && Framebuffer.VideoMemory != null && Framebuffer.Width > 0 && Framebuffer.Height > 0) {
+            // Do not trust a surviving managed Graphics reference in this
+            // isolated probe. Rebuild only this leaf object so a stale vtable
+            // cannot be mistaken for an ABI failure.
+            Framebuffer.Graphics = new guideXOS.Graph.Graphics(
+                Framebuffer.Width, Framebuffer.Height, Framebuffer.VideoMemory);
+            LogUefiGraphicsState("ABI_FRESH_CANONICAL", Framebuffer.Graphics);
+        }
+        SerialBreadcrumb(Framebuffer.Graphics == null ? "ABI_PROBE_GFX_NULL" : "ABI_PROBE_GFX_READY");
+
+        if (UEFI_ABI_PROBE_TARGET == 1) {
+            SerialBreadcrumb("ABI_PROBE_TASKBAR_BEGIN");
+            AbiLogCurrentRsp("BEFORE_TASKBAR_DRAW");
+            // Keep the controlled method probe independent of recovered static
+            // object references. This is still the original Taskbar.Draw body;
+            // normal desktop initialization and fallback paths are untouched.
+            Taskbar probeTaskbar = new Taskbar(40, new Image(32, 32));
+            SerialBreadcrumb("ABI_PROBE_TASKBAR_INSTANCE_READY");
+            probeTaskbar.Draw();
+            SerialBreadcrumb("ABI_PROBE_TASKBAR_RETURNED");
+            SerialBreadcrumb("ABI_PROBE_TASKBAR_SUCCESS");
+        } else if (UEFI_ABI_PROBE_TARGET == 2) {
+            SerialBreadcrumb("ABI_PROBE_CURSOR_BEGIN");
+            AbiLogCurrentRsp("BEFORE_CURSOR_DRAW");
+            DrawUefiCursor();
+            SerialBreadcrumb("ABI_PROBE_CURSOR_RETURNED");
+            SerialBreadcrumb("ABI_PROBE_CURSOR_SUCCESS");
+        } else {
+            SerialBreadcrumb("ABI_PROBE_UNKNOWN_TARGET");
+        }
+
+        HaltAfterNormalDesktopFirstFrame();
     }
 
     /// <summary>
@@ -4635,6 +4940,10 @@ unsafe class Program {
     }
 
     private static void DrawUefiCursor() {
+        LogUefiGraphicsState("CURSOR_ENTRY", Framebuffer.Graphics);
+        if (IsUefiAbiDiagnosticActive()) {
+            AbiLogCurrentRsp("CURSOR_DRAW_BODY");
+        }
         if (!TryGetUefiFramebufferInfo(out uint* fb, out int fbW, out int fbH, out int pitchPixels, out ulong maxPixels)) return;
 
         if (_uefiCursorEverDrawn && IsUefiCursorAreaRestorable(_uefiCursorLastX, _uefiCursorLastY, fbW, fbH)) {
@@ -4661,6 +4970,29 @@ unsafe class Program {
         _uefiCursorLastX = x;
         _uefiCursorLastY = y;
         _uefiCursorEverDrawn = true;
+    }
+
+    private static unsafe void DrawUefiCursorBoundedFirstFrame() {
+        uint* fb = Framebuffer.OriginalVideoMemory;
+        int fbW = Framebuffer.OriginalWidth;
+        int fbH = Framebuffer.OriginalHeight;
+        if (fb == null || fbW <= 0 || fbH <= 0) return;
+
+        // Fixed location is intentional: pointer input is disabled after EBS;
+        // this proves only the procedural cursor draw, not input delivery.
+        int x = 24;
+        int y = 24;
+        for (int yy = 0; yy < SafeModeCursorDrawHeight; yy++) {
+            for (int xx = 0; xx < SafeModeCursorDrawWidth; xx++) {
+                bool outline = xx == 0 || yy == 0 || xx == yy || (yy > 8 && xx == 5) || (yy > 8 && yy < 15 && xx == 6);
+                bool inside = xx < yy && xx < 9;
+                if (!outline && !inside) continue;
+                int px = x + xx;
+                int py = y + yy;
+                if ((uint)px >= (uint)fbW || (uint)py >= (uint)fbH) continue;
+                fb[(py * fbW) + px] = outline ? 0xFF000000u : 0xFFFFFFFFu;
+            }
+        }
     }
 
     private static void DrawUefiCursorPlaceholder() {

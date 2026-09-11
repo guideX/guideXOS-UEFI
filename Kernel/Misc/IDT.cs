@@ -188,7 +188,7 @@ public static class IDT {
         return irs->rsp;
     }
 
-    private static unsafe void SerialWriteFaultBreadcrumbs(int irq, ulong errorCode, InterruptReturnStack* irs) {
+    private static unsafe void SerialWriteFaultBreadcrumbs(int irq, ulong errorCode, RegistersStack* regs, InterruptReturnStack* irs) {
         switch (irq) {
             case 14:
                 SerialWriteLineLiteral("UTINY_FAULT_PF");
@@ -211,6 +211,10 @@ public static class IDT {
         if (irs != null) {
             SerialWriteHexLine64("RIP=", irs->rip);
             SerialWriteHexLine64("RSP=", GetInterruptedRsp(irs));
+        }
+
+        if (regs != null) {
+            SerialWriteHexLine64("RBP=", regs->rbp);
         }
 
         SerialWritePageTableWalk(irq == 14 ? Native.ReadCR2() : (irs != null ? irs->rip : 0));
@@ -245,13 +249,21 @@ public static class IDT {
                     hasErrorCode = true;
                     break;
                 default:
-                    // No error code pushed: irs follows only RegistersStack
-                    irs = (InterruptReturnStack*)(((byte*)stack) + sizeof(RegistersStack));
+                    // isr_common always leaves a dummy errorCode slot before
+                    // the CPU return frame, even for no-error exceptions.
+                    irs = (InterruptReturnStack*)(((byte*)stack) + sizeof(RegistersStack) + sizeof(ulong));
                     hasErrorCode = false;
                     break;
             }
 
-            SerialWriteFaultBreadcrumbs(irq, actualErrorCode, irs);
+            SerialWriteFaultBreadcrumbs(irq, actualErrorCode, &stack->rs, irs);
+
+            // A controlled ABI probe must stop after recording the CPU frame;
+            // do not enter the graphical panic path while its stack state is
+            // deliberately being examined.
+            if ((irq == 13 || irq == 14) && Program.IsUefiAbiDiagnosticActive()) {
+                for (; ; ) Native.Hlt();
+            }
 
             if (irq == 14) {
                 BootConsole.WriteLine("UTINY_FAULT_PF");
