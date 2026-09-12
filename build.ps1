@@ -33,6 +33,9 @@
 .PARAMETER BootloaderOnly
     Limit build to bootloader only (skip kernel, ramdisk, conversion)
 
+.PARAMETER UefiDiagnosticMode
+    Optional UEFI regression build variant: Tiny, FirstFrame, or Frames
+
 .EXAMPLE
     .\build.ps1
     Build everything
@@ -53,7 +56,9 @@ param(
     [switch]$SkipConversion,
     [switch]$CreateISO,
     [switch]$Clean,
-    [switch]$BootloaderOnly
+    [switch]$BootloaderOnly,
+    [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames')]
+    [string]$UefiDiagnosticMode = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -379,19 +384,28 @@ if (-not $SkipKernel) {
         Write-Info "NuGet assets not found; restore will run for the kernel build"
     }
 
+    $publishPropertyArgs = @()
+    $publishPropertySuffix = ''
+    if ($UefiDiagnosticMode) {
+        $publishPropertyArgs += "-p:UefiDiagnosticMode=$UefiDiagnosticMode"
+        $publishPropertySuffix = " -p:UefiDiagnosticMode=$UefiDiagnosticMode"
+        Write-Info "UEFI diagnostic build mode: $UefiDiagnosticMode"
+    }
+
     if ($vcvars64) {
         Write-Info "Using Visual C++ environment: $vcvars64"
-        $publishArgs = "dotnet publish `"$KernelProject`" -c Release"
+        $publishArgs = "dotnet publish `"$KernelProject`" -c Release$publishPropertySuffix"
         if ($skipKernelRestore) {
             $publishArgs += " --no-restore"
         }
         $cmdPathPrefix = "set `"PATH=$env:SystemRoot\System32;C:\Program Files\dotnet`" && "
         & "$env:SystemRoot\System32\cmd.exe" /d /s /c "$cmdPathPrefix call `"$vcvars64`" >nul && $publishArgs"
     } else {
+        $publishArgs = @($KernelProject, '-c', 'Release') + $publishPropertyArgs
         if ($skipKernelRestore) {
-            dotnet publish $KernelProject -c Release --no-restore
+            dotnet publish @publishArgs --no-restore
         } else {
-            dotnet publish $KernelProject -c Release
+            dotnet publish @publishArgs
         }
     }
 

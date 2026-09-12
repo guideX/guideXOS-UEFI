@@ -98,17 +98,36 @@ unsafe class Program {
         }
     }
 
-    // Bounded UEFI desktop regression controls. The runner temporarily patches
-    // these constants for a fresh test build and restores the source afterward.
+    // UEFI desktop dispatch controls. Diagnostic builds select one of the
+    // explicit modes below through the UefiDiagnosticMode MSBuild property.
+#if UEFI_DIAGNOSTIC_TINY
+    private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = true;
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
+#elif UEFI_DIAGNOSTIC_FIRST_FRAME
     private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = true;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
-    private const int UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET = 0;
+#elif UEFI_DIAGNOSTIC_FRAMES
+    private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = true;
+#else
+    private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
+#endif
+    private const int UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET = 300;
 
-    // Deliberate phase boundary: the recovered normal desktop is still bounded
-    // until sustained operation is explicitly validated in the next phase.
-    // This is not a rendering workaround or a known graphics defect.
-    private const bool UEFI_ENABLE_CONTINUOUS_DESKTOP = false;
+    // The ordinary UEFI path is the recovered desktop. Diagnostic modes above
+    // remain opt-in build variants and do not alter the production loop.
+    private const bool UEFI_ENABLE_CONTINUOUS_DESKTOP = true;
+
+    private const int UEFI_CONTINUOUS_HEARTBEAT_FIRST = 1;
+    private const int UEFI_CONTINUOUS_HEARTBEAT_EARLY_1 = 60;
+    private const int UEFI_CONTINUOUS_HEARTBEAT_EARLY_2 = 300;
+    private const int UEFI_CONTINUOUS_HEARTBEAT_EARLY_3 = 600;
+    private const int UEFI_CONTINUOUS_HEARTBEAT_INTERVAL = 1800;
 
     private static bool IsUefiMode =>
         BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
@@ -119,6 +138,31 @@ unsafe class Program {
 
     private static bool UseUefiNormalDesktopBoundedMode() {
         return IsUefiMode && UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED;
+    }
+
+    private static bool IsUefiGraphicsInvariantValid() {
+        guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
+        if (graphics == null || graphics.VideoMemory == null ||
+            Framebuffer.VideoMemory == null || Framebuffer.OriginalVideoMemory == null ||
+            Framebuffer.Width <= 0 || Framebuffer.Height <= 0 ||
+            graphics.Width != Framebuffer.Width || graphics.Height != Framebuffer.Height) {
+            return false;
+        }
+
+        if ((ulong)Framebuffer.VideoMemory != (ulong)Framebuffer.OriginalVideoMemory ||
+            (ulong)graphics.VideoMemory != (ulong)Framebuffer.VideoMemory) {
+            return false;
+        }
+
+        if (Framebuffer.OriginalWidth != 0 &&
+            graphics.Width != Framebuffer.OriginalWidth) {
+            return false;
+        }
+        if (Framebuffer.OriginalHeight != 0 &&
+            graphics.Height != Framebuffer.OriginalHeight) {
+            return false;
+        }
+        return true;
     }
 
     // USB/PS2 input remains outside this recovery pass. All UEFI paths skip
@@ -734,27 +778,48 @@ unsafe class Program {
     }
 
     /// <summary>
-    /// Main render loop - extracted from SMain to keep stack frames small
-    /// </summary>
-    /// <summary>
-    /// Continuous rendering remains available for the next phase, but is
-    /// deliberately unreachable from the current UEFI default dispatch.
+    /// Main render loop - extracted from SMain to keep stack frames small.
     /// </summary>
     private static void RenderLoop() {
         if (IsUefiMode) {
+            _uefiMultiFrameActive = true;
+            _uefiMultiFrameCurrentFrame = 0;
+            _uefiMultiFrameLastCompletedFrame = 0;
+            _uefiMultiFrameStage = 0;
+            _uefiMultiFrameSubstage = 0;
+            _uefiMultiFrameLastBoundary = 0;
+            _uefiMultiFrameStackLowWater = Native.ReadRSP();
+            _uefiMultiFrameLastCodeAddress = 0;
+            _uefiMultiFrameStartTicks = GetUefiTimerTicks();
+
+            SerialBreadcrumb("CONTINUOUS_DESKTOP_ENTER");
+            SerialBreadcrumb("CONTINUOUS_DESKTOP_FRAME_PATH=RenderUefiDesktopFrame");
+            SerialBreadcrumb("CONTINUOUS_DESKTOP_TIMER_START=" +
+                _uefiMultiFrameStartTicks.ToString());
+
             int uefiFrame = 0;
             for (;;) {
                 uefiFrame++;
+                _uefiMultiFrameCurrentFrame = uefiFrame;
                 try {
                     if (!RenderUefiDesktopFrame(uefiFrame)) {
-                        SerialBreadcrumb("UEFI_CONTINUOUS_FRAME_FAULT=FRAMEBUFFER_INVALID");
-                        Thread.Sleep(10);
-                        continue;
+                        SerialBreadcrumb("CONTINUOUS_DESKTOP_FAULT=FRAMEBUFFER_INVALID");
+                        LogUefiMultiFrameFaultContext();
+                        HaltAfterUefiContinuous();
+                        return;
+                    }
+                    _uefiMultiFrameLastCompletedFrame = uefiFrame;
+                    if (!EmitUefiContinuousHeartbeat(uefiFrame)) {
+                        LogUefiMultiFrameFaultContext();
+                        HaltAfterUefiContinuous();
+                        return;
                     }
                     Thread.Sleep(16);
                 } catch {
-                    SerialBreadcrumb("UEFI_CONTINUOUS_FRAME_FAULT=MANAGED_EXCEPTION");
-                    Thread.Sleep(10);
+                    SerialBreadcrumb("CONTINUOUS_DESKTOP_FAULT=MANAGED_EXCEPTION");
+                    LogUefiMultiFrameFaultContext();
+                    HaltAfterUefiContinuous();
+                    return;
                 }
             }
         }
@@ -894,6 +959,36 @@ unsafe class Program {
         return true;
     }
 
+    private static bool ShouldEmitUefiContinuousHeartbeat(int frame) {
+        return frame == UEFI_CONTINUOUS_HEARTBEAT_FIRST ||
+               frame == UEFI_CONTINUOUS_HEARTBEAT_EARLY_1 ||
+               frame == UEFI_CONTINUOUS_HEARTBEAT_EARLY_2 ||
+               frame == UEFI_CONTINUOUS_HEARTBEAT_EARLY_3 ||
+               (frame > UEFI_CONTINUOUS_HEARTBEAT_EARLY_3 &&
+                frame % UEFI_CONTINUOUS_HEARTBEAT_INTERVAL == 0);
+    }
+
+    private static bool EmitUefiContinuousHeartbeat(int frame) {
+        if (!ShouldEmitUefiContinuousHeartbeat(frame)) return true;
+
+        ulong rsp = Native.ReadRSP();
+        if (_uefiMultiFrameStackLowWater == 0 || rsp < _uefiMultiFrameStackLowWater)
+            _uefiMultiFrameStackLowWater = rsp;
+
+        bool graphicsValid = IsUefiGraphicsInvariantValid();
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_FRAME=" + frame.ToString());
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_TIMER=" +
+            GetUefiTimerTicks().ToString());
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_STACK_LOW_WATER=" +
+            _uefiMultiFrameStackLowWater.ToString());
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_GRAPHICS_VALID=" +
+            (graphicsValid ? "1" : "0"));
+        if (!graphicsValid) {
+            SerialBreadcrumb("CONTINUOUS_DESKTOP_FAULT=GRAPHICS_INVARIANT");
+        }
+        return graphicsValid;
+    }
+
     private static void RenderLoopUefiDefaultRecovery() {
         SerialBreadcrumb("UEFI_RECOVERY_DEFAULT");
         if (!RenderUefiDesktopFrame(1)) {
@@ -984,6 +1079,13 @@ unsafe class Program {
 
     private static void HaltAfterUefiDefault() {
         SerialBreadcrumb("UEFI_DEFAULT_HALT_ENTER");
+        for (;;) {
+            Native.Hlt();
+        }
+    }
+
+    private static void HaltAfterUefiContinuous() {
+        SerialBreadcrumb("CONTINUOUS_DESKTOP_HALT_ENTER");
         for (;;) {
             Native.Hlt();
         }

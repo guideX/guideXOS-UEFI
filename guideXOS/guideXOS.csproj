@@ -28,6 +28,18 @@
 		<SkipISO Condition="'$(SkipISO)'==''">false</SkipISO>
 	</PropertyGroup>
 
+	<!-- Diagnostic UEFI modes are opt-in build variants. The normal build
+	     intentionally retains the continuous recovered desktop as its default. -->
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Tiny'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_TINY</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'FirstFrame'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_FIRST_FRAME</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Frames'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_FRAMES</DefineConstants>
+	</PropertyGroup>
+
 	<Target Name="PrepareForILLink">
 	</Target>
 

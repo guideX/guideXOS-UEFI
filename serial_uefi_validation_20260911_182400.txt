@@ -1,0 +1,285 @@
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01HBdsDxe: loading Boot0001 "UEFI QEMU HARDDISK QM00011 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x5,0xFFFF,0x0)
+BdsDxe: starting Boot0001 "UEFI QEMU HARDDISK QM00011 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x5,0xFFFF,0x0)
+guideXOS UEFI Bootloader
+ACPI RSDP found at 0x000000003F77E014, rev 2
+ACPI MCFG allocation: base 0x00000000E0000000 segment 0 buses 0-255
+ACPI XSDT root at 0x000000003F77D0E8 length 84, tables 7
+Simple Pointer Protocol found at 0x000000003E7251B0
+Absolute Pointer Protocol found at 0x000000003E725208
+ELF: vaddr range 0x10001000 - 0x10443600 (size 0x442600)
+ELF: Allocated 1091 pages at 0x3d913000
+ELF: Loading seg 0: vaddr=0x10001000 -> phys=0x3d913000 (filesz=0x2a00)
+ELF: Loading seg 1: vaddr=0x10004000 -> phys=0x3d916000 (filesz=0x200)
+ELF: Loading seg 2: vaddr=0x10005000 -> phys=0x3d917000 (filesz=0x8d200)
+ELF: Loading seg 3: vaddr=0x10093000 -> phys=0x3d9a5000 (filesz=0x2fa00)
+ELF: Loading seg 4: vaddr=0x100c3000 -> phys=0x3d9d5000 (filesz=0x379000)
+ELF: Loading seg 5: vaddr=0x1043d000 -> phys=0x3dd4f000 (filesz=0x5000)
+ELF: Loading seg 6: vaddr=0x10442000 -> phys=0x3dd54000 (filesz=0x200)
+ELF: Loading seg 7: vaddr=0x10443000 -> phys=0x3dd55000 (filesz=0x600)
+ELF: Entry point in segment 2 (vaddr 0x10005000)
+ELF: Entry vaddr=0x1002bad8, offset=0x2aad8, physEntry=0x3d93dad8
+Kernel entry phys: 0x000000003D93DAD8 virt: 0x000000001002BAD8
+Kernel loaded at: 0x000000003D913000 - 0x000000003DD55600
+Ramdisk size: 22473292 bytes
+Ramdisk loaded at 0x000000003C3A4000
+Stack allocated at 0x0000000000200000, top at 0x0000000000280000 (below kernel)
+Mapping stack: 0x0000000000200000 size 524288
+Mapping ramdisk: 0x000000003C3A4000 size 22473292
+Mapping ACPI RSDP region: 0x000000003F77E014
+Mapping ACPI table: 0x000000003F77D0E8 size 84
+Mapping ACPI table: 0x000000003F779000 size 244
+Mapping ACPI table: 0x000000003F778000 size 120
+Mapping ACPI table: 0x000000003F777000 size 56
+Mapping ACPI table: 0x000000003F776000 size 60
+Mapping ACPI table: 0x000000003F775000 size 40
+Mapping ACPI table: 0x000000003F774000 size 56
+Mapping bootloader: 0x000000003DD56000 size 81920
+Mapping allocator region: 0x4000000 size 1GB
+Mapping low memory region: 0x100000 size 4MB
+Building identity page tables with 18 ranges...
+Page tables built at PML4: 0x000000003DD73000
+Mapping framebuffer (uncached): 0x0000000080000000 size 4096000
+Mapping Local APIC MMIO (uncached): 0xFEE00000 size 4KB
+Mapping IOAPIC MMIO (uncached): 0xFEC00000 size 4KB
+Mapping PCI ECAM (uncached): base 0x00000000E0000000 segment 0 buses 0-255 size 268435456
+About to exit boot services...
+Drawing boot splash screen...
+Boot splash complete!
+Exiting boot services...
+
+
+=== GuideXOS Boot (Post-ExitBootServices) ===
+
+=== CPU State Check ===
+CR0 = 0x0000000080010033
+CR3 = 0x000000003F801000
+CR4 = 0x0000000000000668
+EFER = 0x0000000000000D00
+  [OK] CR0.PG (Paging) enabled
+  [OK] CR0.PE (Protected Mode) enabled
+  [OK] CR4.PAE enabled
+  [OK] EFER.LME (Long Mode Enable) set
+  [OK] EFER.LMA (Long Mode Active) set
+
+=== BootInfo ===
+Magic: 0x49425847
+Framebuffer: 0x0000000080000000 (0x00000500x0x00000320)
+
+=== Kernel Entry Validation ===
+Entry point: 0x000000003D93DAD8
+First 16 bytes at entry:
+  55 41 57 41 56 41 55 41 54 57 56 53 48 83 EC 58 
+  [OK] Looks like valid x64 function prologue
+
+=== Jumping to Kernel (Trampoline) ===
+
+========================================
+=== PRE-HANDOFF VALIDATION ===
+========================================
+
+--- Parameters ---
+Kernel Entry: 0x000000003D93DAD8
+BootInfo:     0x000000003DD76000
+Stack Top:    0x0000000000280000
+PML4 Phys:    0x000000003DD73000
+
+--- Validating Mappings ---
+
+[1] Kernel Entry:
+Checking mapping for: 0x000000003D93DAD8
+  PML4[0x00000000] = 0x000000003DD72003
+  PDPT[0x00000000] = 0x000000003DD71003
+  PD[0x000001EC] = 0x000000003DD6F003
+  PT[0x0000013D] = 0x000000003D93D003
+  [OK] Maps to physical: 0x000000003D93D000
+
+[2] BootInfo:
+Checking mapping for: 0x000000003DD76000
+  PML4[0x00000000] = 0x000000003DD72003
+  PDPT[0x00000000] = 0x000000003DD71003
+  PD[0x000001EE] = 0x000000003DD6D003
+  PT[0x00000176] = 0x000000003DD76003
+  [OK] Maps to physical: 0x000000003DD76000
+
+[3] Stack (top - 0x1000):
+Checking mapping for: 0x000000000027F000
+  PML4[0x00000000] = 0x000000003DD72003
+  PDPT[0x00000000] = 0x000000003DD71003
+  PD[0x00000001] = 0x000000003DD6C003
+  PT[0x0000007F] = 0x000000000027F003
+  [OK] Maps to physical: 0x000000000027F000
+
+[4] PML4 self-mapping:
+Checking mapping for: 0x000000003DD73000
+  PML4[0x00000000] = 0x000000003DD72003
+  PDPT[0x00000000] = 0x000000003DD71003
+  PD[0x000001EE] = 0x000000003DD6D003
+  PT[0x00000173] = 0x000000003DD73003
+  [OK] Maps to physical: 0x000000003DD73000
+
+[5] Framebuffer:
+Checking mapping for: 0x0000000080000000
+  PML4[0x00000000] = 0x000000003DD72003
+  PDPT[0x00000002] = 0x000000003C166003
+  PD[0x00000000] = 0x000000003C165003
+  PT[0x00000000] = 0x000000008000001B
+  [OK] Maps to physical: 0x0000000080000000
+
+========================================
+=== VALIDATION COMPLETE ===
+========================================
+
+
+[BOOT] Validating VIRTUAL kernel entry mapping:
+Checking mapping for: 0x000000001002BAD8
+  PML4[0x00000000] = 0x000000003DD72003
+  PDPT[0x00000000] = 0x000000003DD71003
+  PD[0x00000080] = 0x000000003C2F9003
+  PT[0x0000002B] = 0x000000003D93D003
+  [OK] Maps to physical: 0x000000003D93D000
+[BOOT] About to handoff via trampoline...
+[BOOT] Trampoline at: 0x000000003DD74000
+[BOOT] Kernel entry: 0x000000003D93DAD8
+[BOOT] BootInfo at: 0x000000003DD76000
+[BOOT] Stack top: 0x0000000000280000
+[BOOT] PML4: 0x000000003DD73000
+
+[BOOT] Validating trampoline mapping:
+Checking mapping for: 0x000000003DD74000
+  PML4[0x00000000] = 0x000000003DD72003
+  PDPT[0x00000000] = 0x000000003DD71003
+  PD[0x000001EE] = 0x000000003DD6D003
+  PT[0x00000174] = 0x000000003DD74003
+  [OK] Maps to physical: 0x000000003DD74000
+
+[BOOT] === CALLING TRAMPOLINE NOW ===
+[BOOT] Jumping to VIRTUAL entry point
+[KMAIN] INITIALIZE
+[FRAMEBUFFER] INITIALIZE
+[ALLOCATOR] INITIALIZE
+[MOD] INITIALIZE
+[NATIVEAOT] modules initialized
+[ASC] INIT
+[FBI] INIT
+[BS] INIT
+[RUNTIME] ALLOCATE TEST PASS
+[CONS] INITIALIZE
+[ARCH] INITIALIZE
+[ARCH] DETECT
+[ARCH] Pointer Size: 8 bytes (64-bit)
+[ARCH] Running in 64-bit mode (AMD64)
+[ARCH] Pointer integrity: PASS (64-bit pointers working)
+=== Architecture Detection Complete ===
+[IDT] INITIALIZE
+[GDT] INITIALIZE
+[KERNEL] SET STACK SPACE
+[IDT] INIT
+[INTERRUPTS] INIT
+[ACPI] RSDP address available
+[ACPI] Using XSDT
+[ACPI] ACPI Initialized (RSDP provided)
+[ACPI] initialized
+[PIC] DISABLED
+[Local APIC] INIT
+APIC@00000000FEE00000
+[Local APIC] Initialized
+[Local APIC] INIT DONE
+[IO APIC] INIT
+[IO APIC] INIT DONE
+[TIMER] INIT
+[TIMER] INITIALIZE
+[ACPITIMER] SleepMicroseconds begin
+[ACPITIMER] ACPI PM Timer present
+[TIMER] Local APIC timer started (1000Hz)
+[SERIAL] INIT
+[VMWARE] INIT
+vm1vmSKIP[EBS] ExitBootServices marked
+[INPUT] UEFI input disabled after ExitBootServices
+[PCI] INIT
+[PCI] INIT
+[PCI Express 0:0:0] Intel Corporation Bridge
+[PCI Express 0:1:0] Technical Corp Display controller
+[PCI Express 0:2:0] Intel Corporation Network controller
+[PCI Express 0:31:0] Intel Corporation Bridge
+[PCI Express 0:31:2] Intel Corporation Mass storage controller
+[PCI Express 0:31:3] Intel Corporation Serial bus controller
+[PCI] Devices enumerated
+[PCI] enumerated
+[SCHED] ThreadPool.Initialize
+TP1
+TP2
+TP2A
+TP2B
+TP2C=1
+TP2D
+TP3
+TP4
+TP5
+TP6
+STI-
+OK
+RET
+TPRET
+[SCHED] ThreadPool.Initialize complete
+[APIC] STI (Local APIC timer active)
+[BOOT] Post-STI continue
+[BOOT] About to cleanup splash
+[Initrd] initializing
+[Ramdisk] Constructor called
+[Ramdisk] ptr field set
+[Ramdisk] First byte OK (non-zero)
+[Ramdisk] Disk.Instance set
+[RdskFS] Constructor called
+[RdskFS] Got raw pointer
+[RdskFS] Magic OK
+[RdskFS] Constructor completed
+[FS] mounted
+KERNELMAIN_ENTRY_RAW
+[KERNELMAIN]
+
+[BOOT_MODE] UEFI
+[INPUT] UEFI input disabled after ExitBootServices (separate validation)
+[FS] Re-mounting filesystem for UEFI
+[RdskFS] Constructor called
+[RdskFS] Got raw pointer
+[RdskFS] Magic OK
+[RdskFS] Constructor completed
+[FS] mounted
+[WM] INIT
+[FONT] UEFI mode - using placeholder font
+[WM] initialized
+[DESKTOP] INIT
+[DESKTOP] initialized
+[KMAIN] Calling SMain
+[SMAIN] initialized
+[BOOT_MODE] UEFI
+[FRAMEBUFFER] initialized
+[UEFI] triple buffering disabled
+[SMAIN] Setting up icons
+[SMAIN] File.Instance = OK
+[SMAIN] Disk.Instance = OK
+[SMAIN] Initializing background manager and icons
+[SMAIN] UEFI mode - using fallback icons (no PNG)
+[SMAIN] Creating context menus
+[SMAIN] Context menus skipped (UEFI mode)
+[SMAIN] Creating widgets
+[SMAIN] Widgets skipped (UEFI mode)
+SMAIN_DISPATCH_REASON=MULTIFRAME_NORMAL_DESKTOP_UEFI
+MULTIFRAME_BEGIN
+MULTIFRAME_TARGET=300
+MULTIFRAME_ENSURE_GRAPHICS_EVERY_FRAME=0
+MULTIFRAME_CANONICAL_REASSERT=0
+MULTIFRAME_CHECKPOINT_FRAME=1
+MULTIFRAME_CHECKPOINT_FRAME=10
+MULTIFRAME_CHECKPOINT_FRAME=30
+MULTIFRAME_CHECKPOINT_FRAME=60
+MULTIFRAME_CHECKPOINT_FRAME=120
+MULTIFRAME_CHECKPOINT_FRAME=180
+MULTIFRAME_CHECKPOINT_FRAME=240
+MULTIFRAME_CHECKPOINT_FRAME=300
+MULTIFRAME_TIMER_TICKING=1
+UEFI_STACK_LOW_WATER_DEC=2620400
+UEFI_FRAME_LAST_CODE_DEC=268465502
+MULTIFRAME_LAST_COMPLETED_FRAME=300
+MULTIFRAME_COMPLETE
+MULTIFRAME_HALT_ENTER
