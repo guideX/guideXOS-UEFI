@@ -404,6 +404,7 @@ namespace guideXOS.GUI {
             if (WindowManager.font != null && label != null) {
                 int labelWidth = WindowManager.font.MeasureString(label);
                 WindowManager.font.DrawString(x + ((tileSize - labelWidth) / 2), y + tileSize + 8, label);
+                Program.MarkUefiDesktopTextRendered();
             }
         }
 

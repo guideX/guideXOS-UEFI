@@ -207,6 +207,9 @@ namespace guideXOS.GUI {
             int pwdY = pwdLabelY + WindowManager.font.FontSize + 4;
             string masked = Stars(_password.Length);
             DrawTextBox(cx, pwdY, cw, boxH, masked, _pwdFocus);
+            if (!string.IsNullOrEmpty(_username) || !string.IsNullOrEmpty(_password)) {
+                Program.MarkUefiLoginTextRendered();
+            }
 
             // Buttons
             int btnY = panelY + panelH - PanelPad - BtnH;

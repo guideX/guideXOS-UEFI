@@ -101,27 +101,38 @@ unsafe class Program {
 
     // UEFI desktop dispatch controls. Diagnostic builds select one of the
     // explicit modes below through the UefiDiagnosticMode MSBuild property.
-#if UEFI_DIAGNOSTIC_PNG
+#if UEFI_DIAGNOSTIC_FONT
+    private const bool UEFI_ENABLE_FONT_DIAGNOSTIC = true;
+    private const bool UEFI_ENABLE_PNG_DIAGNOSTIC = false;
+    private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
+#elif UEFI_DIAGNOSTIC_PNG
+    private const bool UEFI_ENABLE_FONT_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_PNG_DIAGNOSTIC = true;
     private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
 #elif UEFI_DIAGNOSTIC_TINY
+    private const bool UEFI_ENABLE_FONT_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_PNG_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = true;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
 #elif UEFI_DIAGNOSTIC_FIRST_FRAME
+    private const bool UEFI_ENABLE_FONT_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_PNG_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = true;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
 #elif UEFI_DIAGNOSTIC_FRAMES
+    private const bool UEFI_ENABLE_FONT_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_PNG_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = true;
 #else
+    private const bool UEFI_ENABLE_FONT_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_PNG_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
@@ -206,6 +217,9 @@ unsafe class Program {
     private static bool _uefiDesktopFilesClickRouted;
     private static bool _uefiDesktopClickCandidateLogged;
     private static int _uefiDesktopClickEdgeCount;
+    private static bool _uefiDesktopTextRendered;
+    private static bool _uefiTaskbarTextRendered;
+    private static bool _uefiLoginTextRendered;
 
     internal static void MarkUefiGuiKeyRouted() {
         if (!IsUefiMode || _uefiGuiKeyRouted) return;
@@ -223,6 +237,24 @@ unsafe class Program {
         if (!IsUefiMode || _uefiDesktopFilesClickRouted) return;
         _uefiDesktopFilesClickRouted = true;
         SerialBreadcrumb("DESKTOP_FILES_CLICK_ROUTED");
+    }
+
+    internal static void MarkUefiDesktopTextRendered() {
+        if (!IsUefiMode || _uefiDesktopTextRendered || !WindowManager.RealFontEnabled) return;
+        _uefiDesktopTextRendered = true;
+        SerialBreadcrumb("DESKTOP_REAL_TEXT_RENDERED=1");
+    }
+
+    internal static void MarkUefiTaskbarTextRendered() {
+        if (!IsUefiMode || _uefiTaskbarTextRendered || !WindowManager.RealFontEnabled) return;
+        _uefiTaskbarTextRendered = true;
+        SerialBreadcrumb("TASKBAR_REAL_TEXT_RENDERED=1");
+    }
+
+    internal static void MarkUefiLoginTextRendered() {
+        if (!IsUefiMode || _uefiLoginTextRendered || !WindowManager.RealFontEnabled) return;
+        _uefiLoginTextRendered = true;
+        SerialBreadcrumb("INPUT_GUI_TEXT_RENDERED=1");
     }
 
     internal static void MarkUefiDesktopClickCandidate(int x, int y) {
@@ -567,6 +599,12 @@ unsafe class Program {
         if (UEFI_ENABLE_BACKGROUND_ROTATION_DIAGNOSTIC) {
             SerialBreadcrumb("SMAIN_DISPATCH_REASON=BACKGROUND_ROTATION");
             RenderLoopUefiBackgroundRotation();
+            return;
+        }
+
+        if (UEFI_ENABLE_FONT_DIAGNOSTIC) {
+            SerialBreadcrumb("SMAIN_DISPATCH_REASON=FONT_PROBE");
+            RenderLoopUefiFontProbe();
             return;
         }
 
@@ -1561,6 +1599,13 @@ unsafe class Program {
                     failure = "RENDER";
                     break;
                 }
+                bool textRendered = HasRenderedUefiDesktopLabel();
+                SerialBreadcrumb("BACKGROUND_ROTATION_TEXT_RENDER_OK=" +
+                    (textRendered ? "1" : "0"));
+                if (!textRendered) {
+                    failure = "TEXT";
+                    break;
+                }
                 successful++;
                 SerialBreadcrumb("BACKGROUND_ROTATION_CHANGE_OK=1");
             }
@@ -1579,8 +1624,153 @@ unsafe class Program {
         HaltAfterUefiBackgroundRotation();
     }
 
+    private static bool HasRenderedUefiDesktopLabel() {
+        if (!IsUefiMode || WindowManager.font == null ||
+            !WindowManager.RealFontEnabled || Wallpaper == null ||
+            Wallpaper.RawData == null || Framebuffer.Graphics == null) {
+            return false;
+        }
+
+        const int tileX = 48;
+        const int tileY = 96;
+        const int tileSize = 64;
+        const string label = "FILES";
+        int labelWidth = WindowManager.font.MeasureString(label);
+        int labelHeight = WindowManager.font.FontSize;
+        int labelX = tileX + ((tileSize - labelWidth) / 2);
+        int labelY = tileY + tileSize + 8;
+        if (labelWidth <= 0 || labelHeight <= 0 || labelX < 0 || labelY < 0 ||
+            labelX > Framebuffer.Width - labelWidth ||
+            labelY > Framebuffer.Height - labelHeight) {
+            return false;
+        }
+
+        for (int y = 0; y < labelHeight; y++) {
+            for (int x = 0; x < labelWidth; x++) {
+                int px = labelX + x;
+                int py = labelY + y;
+                if (Framebuffer.Graphics.GetPoint(px, py) != Wallpaper.GetPixel(px, py)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private static void HaltAfterUefiBackgroundRotation() {
         SerialBreadcrumb("BACKGROUND_ROTATION_HALT_ENTER");
+        for (;;) Native.Hlt();
+    }
+
+    /// <summary>
+    /// Bounded proof of the normal guideXOS bitmap-atlas font path. The probe
+    /// renders through IFont.DrawString into Framebuffer.Graphics and compares
+    /// the changed pixels with the IFont measurement; it does not introduce a
+    /// diagnostic bitmap renderer.
+    /// </summary>
+    private static void RenderLoopUefiFontProbe() {
+        string failure = null;
+        const string text = "guideXOS";
+        const uint probeBackground = 0xFF102030u;
+        try {
+            SerialBreadcrumb("FONT_PROBE_BEGIN");
+            SerialBreadcrumb("FONT_PROBE_RESOURCE=" + WindowManager.FontResourcePath);
+            SerialBreadcrumb("FONT_PROBE_BYTES=" + WindowManager.FontResourceBytes.ToString());
+
+            IFont probeFont = WindowManager.font;
+            bool initialized = WindowManager.RealFontEnabled &&
+                               !WindowManager.FontUsingFallback &&
+                               probeFont != null && probeFont.IsValid;
+            if (!initialized) {
+                failure = "INITIALIZATION";
+            } else {
+                SerialBreadcrumb("FONT_PROBE_INIT_OK");
+
+                bool glyphA = probeFont.HasGlyph('A') && probeFont.GlyphHasPixels('A');
+                bool glyphG = probeFont.HasGlyph('g') && probeFont.GlyphHasPixels('g');
+                bool glyph0 = probeFont.HasGlyph('0') && probeFont.GlyphHasPixels('0');
+                bool glyphSpace = probeFont.HasGlyph(' ');
+                bool glyphPunctuation = probeFont.HasGlyph('.') && probeFont.GlyphHasPixels('.');
+                SerialBreadcrumb("FONT_PROBE_GLYPH_A_OK=" + (glyphA ? "1" : "0"));
+                SerialBreadcrumb("FONT_PROBE_GLYPH_g_OK=" + (glyphG ? "1" : "0"));
+                SerialBreadcrumb("FONT_PROBE_GLYPH_0_OK=" + (glyph0 ? "1" : "0"));
+                SerialBreadcrumb("FONT_PROBE_GLYPH_SPACE_OK=" + (glyphSpace ? "1" : "0"));
+                SerialBreadcrumb("FONT_PROBE_GLYPH_PUNCT_OK=" +
+                    (glyphPunctuation ? "1" : "0"));
+                if (!glyphA || !glyphG || !glyph0 || !glyphSpace || !glyphPunctuation) {
+                    failure = "GLYPH";
+                }
+
+                int measuredWidth = probeFont.MeasureString(text);
+                int measuredHeight = probeFont.FontSize;
+                SerialBreadcrumb("FONT_PROBE_MEASURE_WIDTH=" + measuredWidth.ToString());
+                SerialBreadcrumb("FONT_PROBE_MEASURE_HEIGHT=" + measuredHeight.ToString());
+                bool measureOk = measuredWidth > 0 && measuredHeight > 0;
+                SerialBreadcrumb("FONT_PROBE_MEASURE_OK=" + (measureOk ? "1" : "0"));
+                if (!measureOk && failure == null) failure = "MEASURE";
+
+                guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
+                int probeX = 32;
+                int probeY = 32;
+                int probeWidth = measuredWidth + probeFont.FontSize + 4;
+                if (graphics == null || graphics.VideoMemory == null ||
+                    probeWidth <= 0 || probeX + probeWidth > Framebuffer.Width ||
+                    probeY + measuredHeight > Framebuffer.Height) {
+                    failure = failure ?? "FRAMEBUFFER";
+                } else {
+                    graphics.FillRectangle(probeX, probeY, probeWidth,
+                        measuredHeight, probeBackground);
+                    SerialBreadcrumb("FONT_RENDER_TEXT=" + text);
+                    probeFont.DrawString(probeX, probeY, text, graphics);
+
+                    int minX = probeX + probeWidth;
+                    int minY = probeY + measuredHeight;
+                    int maxX = probeX - 1;
+                    int maxY = probeY - 1;
+                    int changed = 0;
+                    for (int y = probeY; y < probeY + measuredHeight; y++) {
+                        for (int x = probeX; x < probeX + probeWidth; x++) {
+                            if (graphics.GetPoint(x, y) == probeBackground) continue;
+                            changed++;
+                            if (x < minX) minX = x;
+                            if (x > maxX) maxX = x;
+                            if (y < minY) minY = y;
+                            if (y > maxY) maxY = y;
+                        }
+                    }
+
+                    int renderedWidth = maxX >= minX ? maxX - minX + 1 : 0;
+                    int renderedHeight = maxY >= minY ? maxY - minY + 1 : 0;
+                    bool inside = changed > 0 && minX >= probeX &&
+                                  maxX < probeX + measuredWidth &&
+                                  minY >= probeY && maxY < probeY + measuredHeight;
+                    int outsideX = probeX + measuredWidth;
+                    bool outside = outsideX < probeX + probeWidth &&
+                                   graphics.GetPoint(outsideX,
+                                       probeY + measuredHeight / 2) == probeBackground;
+                    bool renderOk = changed > 0 && renderedWidth <= measuredWidth &&
+                                    renderedHeight <= measuredHeight && inside && outside;
+                    SerialBreadcrumb("FONT_RENDER_NONBACKGROUND_PIXELS=" + changed.ToString());
+                    SerialBreadcrumb("FONT_RENDER_BOUNDS=" + renderedWidth.ToString() +
+                        "x" + renderedHeight.ToString());
+                    SerialBreadcrumb("FONT_RENDER_INSIDE_BOUNDS=" + (inside ? "1" : "0"));
+                    SerialBreadcrumb("FONT_RENDER_OUTSIDE_UNTOUCHED=" +
+                        (outside ? "1" : "0"));
+                    SerialBreadcrumb("FONT_RENDER_OK=" + (renderOk ? "1" : "0"));
+                    if (!renderOk && failure == null) failure = "RENDER";
+                }
+            }
+        } catch {
+            failure = failure ?? "EXCEPTION";
+        }
+
+        if (failure == null) SerialBreadcrumb("FONT_PROBE_COMPLETE");
+        else SerialBreadcrumb("FONT_PROBE_FAIL=" + failure);
+        HaltAfterUefiFontProbe();
+    }
+
+    private static void HaltAfterUefiFontProbe() {
+        SerialBreadcrumb("FONT_PROBE_HALT_ENTER");
         for (;;) Native.Hlt();
     }
 

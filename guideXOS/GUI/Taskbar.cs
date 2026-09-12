@@ -175,6 +175,7 @@ namespace guideXOS.GUI {
                     WindowManager.font.DrawString(timeX, timeY + WindowManager.font.FontSize,
                                                 _cachedDate);
                 }
+                Program.MarkUefiTaskbarTextRendered();
             }
 
             int startX = 12;
@@ -440,6 +441,7 @@ namespace guideXOS.GUI {
                     // Date below time
                     int dateY = timeY + WindowManager.font.FontSize;
                     WindowManager.font.DrawString(timeX, dateY, _cachedDate);
+                    Program.MarkUefiTaskbarTextRendered();
 
                     // LiveMode indicator (left of network indicator)
                     int liveModeWidth = 0;

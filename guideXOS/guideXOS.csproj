@@ -33,6 +33,9 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Png'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_PNG</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Font'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_FONT</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Tiny'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_TINY</DefineConstants>
 	</PropertyGroup>

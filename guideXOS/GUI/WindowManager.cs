@@ -18,6 +18,18 @@ namespace guideXOS.GUI {
         /// Font
         /// </summary>
         public static IFont font;
+
+        // The normal guideXOS text system is an IFont bitmap atlas. UEFI
+        // selects the same atlas and object model; only the byte-to-Image
+        // decode path changes to the post-EBS-safe PngLoader.
+        internal const string FontResourcePath = "Fonts/roboto/roboto_12pt_regular.png";
+        internal const string FontCharset = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+        internal static bool RealFontEnabled { get; private set; }
+        internal static bool FontUsingFallback { get; private set; }
+        internal static int FontResourceBytes { get; private set; }
+        internal static int FontResourceWidth { get; private set; }
+        internal static int FontResourceHeight { get; private set; }
+        internal static string FontFailureReason { get; private set; }
         /// <summary>
         /// Close Button
         /// </summary>
@@ -47,63 +59,134 @@ namespace guideXOS.GUI {
         public static void Initialize() {
             Windows = new List<Window>();
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
-                // UEFI image-dependent font loading remains disabled until its
-                // runtime path is separately validated.
                 CloseButton = new Image(16, 16);
                 MinimizeButton = new Image(16, 16);
                 MaximizeButton = new Image(16, 16);
-                BootConsole.WriteLine("[FONT] UEFI mode - using placeholder font");
-                Image simpleFontImg = new Image(260, 160);
-                for (int y = 0; y < simpleFontImg.Height; y++) {
-                    for (int x = 0; x < simpleFontImg.Width; x++) {
-                        simpleFontImg.RawData[y * simpleFontImg.Width + x] = unchecked((int)0xFFFFFFFF);
-                    }
-                }
-                font = new IFont(
-                    simpleFontImg,
-                    " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~",
-                    20,
-                    true,
-                    11,
-                    -3
-                );
             } else {
-            // Load window button images from ramdisk (Legacy mode)
-            try { CloseButton = new PNG(File.ReadAllBytes("Images/Close.png")); } catch { CloseButton = new Image(16, 16); }
-            try { MinimizeButton = new PNG(File.ReadAllBytes("Images/BlueVelvet/16/down.png")); } catch { MinimizeButton = new Image(16, 16); }
-            try { MaximizeButton = new PNG(File.ReadAllBytes("Images/BlueVelvet/16/image.png")); } catch { MaximizeButton = new Image(16, 16); }
-            try {
-                PNG robotoBlack = new PNG(File.ReadAllBytes("Fonts/roboto/roboto_12pt_regular.png"));
-                string charset = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
-                font = new IFont(
-                    robotoBlack,
-                    charset,
-                    20,
-                    true,
-                    15,
-                    -5
-                );
-            } catch {
-                BootConsole.WriteLine("[FONT] Falling back to placeholder font");
-                Image simpleFontImg = new Image(260, 160);
-                for (int y = 0; y < simpleFontImg.Height; y++) {
-                    for (int x = 0; x < simpleFontImg.Width; x++) {
-                        simpleFontImg.RawData[y * simpleFontImg.Width + x] = unchecked((int)0xFFFFFFFF);
-                    }
-                }
-                font = new IFont(
-                    simpleFontImg,
-                    " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~",
-                    20,
-                    true,
-                    11,
-                    -3
-                );
+                // Load window button images from ramdisk (Legacy mode).
+                try { CloseButton = new PNG(File.ReadAllBytes("Images/Close.png")); } catch { CloseButton = new Image(16, 16); }
+                try { MinimizeButton = new PNG(File.ReadAllBytes("Images/BlueVelvet/16/down.png")); } catch { MinimizeButton = new Image(16, 16); }
+                try { MaximizeButton = new PNG(File.ReadAllBytes("Images/BlueVelvet/16/image.png")); } catch { MaximizeButton = new Image(16, 16); }
             }
-            }
+
+            InitializeFont();
             MouseHandled = false;
             _pending = new List<PendingWindow>();
             _cpuEpochTick = 0;
+        }
+
+        private static Image LoadUefiFontImage(byte[] data, out string failure) {
+            failure = null;
+            if (data == null || data.Length == 0) {
+                failure = "asset-unavailable";
+                return null;
+            }
+            if (!PngLoader.Initialize()) {
+                failure = "png-runtime-init";
+                return null;
+            }
+
+            int width, height;
+            if (!PngLoader.ValidateSignatureAndParseIHDR(data, out width, out height)) {
+                failure = "png-header";
+                return null;
+            }
+            Image result;
+            if (!PngLoader.Load(data, out result) || result == null ||
+                result.RawData == null || result.Width <= 0 || result.Height <= 0) {
+                if (result != null) result.Dispose();
+                failure = "png-decode";
+                return null;
+            }
+            if (result.Width != width || result.Height != height) {
+                result.Dispose();
+                failure = "png-dimensions";
+                return null;
+            }
+            return result;
+        }
+
+        private static Image CreateFallbackFont() {
+            // This remains a real failure fallback only. It is deliberately
+            // kept separate from the successful UEFI path so white blocks can
+            // never be selected merely because BootMode is UEFI.
+            Image simpleFontImg = new Image(260, 160);
+            if (simpleFontImg != null && simpleFontImg.RawData != null) {
+                for (int y = 0; y < simpleFontImg.Height; y++) {
+                    for (int x = 0; x < simpleFontImg.Width; x++) {
+                        simpleFontImg.RawData[y * simpleFontImg.Width + x] =
+                            unchecked((int)0xFFFFFFFF);
+                    }
+                }
+            }
+            return simpleFontImg;
+        }
+
+        private static void InitializeFont() {
+            RealFontEnabled = false;
+            FontUsingFallback = true;
+            FontResourceBytes = 0;
+            FontResourceWidth = 0;
+            FontResourceHeight = 0;
+            FontFailureReason = null;
+
+            Image fontImage = null;
+            byte[] data = null;
+            string failure = null;
+            try {
+                if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                    if (File.Instance == null) {
+                        failure = "filesystem-unavailable";
+                    } else {
+                        data = File.Instance.ReadAllBytes(FontResourcePath);
+                        fontImage = LoadUefiFontImage(data, out failure);
+                    }
+                } else {
+                    data = File.ReadAllBytes(FontResourcePath);
+                    // Preserve the established legacy native PNG compatibility
+                    // path while using the same IFont atlas object afterward.
+                    fontImage = new PNG(data);
+                    if (fontImage == null || fontImage.RawData == null ||
+                        fontImage.Width <= 0 || fontImage.Height <= 0) {
+                        if (fontImage != null) fontImage.Dispose();
+                        fontImage = null;
+                        failure = "png-decode";
+                    }
+                }
+
+                if (fontImage != null) {
+                    IFont candidate = new IFont(fontImage, FontCharset, 20,
+                                                true, 15, -5);
+                    if (candidate.IsValid && candidate.HasGlyph('A') &&
+                        candidate.HasGlyph('g') && candidate.HasGlyph('0')) {
+                        font = candidate;
+                        RealFontEnabled = true;
+                        FontUsingFallback = false;
+                        FontResourceBytes = data == null ? 0 : data.Length;
+                        FontResourceWidth = fontImage.Width;
+                        FontResourceHeight = fontImage.Height;
+                        fontImage = null; // ownership transferred to IFont
+                        BootConsole.WriteLine("[FONT] initialized");
+                        if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                            BootConsole.WriteLine("[DESKTOP] real text enabled");
+                        }
+                    } else {
+                        failure = "atlas-geometry";
+                    }
+                }
+            } catch {
+                failure = failure ?? "exception";
+            } finally {
+                if (data != null) data.Dispose();
+                if (fontImage != null) fontImage.Dispose();
+            }
+
+            if (RealFontEnabled) return;
+
+            FontFailureReason = failure ?? "unknown";
+            font = new IFont(CreateFallbackFont(), FontCharset, 20,
+                             true, 11, -3);
+            BootConsole.WriteLine("[FONT] fallback: " + FontFailureReason);
         }
         /// <summary>
         /// Enable performance tracking

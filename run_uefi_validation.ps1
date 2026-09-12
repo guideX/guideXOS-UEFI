@@ -32,6 +32,10 @@
 .PARAMETER Png
     Build and run the bounded post-EBS PNG decode/render proof.
 
+.PARAMETER Font
+    Build and run the bounded normal guideXOS bitmap-font initialization and
+    canonical DrawString proof.
+
 .PARAMETER Background
     Build and run the bounded normal wallpaper decode/scale/render proof.
 
@@ -57,6 +61,7 @@ param(
     [switch]$Tiny,
     [switch]$FirstFrame,
     [switch]$Png,
+    [switch]$Font,
     [switch]$Background,
     [switch]$BackgroundRotation,
     [Alias('Input')]
@@ -77,6 +82,7 @@ $selectorCount = @(
     $(if ($Tiny) { 1 } else { 0 }),
     $(if ($FirstFrame) { 1 } else { 0 }),
     $(if ($Png) { 1 } else { 0 }),
+    $(if ($Font) { 1 } else { 0 }),
     $(if ($Background) { 1 } else { 0 }),
     $(if ($BackgroundRotation) { 1 } else { 0 }),
     $(if ($NativeInput) { 1 } else { 0 }),
@@ -85,7 +91,7 @@ $selectorCount = @(
 ) | Measure-Object -Sum | Select-Object -ExpandProperty Sum
 
 if ($selectorCount -gt 1) {
-    throw 'Select only one of -Tiny, -FirstFrame, -Png, -Background, -BackgroundRotation, -Frames, -Input, or -InputStress.'
+    throw 'Select only one of -Tiny, -FirstFrame, -Png, -Font, -Background, -BackgroundRotation, -Frames, -Input, or -InputStress.'
 }
 if ($Frames -lt 0) {
     throw '-Frames cannot be negative.'
@@ -94,6 +100,7 @@ if ($Frames -gt 0 -and $Frames -ne 300) {
     throw 'The bounded diagnostic validation target is fixed at 300 frames.'
 }
 if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
+    -not $Font -and
     -not $Background -and -not $BackgroundRotation -and
     -not $NativeInput -and -not $NativeInputStress -and -not $Continuous) {
     $Continuous = $true
@@ -106,6 +113,8 @@ if ($Tiny) {
     $diagnosticMode = 'FirstFrame'
 } elseif ($Png) {
     $diagnosticMode = 'Png'
+} elseif ($Font) {
+    $diagnosticMode = 'Font'
 } elseif ($Background) {
     $diagnosticMode = 'Background'
 } elseif ($BackgroundRotation) {
@@ -117,7 +126,7 @@ if ($Tiny) {
 } elseif ($NativeInputStress) {
     $diagnosticMode = 'InputStress'
 }
-$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Background', 'BackgroundRotation')
+$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation')
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress')
 $isContinuousValidation = -not $isBoundedDiagnostic
 $diagnosticCompletionMarker = switch ($diagnosticMode) {
@@ -125,6 +134,7 @@ $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'FirstFrame' { 'NORMAL_FRAME_COMPLETE'; break }
     'Frames' { 'MULTIFRAME_COMPLETE'; break }
     'Png' { 'PNG_PROBE_COMPLETE'; break }
+    'Font' { 'FONT_PROBE_COMPLETE'; break }
     'Background' { 'BACKGROUND_PROBE_COMPLETE'; break }
     'BackgroundRotation' { 'BACKGROUND_ROTATION_COMPLETE'; break }
     default { '' }
@@ -447,7 +457,7 @@ try {
 
             $faultMatches = [regex]::Matches(
                 $content,
-                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|BACKGROUND_PROBE_FAIL[^\r\n]*|BACKGROUND_ROTATION_FAIL[^\r\n]*|BACKGROUND_PROBE_RENDER_OK=0|BACKGROUND_ROTATION_RENDER_OK=0|CPU_FAULT_[A-Z_]+|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
+                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|BACKGROUND_PROBE_FAIL[^\r\n]*|BACKGROUND_ROTATION_FAIL[^\r\n]*|BACKGROUND_PROBE_RENDER_OK=0|BACKGROUND_ROTATION_RENDER_OK=0|FONT_PROBE_FAIL[^\r\n]*|FONT_PROBE_INIT_OK=0|FONT_PROBE_MEASURE_OK=0|FONT_RENDER_OK=0|CPU_FAULT_[A-Z_]+|#UD|#GP|#PF|GENERAL_PROTECTION|PAGE_FAULT|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
             if ($faultMatches.Count -gt 0) {
                 $faultText = $faultMatches[$faultMatches.Count - 1].Value
                 $status = 'FAULT'
