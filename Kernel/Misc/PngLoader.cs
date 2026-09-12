@@ -15,7 +15,7 @@ namespace guideXOS.Misc {
     /// - Fail via return false, never throw
     ///
     /// SUPPORTED PNG SUBSET ONLY:
-    /// - Color type 6 (RGBA) ONLY
+    /// - Color type 2 (RGB) and 6 (RGBA)
     /// - Bit depth 8 ONLY
     /// - Non-interlaced ONLY
     /// - Ignores all ancillary chunks (only processes IHDR, IDAT, IEND)
@@ -89,7 +89,7 @@ namespace guideXOS.Misc {
         ///   - Width > 0 and within MAX_WIDTH
         ///   - Height > 0 and within MAX_HEIGHT
         ///   - Bit depth == 8 (only supported depth)
-        ///   - Color type == 6 (RGBA only)
+        ///   - Color type == 2 (RGB) or 6 (RGBA)
         ///   - Compression method == 0 (deflate only)
         ///   - Filter method == 0 (standard PNG filtering)
         ///   - Interlace method == 0 (non-interlaced only)
@@ -238,11 +238,9 @@ namespace guideXOS.Misc {
             // Other valid PNG bit depths are 1, 2, 4, 16 but we reject them
             if (bitDepth != 8) return false;
 
-            // Validate color type == 6 (RGBA)
-            // Color type 6 = truecolor with alpha (RGBA)
-            // Other valid types: 0=grayscale, 2=RGB, 3=palette, 4=grayscale+alpha
-            // We only support type 6
-            if (colorType != 6) return false;
+            // Support truecolor RGB and truecolor RGBA. Other PNG color
+            // types remain intentionally outside this bounded decoder.
+            if (colorType != 2 && colorType != 6) return false;
 
             // Validate compression method == 0
             // PNG only defines compression method 0 (deflate)
@@ -266,6 +264,38 @@ namespace guideXOS.Misc {
             width = w;
             height = h;
             return true;
+        }
+
+        /// <summary>
+        /// Read the bounded PNG header format used by diagnostics and the
+        /// managed background path without allocating image buffers.
+        /// </summary>
+        public static bool TryGetPngInfo(byte[] pngData, out int width,
+            out int height, out byte bitDepth, out byte colorType,
+            out byte interlaceMethod) {
+            width = 0;
+            height = 0;
+            bitDepth = 0;
+            colorType = 0;
+            interlaceMethod = 0;
+            if (pngData == null || pngData.Length < 33) return false;
+            if (pngData[0] != 0x89 || pngData[1] != 0x50 ||
+                pngData[2] != 0x4E || pngData[3] != 0x47 ||
+                pngData[4] != 0x0D || pngData[5] != 0x0A ||
+                pngData[6] != 0x1A || pngData[7] != 0x0A) return false;
+            if (ReadBE32(pngData, 8) != 13 || ReadBE32(pngData, 12) != 0x49484452) {
+                return false;
+            }
+
+            width = (int)ReadBE32(pngData, 16);
+            height = (int)ReadBE32(pngData, 20);
+            bitDepth = pngData[24];
+            colorType = pngData[25];
+            interlaceMethod = pngData[28];
+            return width > 0 && width <= MAX_WIDTH && height > 0 &&
+                   height <= MAX_HEIGHT && bitDepth == 8 &&
+                   (colorType == 2 || colorType == 6) &&
+                   pngData[26] == 0 && pngData[27] == 0 && interlaceMethod == 0;
         }
 
         /// <summary>
@@ -2117,7 +2147,8 @@ namespace guideXOS.Misc {
         /// Assumptions:
         /// - data is non-null and contains valid PNG bytes
         /// - Initialize() has been called
-        /// - PNG is color type 6, bit depth 8, non-interlaced
+        /// - PNG is color type 2 (RGB) or 6 (RGBA), bit depth 8,
+        ///   non-interlaced
         /// </summary>
         public static bool Load(byte[] data, out Image result) {
             result = null;
@@ -2143,6 +2174,7 @@ namespace guideXOS.Misc {
             int pos = 8;
             int width = 0;
             int height = 0;
+            byte colorType = 0;
             int idatTotalSize = 0;
             bool foundIHDR = false;
             bool foundIEND = false;
@@ -2174,13 +2206,13 @@ namespace guideXOS.Misc {
                     width = (int)ReadBE32(data, pos + 8);
                     height = (int)ReadBE32(data, pos + 12);
                     byte bitDepth = data[pos + 16];
-                    byte colorType = data[pos + 17];
+                    colorType = data[pos + 17];
                     byte compressionMethod = data[pos + 18];
                     byte filterMethod = data[pos + 19];
                     byte interlaceMethod = data[pos + 20];
 
-                    // Validate: Only support RGBA (color type 6)
-                    if (colorType != 6) return false;
+                    // Validate: support RGB and RGBA truecolor only.
+                    if (colorType != 2 && colorType != 6) return false;
 
                     // Validate: Only support 8-bit depth
                     if (bitDepth != 8) return false;
@@ -2268,12 +2300,12 @@ namespace guideXOS.Misc {
                 return false;
             }
 
-            // Calculate expected decompressed size
-            // For RGBA (4 bytes per pixel) + 1 filter byte per scanline
-            int bytesPerPixel = 4;
+            // Calculate expected decompressed size. RGB scanlines have three
+            // bytes per pixel; both formats become canonical ARGB32 below.
+            int bytesPerPixel = colorType == 2 ? 3 : 4;
             long scanlineBytesLong = (long)width * bytesPerPixel;
             long expectedSizeLong = (long)height * (scanlineBytesLong + 1);
-            long rgbaBytesLong = (long)width * height * bytesPerPixel;
+            long rgbaBytesLong = (long)width * height * 4;
             if (scanlineBytesLong <= 0 || scanlineBytesLong > int.MaxValue ||
                 expectedSizeLong <= 0 || expectedSizeLong > int.MaxValue ||
                 rgbaBytesLong <= 0 || rgbaBytesLong > MAX_DECODED_RGBA_BYTES) {
@@ -2356,15 +2388,15 @@ namespace guideXOS.Misc {
                     return false;
                 }
 
-                // Convert RGBA to ARGB and write to image
-                // PNG stores RGBA, our Image expects ARGB (0xAARRGGBB)
+                // Convert RGB/RGBA to canonical ARGB. RGB wallpaper pixels
+                // are intentionally opaque.
                 int imgRowStart = y * width;
                 for (int x = 0; x < width; x++) {
-                    int pixelOffset = x * 4;
+                    int pixelOffset = x * bytesPerPixel;
                     byte r = currScanline[pixelOffset + 0];
                     byte g = currScanline[pixelOffset + 1];
                     byte b = currScanline[pixelOffset + 2];
-                    byte a = currScanline[pixelOffset + 3];
+                    byte a = colorType == 2 ? (byte)0xFF : currScanline[pixelOffset + 3];
 
                     // Pack as ARGB: 0xAARRGGBB
                     img.RawData[imgRowStart + x] = (int)(((uint)a << 24) | ((uint)r << 16) | ((uint)g << 8) | b);

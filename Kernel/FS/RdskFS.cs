@@ -43,7 +43,85 @@ namespace guideXOS.FS {
         }
 
         public override List<FileInfo> GetFiles(string Directory) {
-            return new List<FileInfo>();
+            List<FileInfo> result = new List<FileInfo>();
+            if (Directory == null) return result;
+
+            // The ramdisk has no directory records.  Reconstruct the direct
+            // children of the requested directory from the packed paths.
+            string directory = Directory;
+            if (directory.Length > 0 && directory[0] == '/') {
+                directory = directory.Substring(1);
+            }
+            if (directory.Length > 0 && directory[directory.Length - 1] != '/') {
+                string withSlash = directory + "/";
+                directory = withSlash;
+            }
+
+            byte* ptr = Ramdisk.RawBasePointer;
+            if (ptr == null || ptr[0] != (byte)'R' || ptr[1] != (byte)'D' ||
+                ptr[2] != (byte)'S' || ptr[3] != (byte)'K') {
+                return result;
+            }
+
+            uint fileCount = *(uint*)(ptr + 8);
+            if (fileCount == 0 || fileCount > 10000) {
+                return result;
+            }
+
+            ulong offset = 12;
+            const ulong MAX_RDSK_SIZE = 512 * 1024 * 1024;
+            for (uint i = 0; i < fileCount; i++) {
+                if (offset > MAX_RDSK_SIZE || offset + 2 > MAX_RDSK_SIZE) break;
+
+                ushort pathLen = *(ushort*)(ptr + offset);
+                offset += 2;
+                if (pathLen == 0 || pathLen > 512 || offset + pathLen > MAX_RDSK_SIZE) break;
+
+                bool pathValid = true;
+                for (ushort j = 0; j < pathLen; j++) {
+                    byte b = ptr[offset + j];
+                    if (b == 0 || b > 127) {
+                        pathValid = false;
+                        break;
+                    }
+                }
+                if (!pathValid) break;
+
+                string path = null;
+                try {
+                    path = string.FromASCII((nint)(ptr + offset), pathLen);
+                } catch {
+                    break;
+                }
+                offset += pathLen;
+
+                if (offset + 4 > MAX_RDSK_SIZE) {
+                    if (path != null) path.Dispose();
+                    break;
+                }
+                uint dataLen = *(uint*)(ptr + offset);
+                offset += 4;
+                if (dataLen > 100 * 1024 * 1024 || offset + dataLen > MAX_RDSK_SIZE) {
+                    if (path != null) path.Dispose();
+                    break;
+                }
+
+                if (path != null && IsInDirectory(path, directory)) {
+                    int slash = path.LastIndexOf('/');
+                    string name = path.Substring(slash + 1);
+                    FileInfo info = new FileInfo();
+                    info.Name = name;
+                    info.Attribute = FileAttribute.Archive;
+                    info.Param0 = offset;
+                    info.Param1 = dataLen;
+                    result.Add(info);
+                }
+
+                if (path != null) path.Dispose();
+                offset += dataLen;
+            }
+
+            return result;
         }
         
         public override void Delete(string Name) { }

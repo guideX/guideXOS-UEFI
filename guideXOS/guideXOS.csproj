@@ -48,6 +48,12 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'InputStress'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_INPUT_STRESS</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Background'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_BACKGROUND</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'BackgroundRotation'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_BACKGROUND_ROTATION</DefineConstants>
+	</PropertyGroup>
 
 	<Target Name="PrepareForILLink">
 	</Target>

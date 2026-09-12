@@ -127,6 +127,16 @@ unsafe class Program {
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
 #endif
+#if UEFI_DIAGNOSTIC_BACKGROUND
+    private const bool UEFI_ENABLE_BACKGROUND_DIAGNOSTIC = true;
+#else
+    private const bool UEFI_ENABLE_BACKGROUND_DIAGNOSTIC = false;
+#endif
+#if UEFI_DIAGNOSTIC_BACKGROUND_ROTATION
+    private const bool UEFI_ENABLE_BACKGROUND_ROTATION_DIAGNOSTIC = true;
+#else
+    private const bool UEFI_ENABLE_BACKGROUND_ROTATION_DIAGNOSTIC = false;
+#endif
 #if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
     private const bool UEFI_ENABLE_INPUT_DIAGNOSTIC_TARGET = true;
 #else
@@ -548,6 +558,18 @@ unsafe class Program {
             return;
         }
 
+        if (UEFI_ENABLE_BACKGROUND_DIAGNOSTIC) {
+            SerialBreadcrumb("SMAIN_DISPATCH_REASON=BACKGROUND_PROBE");
+            RenderLoopUefiBackgroundProbe();
+            return;
+        }
+
+        if (UEFI_ENABLE_BACKGROUND_ROTATION_DIAGNOSTIC) {
+            SerialBreadcrumb("SMAIN_DISPATCH_REASON=BACKGROUND_ROTATION");
+            RenderLoopUefiBackgroundRotation();
+            return;
+        }
+
         if (UEFI_ENABLE_PNG_DIAGNOSTIC) {
             SerialBreadcrumb("SMAIN_DISPATCH_REASON=PNG_PROBE");
             RenderLoopUefiPngProbe();
@@ -630,8 +652,8 @@ unsafe class Program {
             return;
         }
 
-        // UEFI uses the canonical framebuffer-backed Graphics object. The
-        // direct solid fill avoids image-dependent wallpaper paths post-EBS.
+        // Establish the known safe last-resort background. SetupIcons then
+        // lets BackgroundRotationManager replace it with the managed asset.
         Framebuffer.Graphics.Clear(0xFF0D7D77u);
         Wallpaper = null;
         BootConsole.WriteLine("[FRAMEBUFFER] initialized");
@@ -725,7 +747,9 @@ unsafe class Program {
                 }
             } else {
                 BootConsole.WriteLine("[SMAIN] Initializing managed PNG image assets");
-                if (PngLoader.Initialize() && RefreshCachedIcons() &&
+                bool pngReady = PngLoader.Initialize();
+                if (pngReady) BackgroundRotationManager.Initialize();
+                if (pngReady && RefreshCachedIcons() &&
                     HasVisiblePixels(_cachedDocumentIcon) &&
                     HasVisiblePixels(_cachedFolderIcon) &&
                     HasVisiblePixels(_cachedImageIcon) &&
@@ -1015,6 +1039,7 @@ unsafe class Program {
 
         SetUefiFrameBreadcrumb(1, 0, 100);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
+        BackgroundRotationManager.Update();
         BackgroundRotationManager.DrawBackground();
 
         SetUefiFrameBreadcrumb(1, 1, 101);
@@ -1122,6 +1147,8 @@ unsafe class Program {
             _uefiMultiFrameStackLowWater.ToString());
         SerialBreadcrumb("CONTINUOUS_HEARTBEAT_GRAPHICS_VALID=" +
             (graphicsValid ? "1" : "0"));
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_BYTES=" +
+            Allocator.MemoryInUse.ToString());
         if (PS2Keyboard.IrqCount != 0 || PS2Mouse.InterruptCount != 0) {
             SerialBreadcrumb("INPUT_STATS_KEY_IRQ=" + PS2Keyboard.IrqCount.ToString());
             SerialBreadcrumb("INPUT_STATS_KEY_DROPPED=" + PS2Keyboard.DroppedScancodeCount.ToString());
@@ -1284,6 +1311,277 @@ unsafe class Program {
         for (;;) {
             Native.Hlt();
         }
+    }
+
+    /// <summary>
+    /// Bounded proof of the normal managed wallpaper path. It probes the
+    /// selected asset, then renders the manager-owned scaled image through the
+    /// canonical framebuffer Graphics object.
+    /// </summary>
+    private static void RenderLoopUefiBackgroundProbe() {
+        byte[] data = null;
+        byte[] invalidData = null;
+        byte[] impossibleDimensions = null;
+        byte[] truncatedData = null;
+        Image decoded = null;
+        Image rejected = null;
+        string failure = null;
+
+        try {
+            SerialBreadcrumb("BACKGROUND_PROBE_BEGIN");
+            string path = BackgroundRotationManager.CurrentBackgroundPath;
+            SerialBreadcrumb("BACKGROUND_PROBE_FILE=" + (path == null ? "NONE" : path));
+            SerialBreadcrumb("BACKGROUND_MANAGER_INITIALIZED=" +
+                (BackgroundRotationManager.IsInitialized ? "1" : "0"));
+            SerialBreadcrumb("BACKGROUND_MANAGER_COUNT=" +
+                BackgroundRotationManager.GetBackgroundCount().ToString());
+
+            if (path == null || File.Instance == null) {
+                failure = "FILE_UNAVAILABLE";
+            } else {
+                data = File.Instance.ReadAllBytes(path);
+                if (data == null || data.Length == 0) failure = "FILE_READ";
+            }
+
+            int width = 0;
+            int height = 0;
+            byte bitDepth = 0;
+            byte colorType = 0;
+            byte interlace = 0;
+            if (failure == null) {
+                SerialBreadcrumb("BACKGROUND_PROBE_BYTES=" + data.Length.ToString());
+                if (!PngLoader.TryGetPngInfo(data, out width, out height,
+                    out bitDepth, out colorType, out interlace)) {
+                    failure = "FORMAT";
+                } else {
+                    SerialBreadcrumb("BACKGROUND_PROBE_DIMENSIONS=" +
+                        width.ToString() + "x" + height.ToString());
+                    SerialBreadcrumb("BACKGROUND_PROBE_FORMAT=" +
+                        (colorType == 2 ? "RGB8" : "RGBA8"));
+                    SerialBreadcrumb("BACKGROUND_PROBE_ALPHA=" +
+                        (colorType == 6 ? "PRESENT" : "NONE"));
+                }
+            }
+
+            if (failure == null) {
+                if (!PngLoader.Initialize() || !PngLoader.Load(data, out decoded) ||
+                    decoded == null || decoded.RawData == null) {
+                    failure = "DECODE";
+                } else {
+                    bool rgbOpaque = colorType != 2;
+                    if (colorType == 2) {
+                        rgbOpaque = true;
+                        for (int y = 0; y < decoded.Height && rgbOpaque; y++) {
+                            for (int x = 0; x < decoded.Width; x++) {
+                                if ((byte)(decoded.GetPixel(x, y) >> 24) != 0xFF) {
+                                    rgbOpaque = false;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    SerialBreadcrumb("BACKGROUND_PROBE_RGB_OPAQUE=" +
+                        (rgbOpaque ? "1" : "0"));
+                    SerialBreadcrumb("BACKGROUND_PROBE_DECODE_OK");
+                    if (!rgbOpaque) failure = "RGB_ALPHA";
+                }
+            }
+
+            if (failure == null) {
+                Image scaled = decoded.ResizeImage(Framebuffer.Width, Framebuffer.Height);
+                if (scaled == null || scaled.RawData == null ||
+                    scaled.Width != Framebuffer.Width ||
+                    scaled.Height != Framebuffer.Height) {
+                    if (scaled != null) scaled.Dispose();
+                    failure = "SCALE";
+                } else {
+                    SerialBreadcrumb("BACKGROUND_PROBE_SCALE_DIMENSIONS=" +
+                        scaled.Width.ToString() + "x" + scaled.Height.ToString());
+                    scaled.Dispose();
+                    SerialBreadcrumb("BACKGROUND_PROBE_SCALE_OK");
+                }
+            }
+
+            if (failure == null) {
+                guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
+                Image active = Wallpaper;
+                if (graphics == null || active == null || active.RawData == null ||
+                    active.Width != Framebuffer.Width || active.Height != Framebuffer.Height) {
+                    failure = "ACTIVE_BACKGROUND";
+                } else {
+                    graphics.Clear(0xFF0D7D77u);
+                    BackgroundRotationManager.DrawBackground();
+                    int centerX = Framebuffer.Width / 2;
+                    int centerY = Framebuffer.Height / 2;
+                    int lowerX = Framebuffer.Width - 1;
+                    int lowerY = Framebuffer.Height - 1;
+                    uint expectedUpper = active.GetPixel(0, 0);
+                    uint expectedCenter = active.GetPixel(centerX, centerY);
+                    uint expectedLower = active.GetPixel(lowerX, lowerY);
+                    uint actualUpper = graphics.GetPoint(0, 0);
+                    uint actualCenter = graphics.GetPoint(centerX, centerY);
+                    uint actualLower = graphics.GetPoint(lowerX, lowerY);
+                    SerialBreadcrumb("BACKGROUND_PROBE_PIXEL_UPPER_LEFT=" + actualUpper.ToString());
+                    SerialBreadcrumb("BACKGROUND_PROBE_PIXEL_CENTER=" + actualCenter.ToString());
+                    SerialBreadcrumb("BACKGROUND_PROBE_PIXEL_LOWER_RIGHT=" + actualLower.ToString());
+                    bool renderOk = expectedUpper == actualUpper &&
+                                    expectedCenter == actualCenter &&
+                                    expectedLower == actualLower;
+                    SerialBreadcrumb("BACKGROUND_PROBE_RENDER_OK=" +
+                        (renderOk ? "1" : "0"));
+                    Framebuffer.Update();
+                    if (!renderOk) failure = "RENDER";
+                }
+            }
+
+            // Negative controls exercise the same background candidate path;
+            // none is published, so the valid active image remains intact.
+            if (failure == null) {
+                bool missingRejected = !BackgroundRotationManager.TryLoadPathForDiagnostic(
+                    "Backgrounds/__missing_wallpaper__.png", out rejected);
+                if (rejected != null) rejected.Dispose();
+                rejected = null;
+                SerialBreadcrumb("BACKGROUND_NEGATIVE_MISSING=" +
+                    (missingRejected ? "PASS" : "FAIL"));
+                if (!missingRejected) failure = "NEGATIVE_MISSING";
+            }
+
+            if (failure == null) {
+                invalidData = new byte[8];
+                bool invalidRejected = !BackgroundRotationManager.TryLoadDataForDiagnostic(
+                    invalidData, out rejected);
+                if (rejected != null) rejected.Dispose();
+                rejected = null;
+                invalidData.Dispose();
+                invalidData = null;
+                SerialBreadcrumb("BACKGROUND_NEGATIVE_INVALID=" +
+                    (invalidRejected ? "PASS" : "FAIL"));
+                if (!invalidRejected) failure = "NEGATIVE_INVALID";
+            }
+
+            if (failure == null) {
+                impossibleDimensions = new byte[data.Length];
+                for (int i = 0; i < data.Length; i++) impossibleDimensions[i] = data[i];
+                impossibleDimensions[16] = 0x00;
+                impossibleDimensions[17] = 0x20;
+                impossibleDimensions[18] = 0x00;
+                impossibleDimensions[19] = 0x00;
+                bool impossibleRejected = !BackgroundRotationManager.TryLoadDataForDiagnostic(
+                    impossibleDimensions, out rejected);
+                if (rejected != null) rejected.Dispose();
+                rejected = null;
+                impossibleDimensions.Dispose();
+                impossibleDimensions = null;
+                SerialBreadcrumb("BACKGROUND_NEGATIVE_DIMENSIONS=" +
+                    (impossibleRejected ? "PASS" : "FAIL"));
+                if (!impossibleRejected) failure = "NEGATIVE_DIMENSIONS";
+            }
+
+            if (failure == null) {
+                int truncatedLength = data.Length > 16 ? data.Length - 16 : 0;
+                truncatedData = new byte[truncatedLength];
+                for (int i = 0; i < truncatedLength; i++) truncatedData[i] = data[i];
+                bool failedDecodeRejected = !BackgroundRotationManager.TryLoadDataForDiagnostic(
+                    truncatedData, out rejected);
+                if (rejected != null) rejected.Dispose();
+                rejected = null;
+                truncatedData.Dispose();
+                truncatedData = null;
+                SerialBreadcrumb("BACKGROUND_NEGATIVE_DECODE=" +
+                    (failedDecodeRejected ? "PASS" : "FAIL"));
+                if (!failedDecodeRejected) failure = "NEGATIVE_DECODE";
+            }
+        } catch {
+            failure = "EXCEPTION";
+        }
+
+        if (rejected != null) rejected.Dispose();
+        if (decoded != null) decoded.Dispose();
+        if (data != null) data.Dispose();
+        if (invalidData != null) invalidData.Dispose();
+        if (impossibleDimensions != null) impossibleDimensions.Dispose();
+        if (truncatedData != null) truncatedData.Dispose();
+
+        if (failure == null) SerialBreadcrumb("BACKGROUND_PROBE_COMPLETE");
+        else SerialBreadcrumb("BACKGROUND_PROBE_FAIL=" + failure);
+        HaltAfterUefiBackgroundProbe();
+    }
+
+    private static void HaltAfterUefiBackgroundProbe() {
+        SerialBreadcrumb("BACKGROUND_PROBE_HALT_ENTER");
+        for (;;) Native.Hlt();
+    }
+
+    /// <summary>
+    /// Bounded rotation proof. Each candidate is decoded and published before
+    /// the next frame is rendered, while the ordinary desktop/input sequence
+    /// remains active.
+    /// </summary>
+    private static void RenderLoopUefiBackgroundRotation() {
+        string failure = null;
+        int successful = 0;
+        try {
+            SerialBreadcrumb("BACKGROUND_ROTATION_BEGIN");
+            string initial = BackgroundRotationManager.CurrentBackgroundPath;
+            SerialBreadcrumb("BACKGROUND_ROTATION_INITIAL=" +
+                (initial == null ? "NONE" : initial));
+            if (initial == null || BackgroundRotationManager.GetBackgroundCount() < 2) {
+                failure = "INSUFFICIENT_ASSETS";
+            }
+
+            for (int transition = 0; failure == null && transition < 5; transition++) {
+                string before = BackgroundRotationManager.CurrentBackgroundPath;
+                if (!BackgroundRotationManager.ForceRotateNext()) {
+                    failure = "LOAD";
+                    break;
+                }
+
+                string next = BackgroundRotationManager.CurrentBackgroundPath;
+                SerialBreadcrumb("BACKGROUND_ROTATION_NEXT=" +
+                    (next == null ? "NONE" : next));
+                if (next == null || next == before || Wallpaper == null ||
+                    Wallpaper.RawData == null || Wallpaper.Width != Framebuffer.Width ||
+                    Wallpaper.Height != Framebuffer.Height) {
+                    failure = "STATE";
+                    break;
+                }
+
+                _uefiMultiFrameCurrentFrame = transition + 1;
+                if (!RenderUefiDesktopFrame(transition + 1)) {
+                    failure = "FRAME";
+                    break;
+                }
+
+                uint expected = Wallpaper.GetPixel(0, 0);
+                uint actual = Framebuffer.Graphics.GetPoint(0, 0);
+                bool rendered = expected == actual;
+                SerialBreadcrumb("BACKGROUND_ROTATION_RENDER_OK=" +
+                    (rendered ? "1" : "0"));
+                if (!rendered) {
+                    failure = "RENDER";
+                    break;
+                }
+                successful++;
+                SerialBreadcrumb("BACKGROUND_ROTATION_CHANGE_OK=1");
+            }
+
+            SerialBreadcrumb("BACKGROUND_ROTATION_SUCCESS_COUNT=" + successful.ToString());
+        } catch {
+            failure = "EXCEPTION";
+        }
+
+        if (failure == null && successful == 5) {
+            SerialBreadcrumb("BACKGROUND_ROTATION_COMPLETE");
+        } else {
+            SerialBreadcrumb("BACKGROUND_ROTATION_FAIL=" +
+                (failure == null ? "COUNT" : failure));
+        }
+        HaltAfterUefiBackgroundRotation();
+    }
+
+    private static void HaltAfterUefiBackgroundRotation() {
+        SerialBreadcrumb("BACKGROUND_ROTATION_HALT_ENTER");
+        for (;;) Native.Hlt();
     }
 
     private static bool HasVisiblePixels(Image image) {

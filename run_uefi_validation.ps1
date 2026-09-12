@@ -32,6 +32,12 @@
 .PARAMETER Png
     Build and run the bounded post-EBS PNG decode/render proof.
 
+.PARAMETER Background
+    Build and run the bounded normal wallpaper decode/scale/render proof.
+
+.PARAMETER BackgroundRotation
+    Build and run five bounded normal background transitions.
+
 .PARAMETER TimeoutSeconds
     Host-side validation limit. The guest has no corresponding timeout.
 
@@ -51,6 +57,8 @@ param(
     [switch]$Tiny,
     [switch]$FirstFrame,
     [switch]$Png,
+    [switch]$Background,
+    [switch]$BackgroundRotation,
     [Alias('Input')]
     [switch]$NativeInput,
     [Alias('InputStress')]
@@ -69,13 +77,15 @@ $selectorCount = @(
     $(if ($Tiny) { 1 } else { 0 }),
     $(if ($FirstFrame) { 1 } else { 0 }),
     $(if ($Png) { 1 } else { 0 }),
+    $(if ($Background) { 1 } else { 0 }),
+    $(if ($BackgroundRotation) { 1 } else { 0 }),
     $(if ($NativeInput) { 1 } else { 0 }),
     $(if ($NativeInputStress) { 1 } else { 0 }),
     [int]($Frames -gt 0)
 ) | Measure-Object -Sum | Select-Object -ExpandProperty Sum
 
 if ($selectorCount -gt 1) {
-    throw 'Select only one of -Tiny, -FirstFrame, -Png, -Frames, -Input, or -InputStress.'
+    throw 'Select only one of -Tiny, -FirstFrame, -Png, -Background, -BackgroundRotation, -Frames, -Input, or -InputStress.'
 }
 if ($Frames -lt 0) {
     throw '-Frames cannot be negative.'
@@ -84,6 +94,7 @@ if ($Frames -gt 0 -and $Frames -ne 300) {
     throw 'The bounded diagnostic validation target is fixed at 300 frames.'
 }
 if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
+    -not $Background -and -not $BackgroundRotation -and
     -not $NativeInput -and -not $NativeInputStress -and -not $Continuous) {
     $Continuous = $true
 }
@@ -95,6 +106,10 @@ if ($Tiny) {
     $diagnosticMode = 'FirstFrame'
 } elseif ($Png) {
     $diagnosticMode = 'Png'
+} elseif ($Background) {
+    $diagnosticMode = 'Background'
+} elseif ($BackgroundRotation) {
+    $diagnosticMode = 'BackgroundRotation'
 } elseif ($Frames -gt 0) {
     $diagnosticMode = 'Frames'
 } elseif ($NativeInput) {
@@ -102,7 +117,7 @@ if ($Tiny) {
 } elseif ($NativeInputStress) {
     $diagnosticMode = 'InputStress'
 }
-$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png')
+$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Background', 'BackgroundRotation')
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress')
 $isContinuousValidation = -not $isBoundedDiagnostic
 $diagnosticCompletionMarker = switch ($diagnosticMode) {
@@ -110,6 +125,8 @@ $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'FirstFrame' { 'NORMAL_FRAME_COMPLETE'; break }
     'Frames' { 'MULTIFRAME_COMPLETE'; break }
     'Png' { 'PNG_PROBE_COMPLETE'; break }
+    'Background' { 'BACKGROUND_PROBE_COMPLETE'; break }
+    'BackgroundRotation' { 'BACKGROUND_ROTATION_COMPLETE'; break }
     default { '' }
 }
 
@@ -430,7 +447,7 @@ try {
 
             $faultMatches = [regex]::Matches(
                 $content,
-                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|CPU_FAULT_[A-Z_]+|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
+                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|BACKGROUND_PROBE_FAIL[^\r\n]*|BACKGROUND_ROTATION_FAIL[^\r\n]*|BACKGROUND_PROBE_RENDER_OK=0|BACKGROUND_ROTATION_RENDER_OK=0|CPU_FAULT_[A-Z_]+|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
             if ($faultMatches.Count -gt 0) {
                 $faultText = $faultMatches[$faultMatches.Count - 1].Value
                 $status = 'FAULT'

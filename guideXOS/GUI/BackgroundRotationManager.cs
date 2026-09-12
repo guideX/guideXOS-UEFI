@@ -7,227 +7,252 @@ using System.Drawing;
 
 namespace guideXOS.GUI {
     /// <summary>
-    /// Manages automatic background rotation with fade transitions
+    /// Owns the normal desktop background and its optional rotation state.
+    /// UEFI uses the managed PngLoader path; legacy retains its existing PNG
+    /// compatibility path.
     /// </summary>
     internal static class BackgroundRotationManager {
         private static List<string> _backgroundPaths;
-        private static int _currentIndex = 0;
-        private static ulong _lastRotationTick = 0;
-        private static bool _initialized = false;
-        
-        // Fade transition state - FIXED: Pre-render frames instead of per-pixel blending
-        private static bool _isFading = false;
-        private static Image _fadeFrame = null; // Pre-rendered composite frame
-        private static ulong _fadeStartTick = 0;
-        private static int _fadeFrameCount = 0;
-        private static int _fadeCurrentFrame = 0;
-        
-        /// <summary>
-        /// Initialize the background rotation manager
-        /// </summary>
+        private static int _currentIndex;
+        private static ulong _lastRotationTick;
+        private static bool _initialized;
+
+        // Fade is represented as an instantaneous, already decoded
+        // replacement. This keeps the existing behavior without a per-frame
+        // composite allocation.
+        private static bool _isFading;
+        private static Image _fadeFrame;
+
+        public static bool IsInitialized { get { return _initialized; } }
+
+        public static string CurrentBackgroundPath {
+            get {
+                if (_backgroundPaths == null || _currentIndex < 0 ||
+                    _currentIndex >= _backgroundPaths.Count) return null;
+                return _backgroundPaths[_currentIndex];
+            }
+        }
+
         public static void Initialize() {
             if (_initialized) return;
-            
+
             _backgroundPaths = new List<string>();
             LoadBackgroundPaths();
             _lastRotationTick = Timer.Ticks;
             _initialized = true;
-            
-            // Load background on startup
-            if (_backgroundPaths.Count > 0) {
-                int selectedIndex = 0;
-                
-                // Choose random background if enabled and auto-rotation is disabled
-                if (!UISettings.EnableAutoBackgroundRotation && UISettings.EnableRandomBackgroundOnStartup) {
-                    // Use pseudo-random based on current tick count
-                    selectedIndex = (int)(Timer.Ticks % (ulong)_backgroundPaths.Count);
-                }
-                // Otherwise use first background (index 0) for auto-rotation or when random is disabled
-                
-                try {
-                    byte[] data = File.ReadAllBytes(_backgroundPaths[selectedIndex]);
-                    if (data != null) {
-                        var img = new PNG(data);
-                        var resized = img.ResizeImage(Framebuffer.Width, Framebuffer.Height);
-                        img.Dispose();
-                        
-                        // Replace gradient with selected background
-                        if (Program.Wallpaper != null) Program.Wallpaper.Dispose();
-                        Program.Wallpaper = resized;
-                        _currentIndex = selectedIndex;
-                    }
-                } catch {
-                    // Failed to load background, keep gradient
-                }
-            }
-        }
-        
-        /// <summary>
-        /// Load all available background image paths
-        /// </summary>
-        private static void LoadBackgroundPaths() {
-            _backgroundPaths.Clear();
-            
-            var files = File.GetFiles(@"Backgrounds/");
-            if (files != null && files.Count > 0) {
-                for (int i = 0; i < files.Count; i++) {
-                    var fi = files[i];
-                    if (fi.Attribute != FileAttribute.Directory) {
-                        string name = fi.Name;
-                        // Check for image files - case insensitive
-                        bool isPng = name.EndsWith(".png") || name.EndsWith(".PNG");
-                        bool isJpg = name.EndsWith(".jpg") || name.EndsWith(".JPG") || 
-                                    name.EndsWith(".jpeg") || name.EndsWith(".JPEG");
-                        bool isBmp = name.EndsWith(".bmp") || name.EndsWith(".BMP");
-                        
-                        // Skip thumbnail files
-                        if (name.EndsWith("_thumb.png") || name.EndsWith("_thumb.PNG")) {
-                            continue;
-                        }
-                        
-                        if (isPng || isJpg || isBmp) {
-                            string path = "Backgrounds/" + name;
-                            _backgroundPaths.Add(path);
-                        }
-                    }
-                    fi.Dispose();
-                }
-                files.Dispose();
-            }
-        }
-        
-        /// <summary>
-        /// Update rotation logic - call this from main loop
-        /// </summary>
-        public static void Update() {
-            if (!_initialized) Initialize();
-            
-            // Handle fade transition
-            if (_isFading) {
-                UpdateFadeTransition();
+
+            if (_backgroundPaths.Count == 0) {
+                BootConsole.WriteLine("[BACKGROUND] no bundled wallpaper; retaining solid fallback");
                 return;
             }
-            
-            // Check if auto-rotation is enabled
-            if (!UISettings.EnableAutoBackgroundRotation) return;
-            
-            // Check if we have backgrounds to rotate
-            if (_backgroundPaths.Count <= 1) return;
-            
-            // Check if enough time has passed
-            ulong elapsed = Timer.Ticks >= _lastRotationTick ? 
-                           Timer.Ticks - _lastRotationTick : 0;
+
+            int selectedIndex = 0;
+            if (!UISettings.EnableAutoBackgroundRotation &&
+                UISettings.EnableRandomBackgroundOnStartup) {
+                selectedIndex = (int)(Timer.Ticks % (ulong)_backgroundPaths.Count);
+            }
+
+            Image candidate;
+            if (TryLoadBackground(_backgroundPaths[selectedIndex], out candidate)) {
+                PublishWallpaper(candidate);
+                _currentIndex = selectedIndex;
+                BootConsole.WriteLine("[BACKGROUND] loaded " + CurrentBackgroundPath);
+            } else {
+                BootConsole.WriteLine("[BACKGROUND] wallpaper load failed; retaining solid fallback");
+            }
+        }
+
+        private static bool IsUefi() {
+            return BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
+        }
+
+        private static void LoadBackgroundPaths() {
+            _backgroundPaths.Clear();
+
+            List<FileInfo> files = null;
+            try {
+                files = File.GetFiles(@"Backgrounds/");
+                if (files == null) return;
+
+                for (int i = 0; i < files.Count; i++) {
+                    FileInfo fi = files[i];
+                    if (fi == null) continue;
+                    try {
+                        if (fi.Attribute != FileAttribute.Directory) {
+                            string name = fi.Name;
+                            bool isPng = name.EndsWith(".png") || name.EndsWith(".PNG");
+                            bool isJpg = name.EndsWith(".jpg") || name.EndsWith(".JPG") ||
+                                         name.EndsWith(".jpeg") || name.EndsWith(".JPEG");
+                            bool isBmp = name.EndsWith(".bmp") || name.EndsWith(".BMP");
+                            bool isThumb = name.EndsWith("_thumb.png") ||
+                                           name.EndsWith("_thumb.PNG");
+                            if (!isThumb && (isPng || isJpg || isBmp)) {
+                                _backgroundPaths.Add("Backgrounds/" + name);
+                            }
+                        }
+                    } finally {
+                        fi.Dispose();
+                    }
+                }
+            } catch {
+                // An unavailable directory leaves the list empty and
+                // DrawBackground supplies the stable fallback.
+            } finally {
+                if (files != null) files.Dispose();
+            }
+
+            BootConsole.WriteLine("[BACKGROUND] discovered " +
+                _backgroundPaths.Count.ToString() + " wallpaper assets");
+        }
+
+        /// <summary>
+        /// Decode and scale a candidate before it can replace the active one.
+        /// The caller owns the input byte array; a successful return transfers
+        /// ownership of the scaled image to the caller.
+        /// </summary>
+        private static Image DecodeAndScale(byte[] data) {
+            if (data == null || Framebuffer.Graphics == null ||
+                Framebuffer.Width <= 0 || Framebuffer.Height <= 0) return null;
+
+            Image decoded = null;
+            Image scaled = null;
+            try {
+                if (IsUefi()) {
+                    if (!PngLoader.Initialize() || !PngLoader.Load(data, out decoded)) {
+                        return null;
+                    }
+                } else {
+                    decoded = new PNG(data);
+                }
+
+                if (decoded == null || decoded.RawData == null ||
+                    decoded.Width <= 0 || decoded.Height <= 0) return null;
+
+                scaled = decoded.ResizeImage(Framebuffer.Width, Framebuffer.Height);
+                if (scaled == null || scaled.RawData == null ||
+                    scaled.Width != Framebuffer.Width ||
+                    scaled.Height != Framebuffer.Height) {
+                    if (scaled != null) scaled.Dispose();
+                    scaled = null;
+                }
+                return scaled;
+            } catch {
+                if (scaled != null) scaled.Dispose();
+                return null;
+            } finally {
+                if (decoded != null) decoded.Dispose();
+            }
+        }
+
+        private static bool TryLoadBackground(string path, out Image candidate) {
+            candidate = null;
+            if (path == null || File.Instance == null) return false;
+
+            byte[] data = null;
+            try {
+                data = File.Instance.ReadAllBytes(path);
+                candidate = DecodeAndScale(data);
+                return candidate != null;
+            } catch {
+                if (candidate != null) candidate.Dispose();
+                candidate = null;
+                return false;
+            } finally {
+                if (data != null) data.Dispose();
+            }
+        }
+
+        // Diagnostics use the same candidate path without publishing it, so a
+        // failed probe cannot disturb the live desktop wallpaper.
+        internal static bool TryLoadPathForDiagnostic(string path, out Image candidate) {
+            return TryLoadBackground(path, out candidate);
+        }
+
+        internal static bool TryLoadDataForDiagnostic(byte[] data, out Image candidate) {
+            candidate = DecodeAndScale(data);
+            return candidate != null;
+        }
+
+        private static void PublishWallpaper(Image candidate) {
+            if (candidate == null || candidate.RawData == null) return;
+
+            Image previous = Program.Wallpaper;
+            // Publish only after complete decode and scaling. The old valid
+            // image remains available until this point.
+            Program.Wallpaper = candidate;
+            if (previous != null && previous != candidate) previous.Dispose();
+        }
+
+        public static void Update() {
+            if (!_initialized) Initialize();
+            if (_isFading) {
+                _isFading = false;
+                return;
+            }
+            if (!UISettings.EnableAutoBackgroundRotation ||
+                _backgroundPaths == null || _backgroundPaths.Count <= 1) return;
+
+            ulong elapsed = Timer.Ticks >= _lastRotationTick
+                ? Timer.Ticks - _lastRotationTick : 0;
             ulong intervalMs = (ulong)UISettings.BackgroundRotationIntervalMinutes * 60000;
-            
-            if (elapsed >= intervalMs) {
+            if (intervalMs != 0 && elapsed >= intervalMs) {
                 RotateToNext();
                 _lastRotationTick = Timer.Ticks;
             }
         }
-        
-        /// <summary>
-        /// Rotate to next background
-        /// </summary>
-        private static void RotateToNext() {
-            if (_backgroundPaths.Count == 0) return;
-            
-            // Pick next background (random or sequential)
-            _currentIndex = (_currentIndex + 1) % _backgroundPaths.Count;
-            
-            try {
-                byte[] data = File.ReadAllBytes(_backgroundPaths[_currentIndex]);
-                if (data != null) {
-                    var img = new PNG(data);
-                    var resized = img.ResizeImage(Framebuffer.Width, Framebuffer.Height);
-                    img.Dispose(); // FIXED: Dispose original image
-                    
-                    // Check if fade transition is enabled
-                    if (UISettings.EnableBackgroundFadeTransition && Program.Wallpaper != null) {
-                        StartFadeTransition(resized);
-                    } else {
-                        // Instant change - FIXED: Dispose old wallpaper
-                        if (Program.Wallpaper != null) Program.Wallpaper.Dispose();
-                        Program.Wallpaper = resized;
-                    }
+
+        private static bool RotateToNext() {
+            if (_backgroundPaths == null || _backgroundPaths.Count == 0) return false;
+
+            int oldIndex = _currentIndex;
+            for (int step = 1; step <= _backgroundPaths.Count; step++) {
+                int candidateIndex = (oldIndex + step) % _backgroundPaths.Count;
+                Image candidate;
+                if (!TryLoadBackground(_backgroundPaths[candidateIndex], out candidate)) {
+                    continue;
                 }
-            } catch {
-                // Failed to load background, try next one on next rotation
+
+                PublishWallpaper(candidate);
+                _currentIndex = candidateIndex;
+                return true;
             }
+            return false;
         }
-        
-        /// <summary>
-        /// Start fade transition between backgrounds - FIXED: Simplified to avoid per-pixel operations
-        /// </summary>
-        private static void StartFadeTransition(Image newBackground) {
-            // FIXED: Disable fade transition to prevent memory leak
-            // Instead use instant transition
-            if (Program.Wallpaper != null) {
-                Program.Wallpaper.Dispose();
-            }
-            Program.Wallpaper = newBackground;
-            _isFading = false;
-        }
-        
-        /// <summary>
-        /// Update fade transition animation - FIXED: Removed expensive per-pixel blending
-        /// </summary>
-        private static void UpdateFadeTransition() {
-            // Fade transition disabled to prevent memory leak
-            _isFading = false;
-        }
-        
-        /// <summary>
-        /// Complete the fade transition - FIXED: Proper disposal
-        /// </summary>
-        private static void CompleteFadeTransition() {
-            _isFading = false;
-            
-            if (_fadeFrame != null) {
-                _fadeFrame.Dispose();
-                _fadeFrame = null;
-            }
-        }
-        
-        /// <summary>
-        /// Draw the current background - FIXED: No more per-pixel operations
-        /// </summary>
+
         public static void DrawBackground() {
-            if (Program.Wallpaper != null) {
-                // Draw regular wallpaper
+            if (Framebuffer.Graphics == null) return;
+            if (Program.Wallpaper != null && Program.Wallpaper.RawData != null &&
+                Program.Wallpaper.Width == Framebuffer.Width &&
+                Program.Wallpaper.Height == Framebuffer.Height) {
                 Framebuffer.Graphics.DrawImage(0, 0, Program.Wallpaper, false);
             } else {
-                // Fill with default color
-                Framebuffer.Graphics.FillRectangle(0, 0, Framebuffer.Width, Framebuffer.Height, 0xFF1E1E1E);
+                Framebuffer.Graphics.FillRectangle(0, 0, Framebuffer.Width,
+                    Framebuffer.Height, 0xFF1E1E1E);
             }
         }
-        
-        /// <summary>
-        /// Reload background paths (call when new backgrounds are added)
-        /// </summary>
+
         public static void ReloadBackgrounds() {
+            if (!_initialized) Initialize();
             LoadBackgroundPaths();
-            _currentIndex = 0;
+            if (_backgroundPaths.Count == 0) {
+                _currentIndex = 0;
+            } else if (_currentIndex >= _backgroundPaths.Count) {
+                _currentIndex = 0;
+            }
         }
-        
-        /// <summary>
-        /// Force immediate rotation to next background
-        /// </summary>
-        public static void ForceRotateNext() {
-            if (_isFading) return; // Don't rotate while fading
-            RotateToNext();
+
+        public static bool ForceRotateNext() {
+            if (!_initialized) Initialize();
+            if (_isFading) return false;
+            bool changed = RotateToNext();
             _lastRotationTick = Timer.Ticks;
+            return changed;
         }
-        
-        /// <summary>
-        /// Get count of available backgrounds
-        /// </summary>
+
         public static int GetBackgroundCount() {
-            return _backgroundPaths.Count;
+            return _backgroundPaths == null ? 0 : _backgroundPaths.Count;
         }
-        
-        /// <summary>
-        /// Cleanup resources
-        /// </summary>
+
         public static new void Dispose() {
             if (_fadeFrame != null) {
                 _fadeFrame.Dispose();

@@ -155,23 +155,34 @@ namespace guideXOS.Graph {
                     }
                 }
             } else {
-                int _x = 0;
-                int _y = 0;
-                int clip_x = 0;
-                int clip_y = 0;
+                // Copy only the visible rectangle. The former path used
+                // one-based row/column offsets and could overrun both the
+                // framebuffer and an exact-size image at (0, 0).
+                if (image.Width <= 0 || image.Height <= 0) return;
+                if (X == int.MinValue || Y == int.MinValue) return;
+                if (X >= Width || Y >= Height || X + image.Width <= 0 ||
+                    Y + image.Height <= 0) return;
 
-                if (X < 0) _x = X;
-                if (Y < 0) _y = Y;
-                if (X + image.Width >= Width) clip_x = X - (Width - image.Width - 1);
-                if (Y + image.Height >= Height) clip_y = Y - (Height - image.Height - 1);
-                if (_x >= -image.Width && _y >= -image.Height &&
-                    clip_x < image.Width && clip_y < image.Height) {
-                    fixed (int* ptr = image.RawData) {
-                        for (int h = 1; h < image.Height + _y - clip_y + 1; h++) {
-                            Native.Movsd(VideoMemory + (Width * ((Y - _y) + h) + (X - _x)) + 1,
-                                         (uint*)(ptr + ((h - _y) * image.Width) + 1 - _x),
-                                         (ulong)(image.Width + _x - clip_x));
-                        }
+                int sourceX = X < 0 ? -X : 0;
+                int sourceY = Y < 0 ? -Y : 0;
+                int destinationX = X < 0 ? 0 : X;
+                int destinationY = Y < 0 ? 0 : Y;
+                int copyWidth = image.Width - sourceX;
+                int copyHeight = image.Height - sourceY;
+
+                if (copyWidth > Width - destinationX) {
+                    copyWidth = Width - destinationX;
+                }
+                if (copyHeight > Height - destinationY) {
+                    copyHeight = Height - destinationY;
+                }
+                if (copyWidth <= 0 || copyHeight <= 0) return;
+
+                fixed (int* ptr = image.RawData) {
+                    for (int row = 0; row < copyHeight; row++) {
+                        Native.Movsd(VideoMemory + ((destinationY + row) * Width) + destinationX,
+                                     (uint*)(ptr + ((sourceY + row) * image.Width) + sourceX),
+                                     (ulong)copyWidth);
                     }
                 }
             }
