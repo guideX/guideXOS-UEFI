@@ -190,8 +190,9 @@ namespace guideXOS.GUI {
             int mx = Control.MousePosition.X;
             int my = Control.MousePosition.Y;
             bool rightDown = (Control.MouseButtons & MouseButtons.Right) == MouseButtons.Right;
+            bool rightPressed = guideXOS.Kernel.Drivers.Input.MouseEventDispatcher.WasPressedThisFrame(MouseButtons.Right);
             bool onBar = my >= yTop && my < Framebuffer.Height;
-            if (rightDown && onBar) {
+            if ((rightDown || rightPressed) && onBar) {
                 if (!_rightClickLatch) {
                     if (_menu == null) {
                         _menu = new TaskbarMenu(mx, my);

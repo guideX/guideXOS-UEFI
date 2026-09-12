@@ -1,5 +1,6 @@
 using guideXOS.DefaultApps;
 using guideXOS.Kernel.Drivers;
+using guideXOS.Kernel.Drivers.Input;
 using System.Windows.Forms;
 namespace guideXOS.GUI {
     /// <summary>
@@ -51,8 +52,10 @@ namespace guideXOS.GUI {
                 return;
             }
             int mx = Control.MousePosition.X; int my = Control.MousePosition.Y;
-            if (Control.MouseButtons.HasFlag(MouseButtons.Left)) {
-                if (_clickLatch) return;
+            bool leftDown = Control.MouseButtons.HasFlag(MouseButtons.Left);
+            bool leftPressed = MouseEventDispatcher.WasPressedThisFrame(MouseButtons.Left);
+            if (leftDown || leftPressed) {
+                if (_clickLatch && !leftPressed) return;
                 _clickLatch = true;
                 WindowManager.MouseHandled = true;
                 // Single item: Task Manager

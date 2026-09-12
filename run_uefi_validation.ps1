@@ -32,6 +32,10 @@
 .PARAMETER ContextMenu
     Run the normal desktop context-menu interaction workload through QMP.
 
+.PARAMETER ContextMenuSoak
+    Run the normal context-menu workload, then keep the UEFI desktop running
+    while periodically opening and dismissing the popup for five minutes.
+
 .PARAMETER Png
     Build and run the bounded post-EBS PNG decode/render proof.
 
@@ -76,6 +80,7 @@ param(
     [Alias('InputStress')]
     [switch]$NativeInputStress,
     [switch]$ContextMenu,
+    [switch]$ContextMenuSoak,
     [int]$Frames = 0,
     [ValidateRange(1, 86400)]
     [int]$TimeoutSeconds = 300,
@@ -97,11 +102,12 @@ $selectorCount = @(
     $(if ($NativeInput) { 1 } else { 0 }),
     $(if ($NativeInputStress) { 1 } else { 0 }),
     $(if ($ContextMenu) { 1 } else { 0 }),
+    $(if ($ContextMenuSoak) { 1 } else { 0 }),
     [int]($Frames -gt 0)
 ) | Measure-Object -Sum | Select-Object -ExpandProperty Sum
 
 if ($selectorCount -gt 1) {
-    throw 'Select only one of -Tiny, -FirstFrame, -Png, -Font, -Background, -BackgroundRotation, -Frames, -Input, -InputStress, or -ContextMenu.'
+    throw 'Select only one validation selector.'
 }
 if ($Frames -lt 0) {
     throw '-Frames cannot be negative.'
@@ -113,6 +119,7 @@ if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Font -and
     -not $Background -and -not $BackgroundRotation -and
     -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
+    -not $ContextMenuSoak -and
     -not $Continuous) {
     $Continuous = $true
 }
@@ -136,7 +143,7 @@ if ($Tiny) {
     $diagnosticMode = 'Input'
 } elseif ($NativeInputStress) {
     $diagnosticMode = 'InputStress'
-} elseif ($ContextMenu) {
+} elseif ($ContextMenu -or $ContextMenuSoak) {
     $diagnosticMode = 'ContextMenu'
 }
 $isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation')
@@ -418,9 +425,9 @@ function Send-QmpMouseClick {
     Send-QmpEvents $Qmp @((New-QmpButtonEvent $Button $true))
     # Hold long enough for at least several 16ms desktop frames. This keeps
     # down/up from collapsing into one ProcessPendingInput drain.
-    Start-Sleep -Milliseconds 90
+    Start-Sleep -Milliseconds 220
     Send-QmpEvents $Qmp @((New-QmpButtonEvent $Button $false))
-    Start-Sleep -Milliseconds 90
+    Start-Sleep -Milliseconds 220
 }
 
 function Open-QmpContextMenu {
@@ -490,14 +497,15 @@ function Send-QmpContextMenuWorkload {
         Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_OPENED=' ($openedBefore + 1)
         # Hover Display Options, Performance Widget, and Icon Size in turn.
         Set-QmpPointer $Qmp 410 220
-        Start-Sleep -Milliseconds 35
+        Start-Sleep -Milliseconds 120
         Set-QmpPointer $Qmp 410 248
-        Start-Sleep -Milliseconds 35
+        Start-Sleep -Milliseconds 120
         Set-QmpPointer $Qmp 410 276
-        Start-Sleep -Milliseconds 50
-        # The submenu is to the right of the 220px menu. Select 32px.
+        Start-Sleep -Milliseconds 180
+        # The submenu is to the right of the 220px menu. Select the 32px row
+        # (the third 28px row, centered at y=338 for a menu origin of 212).
         Send-QmpRelative $Qmp 212 62
-        Start-Sleep -Milliseconds 80
+        Start-Sleep -Milliseconds 180
         $activatedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_ACTIVATED=ICON_SIZE_32'
         Send-QmpMouseClick $Qmp 'left'
         Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_ACTIVATED=ICON_SIZE_32' ($activatedBefore + 1)
@@ -528,6 +536,43 @@ function Send-QmpContextMenuWorkload {
     }
 
     # Leave the guest with a normal desktop pointer and no pressed buttons.
+    Set-QmpPointer $Qmp 80 120
+}
+
+function Send-QmpContextMenuSoak {
+    param(
+        $Qmp,
+        [int]$DurationSeconds = 300
+    )
+
+    $deadline = (Get-Date).AddSeconds($DurationSeconds)
+    $cycle = 0
+    while ((Get-Date) -lt $deadline) {
+        $openedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_OPENED='
+        Open-QmpContextMenu $Qmp 400 220
+        Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_OPENED=' ($openedBefore + 1)
+
+        if (($cycle % 2) -eq 0) {
+            # Keep the pointer over a real entry before using the existing
+            # keyboard dismissal path.
+            Set-QmpPointer $Qmp 410 220
+            Start-Sleep -Milliseconds 150
+            $dismissedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_DISMISSED=ESCAPE'
+            Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
+            Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+            Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_DISMISSED=ESCAPE' ($dismissedBefore + 1)
+        } else {
+            Set-QmpPointer $Qmp 700 470
+            Start-Sleep -Milliseconds 80
+            $dismissedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_DISMISSED=CLICK_AWAY'
+            Send-QmpMouseClick $Qmp 'left'
+            Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_DISMISSED=CLICK_AWAY' ($dismissedBefore + 1)
+        }
+
+        $cycle++
+        Start-Sleep -Seconds 10
+    }
+
     Set-QmpPointer $Qmp 80 120
 }
 
@@ -606,6 +651,10 @@ try {
                     }
                     $inputInjected = $true
                     if ($diagnosticMode -eq 'ContextMenu') {
+                        if ($ContextMenuSoak) {
+                            Write-Host '  running five-minute context-menu interaction soak' -ForegroundColor Green
+                            Send-QmpContextMenuSoak $qmp 300
+                        }
                         $status = 'CONTEXT_MENU_COMPLETE'
                         break
                     }
@@ -703,6 +752,24 @@ try {
 $finalContent = ''
 if (Test-Path -LiteralPath $serialPath) {
     $finalContent = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+}
+
+# Context-menu QMP workloads complete from inside the injection function, so
+# refresh the summary counters from the complete serial log before reporting.
+$finalHeartbeatMatches = [regex]::Matches(
+    $finalContent,
+    'CONTINUOUS_HEARTBEAT_FRAME=(\d+)')
+if ($finalHeartbeatMatches.Count -gt 0) {
+    $firstHeartbeatFrame = [int]$finalHeartbeatMatches[0].Groups[1].Value
+    $lastHeartbeatFrame = [int]$finalHeartbeatMatches[$finalHeartbeatMatches.Count - 1].Groups[1].Value
+    $heartbeatCount = $finalHeartbeatMatches.Count
+}
+$finalTimerMatches = [regex]::Matches(
+    $finalContent,
+    'CONTINUOUS_HEARTBEAT_TIMER=(\d+)')
+if ($finalTimerMatches.Count -gt 0) {
+    $firstHeartbeatTimer = [UInt64]$finalTimerMatches[0].Groups[1].Value
+    $lastHeartbeatTimer = [UInt64]$finalTimerMatches[$finalTimerMatches.Count - 1].Groups[1].Value
 }
 
 $stackLowWaterMatches = [regex]::Matches(

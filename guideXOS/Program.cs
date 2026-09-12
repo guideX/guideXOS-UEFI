@@ -292,6 +292,13 @@ unsafe class Program {
 #endif
     }
 
+    internal static void MarkUefiContextMenuLeftEdge() {
+#if UEFI_DIAGNOSTIC_CONTEXT_MENU
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("CONTEXT_MENU_LEFT_EDGE");
+#endif
+    }
+
     internal static void MarkUefiContextMenuDismissed(string reason) {
 #if UEFI_DIAGNOSTIC_CONTEXT_MENU
         if (!IsUefiMode || reason == null) return;
@@ -1018,18 +1025,19 @@ unsafe class Program {
     private static void HandleContextMenuOpening() {
         try {
             bool rightDown = (Control.MouseButtons & MouseButtons.Right) == MouseButtons.Right;
-            if (rightDown && !RightClicked) {
+            bool rightPressed = MouseEventDispatcher.WasPressedThisFrame(MouseButtons.Right);
+            if ((rightPressed || (rightDown && !RightClicked)) &&
+                !WindowManager.MouseHandled) {
                 RightClicked = true;
-                if (!WindowManager.MouseHandled && RightMenu != null) {
+                if (RightMenu != null) {
                     int x = Control.MousePosition.X;
                     int y = Control.MousePosition.Y;
                     RightMenu.ShowAt(x, y);
                     MarkUefiContextMenuOpened(RightMenu.X, RightMenu.Y,
                         RightMenu.Width, RightMenu.Height);
                 }
-            } else if (!rightDown) {
-                RightClicked = false;
             }
+            RightClicked = rightDown;
         } catch {
             RightClicked = false;
         }
@@ -1087,6 +1095,7 @@ unsafe class Program {
         for (;;) {
             frameCounter++;
             try {
+                MouseEventDispatcher.BeginFrame();
                 try { MouseEventDispatcher.Update(); } catch { }
                 WindowManager.MouseHandled = false;
                 try { WindowManager.InputAll(); } catch { }
@@ -1159,6 +1168,7 @@ unsafe class Program {
         // them before normal window/desktop input so all GUI routing remains
         // on this rendering thread.
         PS2Keyboard.ProcessPendingInput(128);
+        MouseEventDispatcher.BeginFrame();
         PS2Mouse.ProcessPendingInput(256);
         WindowManager.MouseHandled = false;
         WindowManager.InputAll();

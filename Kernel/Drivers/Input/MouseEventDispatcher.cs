@@ -70,6 +70,12 @@ namespace guideXOS.Kernel.Drivers.Input {
         private const int EVENT_HISTORY_SIZE = 16;
         private static MouseEvent[] _eventHistory;
         private static int _eventHistoryIndex = 0;
+
+        // Button transitions are retained for the current render frame. A
+        // bounded input drain can contain both halves of a short click, so
+        // GUI code must not rely only on the final Control.MouseButtons state.
+        private static MouseButtons _pressedButtonsThisFrame;
+        private static MouseButtons _releasedButtonsThisFrame;
         
         #endregion
         
@@ -91,6 +97,8 @@ namespace guideXOS.Kernel.Drivers.Input {
             _totalEventsFiltered = 0;
             _lastActiveSource = MouseInputSource.Unknown;
             _lastEvent = MouseEvent.Empty;
+            _pressedButtonsThisFrame = MouseButtons.None;
+            _releasedButtonsThisFrame = MouseButtons.None;
             
             _initialized = true;
             
@@ -149,6 +157,12 @@ namespace guideXOS.Kernel.Drivers.Input {
             _eventHistoryIndex = (_eventHistoryIndex + 1) % EVENT_HISTORY_SIZE;
             
             // Update global state
+            MouseButtons oldButtons = Control.MouseButtons;
+            MouseButtons trackedButtons = MouseButtons.Left |
+                                           MouseButtons.Right |
+                                           MouseButtons.Middle;
+            _pressedButtonsThisFrame |= (evt.Buttons & trackedButtons) & ~oldButtons;
+            _releasedButtonsThisFrame |= (oldButtons & trackedButtons) & ~evt.Buttons;
             UpdateGlobalState(evt);
             
             // Store as last event
@@ -227,7 +241,27 @@ namespace guideXOS.Kernel.Drivers.Input {
         }
         
         #endregion
-        
+
+        /// <summary>
+        /// Start a new main/render-thread input frame. Raw providers may emit
+        /// more than one button transition before the frame consumes input.
+        /// </summary>
+        public static void BeginFrame() {
+            _pressedButtonsThisFrame = MouseButtons.None;
+            _releasedButtonsThisFrame = MouseButtons.None;
+        }
+
+        public static MouseButtons PressedButtonsThisFrame => _pressedButtonsThisFrame;
+        public static MouseButtons ReleasedButtonsThisFrame => _releasedButtonsThisFrame;
+
+        public static bool WasPressedThisFrame(MouseButtons button) {
+            return (_pressedButtonsThisFrame & button) != MouseButtons.None;
+        }
+
+        public static bool WasReleasedThisFrame(MouseButtons button) {
+            return (_releasedButtonsThisFrame & button) != MouseButtons.None;
+        }
+
         #region Diagnostics
         
         /// <summary>

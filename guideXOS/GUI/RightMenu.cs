@@ -1,4 +1,5 @@
 using guideXOS.Kernel.Drivers;
+using guideXOS.Kernel.Drivers.Input;
 using System.Windows.Forms;
 
 namespace guideXOS.GUI {
@@ -128,10 +129,12 @@ namespace guideXOS.GUI {
             }
 
             bool leftDown = Control.MouseButtons.HasFlag(MouseButtons.Left);
-            bool clickEdge = leftDown && !_leftDown;
+            bool clickEdge = MouseEventDispatcher.WasPressedThisFrame(MouseButtons.Left) ||
+                             (leftDown && !_leftDown);
+            if (clickEdge) Program.MarkUefiContextMenuLeftEdge();
             _leftDown = leftDown;
 
-            if (!leftDown) return;
+            if (!leftDown && !clickEdge) return;
 
             // A popup owns every left-button gesture while it is visible,
             // including click-away dismissal. This prevents click-through to
