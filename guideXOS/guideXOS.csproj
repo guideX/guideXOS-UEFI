@@ -51,6 +51,9 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'InputStress'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_INPUT_STRESS</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'ContextMenu'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_CONTEXT_MENU</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Background'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_BACKGROUND</DefineConstants>
 	</PropertyGroup>

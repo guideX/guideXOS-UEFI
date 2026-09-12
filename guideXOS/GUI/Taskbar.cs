@@ -184,6 +184,31 @@ namespace guideXOS.GUI {
             graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2E);
             graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3E, 1);
 
+            // Keep the recovered taskbar popup on the same WindowManager path
+            // as the desktop popup. This is intentionally a small secondary
+            // route: it only exposes the existing Task Manager command.
+            int mx = Control.MousePosition.X;
+            int my = Control.MousePosition.Y;
+            bool rightDown = (Control.MouseButtons & MouseButtons.Right) == MouseButtons.Right;
+            bool onBar = my >= yTop && my < Framebuffer.Height;
+            if (rightDown && onBar) {
+                if (!_rightClickLatch) {
+                    if (_menu == null) {
+                        _menu = new TaskbarMenu(mx, my);
+                    } else {
+                        _menu.Visible = true;
+                        _menu.OnSetVisible(true);
+                        WindowManager.MoveToEnd(_menu);
+                    }
+                    _rightClickLatch = true;
+                    WindowManager.MouseHandled = true;
+                    Program.MarkUefiTaskbarContextMenuOpened(_menu.X, _menu.Y,
+                                                            _menu.Width, _menu.Height);
+                }
+            } else if (!rightDown) {
+                _rightClickLatch = false;
+            }
+
             // The recovered UEFI taskbar has no legacy StartMenu object. Use
             // its existing start tile as the narrow, safe route to the
             // already-supported on-screen keyboard window.

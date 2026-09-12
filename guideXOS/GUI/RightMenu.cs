@@ -1,238 +1,373 @@
 using guideXOS.Kernel.Drivers;
 using System.Windows.Forms;
+
 namespace guideXOS.GUI {
     /// <summary>
-    /// Right Menu
+    /// The normal guideXOS desktop context menu.
+    ///
+    /// This remains a Window so WindowManager owns its z-order and input
+    /// ordering. It is reused between opens; no UEFI-specific popup layer is
+    /// involved.
     /// </summary>
     internal class RightMenu : Window {
-        private bool _showIconSizeSubmenu = false;
+        private const int ItemH = 28;
+        private const int MinimumMenuW = 220;
+        private const int SubmenuW = 160;
+        private const int SubmenuItemBase = 100;
+
+        private static readonly int[] IconSizes = { 16, 24, 32, 48, 128 };
+        private static readonly string[] IconSizeLabels = { "16", "24", "32", "48", "128" };
+        private static readonly string[] IconSizeCommands = {
+            "ICON_SIZE_16", "ICON_SIZE_24", "ICON_SIZE_32", "ICON_SIZE_48", "ICON_SIZE_128"
+        };
+
+        private bool _showIconSizeSubmenu;
+        private bool _leftDown;
+        private bool _drawReported;
+        private int _openKeyboardEventCount;
+        private int _hoveredItemIndex = -1;
         private int _iconSizeItemIndex = -1;
 
-        /// <summary>
-        /// Right Menu
-        /// </summary>
-        public RightMenu() : base(Control.MousePosition.X, Control.MousePosition.Y, 220, 200) {
+        public int HoveredItemIndex => _hoveredItemIndex;
+
+        public RightMenu() : base(Control.MousePosition.X, Control.MousePosition.Y,
+                                  MinimumMenuW, ItemH * 3) {
+            BarHeight = 0;
+            ShowInTaskbar = false;
+            ShowInStartMenu = false;
+            ShowMaximize = false;
+            ShowMinimize = false;
+            ShowTombstone = false;
+            IsResizable = false;
             Visible = false;
         }
+
         /// <summary>
-        /// On Set Visible
+        /// Open this existing menu at the current pointer location.
         /// </summary>
-        /// <param name="value"></param>
+        public void ShowAt(int x, int y) {
+            _showIconSizeSubmenu = false;
+            _leftDown = false;
+            _hoveredItemIndex = -1;
+            _drawReported = false;
+            _openKeyboardEventCount = PS2Keyboard.ProcessedEventCount;
+            X = x - 8;
+            Y = y - 8;
+            UpdateMenuGeometry();
+            WindowManager.MoveToEnd(this);
+            Visible = true;
+        }
+
         public override void OnSetVisible(bool value) {
             base.OnSetVisible(value);
             if (value) {
+                UpdateMenuGeometry();
+                // Preserve the original pointer-offset placement, but clamp
+                // all four edges so draw and hit-test rectangles stay visible.
                 X = Control.MousePosition.X - 8;
                 Y = Control.MousePosition.Y - 8;
+                ClampMenuToScreen();
+                return;
             }
+
+            if (_hoveredItemIndex != -1) {
+                Program.MarkUefiContextMenuHover(-1);
+            }
+            _showIconSizeSubmenu = false;
+            _leftDown = false;
+            _hoveredItemIndex = -1;
+            _drawReported = false;
         }
-        /// <summary>
-        /// On Input
-        /// </summary>
+
         public override void OnInput() {
             if (!Visible) return;
 
-            int itemH = 28;
+            // Keep Escape on the same native keyboard pipeline even on
+            // builds where a later keyboard subscriber replaces the global
+            // event chain. The processed-event watermark prevents a stale
+            // released Escape from dismissing the next popup immediately.
+            if (PS2Keyboard.ProcessedEventCount > _openKeyboardEventCount &&
+                Keyboard.KeyInfo.Key == System.ConsoleKey.Escape &&
+                Keyboard.KeyInfo.KeyState == System.ConsoleKeyState.Released) {
+                Dismiss("ESCAPE");
+                return;
+            }
+
+            UpdateMenuGeometry();
             int mx = Control.MousePosition.X;
             int my = Control.MousePosition.Y;
+            int iconSizeIdx = GetIconSizeItemIndex();
 
-            bool leftClick = Control.MouseButtons.HasFlag(MouseButtons.Left);
+            bool hoverIconSize = Hit(iconSizeIdx, mx, my);
+            bool hoverSubmenu = _showIconSizeSubmenu && IsInSubmenu(mx, my);
 
-            // Calculate Icon Size item index dynamically
-            int iconSizeIdx = 2; // Start after Display Options and Performance Widget
-            if (!guideXOS.OS.SystemMode.IsLiveMode) iconSizeIdx++; // Add Save Settings
-            if (Desktop.Dir.Length > 0) iconSizeIdx++; // Add Up One Level
-            _iconSizeItemIndex = iconSizeIdx;
-            
-            // Check if hovering over Icon Size item
-            bool hoverIconSize = Hit(iconSizeIdx, mx, my, itemH);
-            
-            // Check if hovering over submenu
-            bool hoverSubmenu = false;
-            if (_showIconSizeSubmenu) {
-                int subX = X + Width;
-                int subY = Y + iconSizeIdx * itemH;
-                int subW = 160;
-                int subH = itemH * 5; // 5 icon sizes
-                hoverSubmenu = (mx >= subX && mx <= subX + subW && my >= subY && my <= subY + subH);
-            }
-            
-            // Show submenu on hover, hide when not hovering over main item or submenu
             if (hoverIconSize) {
                 _showIconSizeSubmenu = true;
             } else if (!hoverSubmenu) {
                 _showIconSizeSubmenu = false;
             }
 
-            if (leftClick) {
-                int currentItem = 0;
-                
-                // Item 0: Display Options
-                if (Hit(currentItem, mx, my, itemH)) {
-                    WindowManager.EnqueueDisplayOptions(Control.MousePosition.X, Control.MousePosition.Y, 800, 600);
-                    this.Visible = false;
-                    return;
+            int hovered = -1;
+            if (_showIconSizeSubmenu && hoverSubmenu) {
+                int submenuIndex = (my - GetSubmenuY(iconSizeIdx)) / ItemH;
+                if (submenuIndex >= 0 && submenuIndex < IconSizes.Length) {
+                    hovered = SubmenuItemBase + submenuIndex;
                 }
-                currentItem++;
-                
-                // Item 1: Performance Widget toggle
-                if (Hit(currentItem, mx, my, itemH)) {
-                    if (Program.PerfWidget != null) {
-                        Program.PerfWidget.Visible = !Program.PerfWidget.Visible;
-                        if (Program.PerfWidget.Visible) {
-                            WindowManager.MoveToEnd(Program.PerfWidget);
-                        }
+            } else {
+                int itemCount = GetMenuItemCount();
+                for (int i = 0; i < itemCount; i++) {
+                    if (Hit(i, mx, my)) {
+                        hovered = i;
+                        break;
                     }
-                    this.Visible = false;
-                    return;
-                }
-                currentItem++;
-                
-                // Save Settings (only when not in LiveMode)
-                if (!guideXOS.OS.SystemMode.IsLiveMode) {
-                    if (Hit(currentItem, mx, my, itemH)) {
-                        guideXOS.OS.Configuration.SaveConfiguration();
-                        
-                        // Show a confirmation message
-                        if (Desktop.msgbox != null) {
-                            Desktop.msgbox.X = Control.MousePosition.X + 20;
-                            Desktop.msgbox.Y = Control.MousePosition.Y + 20;
-                            Desktop.msgbox.SetText("Settings saved successfully!");
-                            WindowManager.MoveToEnd(Desktop.msgbox);
-                            Desktop.msgbox.Visible = true;
-                        }
-                        
-                        this.Visible = false;
-                        return;
-                    }
-                    currentItem++;
-                }
-                
-                // Up One Level (only when not root)
-                if (Desktop.Dir.Length > 0) {
-                    if (Hit(currentItem, mx, my, itemH)) {
-                        Desktop.Dir.Length--;
-
-                        if (Desktop.Dir.IndexOf('/') != -1) {
-                            string ndir = $"{Desktop.Dir.Substring(0, Desktop.Dir.LastIndexOf('/'))}/";
-                            Desktop.Dir.Dispose();
-                            Desktop.Dir = ndir;
-                        } else {
-                            Desktop.Dir = "";
-                        }
-                        this.Visible = false;
-                        return;
-                    }
-                    currentItem++;
-                }
-                
-                // Icon Size is the next item
-                _iconSizeItemIndex = currentItem;
-                
-                // Handle submenu clicks
-                if (_showIconSizeSubmenu && hoverSubmenu) {
-                    int[] sizes = new[] { 16, 24, 32, 48, 128 };
-                    int subX = X + Width;
-                    int subY = Y + iconSizeIdx * itemH;
-                    
-                    for (int i = 0; i < sizes.Length; i++) {
-                        int subItemY = subY + i * itemH;
-                        if (my >= subItemY && my <= subItemY + itemH) {
-                            Desktop.SetIconSize(sizes[i]);
-                            this.Visible = false;
-                            return;
-                        }
-                    }
-                }
-
-                // Click anywhere else -> close (but not on Icon Size itself, that just shows submenu)
-                if (!hoverIconSize) {
-                    this.Visible = false;
                 }
             }
-        }
-        private bool Hit(int index, int mx, int my, int itemH) {
-            int y = Y + index * itemH;
-            return (mx >= X && mx <= X + Width && my >= y && my <= y + itemH);
-        }
-        /// <summary>
-        /// On Draw
-        /// </summary>
-        public override void OnDraw() {
-            int itemH = 28;
-            int extra = 2 + (Desktop.Dir.Length > 0 ? 1 : 0); // +1 for Display Options, +1 for Performance Widget
-            
-            // Add Save Settings option if not in LiveMode
+            if (hovered != _hoveredItemIndex) {
+                _hoveredItemIndex = hovered;
+                Program.MarkUefiContextMenuHover(hovered);
+            }
+
+            bool leftDown = Control.MouseButtons.HasFlag(MouseButtons.Left);
+            bool clickEdge = leftDown && !_leftDown;
+            _leftDown = leftDown;
+
+            if (!leftDown) return;
+
+            // A popup owns every left-button gesture while it is visible,
+            // including click-away dismissal. This prevents click-through to
+            // a desktop tile or window underneath the popup.
+            WindowManager.MouseHandled = true;
+            if (!clickEdge) return;
+
+            if (_showIconSizeSubmenu && hoverSubmenu) {
+                int submenuIndex = (my - GetSubmenuY(iconSizeIdx)) / ItemH;
+                if (submenuIndex >= 0 && submenuIndex < IconSizes.Length) {
+                    Desktop.SetIconSize(IconSizes[submenuIndex]);
+                    Program.MarkUefiContextMenuActivated(IconSizeCommands[submenuIndex]);
+                    Dismiss("COMMAND");
+                    return;
+                }
+            }
+
+            if (Hit(0, mx, my)) {
+                WindowManager.EnqueueDisplayOptions(Control.MousePosition.X,
+                                                    Control.MousePosition.Y, 800, 600);
+                Program.MarkUefiContextMenuActivated("DISPLAY_OPTIONS");
+                Dismiss("COMMAND");
+                return;
+            }
+
+            int currentItem = 1;
+            if (Hit(currentItem, mx, my)) {
+                if (Program.PerfWidget != null) {
+                    Program.PerfWidget.Visible = !Program.PerfWidget.Visible;
+                    if (Program.PerfWidget.Visible) WindowManager.MoveToEnd(Program.PerfWidget);
+                }
+                Program.MarkUefiContextMenuActivated("PERFORMANCE_WIDGET");
+                Dismiss("COMMAND");
+                return;
+            }
+            currentItem++;
+
             if (!guideXOS.OS.SystemMode.IsLiveMode) {
-                extra++;
+                if (Hit(currentItem, mx, my)) {
+                    guideXOS.OS.Configuration.SaveConfiguration();
+                    Program.MarkUefiContextMenuActivated("SAVE_SETTINGS");
+                    Dismiss("COMMAND");
+                    return;
+                }
+                currentItem++;
             }
-            
-            Height = itemH * (extra + 1); // +1 for Icon Size submenu parent
-            
-            // Background
+
+            if (Desktop.Dir != null && Desktop.Dir.Length > 0) {
+                if (Hit(currentItem, mx, my)) {
+                    Desktop.Dir.Length--;
+                    if (Desktop.Dir.IndexOf('/') != -1) {
+                        string nextDir = Desktop.Dir.Substring(0, Desktop.Dir.LastIndexOf('/')) + "/";
+                        Desktop.Dir.Dispose();
+                        Desktop.Dir = nextDir;
+                    } else {
+                        Desktop.Dir = "";
+                    }
+                    Program.MarkUefiContextMenuActivated("UP_ONE_LEVEL");
+                    Dismiss("COMMAND");
+                    return;
+                }
+                currentItem++;
+            }
+
+            // The Icon Size parent intentionally stays open so the existing
+            // submenu can be reached by hover.
+            if (Hit(currentItem, mx, my)) return;
+
+            Dismiss("CLICK_AWAY");
+        }
+
+        private void Dismiss(string reason) {
+            Program.MarkUefiContextMenuDismissed(reason);
+            Visible = false;
+        }
+
+        private int GetMenuItemCount() {
+            int count = 3; // Display Options, Performance Widget, Icon Size
+            if (!guideXOS.OS.SystemMode.IsLiveMode) count++;
+            if (Desktop.Dir != null && Desktop.Dir.Length > 0) count++;
+            return count;
+        }
+
+        private int GetIconSizeItemIndex() {
+            int index = 2;
+            if (!guideXOS.OS.SystemMode.IsLiveMode) index++;
+            if (Desktop.Dir != null && Desktop.Dir.Length > 0) index++;
+            _iconSizeItemIndex = index;
+            return index;
+        }
+
+        private void UpdateMenuGeometry() {
+            Height = ItemH * GetMenuItemCount();
+            Width = GetMenuWidth();
+            if (_showIconSizeSubmenu) ClampMenuToScreen();
+        }
+
+        private int GetMenuWidth() {
+            int width = MinimumMenuW;
+            if (WindowManager.font == null) return width;
+
+            int measured = WindowManager.font.MeasureString("Display Options");
+            int candidate = WindowManager.font.MeasureString("Performance Widget");
+            if (candidate > measured) measured = candidate;
+            candidate = WindowManager.font.MeasureString("Icon Size");
+            if (candidate > measured) measured = candidate;
+            if (!guideXOS.OS.SystemMode.IsLiveMode) {
+                candidate = WindowManager.font.MeasureString("Save Settings");
+                if (candidate > measured) measured = candidate;
+            }
+            if (Desktop.Dir != null && Desktop.Dir.Length > 0) {
+                candidate = WindowManager.font.MeasureString("Up one level");
+                if (candidate > measured) measured = candidate;
+            }
+            return measured + 32 > width ? measured + 32 : width;
+        }
+
+        private int GetSubmenuY(int iconSizeIdx) {
+            int submenuHeight = ItemH * IconSizes.Length;
+            int y = Y + iconSizeIdx * ItemH;
+            int maxY = Framebuffer.Height - submenuHeight;
+            if (y > maxY) y = maxY;
+            if (y < 0) y = 0;
+            return y;
+        }
+
+        private int GetSubmenuX() {
+            int rightX = X + Width;
+            if (rightX + SubmenuW <= Framebuffer.Width) return rightX;
+            int leftX = X - SubmenuW;
+            if (leftX >= 0) return leftX;
+            return 0;
+        }
+
+        private bool IsInSubmenu(int mx, int my) {
+            int submenuX = GetSubmenuX();
+            int submenuY = GetSubmenuY(GetIconSizeItemIndex());
+            int submenuHeight = ItemH * IconSizes.Length;
+            return mx >= submenuX && mx < submenuX + SubmenuW &&
+                   my >= submenuY && my < submenuY + submenuHeight;
+        }
+
+        private bool Hit(int index, int mx, int my) {
+            int y = Y + index * ItemH;
+            return mx >= X && mx < X + Width && my >= y && my < y + ItemH;
+        }
+
+        private void ClampMenuToScreen() {
+            int maxX = Framebuffer.Width - Width;
+            int maxY = Framebuffer.Height - Height;
+            if (maxX < 0) maxX = 0;
+            if (maxY < 0) maxY = 0;
+            if (X < 0) X = 0;
+            if (Y < 0) Y = 0;
+            if (X > maxX) X = maxX;
+            if (Y > maxY) Y = maxY;
+        }
+
+        public override void OnGlobalKey(System.ConsoleKeyInfo key) {
+            if (key.Key == System.ConsoleKey.Escape &&
+                key.KeyState == System.ConsoleKeyState.Pressed && Visible) {
+                Dismiss("ESCAPE");
+                return;
+            }
+            base.OnGlobalKey(key);
+        }
+
+        public override void OnDraw() {
+            if (!Visible || Framebuffer.Graphics == null || WindowManager.font == null) return;
+
+            UpdateMenuGeometry();
             Framebuffer.Graphics.AFillRectangle(X, Y, Width, Height, 0xCC222222);
 
+            if (!_drawReported) {
+                _drawReported = true;
+                Program.MarkUefiContextMenuDrawn(X, Y, Width, Height);
+            }
+
             int y = Y;
-            WindowManager.font.DrawString(X + 8, y + (itemH / 2) - (WindowManager.font.FontSize / 2), "Display Options"); y += itemH;
-            
-            // Performance Widget toggle
+            DrawItem(0, y, "Display Options");
+            y += ItemH;
+
             bool perfVisible = Program.PerfWidget != null && Program.PerfWidget.Visible;
-            if (perfVisible) {
-                string perfLabel = "Performance Widget ?";
-                WindowManager.font.DrawString(X + 8, y + (itemH / 2) - (WindowManager.font.FontSize / 2), perfLabel);
-            } else {
-                WindowManager.font.DrawString(X + 8, y + (itemH / 2) - (WindowManager.font.FontSize / 2), "Performance Widget");
-            }
-            y += itemH;
-            
-            // Save Settings (only when not in LiveMode)
+            DrawItem(1, y, perfVisible ? "Performance Widget ?" : "Performance Widget");
+            y += ItemH;
+
             if (!guideXOS.OS.SystemMode.IsLiveMode) {
-                WindowManager.font.DrawString(X + 8, y + (itemH / 2) - (WindowManager.font.FontSize / 2), "Save Settings");
-                y += itemH;
+                DrawItem(2, y, "Save Settings");
+                y += ItemH;
             }
-            
-            if (Desktop.Dir.Length > 0) { 
-                WindowManager.font.DrawString(X + 8, y + (itemH / 2) - (WindowManager.font.FontSize / 2), "Up one level"); 
-                y += itemH; 
+            if (Desktop.Dir != null && Desktop.Dir.Length > 0) {
+                int row = GetIconSizeItemIndex() - 1;
+                DrawItem(row, y, "Up one level");
+                y += ItemH;
             }
-            
-            // Icon Size with submenu indicator
-            WindowManager.font.DrawString(X + 8, y + (itemH / 2) - (WindowManager.font.FontSize / 2), "Icon Size");
-            WindowManager.font.DrawString(X + Width - 20, y + (itemH / 2) - (WindowManager.font.FontSize / 2), ">");
-            
-            // Draw submenu if visible
+
+            int iconSizeIdx = GetIconSizeItemIndex();
+            DrawItem(iconSizeIdx, y, "Icon Size");
+            WindowManager.font.DrawString(X + Width - 20,
+                y + (ItemH / 2) - (WindowManager.font.FontSize / 2), ">");
+
             if (_showIconSizeSubmenu) {
-                int subX = X + Width;
-                int subY = y;
-                int subW = 160;
-                int subH = itemH * 5;
-                
-                // Submenu background
-                Framebuffer.Graphics.AFillRectangle(subX, subY, subW, subH, 0xCC222222);
-                Framebuffer.Graphics.DrawRectangle(subX, subY, subW, subH, 0xFF3F3F3F, 1);
-                
-                int[] sizes = new[] { 16, 24, 32, 48, 128 };
-                int mx = Control.MousePosition.X;
-                int my = Control.MousePosition.Y;
-                
-                for (int i = 0; i < sizes.Length; i++) {
-                    int subItemY = subY + i * itemH;
-                    
-                    // Hover highlight
-                    if (mx >= subX && mx <= subX + subW && my >= subItemY && my <= subItemY + itemH) {
-                        Framebuffer.Graphics.FillRectangle(subX + 1, subItemY, subW - 2, itemH, 0xFF313131);
+                int submenuX = GetSubmenuX();
+                int submenuY = GetSubmenuY(iconSizeIdx);
+                int submenuHeight = ItemH * IconSizes.Length;
+                Framebuffer.Graphics.AFillRectangle(submenuX, submenuY, SubmenuW,
+                                                    submenuHeight, 0xCC222222);
+                Framebuffer.Graphics.DrawRectangle(submenuX, submenuY, SubmenuW,
+                                                   submenuHeight, 0xFF3F3F3F, 1);
+                for (int i = 0; i < IconSizes.Length; i++) {
+                    int itemY = submenuY + i * ItemH;
+                    if (_hoveredItemIndex == SubmenuItemBase + i) {
+                        Framebuffer.Graphics.FillRectangle(submenuX + 1, itemY,
+                                                           SubmenuW - 2, ItemH,
+                                                           0xFF313131);
                     }
-                    
-                    string label = sizes[i].ToString();
-                    if (sizes[i] == Desktop.IconSize) {
-                        label += " ?";
+                    WindowManager.font.DrawString(submenuX + 8,
+                        itemY + (ItemH / 2) - (WindowManager.font.FontSize / 2),
+                        IconSizeLabels[i]);
+                    if (IconSizes[i] == Desktop.IconSize) {
+                        WindowManager.font.DrawString(submenuX + SubmenuW - 20,
+                            itemY + (ItemH / 2) - (WindowManager.font.FontSize / 2), "*");
                     }
-                    WindowManager.font.DrawString(subX + 8, subItemY + (itemH / 2) - (WindowManager.font.FontSize / 2), label);
-                    label.Dispose();
                 }
             }
-            
-            y += itemH;
+
             DrawBorder(false);
+        }
+
+        private void DrawItem(int index, int y, string label) {
+            if (_hoveredItemIndex == index) {
+                Framebuffer.Graphics.FillRectangle(X + 1, y, Width - 2, ItemH,
+                                                   0xFF313131);
+            }
+            WindowManager.font.DrawString(X + 8,
+                y + (ItemH / 2) - (WindowManager.font.FontSize / 2), label);
         }
     }
 }

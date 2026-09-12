@@ -25,6 +25,8 @@ namespace guideXOS.Kernel.Drivers {
         private static bool _moveMarkerLogged;
         private static bool _leftDownMarkerLogged;
         private static bool _leftUpMarkerLogged;
+        private static bool _rightDownMarkerLogged;
+        private static bool _rightUpMarkerLogged;
 
         private static int _phase;
         private static MouseButtons _lastButtons;
@@ -40,6 +42,8 @@ namespace guideXOS.Kernel.Drivers {
         public static int MoveEventCount;
         public static int LeftDownCount;
         public static int LeftUpCount;
+        public static int RightDownCount;
+        public static int RightUpCount;
         public static int DroppedByteCount;
 
         // Kept as public tuning fields for existing callers. Native QEMU
@@ -74,9 +78,12 @@ namespace guideXOS.Kernel.Drivers {
             MoveEventCount = 0;
             LeftDownCount = 0;
             LeftUpCount = 0;
+            RightDownCount = 0;
+            RightUpCount = 0;
             DroppedByteCount = 0;
             _irqMarkerLogged = _moveMarkerLogged = false;
             _leftDownMarkerLogged = _leftUpMarkerLogged = false;
+            _rightDownMarkerLogged = _rightUpMarkerLogged = false;
             ScreenWidth = Framebuffer.Width;
             ScreenHeight = Framebuffer.Height;
             Control.MouseButtons = MouseButtons.None;
@@ -213,6 +220,22 @@ namespace guideXOS.Kernel.Drivers {
                 if (!_leftUpMarkerLogged) {
                     BootConsole.WriteLine("[INPUT] MOUSE_LEFT_UP");
                     _leftUpMarkerLogged = true;
+                }
+            }
+            if ((oldButtons & MouseButtons.Right) == 0 &&
+                (buttons & MouseButtons.Right) != 0) {
+                RightDownCount++;
+                if (!_rightDownMarkerLogged) {
+                    BootConsole.WriteLine("[INPUT] MOUSE_RIGHT_DOWN");
+                    _rightDownMarkerLogged = true;
+                }
+            }
+            if ((oldButtons & MouseButtons.Right) != 0 &&
+                (buttons & MouseButtons.Right) == 0) {
+                RightUpCount++;
+                if (!_rightUpMarkerLogged) {
+                    BootConsole.WriteLine("[INPUT] MOUSE_RIGHT_UP");
+                    _rightUpMarkerLogged = true;
                 }
             }
         }

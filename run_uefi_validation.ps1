@@ -29,6 +29,9 @@
     Run a shorter continuous desktop input burst with several hundred bounded
     QMP events.
 
+.PARAMETER ContextMenu
+    Run the normal desktop context-menu interaction workload through QMP.
+
 .PARAMETER Png
     Build and run the bounded post-EBS PNG decode/render proof.
 
@@ -47,6 +50,10 @@
 
 .PARAMETER GuiVisible
     Show the QEMU graphics window instead of using -display none.
+
+.PARAMETER SkipBuild
+    Reuse the existing ESP and only run the selected QEMU validation. Use
+    this after a successful build when iterating on the host-side workload.
 
 .EXAMPLE
     .\run_uefi_validation.ps1 -Continuous -TimeoutSeconds 300 -GuiVisible
@@ -68,10 +75,12 @@ param(
     [switch]$NativeInput,
     [Alias('InputStress')]
     [switch]$NativeInputStress,
+    [switch]$ContextMenu,
     [int]$Frames = 0,
     [ValidateRange(1, 86400)]
     [int]$TimeoutSeconds = 300,
     [switch]$GuiVisible,
+    [switch]$SkipBuild,
     [string]$SerialLog = ''
 )
 
@@ -87,11 +96,12 @@ $selectorCount = @(
     $(if ($BackgroundRotation) { 1 } else { 0 }),
     $(if ($NativeInput) { 1 } else { 0 }),
     $(if ($NativeInputStress) { 1 } else { 0 }),
+    $(if ($ContextMenu) { 1 } else { 0 }),
     [int]($Frames -gt 0)
 ) | Measure-Object -Sum | Select-Object -ExpandProperty Sum
 
 if ($selectorCount -gt 1) {
-    throw 'Select only one of -Tiny, -FirstFrame, -Png, -Font, -Background, -BackgroundRotation, -Frames, -Input, or -InputStress.'
+    throw 'Select only one of -Tiny, -FirstFrame, -Png, -Font, -Background, -BackgroundRotation, -Frames, -Input, -InputStress, or -ContextMenu.'
 }
 if ($Frames -lt 0) {
     throw '-Frames cannot be negative.'
@@ -102,7 +112,8 @@ if ($Frames -gt 0 -and $Frames -ne 300) {
 if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Font -and
     -not $Background -and -not $BackgroundRotation -and
-    -not $NativeInput -and -not $NativeInputStress -and -not $Continuous) {
+    -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
+    -not $Continuous) {
     $Continuous = $true
 }
 
@@ -125,9 +136,11 @@ if ($Tiny) {
     $diagnosticMode = 'Input'
 } elseif ($NativeInputStress) {
     $diagnosticMode = 'InputStress'
+} elseif ($ContextMenu) {
+    $diagnosticMode = 'ContextMenu'
 }
 $isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation')
-$isInputValidation = $diagnosticMode -in @('Input', 'InputStress')
+$isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu')
 $isContinuousValidation = -not $isBoundedDiagnostic
 $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'Tiny' { 'UTINY_COMPLETE'; break }
@@ -164,18 +177,22 @@ Write-Host "Timeout: $TimeoutSeconds seconds (host only)" -ForegroundColor Yello
 Write-Host "GUI: $(if ($GuiVisible) { 'visible' } else { 'headless' })" -ForegroundColor Yellow
 
 Write-Host ''
-Write-Host 'Refreshing build and ESP...' -ForegroundColor Cyan
-$buildArgs = @(
-    '-NoProfile',
-    '-ExecutionPolicy', 'Bypass',
-    '-File', (Join-Path $PSScriptRoot 'build.ps1')
-)
-if ($diagnosticMode) {
-    $buildArgs += @('-UefiDiagnosticMode', $diagnosticMode)
-}
-& powershell.exe @buildArgs
-if ($LASTEXITCODE -ne 0) {
-    throw "build.ps1 failed with exit code $LASTEXITCODE"
+if ($SkipBuild) {
+    Write-Host 'Reusing existing ESP (build skipped)...' -ForegroundColor Yellow
+} else {
+    Write-Host 'Refreshing build and ESP...' -ForegroundColor Cyan
+    $buildArgs = @(
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', (Join-Path $PSScriptRoot 'build.ps1')
+    )
+    if ($diagnosticMode) {
+        $buildArgs += @('-UefiDiagnosticMode', $diagnosticMode)
+    }
+    & powershell.exe @buildArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "build.ps1 failed with exit code $LASTEXITCODE"
+    }
 }
 
 New-Item -ItemType Directory -Path $firmwareRoot -Force | Out-Null
@@ -358,6 +375,162 @@ function Send-QmpWorkload {
     Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $false))
 }
 
+function Reset-QmpPointer {
+    param($Qmp)
+    # The native relative PS/2 cursor starts at a bounded screen coordinate.
+    # Repeated negative reports deterministically return it to (0,0).
+    for ($i = 0; $i -lt 12; $i++) {
+        Send-QmpRelative $Qmp -100 -100
+        # Leave a small drain interval between reports; the guest deliberately
+        # keeps PS/2 parsing on the render thread instead of the IRQ handler.
+        Start-Sleep -Milliseconds 3
+    }
+    Start-Sleep -Milliseconds 30
+}
+
+function Set-QmpPointer {
+    param($Qmp, [int]$X, [int]$Y)
+    Reset-QmpPointer $Qmp
+    # Keep each relative report within the native PS/2 range. QEMU accepts
+    # larger QMP values, but can coalesce or drop a single oversized move
+    # before the guest's bounded render-thread parser sees it.
+    $remainingX = $X
+    while ($remainingX -gt 0) {
+        $stepX = [Math]::Min(100, $remainingX)
+        Send-QmpRelative $Qmp $stepX 0
+        $remainingX -= $stepX
+        Start-Sleep -Milliseconds 2
+    }
+    $remainingY = $Y
+    while ($remainingY -gt 0) {
+        $stepY = [Math]::Min(100, $remainingY)
+        Send-QmpRelative $Qmp 0 $stepY
+        $remainingY -= $stepY
+        Start-Sleep -Milliseconds 2
+    }
+    # Allow the guest to drain the final positioning reports before the
+    # button-down transition is sent.
+    Start-Sleep -Milliseconds 120
+}
+
+function Send-QmpMouseClick {
+    param($Qmp, [string]$Button)
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent $Button $true))
+    # Hold long enough for at least several 16ms desktop frames. This keeps
+    # down/up from collapsing into one ProcessPendingInput drain.
+    Start-Sleep -Milliseconds 90
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent $Button $false))
+    Start-Sleep -Milliseconds 90
+}
+
+function Open-QmpContextMenu {
+    param($Qmp, [int]$X = 400, [int]$Y = 220)
+    Set-QmpPointer $Qmp $X $Y
+    Send-QmpMouseClick $Qmp 'right'
+    # Let at least one guest frame draw the popup before moving the pointer.
+    Start-Sleep -Milliseconds 55
+}
+
+function Get-ContextMarkerCount {
+    param([string]$Pattern)
+    if (-not (Test-Path -LiteralPath $serialPath)) { return 0 }
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    if (-not $content) { return 0 }
+    return [regex]::Matches($content, $Pattern).Count
+}
+
+function Wait-ForContextMarkerCount {
+    param(
+        [string]$Pattern,
+        [int]$Minimum,
+        [int]$TimeoutMilliseconds = 4000
+    )
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMilliseconds)
+    do {
+        if ((Get-ContextMarkerCount $Pattern) -ge $Minimum) { return }
+        Start-Sleep -Milliseconds 20
+    } while ((Get-Date) -lt $deadline)
+    throw "Guest did not emit marker '$Pattern' count $Minimum."
+}
+
+function Send-QmpContextMenuWorkload {
+    param($Qmp)
+
+    # Four corner opens prove the normal menu clamping logic. Escape is the
+    # existing Window global-key dismissal path.
+    # Keep the desktop edge probes just above the recovered 40px taskbar so
+    # the bottom probes exercise RightMenu clamping, not TaskbarMenu routing.
+    foreach ($edge in @(
+        @{ X = 0; Y = 0 }, @{ X = 1279; Y = 0 },
+        @{ X = 0; Y = 720 }, @{ X = 1279; Y = 720 })) {
+        $openedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_OPENED='
+        Open-QmpContextMenu $Qmp $edge.X $edge.Y
+        Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_OPENED=' ($openedBefore + 1)
+        $dismissedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_DISMISSED=ESCAPE'
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+        Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_DISMISSED=ESCAPE' ($dismissedBefore + 1)
+    }
+
+    # Exercise the recovered taskbar popup once, including its keyboard
+    # dismissal path, without invoking the heavyweight Task Manager command.
+    $taskbarOpenedBefore = Get-ContextMarkerCount '(?m)^TASKBAR_CONTEXT_MENU_OPENED='
+    Open-QmpContextMenu $Qmp 400 790
+    Wait-ForContextMarkerCount '(?m)^TASKBAR_CONTEXT_MENU_OPENED=' ($taskbarOpenedBefore + 1)
+    $taskbarDismissedBefore = Get-ContextMarkerCount '(?m)^TASKBAR_CONTEXT_MENU_DISMISSED=ESCAPE'
+    Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
+    Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+    Wait-ForContextMarkerCount '(?m)^TASKBAR_CONTEXT_MENU_DISMISSED=ESCAPE' ($taskbarDismissedBefore + 1)
+
+    # 25 safe activations through the existing Icon Size submenu. This menu
+    # command only updates the desktop's existing icon-size state.
+    for ($i = 0; $i -lt 25; $i++) {
+        $openedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_OPENED='
+        Open-QmpContextMenu $Qmp 400 220
+        Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_OPENED=' ($openedBefore + 1)
+        # Hover Display Options, Performance Widget, and Icon Size in turn.
+        Set-QmpPointer $Qmp 410 220
+        Start-Sleep -Milliseconds 35
+        Set-QmpPointer $Qmp 410 248
+        Start-Sleep -Milliseconds 35
+        Set-QmpPointer $Qmp 410 276
+        Start-Sleep -Milliseconds 50
+        # The submenu is to the right of the 220px menu. Select 32px.
+        Send-QmpRelative $Qmp 212 62
+        Start-Sleep -Milliseconds 80
+        $activatedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_ACTIVATED=ICON_SIZE_32'
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_ACTIVATED=ICON_SIZE_32' ($activatedBefore + 1)
+    }
+
+    # 50 click-away dismissals. The outside click is consumed by the popup and
+    # is not forwarded to the desktop underneath it.
+    for ($i = 0; $i -lt 50; $i++) {
+        $openedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_OPENED='
+        Open-QmpContextMenu $Qmp 400 220
+        Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_OPENED=' ($openedBefore + 1)
+        Set-QmpPointer $Qmp 700 470
+        Start-Sleep -Milliseconds 40
+        $dismissedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_DISMISSED=CLICK_AWAY'
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_DISMISSED=CLICK_AWAY' ($dismissedBefore + 1)
+    }
+
+    # 25 Escape dismissals through the existing keyboard pipeline.
+    for ($i = 0; $i -lt 25; $i++) {
+        $openedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_OPENED='
+        Open-QmpContextMenu $Qmp 400 220
+        Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_OPENED=' ($openedBefore + 1)
+        $dismissedBefore = Get-ContextMarkerCount '(?m)^CONTEXT_MENU_DISMISSED=ESCAPE'
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+        Wait-ForContextMarkerCount '(?m)^CONTEXT_MENU_DISMISSED=ESCAPE' ($dismissedBefore + 1)
+    }
+
+    # Leave the guest with a normal desktop pointer and no pressed buttons.
+    Set-QmpPointer $Qmp 80 120
+}
+
 $qemuArgs = @(
     '-machine', 'pc-q35-8.2',
     '-drive', 'if=pflash,format=raw,readonly=on,file=bin/qemu-firmware/edk2-x86_64-code.fd',
@@ -421,11 +594,21 @@ try {
                 $continuousEntered = $true
             }
 
-            if ($isInputValidation -and $continuousEntered -and -not $inputInjected) {
+            if ($isInputValidation -and $continuousEntered -and
+                $content -match 'CONTINUOUS_HEARTBEAT_FRAME=' -and
+                -not $inputInjected) {
                 try {
                     Write-Host '  injecting bounded native keyboard/mouse workload' -ForegroundColor Green
-                    Send-QmpWorkload $qmp $NativeInputStress
+                    if ($diagnosticMode -eq 'ContextMenu') {
+                        Send-QmpContextMenuWorkload $qmp
+                    } else {
+                        Send-QmpWorkload $qmp $NativeInputStress
+                    }
                     $inputInjected = $true
+                    if ($diagnosticMode -eq 'ContextMenu') {
+                        $status = 'CONTEXT_MENU_COMPLETE'
+                        break
+                    }
                 } catch {
                     $inputInjectionError = $_.Exception.Message
                     $status = 'INPUT_INJECTION_FAILED'
@@ -457,7 +640,7 @@ try {
 
             $faultMatches = [regex]::Matches(
                 $content,
-                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|BACKGROUND_PROBE_FAIL[^\r\n]*|BACKGROUND_ROTATION_FAIL[^\r\n]*|BACKGROUND_PROBE_RENDER_OK=0|BACKGROUND_ROTATION_RENDER_OK=0|FONT_PROBE_FAIL[^\r\n]*|FONT_PROBE_INIT_OK=0|FONT_PROBE_MEASURE_OK=0|FONT_RENDER_OK=0|CPU_FAULT_[A-Z_]+|#UD|#GP|#PF|GENERAL_PROTECTION|PAGE_FAULT|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
+                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|BACKGROUND_PROBE_FAIL[^\r\n]*|BACKGROUND_ROTATION_FAIL[^\r\n]*|BACKGROUND_PROBE_RENDER_OK=0|BACKGROUND_ROTATION_RENDER_OK=0|FONT_PROBE_FAIL[^\r\n]*|FONT_PROBE_INIT_OK=0|FONT_PROBE_MEASURE_OK=0|FONT_RENDER_OK=0|CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|TASKBAR_CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|TASKBAR_CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|CPU_FAULT_[A-Z_]+|#UD|#GP|#PF|GENERAL_PROTECTION|PAGE_FAULT|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
             if ($faultMatches.Count -gt 0) {
                 $faultText = $faultMatches[$faultMatches.Count - 1].Value
                 $status = 'FAULT'
@@ -546,18 +729,92 @@ $inputStat = @{}
 foreach ($name in @(
     'KEY_IRQ', 'KEY_DROPPED', 'KEY_DOWN', 'KEY_UP', 'MOUSE_IRQ',
     'MOUSE_DROPPED', 'MOUSE_PACKETS', 'MOUSE_MOVES',
-    'MOUSE_LEFT_DOWN', 'MOUSE_LEFT_UP')) {
+    'MOUSE_LEFT_DOWN', 'MOUSE_LEFT_UP', 'MOUSE_RIGHT_DOWN', 'MOUSE_RIGHT_UP')) {
     $matches = [regex]::Matches($finalContent, "INPUT_STATS_${name}=(\d+)")
     $inputStat[$name] = if ($matches.Count -gt 0) {
         [UInt64]$matches[$matches.Count - 1].Groups[1].Value
     } else { 0 }
 }
 
+$contextValidation = $null
+if ($diagnosticMode -eq 'ContextMenu') {
+    $contextMenuOpened = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_OPENED=').Count
+    $contextMenuDrawn = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_DRAWN=[^\r\n]*,font=1').Count
+    $contextMenuGoodBounds = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=1').Count
+    $contextMenuBadBounds = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0').Count
+    $contextMenuHover0 = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_HOVER_INDEX=0').Count
+    $contextMenuHover1 = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_HOVER_INDEX=1').Count
+    $contextMenuHover2 = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_HOVER_INDEX=2').Count
+    $contextMenuHoverSubmenu = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_HOVER_INDEX=102').Count
+    $contextMenuHoverReset = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_HOVER_INDEX=-1').Count
+    $contextMenuCommands = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_ACTIVATED=ICON_SIZE_32').Count
+    $contextMenuClickAway = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_DISMISSED=CLICK_AWAY').Count
+    $contextMenuEscape = [regex]::Matches($finalContent, '(?m)^CONTEXT_MENU_DISMISSED=ESCAPE').Count
+    $taskbarMenuOpened = [regex]::Matches($finalContent, '(?m)^TASKBAR_CONTEXT_MENU_OPENED=').Count
+    $taskbarMenuDrawn = [regex]::Matches($finalContent, '(?m)^TASKBAR_CONTEXT_MENU_DRAWN=[^\r\n]*,font=1').Count
+    $taskbarMenuGoodBounds = [regex]::Matches($finalContent, '(?m)^TASKBAR_CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=1').Count
+    $taskbarMenuEscape = [regex]::Matches($finalContent, '(?m)^TASKBAR_CONTEXT_MENU_DISMISSED=ESCAPE').Count
+    $contextMenuInputMatches = [regex]::Matches($finalContent, 'CONTEXT_MENU_INPUT_STATS=(\d+),(\d+)')
+    $contextMenuLastRightDown = if ($contextMenuInputMatches.Count -gt 0) {
+        [UInt64]$contextMenuInputMatches[$contextMenuInputMatches.Count - 1].Groups[1].Value
+    } else { 0 }
+    $contextMenuLastRightUp = if ($contextMenuInputMatches.Count -gt 0) {
+        [UInt64]$contextMenuInputMatches[$contextMenuInputMatches.Count - 1].Groups[2].Value
+    } else { 0 }
+    $taskbarInputMatches = [regex]::Matches($finalContent, 'TASKBAR_CONTEXT_MENU_INPUT_STATS=(\d+),(\d+)')
+    $taskbarLastRightDown = if ($taskbarInputMatches.Count -gt 0) {
+        [UInt64]$taskbarInputMatches[$taskbarInputMatches.Count - 1].Groups[1].Value
+    } else { 0 }
+    $taskbarLastRightUp = if ($taskbarInputMatches.Count -gt 0) {
+        [UInt64]$taskbarInputMatches[$taskbarInputMatches.Count - 1].Groups[2].Value
+    } else { 0 }
+    $lastRightDown = if ($contextMenuLastRightDown -gt $taskbarLastRightDown) {
+        $contextMenuLastRightDown
+    } else { $taskbarLastRightDown }
+    $lastRightUp = if ($contextMenuLastRightUp -gt $taskbarLastRightUp) {
+        $contextMenuLastRightUp
+    } else { $taskbarLastRightUp }
+    $contextMenuExpectedOpens = 104
+    $contextMenuPass =
+        $status -eq 'CONTEXT_MENU_COMPLETE' -and
+        $contextMenuOpened -ge $contextMenuExpectedOpens -and
+        $contextMenuDrawn -ge $contextMenuExpectedOpens -and
+        $contextMenuGoodBounds -ge $contextMenuExpectedOpens -and
+        $contextMenuBadBounds -eq 0 -and
+        $contextMenuHover0 -gt 0 -and $contextMenuHover1 -gt 0 -and
+        $contextMenuHover2 -gt 0 -and $contextMenuHoverSubmenu -gt 0 -and
+        $contextMenuHoverReset -gt 0 -and $contextMenuCommands -ge 25 -and
+        $contextMenuClickAway -ge 50 -and $contextMenuEscape -ge 25 -and
+        $taskbarMenuOpened -ge 1 -and $taskbarMenuDrawn -ge 1 -and
+        $taskbarMenuGoodBounds -ge 1 -and $taskbarMenuEscape -ge 1 -and
+        $lastRightDown -ge ($contextMenuOpened + $taskbarMenuOpened) -and
+        $lastRightDown -eq $lastRightUp
+    $contextValidation = [ordered]@{
+        pass = $contextMenuPass
+        desktopOpened = $contextMenuOpened
+        desktopDrawn = $contextMenuDrawn
+        desktopGoodBounds = $contextMenuGoodBounds
+        desktopBadBounds = $contextMenuBadBounds
+        hover = "$contextMenuHover0/$contextMenuHover1/$contextMenuHover2/$contextMenuHoverSubmenu/$contextMenuHoverReset"
+        iconSize32 = $contextMenuCommands
+        clickAway = $contextMenuClickAway
+        escape = $contextMenuEscape
+        taskbarOpened = $taskbarMenuOpened
+        taskbarDrawn = $taskbarMenuDrawn
+        taskbarGoodBounds = $taskbarMenuGoodBounds
+        taskbarEscape = $taskbarMenuEscape
+        rightDownUp = "$lastRightDown/$lastRightUp"
+    }
+    if ($status -eq 'CONTEXT_MENU_COMPLETE' -and -not $contextMenuPass) {
+        $status = 'CONTEXT_MENU_VALIDATION_FAILED'
+    }
+}
+
 Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '   Validation Summary' -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
-Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE')) { 'Green' } else { 'Red' })
+Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'CONTEXT_MENU_COMPLETE')) { 'Green' } else { 'Red' })
 Write-Host "Dispatch selected: $dispatchSelected" -ForegroundColor Gray
 Write-Host "Continuous entered: $continuousEntered" -ForegroundColor Gray
 Write-Host "Heartbeats: $heartbeatCount (last frame $lastHeartbeatFrame)" -ForegroundColor Gray
@@ -570,18 +827,27 @@ if ($isInputValidation) {
     Write-Host "Keyboard IRQ/down/up/dropped: $($inputStat.KEY_IRQ)/$($inputStat.KEY_DOWN)/$($inputStat.KEY_UP)/$($inputStat.KEY_DROPPED)" -ForegroundColor Gray
     Write-Host "Mouse IRQ/packets/moves/dropped: $($inputStat.MOUSE_IRQ)/$($inputStat.MOUSE_PACKETS)/$($inputStat.MOUSE_MOVES)/$($inputStat.MOUSE_DROPPED)" -ForegroundColor Gray
     Write-Host "Mouse left down/up: $($inputStat.MOUSE_LEFT_DOWN)/$($inputStat.MOUSE_LEFT_UP)" -ForegroundColor Gray
+    Write-Host "Mouse right down/up: $($inputStat.MOUSE_RIGHT_DOWN)/$($inputStat.MOUSE_RIGHT_UP)" -ForegroundColor Gray
     Write-Host "GUI key routed: $($finalContent -match 'INPUT_GUI_KEY_ROUTED')" -ForegroundColor Gray
     Write-Host "GUI mouse routed: $($finalContent -match 'INPUT_GUI_MOUSE_ROUTED')" -ForegroundColor Gray
     if ($inputInjectionError) {
         Write-Host "Input error: $inputInjectionError" -ForegroundColor Red
     }
 }
+if ($contextValidation) {
+    Write-Host "Context menu validation: $($contextValidation.pass)" -ForegroundColor $(if ($contextValidation.pass) { 'Green' } else { 'Red' })
+    Write-Host "Desktop opens/draws/good-bounds/bad-bounds: $($contextValidation.desktopOpened)/$($contextValidation.desktopDrawn)/$($contextValidation.desktopGoodBounds)/$($contextValidation.desktopBadBounds)" -ForegroundColor Gray
+    Write-Host "Hover indices (0/1/2/submenu/reset): $($contextValidation.hover)" -ForegroundColor Gray
+    Write-Host "Icon Size 32 activations/click-away/Escape: $($contextValidation.iconSize32)/$($contextValidation.clickAway)/$($contextValidation.escape)" -ForegroundColor Gray
+    Write-Host "Taskbar opens/draws/good-bounds/Escape: $($contextValidation.taskbarOpened)/$($contextValidation.taskbarDrawn)/$($contextValidation.taskbarGoodBounds)/$($contextValidation.taskbarEscape)" -ForegroundColor Gray
+    Write-Host "Right-button down/up: $($contextValidation.rightDownUp)" -ForegroundColor Gray
+}
 if ($faultText) {
     Write-Host "Fault: $faultText" -ForegroundColor Red
 }
 Write-Host "Serial log: $serialPath" -ForegroundColor Cyan
 
-if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED')) {
+if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED')) {
     exit 1
 }
 exit 0

@@ -257,6 +257,80 @@ unsafe class Program {
         SerialBreadcrumb("INPUT_GUI_TEXT_RENDERED=1");
     }
 
+    internal static void MarkUefiContextMenuOpened(int x, int y, int width, int height) {
+#if UEFI_DIAGNOSTIC_CONTEXT_MENU
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("CONTEXT_MENU_OPENED=" + x.ToString() + "," + y.ToString());
+        SerialBreadcrumb("CONTEXT_MENU_RIGHT_DOWN=" + PS2Mouse.RightDownCount.ToString());
+        SerialBreadcrumb("CONTEXT_MENU_BOUNDS=" + x.ToString() + "," + y.ToString() + "," +
+            width.ToString() + "," + height.ToString() + ",ok=" +
+            ((x >= 0 && y >= 0 && x + width <= Framebuffer.Width &&
+              y + height <= Framebuffer.Height) ? "1" : "0"));
+#endif
+    }
+
+    internal static void MarkUefiContextMenuDrawn(int x, int y, int width, int height) {
+#if UEFI_DIAGNOSTIC_CONTEXT_MENU
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("CONTEXT_MENU_DRAWN=" + x.ToString() + "," + y.ToString() + "," +
+            width.ToString() + "," + height.ToString() + ",font=" +
+            (WindowManager.RealFontEnabled ? "1" : "0"));
+#endif
+    }
+
+    internal static void MarkUefiContextMenuHover(int index) {
+#if UEFI_DIAGNOSTIC_CONTEXT_MENU
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("CONTEXT_MENU_HOVER_INDEX=" + index.ToString());
+#endif
+    }
+
+    internal static void MarkUefiContextMenuActivated(string command) {
+#if UEFI_DIAGNOSTIC_CONTEXT_MENU
+        if (!IsUefiMode || command == null) return;
+        SerialBreadcrumb("CONTEXT_MENU_ACTIVATED=" + command);
+#endif
+    }
+
+    internal static void MarkUefiContextMenuDismissed(string reason) {
+#if UEFI_DIAGNOSTIC_CONTEXT_MENU
+        if (!IsUefiMode || reason == null) return;
+        SerialBreadcrumb("CONTEXT_MENU_DISMISSED=" + reason);
+        SerialBreadcrumb("CONTEXT_MENU_INPUT_STATS=" + PS2Mouse.RightDownCount.ToString() + "," +
+                         PS2Mouse.RightUpCount.ToString());
+#endif
+    }
+
+    internal static void MarkUefiTaskbarContextMenuOpened(int x, int y, int width, int height) {
+#if UEFI_DIAGNOSTIC_CONTEXT_MENU
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("TASKBAR_CONTEXT_MENU_OPENED=" + x.ToString() + "," + y.ToString());
+        SerialBreadcrumb("TASKBAR_CONTEXT_MENU_RIGHT_DOWN=" + PS2Mouse.RightDownCount.ToString());
+        SerialBreadcrumb("TASKBAR_CONTEXT_MENU_BOUNDS=" + x.ToString() + "," + y.ToString() + "," +
+            width.ToString() + "," + height.ToString() + ",ok=" +
+            ((x >= 0 && y >= 0 && x + width <= Framebuffer.Width &&
+              y + height <= Framebuffer.Height) ? "1" : "0"));
+#endif
+    }
+
+    internal static void MarkUefiTaskbarContextMenuDrawn(int x, int y, int width, int height) {
+#if UEFI_DIAGNOSTIC_CONTEXT_MENU
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("TASKBAR_CONTEXT_MENU_DRAWN=" + x.ToString() + "," + y.ToString() + "," +
+            width.ToString() + "," + height.ToString() + ",font=" +
+            (WindowManager.RealFontEnabled ? "1" : "0"));
+#endif
+    }
+
+    internal static void MarkUefiTaskbarContextMenuDismissed(string reason) {
+#if UEFI_DIAGNOSTIC_CONTEXT_MENU
+        if (!IsUefiMode || reason == null) return;
+        SerialBreadcrumb("TASKBAR_CONTEXT_MENU_DISMISSED=" + reason);
+        SerialBreadcrumb("TASKBAR_CONTEXT_MENU_INPUT_STATS=" + PS2Mouse.RightDownCount.ToString() + "," +
+                         PS2Mouse.RightUpCount.ToString());
+#endif
+    }
+
     internal static void MarkUefiDesktopClickCandidate(int x, int y) {
 #if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
         if (!IsUefiMode || _uefiDesktopClickCandidateLogged) return;
@@ -583,8 +657,11 @@ unsafe class Program {
         BootConsole.WriteLine("[SMAIN] initialized");
         SMainSetup();
 
+        // Escape is part of the normal Window contract. It is safe on UEFI now
+        // that keyboard input reaches the same main-thread event pipeline.
+        SetupEscapeKeyHandler();
+
         if (!IsUefiMode) {
-            SetupEscapeKeyHandler();
             SerialBreadcrumb("SMAIN_DISPATCH_REASON=LEGACY");
             RenderLoop();
             return;
@@ -817,19 +894,26 @@ unsafe class Program {
     /// </summary>
     private static void SetupContextMenus() {
         BootConsole.WriteLine("[SMAIN] Creating context menus");
-        if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy) {
-            if (RightMenu == null) {
-                RightMenu = new RightMenu();
-                RightMenu.Visible = false;
+        RightMenu = null;
+        widgetContextMenu = null;
+        try {
+            RightMenu = new RightMenu();
+            RightMenu.Visible = false;
+
+            // WidgetContextMenu belongs to the normal widget subsystem. UEFI
+            // currently has no widgets, so do not create an unreachable menu.
+            if (!IsUefiMode) {
+                widgetContextMenu = new WidgetContextMenu();
+                widgetContextMenu.Visible = false;
+                WindowManager.MoveToEnd(widgetContextMenu);
             }
-            widgetContextMenu = new WidgetContextMenu();
-            widgetContextMenu.Visible = false;
-            WindowManager.MoveToEnd(widgetContextMenu);
-            BootConsole.WriteLine("[SMAIN] Context menus created (Legacy)");
-        } else {
-            BootConsole.WriteLine("[SMAIN] Context menus skipped (UEFI mode)");
+            BootConsole.WriteLine("[CONTEXT_MENU] initialized");
+        } catch {
+            // Popup initialization is optional: the desktop and input path must
+            // remain usable if a menu allocation or dependent asset fails.
             RightMenu = null;
             widgetContextMenu = null;
+            BootConsole.WriteLine("[CONTEXT_MENU] unavailable");
         }
     }
 
@@ -889,7 +973,7 @@ unsafe class Program {
     }
 
     /// <summary>
-    /// Setup global Escape key handler (Legacy only)
+    /// Setup the global Escape key handler shared by legacy and UEFI paths.
     /// </summary>
     private static void SetupEscapeKeyHandler() {
         Keyboard.OnKeyChanged += (sender, key) => {
@@ -931,6 +1015,26 @@ unsafe class Program {
     /// <summary>
     /// Main render loop - extracted from SMain to keep stack frames small.
     /// </summary>
+    private static void HandleContextMenuOpening() {
+        try {
+            bool rightDown = (Control.MouseButtons & MouseButtons.Right) == MouseButtons.Right;
+            if (rightDown && !RightClicked) {
+                RightClicked = true;
+                if (!WindowManager.MouseHandled && RightMenu != null) {
+                    int x = Control.MousePosition.X;
+                    int y = Control.MousePosition.Y;
+                    RightMenu.ShowAt(x, y);
+                    MarkUefiContextMenuOpened(RightMenu.X, RightMenu.Y,
+                        RightMenu.Width, RightMenu.Height);
+                }
+            } else if (!rightDown) {
+                RightClicked = false;
+            }
+        } catch {
+            RightClicked = false;
+        }
+    }
+
     private static void RenderLoop() {
         if (IsUefiMode) {
             _uefiMultiFrameActive = true;
@@ -989,22 +1093,7 @@ unsafe class Program {
                 try { WindowManager.FlushPendingCreates(); } catch { }
                 try { WAVPlayer.DoPlay(); } catch { }
 
-                try {
-                    if ((Control.MouseButtons & MouseButtons.Right) == MouseButtons.Right &&
-                        !RightClicked && !WindowManager.MouseHandled) {
-                        RightClicked = true;
-                        if (RightMenu != null) {
-                            RightMenu.X = Control.MousePosition.X;
-                            RightMenu.Y = Control.MousePosition.Y;
-                            WindowManager.MoveToEnd(RightMenu);
-                            RightMenu.Visible = true;
-                        }
-                    } else if ((Control.MouseButtons & MouseButtons.Right) != MouseButtons.Right) {
-                        RightClicked = false;
-                    }
-                } catch {
-                    RightClicked = false;
-                }
+                HandleContextMenuOpening();
 
                 try {
                     Native.Stosd(Framebuffer.Graphics.VideoMemory, 0,
@@ -1086,6 +1175,9 @@ unsafe class Program {
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         Desktop.Update(_cachedDocumentIcon, _cachedFolderIcon,
             _cachedImageIcon, _cachedAudioIcon, 48);
+        // Let taskbar hit regions claim right-clicks before the desktop popup
+        // is opened. Both routes still use the normal Window-based menus.
+        HandleContextMenuOpening();
         EmitUefiRealIconMarker(graphics, frameCounter);
 
         SetUefiFrameBreadcrumb(2, 1, 201);
@@ -1198,6 +1290,8 @@ unsafe class Program {
             SerialBreadcrumb("INPUT_STATS_MOUSE_MOVES=" + PS2Mouse.MoveEventCount.ToString());
             SerialBreadcrumb("INPUT_STATS_MOUSE_LEFT_DOWN=" + PS2Mouse.LeftDownCount.ToString());
             SerialBreadcrumb("INPUT_STATS_MOUSE_LEFT_UP=" + PS2Mouse.LeftUpCount.ToString());
+            SerialBreadcrumb("INPUT_STATS_MOUSE_RIGHT_DOWN=" + PS2Mouse.RightDownCount.ToString());
+            SerialBreadcrumb("INPUT_STATS_MOUSE_RIGHT_UP=" + PS2Mouse.RightUpCount.ToString());
         }
         if (!graphicsValid) {
             SerialBreadcrumb("CONTINUOUS_DESKTOP_FAULT=GRAPHICS_INVARIANT");
