@@ -182,6 +182,22 @@ namespace guideXOS.GUI {
             int startSize = _barHeight - 8;
             graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2E);
             graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3E, 1);
+
+            // The recovered UEFI taskbar has no legacy StartMenu object. Use
+            // its existing start tile as the narrow, safe route to the
+            // already-supported on-screen keyboard window.
+            bool leftDown = (Control.MouseButtons & MouseButtons.Left) == MouseButtons.Left;
+            if (!leftDown) {
+                _oskClickLatch = false;
+            } else if (!_oskClickLatch &&
+                       Control.MousePosition.X >= startX &&
+                       Control.MousePosition.X <= startX + startSize &&
+                       Control.MousePosition.Y >= startY &&
+                       Control.MousePosition.Y <= startY + startSize) {
+                OpenOnScreenKeyboard();
+                _oskClickLatch = true;
+                Program.MarkUefiGuiMouseRouted();
+            }
         }
 
         public void Draw() {

@@ -116,6 +116,9 @@ namespace guideXOS.GUI {
                 }
             }
             if (_userFocus) _username = target; else _password = target;
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+            Program.MarkUefiGuiKeyRouted();
+#endif
         }
 
         public override void OnInput() {
@@ -143,8 +146,18 @@ namespace guideXOS.GUI {
 
             if (left) {
                 if (!_clickLatch) {
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+                    // Diagnostic builds use this existing focusable window as
+                    // the proof target; any physical click reaching OnInput
+                    // is sufficient to prove window routing.
+                    Program.MarkUefiGuiMouseRouted();
+#endif
                     // Username box
-                    if (mx >= cx && mx <= cx + cw && my >= userY && my <= userY + boxH) { _userFocus = true; _pwdFocus = false; _clickLatch = true; return; }
+                    if (mx >= cx && mx <= cx + cw && my >= userY && my <= userY + boxH) { _userFocus = true; _pwdFocus = false; _clickLatch = true;
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+                        Program.MarkUefiGuiMouseRouted();
+#endif
+                        return; }
                     // Password box
                     if (mx >= cx && mx <= cx + cw && my >= pwdY && my <= pwdY + boxH) { _userFocus = false; _pwdFocus = true; _clickLatch = true; return; }
                     // Login

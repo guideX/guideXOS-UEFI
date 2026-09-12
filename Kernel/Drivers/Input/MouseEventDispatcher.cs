@@ -339,14 +339,22 @@ namespace guideXOS.Kernel.Drivers.Input {
             try {
                 for (int i = 0; i < message.Length; i++) {
                     char c = message[i];
-                    while ((Native.In8(0x3FD) & 0x20) == 0) { }
-                    Native.Out8(0x3F8, (byte)c);
+                    if (!TryWriteSerial((byte)c)) break;
                 }
-                while ((Native.In8(0x3FD) & 0x20) == 0) { }
-                Native.Out8(0x3F8, (byte)'\n');
+                TryWriteSerial((byte)'\n');
             } catch {
                 // Ignore serial errors
             }
+        }
+
+        private static bool TryWriteSerial(byte value) {
+            for (int wait = 0; wait < 100000; wait++) {
+                if ((Native.In8(0x3FD) & 0x20) != 0) {
+                    Native.Out8(0x3F8, value);
+                    return true;
+                }
+            }
+            return false;
         }
         
         #endregion

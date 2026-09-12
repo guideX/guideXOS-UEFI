@@ -89,6 +89,7 @@ unsafe class Program {
     /// </summary>
     private static int _cachedIconSize = 48;
     private static ulong _lastIconCacheRefresh = 0;
+    private static bool _uefiRealIconMarkerEmitted;
 
     private static ulong GetUefiTimerTicks() {
         try {
@@ -100,22 +101,36 @@ unsafe class Program {
 
     // UEFI desktop dispatch controls. Diagnostic builds select one of the
     // explicit modes below through the UefiDiagnosticMode MSBuild property.
-#if UEFI_DIAGNOSTIC_TINY
+#if UEFI_DIAGNOSTIC_PNG
+    private const bool UEFI_ENABLE_PNG_DIAGNOSTIC = true;
+    private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
+#elif UEFI_DIAGNOSTIC_TINY
+    private const bool UEFI_ENABLE_PNG_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = true;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
 #elif UEFI_DIAGNOSTIC_FIRST_FRAME
+    private const bool UEFI_ENABLE_PNG_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = true;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
 #elif UEFI_DIAGNOSTIC_FRAMES
+    private const bool UEFI_ENABLE_PNG_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = true;
 #else
+    private const bool UEFI_ENABLE_PNG_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
+#endif
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+    private const bool UEFI_ENABLE_INPUT_DIAGNOSTIC_TARGET = true;
+#else
+    private const bool UEFI_ENABLE_INPUT_DIAGNOSTIC_TARGET = false;
 #endif
     private const int UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET = 300;
 
@@ -165,14 +180,66 @@ unsafe class Program {
         return true;
     }
 
-    // USB/PS2 input remains outside this recovery pass. All UEFI paths skip
-    // post-EBS input initialization until that subsystem is validated separately.
+    // Early firmware-era hardware discovery remains guarded. Native PS/2 is
+    // deliberately not guarded by BootMode and is initialized after APIC/IOAPIC
+    // setup, before ExitBootServices-owned pointers are retired.
     internal static bool ShouldSkipEarlyUefiHardwareInitialization() {
         return IsUefiMode;
     }
 
     internal static bool ShouldSkipEarlyUefiInputInitialization() {
-        return IsUefiMode;
+        return false;
+    }
+
+    private static bool _uefiGuiKeyRouted;
+    private static bool _uefiGuiMouseRouted;
+    private static bool _uefiDesktopFilesClickRouted;
+    private static bool _uefiDesktopClickCandidateLogged;
+    private static int _uefiDesktopClickEdgeCount;
+
+    internal static void MarkUefiGuiKeyRouted() {
+        if (!IsUefiMode || _uefiGuiKeyRouted) return;
+        _uefiGuiKeyRouted = true;
+        SerialBreadcrumb("INPUT_GUI_KEY_ROUTED");
+    }
+
+    internal static void MarkUefiGuiMouseRouted() {
+        if (!IsUefiMode || _uefiGuiMouseRouted) return;
+        _uefiGuiMouseRouted = true;
+        SerialBreadcrumb("INPUT_GUI_MOUSE_ROUTED");
+    }
+
+    internal static void MarkUefiDesktopFilesClickRouted() {
+        if (!IsUefiMode || _uefiDesktopFilesClickRouted) return;
+        _uefiDesktopFilesClickRouted = true;
+        SerialBreadcrumb("DESKTOP_FILES_CLICK_ROUTED");
+    }
+
+    internal static void MarkUefiDesktopClickCandidate(int x, int y) {
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+        if (!IsUefiMode || _uefiDesktopClickCandidateLogged) return;
+        _uefiDesktopClickCandidateLogged = true;
+        SerialBreadcrumb("DESKTOP_CLICK_CANDIDATE=" + x.ToString() + "," + y.ToString());
+#endif
+    }
+
+    internal static void MarkUefiDesktopClickEdge(int x, int y, bool handled) {
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+        if (!IsUefiMode || _uefiDesktopClickEdgeCount >= 4) return;
+        _uefiDesktopClickEdgeCount++;
+        SerialBreadcrumb("DESKTOP_CLICK_EDGE=" + x.ToString() + "," + y.ToString() +
+            ",handled=" + (handled ? "1" : "0"));
+#endif
+    }
+
+    private static void SetupUefiDiagnosticInputTarget() {
+        if (!IsUefiMode || !UEFI_ENABLE_INPUT_DIAGNOSTIC_TARGET) return;
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+        LoginDialog probe = new LoginDialog();
+        WindowManager.MoveToEnd(probe);
+        probe.Visible = true;
+        SerialBreadcrumb("INPUT_GUI_TARGET=LOGIN_DIALOG");
+#endif
     }
 
     internal static bool IsUefiMultiFrameActive() {
@@ -294,7 +361,7 @@ unsafe class Program {
         if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
             BootConsole.DrawDebugLines = false;
             BootConsole.WriteLine("[BOOT_MODE] UEFI");
-            BootConsole.WriteLine("[INPUT] UEFI input disabled after ExitBootServices (separate validation)");
+            BootConsole.WriteLine("[INPUT] Native post-EBS path selected");
 
             BootConsole.WriteLine("[FS] Re-mounting filesystem for UEFI");
             if (Ramdisk.RawBasePointer != null) {
@@ -481,6 +548,12 @@ unsafe class Program {
             return;
         }
 
+        if (UEFI_ENABLE_PNG_DIAGNOSTIC) {
+            SerialBreadcrumb("SMAIN_DISPATCH_REASON=PNG_PROBE");
+            RenderLoopUefiPngProbe();
+            return;
+        }
+
         if (UEFI_ENABLE_UTINY_DIAGNOSTIC) {
             SerialBreadcrumb("SMAIN_DISPATCH_REASON=TINY_UEFI");
             RenderLoopUefiTinyBypass();
@@ -524,8 +597,8 @@ unsafe class Program {
 
         FConsole = null; // Don't create console here - let it be created on-demand
 
-        // UEFI setup deliberately keeps image-dependent and input subsystems
-        // out of the post-EBS recovery path. Icons use their existing safe fallbacks.
+        // UEFI setup keeps firmware-owned paths out of the post-EBS recovery
+        // path, but its managed image assets are now safe to initialize here.
         SetupIcons();
 
         // Context menus
@@ -533,6 +606,12 @@ unsafe class Program {
 
         // Widgets
         SetupWidgets();
+
+        if (IsUefiMode) {
+            SetupUefiDiagnosticInputTarget();
+            PS2Keyboard.EnableFullProcessing();
+            PS2Mouse.EnableFullProcessing();
+        }
     }
 
     /// <summary>
@@ -634,11 +713,10 @@ unsafe class Program {
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy) {
                 BackgroundRotationManager.Initialize();
                 guideXOS.Modules.ModuleManager.InitializeBuiltins();
-                try {
-                    RefreshCachedIcons();
+                if (RefreshCachedIcons()) {
                     _lastIconCacheRefresh = Timer.Ticks;
                     BootConsole.WriteLine("[SMAIN] Icons initialized");
-                } catch {
+                } else {
                     BootConsole.WriteLine("[SMAIN] Icon initialization failed - using fallback");
                     _cachedDocumentIcon = new Image(48, 48);
                     _cachedFolderIcon = new Image(48, 48);
@@ -646,11 +724,22 @@ unsafe class Program {
                     _cachedAudioIcon = new Image(48, 48);
                 }
             } else {
-                BootConsole.WriteLine("[SMAIN] UEFI mode - using fallback icons (no PNG)");
-                _cachedDocumentIcon = new Image(48, 48);
-                _cachedFolderIcon = new Image(48, 48);
-                _cachedImageIcon = new Image(48, 48);
-                _cachedAudioIcon = new Image(48, 48);
+                BootConsole.WriteLine("[SMAIN] Initializing managed PNG image assets");
+                if (PngLoader.Initialize() && RefreshCachedIcons() &&
+                    HasVisiblePixels(_cachedDocumentIcon) &&
+                    HasVisiblePixels(_cachedFolderIcon) &&
+                    HasVisiblePixels(_cachedImageIcon) &&
+                    HasVisiblePixels(_cachedAudioIcon)) {
+                    _lastIconCacheRefresh = Timer.Ticks;
+                    BootConsole.WriteLine("[PNG] image assets initialized");
+                    BootConsole.WriteLine("[DESKTOP] real icon assets enabled");
+                } else {
+                    BootConsole.WriteLine("[SMAIN] PNG icon initialization failed - using fallback");
+                    _cachedDocumentIcon = new Image(48, 48);
+                    _cachedFolderIcon = new Image(48, 48);
+                    _cachedImageIcon = new Image(48, 48);
+                    _cachedAudioIcon = new Image(48, 48);
+                }
             }
         } else {
             BootConsole.WriteLine("[SMAIN] No filesystem - using fallback icons");
@@ -915,6 +1004,15 @@ unsafe class Program {
             return false;
         }
 
+        // Native IRQ handlers only place raw bytes in bounded queues. Drain
+        // them before normal window/desktop input so all GUI routing remains
+        // on this rendering thread.
+        PS2Keyboard.ProcessPendingInput(128);
+        PS2Mouse.ProcessPendingInput(256);
+        WindowManager.MouseHandled = false;
+        WindowManager.InputAll();
+        WindowManager.FlushPendingCreates();
+
         SetUefiFrameBreadcrumb(1, 0, 100);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         BackgroundRotationManager.DrawBackground();
@@ -925,6 +1023,7 @@ unsafe class Program {
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         Desktop.Update(_cachedDocumentIcon, _cachedFolderIcon,
             _cachedImageIcon, _cachedAudioIcon, 48);
+        EmitUefiRealIconMarker(graphics, frameCounter);
 
         SetUefiFrameBreadcrumb(2, 1, 201);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
@@ -959,6 +1058,46 @@ unsafe class Program {
         return true;
     }
 
+    private static void EmitUefiRealIconMarker(guideXOS.Graph.Graphics graphics, int frameCounter) {
+        if (!IsUefiMode || _uefiRealIconMarkerEmitted || frameCounter != 1) return;
+        _uefiRealIconMarkerEmitted = true;
+
+        Image icon = _cachedFolderIcon;
+        if (icon == null || icon.RawData == null) {
+            SerialBreadcrumb("DESKTOP_REAL_ICON_RENDERED=0");
+            return;
+        }
+
+        int sampleX = -1;
+        int sampleY = -1;
+        uint imagePixel = 0;
+        for (int y = 0; y < icon.Height && sampleX < 0; y++) {
+            for (int x = 0; x < icon.Width; x++) {
+                uint pixel = icon.GetPixel(x, y);
+                if ((byte)(pixel >> 24) != 0) {
+                    sampleX = x;
+                    sampleY = y;
+                    imagePixel = pixel;
+                    break;
+                }
+            }
+        }
+
+        if (sampleX < 0 || graphics == null || graphics.VideoMemory == null) {
+            SerialBreadcrumb("DESKTOP_REAL_ICON_RENDERED=0");
+            return;
+        }
+
+        // UEFI keeps the recovered tile at (48,96) and places the 48x48
+        // image at (56,104).  Check the first nontransparent source pixel
+        // against the canonical framebuffer result after Desktop.Update.
+        uint framebufferPixel = graphics.GetPoint(56 + sampleX, 104 + sampleY);
+        SerialBreadcrumb("DESKTOP_REAL_ICON_SAMPLE=" + imagePixel.ToString());
+        SerialBreadcrumb("DESKTOP_REAL_ICON_FRAMEBUFFER_SAMPLE=" + framebufferPixel.ToString());
+        SerialBreadcrumb("DESKTOP_REAL_ICON_RENDERED=" +
+            (framebufferPixel != 0xFF263241u ? "1" : "0"));
+    }
+
     private static bool ShouldEmitUefiContinuousHeartbeat(int frame) {
         return frame == UEFI_CONTINUOUS_HEARTBEAT_FIRST ||
                frame == UEFI_CONTINUOUS_HEARTBEAT_EARLY_1 ||
@@ -983,6 +1122,18 @@ unsafe class Program {
             _uefiMultiFrameStackLowWater.ToString());
         SerialBreadcrumb("CONTINUOUS_HEARTBEAT_GRAPHICS_VALID=" +
             (graphicsValid ? "1" : "0"));
+        if (PS2Keyboard.IrqCount != 0 || PS2Mouse.InterruptCount != 0) {
+            SerialBreadcrumb("INPUT_STATS_KEY_IRQ=" + PS2Keyboard.IrqCount.ToString());
+            SerialBreadcrumb("INPUT_STATS_KEY_DROPPED=" + PS2Keyboard.DroppedScancodeCount.ToString());
+            SerialBreadcrumb("INPUT_STATS_KEY_DOWN=" + PS2Keyboard.KeyDownCount.ToString());
+            SerialBreadcrumb("INPUT_STATS_KEY_UP=" + PS2Keyboard.KeyUpCount.ToString());
+            SerialBreadcrumb("INPUT_STATS_MOUSE_IRQ=" + PS2Mouse.InterruptCount.ToString());
+            SerialBreadcrumb("INPUT_STATS_MOUSE_DROPPED=" + PS2Mouse.DroppedByteCount.ToString());
+            SerialBreadcrumb("INPUT_STATS_MOUSE_PACKETS=" + PS2Mouse.ProcessedPacketCount.ToString());
+            SerialBreadcrumb("INPUT_STATS_MOUSE_MOVES=" + PS2Mouse.MoveEventCount.ToString());
+            SerialBreadcrumb("INPUT_STATS_MOUSE_LEFT_DOWN=" + PS2Mouse.LeftDownCount.ToString());
+            SerialBreadcrumb("INPUT_STATS_MOUSE_LEFT_UP=" + PS2Mouse.LeftUpCount.ToString());
+        }
         if (!graphicsValid) {
             SerialBreadcrumb("CONTINUOUS_DESKTOP_FAULT=GRAPHICS_INVARIANT");
         }
@@ -1135,6 +1286,198 @@ unsafe class Program {
         }
     }
 
+    private static bool HasVisiblePixels(Image image) {
+        if (image == null || image.RawData == null || image.Width <= 0 || image.Height <= 0) {
+            return false;
+        }
+        for (int y = 0; y < image.Height; y++) {
+            for (int x = 0; x < image.Width; x++) {
+                if ((byte)(image.GetPixel(x, y) >> 24) != 0) return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Bounded post-EBS proof of the managed PNG path.  This is selected only
+    /// by the opt-in UEFI Png diagnostic build and never by normal boot.
+    /// </summary>
+    private static void RenderLoopUefiPngProbe() {
+        const string path = "Images/BlueVelvet/48/folder.png";
+        byte[] data = null;
+        byte[] invalidSignature = null;
+        byte[] truncatedHeader = null;
+        byte[] impossibleDimensions = null;
+        byte[] truncatedStream = null;
+        Image decoded = null;
+        string failure = null;
+
+        try {
+            SerialBreadcrumb("PNG_PROBE_BEGIN");
+            SerialBreadcrumb("PNG_PROBE_FILE=" + path);
+
+            if (File.Instance == null) {
+                failure = "FILESYSTEM_UNAVAILABLE";
+            } else {
+                // RdskFS returns an owned copy.  The decoded Image below must
+                // remain valid after this temporary file buffer is released.
+                data = File.Instance.ReadAllBytes(path);
+                if (data == null || data.Length == 0) {
+                    failure = "FILE_READ";
+                }
+            }
+
+            if (failure == null) {
+                SerialBreadcrumb("PNG_PROBE_BYTES=" + data.Length.ToString());
+                int width;
+                int height;
+                if (!PngLoader.ValidateSignatureAndParseIHDR(data, out width, out height)) {
+                    failure = "IHDR";
+                } else {
+                    SerialBreadcrumb("PNG_PROBE_DIMENSIONS=" + width.ToString() + "x" + height.ToString());
+                }
+            }
+
+            if (failure == null) {
+                if (!PngLoader.Initialize() || !PngLoader.Load(data, out decoded) ||
+                    decoded == null || decoded.RawData == null) {
+                    failure = "DECODE";
+                }
+            }
+
+            if (failure == null) {
+                SerialBreadcrumb("PNG_PROBE_DECODE_OK");
+
+                int transparentX = -1;
+                int transparentY = -1;
+                int partialX = -1;
+                int partialY = -1;
+                int opaqueX = -1;
+                int opaqueY = -1;
+                for (int y = 0; y < decoded.Height; y++) {
+                    for (int x = 0; x < decoded.Width; x++) {
+                        byte alpha = (byte)(decoded.GetPixel(x, y) >> 24);
+                        if (alpha == 0 && transparentX < 0) {
+                            transparentX = x;
+                            transparentY = y;
+                        } else if (alpha > 0 && alpha < 255 && partialX < 0) {
+                            partialX = x;
+                            partialY = y;
+                        } else if (alpha == 255 && opaqueX < 0) {
+                            opaqueX = x;
+                            opaqueY = y;
+                        }
+                    }
+                }
+
+                SerialBreadcrumb("PNG_PROBE_ALPHA_TRANSPARENT=" + (transparentX >= 0 ? "1" : "0"));
+                SerialBreadcrumb("PNG_PROBE_ALPHA_PARTIAL=" + (partialX >= 0 ? "1" : "0"));
+                SerialBreadcrumb("PNG_PROBE_ALPHA_OPAQUE=" + (opaqueX >= 0 ? "1" : "0"));
+
+                int sampleX = partialX >= 0 ? partialX : (opaqueX >= 0 ? opaqueX : 0);
+                int sampleY = partialX >= 0 ? partialY : (opaqueY >= 0 ? opaqueY : 0);
+                uint pixelSample = decoded.GetPixel(sampleX, sampleY);
+                SerialBreadcrumb("PNG_PROBE_PIXEL_SAMPLE=" + pixelSample.ToString());
+
+                guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
+                if (graphics == null || graphics.VideoMemory == null ||
+                    graphics.Width < decoded.Width + 16 || graphics.Height < decoded.Height + 16) {
+                    failure = "GRAPHICS";
+                } else {
+                    const int drawX = 8;
+                    const int drawY = 8;
+                    graphics.Clear(0xFF010203u);
+                    uint beforeVisible = graphics.GetPoint(drawX + sampleX, drawY + sampleY);
+                    uint beforeTransparent = transparentX >= 0
+                        ? graphics.GetPoint(drawX + transparentX, drawY + transparentY) : beforeVisible;
+                    graphics.DrawImage(drawX, drawY, decoded);
+                    uint afterVisible = graphics.GetPoint(drawX + sampleX, drawY + sampleY);
+                    uint afterTransparent = transparentX >= 0
+                        ? graphics.GetPoint(drawX + transparentX, drawY + transparentY) : beforeTransparent;
+                    bool visibleChanged = afterVisible != beforeVisible;
+                    bool transparentUnchanged = transparentX < 0 || afterTransparent == beforeTransparent;
+                    SerialBreadcrumb("PNG_PROBE_RENDER_SAMPLE=" + afterVisible.ToString());
+                    SerialBreadcrumb("PNG_PROBE_ALPHA_RENDER_OK=" +
+                        (visibleChanged && transparentUnchanged ? "1" : "0"));
+                    Framebuffer.Update();
+                    if (!visibleChanged || !transparentUnchanged) failure = "RENDER";
+                }
+            }
+
+            // Negative controls stay bounded and use the same public loader.
+            if (failure == null) {
+                invalidSignature = new byte[8];
+                Image rejected = null;
+                bool rejectedInvalid = !PngLoader.Load(invalidSignature, out rejected);
+                if (rejected != null) rejected.Dispose();
+                invalidSignature.Dispose();
+                invalidSignature = null;
+                SerialBreadcrumb("PNG_NEGATIVE_INVALID_SIGNATURE=" + (rejectedInvalid ? "PASS" : "FAIL"));
+                if (!rejectedInvalid) failure = "NEGATIVE_SIGNATURE";
+            }
+
+            if (failure == null) {
+                truncatedHeader = new byte[20];
+                Image rejected = null;
+                bool rejectedHeader = !PngLoader.Load(truncatedHeader, out rejected);
+                if (rejected != null) rejected.Dispose();
+                truncatedHeader.Dispose();
+                truncatedHeader = null;
+                SerialBreadcrumb("PNG_NEGATIVE_TRUNCATED_HEADER=" + (rejectedHeader ? "PASS" : "FAIL"));
+                if (!rejectedHeader) failure = "NEGATIVE_HEADER";
+            }
+
+            if (failure == null) {
+                impossibleDimensions = new byte[data.Length];
+                for (int i = 0; i < data.Length; i++) impossibleDimensions[i] = data[i];
+                impossibleDimensions[16] = 0x00;
+                impossibleDimensions[17] = 0x20;
+                impossibleDimensions[18] = 0x00;
+                impossibleDimensions[19] = 0x00;
+                Image rejected = null;
+                bool rejectedDimensions = !PngLoader.Load(impossibleDimensions, out rejected);
+                if (rejected != null) rejected.Dispose();
+                impossibleDimensions.Dispose();
+                impossibleDimensions = null;
+                SerialBreadcrumb("PNG_NEGATIVE_IMPOSSIBLE_DIMENSIONS=" + (rejectedDimensions ? "PASS" : "FAIL"));
+                if (!rejectedDimensions) failure = "NEGATIVE_DIMENSIONS";
+            }
+
+            if (failure == null) {
+                int truncatedLength = data.Length > 16 ? data.Length - 16 : 0;
+                truncatedStream = new byte[truncatedLength];
+                for (int i = 0; i < truncatedLength; i++) truncatedStream[i] = data[i];
+                Image rejected = null;
+                bool rejectedStream = !PngLoader.Load(truncatedStream, out rejected);
+                if (rejected != null) rejected.Dispose();
+                truncatedStream.Dispose();
+                truncatedStream = null;
+                SerialBreadcrumb("PNG_NEGATIVE_TRUNCATED_STREAM=" + (rejectedStream ? "PASS" : "FAIL"));
+                if (!rejectedStream) failure = "NEGATIVE_STREAM";
+            }
+        } catch {
+            failure = "EXCEPTION";
+        }
+
+        if (decoded != null) decoded.Dispose();
+        if (data != null) data.Dispose();
+        if (invalidSignature != null) invalidSignature.Dispose();
+        if (truncatedHeader != null) truncatedHeader.Dispose();
+        if (impossibleDimensions != null) impossibleDimensions.Dispose();
+        if (truncatedStream != null) truncatedStream.Dispose();
+
+        if (failure == null) SerialBreadcrumb("PNG_PROBE_COMPLETE");
+        else SerialBreadcrumb("PNG_PROBE_FAIL=" + failure);
+        HaltAfterUefiPngProbe();
+    }
+
+    private static void HaltAfterUefiPngProbe() {
+        SerialBreadcrumb("PNG_PROBE_HALT_ENTER");
+        for (;;) {
+            Native.Hlt();
+        }
+    }
+
     private static void DrawUefiTinyProofPattern(guideXOS.Graph.Graphics graphics,
                                                   int fbW, int fbH, int frameCounter) {
         if (graphics == null || graphics.VideoMemory == null || fbW <= 0 || fbH <= 0) {
@@ -1195,7 +1538,7 @@ unsafe class Program {
     /// Refresh cached icons without exposing a partially updated set to Desktop.Update.
     /// </summary>
     /// </summary>
-    private static void RefreshCachedIcons() {
+    private static bool RefreshCachedIcons() {
         // Works in both Legacy and UEFI modes now (with managed PNG decoder)
         try {
             // STEP 1: Create new icons first
@@ -1221,9 +1564,11 @@ unsafe class Program {
             if (oldFolderIcon != null) oldFolderIcon.Dispose();
             if (oldImageIcon != null) oldImageIcon.Dispose();
             if (oldAudioIcon != null) oldAudioIcon.Dispose();
+            return true;
         } catch {
             // If icon creation fails, keep using old icons rather than having null icons
             BootConsole.WriteLine("Icon cache refresh failed - keeping old icons");
+            return false;
         }
     }
 }

@@ -175,20 +175,40 @@ namespace guideXOS.Misc {
             
             BootConsole.WriteLine("[TIMER] INIT"); 
             Timer.Initialize();
-            if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy)
-                 Keyboard.Initialize();
+            // Keyboard event state is mode-independent. The native PS/2
+            // device itself is initialized below only after APIC/IOAPIC and
+            // serial diagnostics are ready.
+            Keyboard.Initialize();
 
             BootConsole.WriteLine("[SERIAL] INIT");
             Serial.Initialize();
             
-            // PS/2 Controller initialization moved to capability-based detection in Program.KMain
-            // This prevents unconditional PS/2 access on UEFI systems without PS/2 hardware
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy) {
-                BootConsole.WriteLine("[PS2] Controller initialization deferred to capability detection");
+                BootConsole.WriteLine("[PS2] Controller initialization deferred to legacy desktop");
             }
             
             BootConsole.WriteLine("[VMWARE] INIT");
             VMwareTools.Initialize();
+
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                // This is guideXOS-owned native hardware access. It does not
+                // use any firmware input pointer after ExitBootServices.
+                bool ps2Initialized = false;
+                try {
+                    ps2Initialized = PS2Controller.Initialize();
+                } catch {
+                    ps2Initialized = false;
+                }
+                if (ps2Initialized && PS2Keyboard.IsNativeInitialized) {
+                    BootConsole.WriteLine("[INPUT] Native keyboard initialized");
+                }
+                if (ps2Initialized && PS2Mouse.IsNativeInitialized) {
+                    BootConsole.WriteLine("[INPUT] Native pointer initialized");
+                }
+                if (!ps2Initialized) {
+                    BootConsole.WriteLine("[INPUT] Native PS/2 controller unavailable");
+                }
+            }
 
             // Initialize UEFI mouse input if available (before other subsystems)
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
@@ -196,7 +216,7 @@ namespace guideXOS.Misc {
                 // Keep firmware-owned input protocols out of the kernel recovery path.
                 BootConsole.WriteLine("[EBS] ExitBootServices marked");
                 ExitBootServicesRules.MarkExitBootServices();
-                BootConsole.WriteLine("[INPUT] UEFI input disabled after ExitBootServices");
+                BootConsole.WriteLine("[INPUT] Firmware input protocols retired; native input owns devices");
             }
 
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy)

@@ -34,7 +34,8 @@
     Limit build to bootloader only (skip kernel, ramdisk, conversion)
 
 .PARAMETER UefiDiagnosticMode
-    Optional UEFI regression build variant: Tiny, FirstFrame, or Frames
+    Optional UEFI regression build variant: Tiny, FirstFrame, Frames, Input,
+    InputStress, or Png
 
 .EXAMPLE
     .\build.ps1
@@ -57,7 +58,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-    [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames')]
+    [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'Png')]
     [string]$UefiDiagnosticMode = ''
 )
 

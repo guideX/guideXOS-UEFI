@@ -51,13 +51,32 @@ namespace guideXOS.Kernel.Drivers {
         public static void SetEntryForIrq(uint legacyIrq, byte vector = 0x20) {
             // Apply ACPI interrupt source overrides
             uint gsi = ACPI.RemapIRQ(legacyIrq);
+
+            uint baseGsi = ACPI.IO_APIC->GlobalSystemInterruptBase;
+            if (gsi < baseGsi) return;
+            uint index = gsi - baseGsi;
+            uint version = In(IOAPICVER);
+            uint count = ((version >> 16) & 0xFF) + 1;
+            if (index >= count) return;
             
             // Build a basic redirect entry:
             // bits 0-7: vector
             // bit 16: mask (0 = enabled)
             // deliver to BSP (destination in high dword, set later if needed)
             ulong entry = vector;
-            SetEntry((byte)gsi, entry);
+            ushort flags;
+            uint overrideGsi;
+            if (ACPI.TryGetInterruptOverride(legacyIrq, out overrideGsi, out flags)) {
+                // MADT flags: 0x3 = active-low, 0xC = level-triggered.
+                if ((flags & 0x3) == 0x3) entry |= 1UL << 13;
+                if ((flags & 0xC) == 0xC) entry |= 1UL << 15;
+            }
+            SetEntry((byte)index, entry);
+            if (vector == 0x21 || vector == 0x2C) {
+                BootConsole.WriteLine("[IOAPIC] IRQ" + legacyIrq.ToString() +
+                    " GSI" + gsi.ToString() +
+                    (vector == 0x21 ? " VEC0x21" : " VEC0x2C"));
+            }
         }
 
         public static void SetEntry(uint irq) {

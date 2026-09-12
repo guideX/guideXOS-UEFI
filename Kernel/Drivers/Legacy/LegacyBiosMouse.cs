@@ -236,7 +236,12 @@ namespace guideXOS.Kernel.Drivers.Legacy {
             // Attempt initialization
             try {
                 LogDebug("[LegacyBiosMouse] Calling PS2Controller.Initialize()...");
-                PS2Controller.Initialize();
+                bool initialized = PS2Controller.Initialize();
+                if (!initialized || !PS2Mouse.IsNativeInitialized) {
+                    _initializationFailureReason = "Native PS/2 initialization was not acknowledged";
+                    LogDebug("[LegacyBiosMouse] PS2Controller initialization failed");
+                    return false;
+                }
                 LogDebug("[LegacyBiosMouse] PS2Controller initialized");
                 
                 _initializationSucceeded = true;

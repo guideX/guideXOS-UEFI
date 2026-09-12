@@ -121,26 +121,66 @@ namespace guideXOS.GUI {
                 ChatIcon = LoadIcon($"{basePath}/preferences-system.svg", size, format);
                 NetworkIcon = LoadIcon($"{basePath}/preferences-system.svg", size, format);
             } else {
-                // Original PNG loading
-                ConfigureIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/configure.png"));
-                NotepadIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/notepad.png"));
-                EditIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/edit.png"));
-                CalendarIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/calendar.png"));
-                CalculatorIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/calculator.png"));
-                DocumentIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/documents.png"));
-                AudioIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/music.png"));
-                ImageIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/image.png"));
-                FolderIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/folder.png"));
-                TaskbarIcon = new PNG(File.ReadAllBytes($"Images/startmenubutton.png"));
-                TaskbarIconOver = new PNG(File.ReadAllBytes($"Images/startmenubutton_over.png"));
-                TaskbarIconDown = new PNG(File.ReadAllBytes($"Images/startmenubutton_over.png"));
-                StartIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/play.png"));
-                AudioPauseIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/pause.png"));
-                AudioPlayIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/play.png"));
-                LockIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/lock.png"));
-                ApplicationsIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/applications.png"));
-                ChatIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/chat.png"));
-                NetworkIcon = new PNG(File.ReadAllBytes($"Images/BlueVelvet/{size}/network.png"));
+                // Keep the existing native decoder for Legacy, but use the
+                // managed PngLoader after ExitBootServices.  The native PNG
+                // path is not valid once firmware services are gone.
+                ConfigureIcon = LoadPngImage($"Images/BlueVelvet/{size}/configure.png", size);
+                NotepadIcon = LoadPngImage($"Images/BlueVelvet/{size}/notepad.png", size);
+                EditIcon = LoadPngImage($"Images/BlueVelvet/{size}/edit.png", size);
+                CalendarIcon = LoadPngImage($"Images/BlueVelvet/{size}/calendar.png", size);
+                CalculatorIcon = LoadPngImage($"Images/BlueVelvet/{size}/calculator.png", size);
+                DocumentIcon = LoadPngImage($"Images/BlueVelvet/{size}/documents.png", size);
+                AudioIcon = LoadPngImage($"Images/BlueVelvet/{size}/music.png", size);
+                ImageIcon = LoadPngImage($"Images/BlueVelvet/{size}/image.png", size);
+                FolderIcon = LoadPngImage($"Images/BlueVelvet/{size}/folder.png", size);
+                TaskbarIcon = LoadPngImage("Images/startmenubutton.png", size);
+                TaskbarIconOver = LoadPngImage("Images/startmenubutton_over.png", size);
+                TaskbarIconDown = LoadPngImage("Images/startmenubutton_over.png", size);
+                StartIcon = LoadPngImage($"Images/BlueVelvet/{size}/play.png", size);
+                AudioPauseIcon = LoadPngImage($"Images/BlueVelvet/{size}/pause.png", size);
+                AudioPlayIcon = LoadPngImage($"Images/BlueVelvet/{size}/play.png", size);
+                LockIcon = LoadPngImage($"Images/BlueVelvet/{size}/lock.png", size);
+                ApplicationsIcon = LoadPngImage($"Images/BlueVelvet/{size}/applications.png", size);
+                ChatIcon = LoadPngImage($"Images/BlueVelvet/{size}/chat.png", size);
+                NetworkIcon = LoadPngImage($"Images/BlueVelvet/{size}/network.png", size);
+            }
+        }
+
+        private static Image LoadPngImage(string path, int fallbackSize) {
+            byte[] data = null;
+            try {
+                // Avoid the legacy diagnostic wrapper's per-file boot log in
+                // the normal UEFI desktop; this is still the mounted RdskFS
+                // FileSystem instance and returns an owned byte[] copy.
+                data = BootConsole.CurrentMode == guideXOS.BootMode.UEFI
+                    ? File.Instance.ReadAllBytes(path)
+                    : File.ReadAllBytes(path);
+                if (data == null || data.Length == 0) {
+                    return new Image(fallbackSize, fallbackSize);
+                }
+
+                if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                    if (!PngLoader.Initialize()) {
+                        return new Image(fallbackSize, fallbackSize);
+                    }
+
+                    Image decoded;
+                    if (PngLoader.Load(data, out decoded) && decoded != null &&
+                        decoded.RawData != null) {
+                        return decoded;
+                    }
+                    return new Image(fallbackSize, fallbackSize);
+                }
+
+                return new PNG(data);
+            } catch {
+                return new Image(fallbackSize, fallbackSize);
+            } finally {
+                // PngLoader copies the file into its own decoded Image.  Do
+                // not retain the temporary RdskFS read buffer in UEFI mode.
+                if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI && data != null) {
+                    data.Dispose();
+                }
             }
         }
         
@@ -213,21 +253,14 @@ namespace guideXOS.GUI {
         /// Static constructor to initialize icons (deferred until first use)
         /// </summary>
         static Icons() {
-            // CRITICAL: In UEFI mode, skip PNG decoding entirely
-            // Icons will use fallback placeholders instead
-            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
-                _iconsPrivate16 = null;
-                _iconsPrivate24 = null;
-                _iconsPrivate32 = null;
-                _iconsPrivate48 = null;
-                _iconsPrivate128 = null;
-            } else {
-                _iconsPrivate16 = new IconsPrivate(16);
-                _iconsPrivate24 = new IconsPrivate(24);
-                _iconsPrivate32 = new IconsPrivate(32);
-                _iconsPrivate48 = new IconsPrivate(48);
-                _iconsPrivate128 = new IconsPrivate(128);
-            }
+            // PngLoader is the post-EBS decoder; it is initialized by the
+            // UEFI setup path before the first Icons access.  Legacy keeps its
+            // established native PNG behavior through LoadPngImage.
+            _iconsPrivate16 = new IconsPrivate(16);
+            _iconsPrivate24 = new IconsPrivate(24);
+            _iconsPrivate32 = new IconsPrivate(32);
+            _iconsPrivate48 = new IconsPrivate(48);
+            _iconsPrivate128 = new IconsPrivate(128);
         }
         /// <summary>
         /// Network Icon

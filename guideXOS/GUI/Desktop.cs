@@ -356,21 +356,49 @@ namespace guideXOS.GUI {
                 graphics.Width <= 0 || graphics.Height <= 0) return;
 
             SetIconSize(iconSize);
-            DrawUefiFallbackIcon(graphics, folderIcon, "FILES", 48, 96, 0xFF47D6C8u);
-            DrawUefiFallbackIcon(graphics, documentIcon, "DOCS", 152, 96, 0xFFFFD166u);
-            DrawUefiFallbackIcon(graphics, imageIcon, "IMAGES", 256, 96, 0xFFFF6B6Bu);
-            DrawUefiFallbackIcon(graphics, audioIcon, "AUDIO", 360, 96, 0xFF9B8AFBu);
+            DrawUefiImageIcon(graphics, folderIcon, "FILES", 48, 96, 0xFF47D6C8u);
+            DrawUefiImageIcon(graphics, documentIcon, "DOCS", 152, 96, 0xFFFFD166u);
+            DrawUefiImageIcon(graphics, imageIcon, "IMAGES", 256, 96, 0xFFFF6B6Bu);
+            DrawUefiImageIcon(graphics, audioIcon, "AUDIO", 360, 96, 0xFF9B8AFBu);
+
+            // Keep the recovered UEFI desktop layout, but give its existing
+            // FILES tile the same real window route as the legacy desktop.
+            bool leftDown = (Control.MouseButtons & MouseButtons.Left) == MouseButtons.Left;
+            bool clickEdge = leftDown && !_prevLeftDown;
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+            if (clickEdge) {
+                Program.MarkUefiDesktopClickEdge(Control.MousePosition.X,
+                                                 Control.MousePosition.Y,
+                                                 WindowManager.MouseHandled);
+            }
+            if (clickEdge && !WindowManager.MouseHandled) {
+                Program.MarkUefiDesktopClickCandidate(Control.MousePosition.X,
+                                                       Control.MousePosition.Y);
+            }
+#endif
+            if (clickEdge && !WindowManager.MouseHandled &&
+                Control.MousePosition.X >= 48 && Control.MousePosition.X <= 112 &&
+                Control.MousePosition.Y >= 96 && Control.MousePosition.Y <= 160) {
+                if (compFiles == null || !compFiles.Visible) {
+                    compFiles = new ComputerFiles(300, 200, 540, 380);
+                    WindowManager.MoveToEnd(compFiles);
+                    compFiles.Visible = true;
+                }
+                Program.MarkUefiDesktopFilesClickRouted();
+                Program.MarkUefiGuiMouseRouted();
+            }
+            _prevLeftDown = leftDown;
 
             if (Taskbar != null) Taskbar.Draw();
         }
 
-        private static void DrawUefiFallbackIcon(guideXOS.Graph.Graphics graphics, Image icon, string label, int x, int y, uint accent) {
+        private static void DrawUefiImageIcon(guideXOS.Graph.Graphics graphics, Image icon, string label, int x, int y, uint accent) {
             const int tileSize = 64;
             graphics.FillRectangle(x, y, tileSize, tileSize, 0xFF263241u);
             graphics.DrawRectangle(x, y, tileSize, tileSize, accent, 2);
-            graphics.FillRectangle(x + 14, y + 18, 36, 28, accent);
-            graphics.FillRectangle(x + 20, y + 14, 20, 8, accent);
             if (icon != null) {
+                // The image is the normal decoded guideXOS asset.  Keep the
+                // recovered tile geometry and label positions unchanged.
                 graphics.DrawImage(x + 8, y + 8, icon);
             }
             if (WindowManager.font != null && label != null) {

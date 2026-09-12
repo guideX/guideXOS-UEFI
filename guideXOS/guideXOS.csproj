@@ -30,6 +30,9 @@
 
 	<!-- Diagnostic UEFI modes are opt-in build variants. The normal build
 	     intentionally retains the continuous recovered desktop as its default. -->
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Png'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_PNG</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Tiny'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_TINY</DefineConstants>
 	</PropertyGroup>
@@ -38,6 +41,12 @@
 	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Frames'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_FRAMES</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Input'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_INPUT</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'InputStress'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_INPUT_STRESS</DefineConstants>
 	</PropertyGroup>
 
 	<Target Name="PrepareForILLink">

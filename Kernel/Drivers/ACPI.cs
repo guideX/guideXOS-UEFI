@@ -422,6 +422,7 @@ namespace guideXOS.Kernel.Drivers {
         }
 
         public static uint RemapIRQ(uint irq) {
+            if (MADT == null) return irq;
             byte* p = (byte*)(MADT + 1);
             byte* end = (byte*)MADT + MADT->Header.Length;
 
@@ -442,6 +443,29 @@ namespace guideXOS.Kernel.Drivers {
             }
 
             return irq;
+        }
+
+        public static bool TryGetInterruptOverride(uint source, out uint interrupt, out ushort flags) {
+            interrupt = source;
+            flags = 0;
+            if (MADT == null) return false;
+
+            byte* p = (byte*)(MADT + 1);
+            byte* end = (byte*)MADT + MADT->Header.Length;
+            while (p < end) {
+                APIC_HEADER* header = (APIC_HEADER*)p;
+                if (header->Length < 2) break;
+                if (header->Type == APIC_TYPE.InterruptOverride) {
+                    APIC_INTERRUPT_OVERRIDE* ovr = (APIC_INTERRUPT_OVERRIDE*)p;
+                    if (ovr->Source == source) {
+                        interrupt = ovr->Interrupt;
+                        flags = ovr->Flags;
+                        return true;
+                    }
+                }
+                p += header->Length;
+            }
+            return false;
         }
 
         public static void Shutdown() {

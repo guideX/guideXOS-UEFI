@@ -36,6 +36,12 @@ namespace guideXOS.Misc {
         // Assumption: Compressed data won't exceed this for our use case
         private const int MAX_COMPRESSED_SIZE = 32 * 1024 * 1024;
 
+        // Keep the decoded image and scanline work buffers bounded separately
+        // from the per-axis limits.  The shipped desktop assets are tiny, and
+        // this prevents a malformed but dimensionally plausible image from
+        // reserving an excessive amount of kernel heap.
+        private const long MAX_DECODED_RGBA_BYTES = 16 * 1024 * 1024;
+
         // Maximum iterations for DEFLATE decode loop to prevent infinite loops
         // Assumption: This should be enough for any valid PNG within our size limits
         private const int MAX_DECODE_ITERATIONS = 50000000;
@@ -2143,20 +2149,27 @@ namespace guideXOS.Misc {
 
             // First pass: Parse chunks, validate header, count IDAT size
             // Assumption: Chunks appear in order with IHDR first (per PNG spec)
-            while (pos + 12 <= data.Length) {
+            while (pos <= data.Length - 12) {
                 // Read chunk length (big-endian 32-bit)
                 uint chunkLen = ReadBE32(data, pos);
 
                 // Sanity check chunk length
                 if (chunkLen > 0x7FFFFFFF) return false;
-                if (pos + 12 + (int)chunkLen > data.Length) return false;
+                int chunkLength = (int)chunkLen;
+                if (chunkLength > data.Length - pos - 12) return false;
 
                 // Read chunk type (big-endian 32-bit, but we compare as-is)
                 uint chunkType = ReadBE32(data, pos + 4);
 
+                // IHDR must be the first chunk.  Validate every chunk CRC so
+                // corrupted ramdisk bytes fail before they reach inflate or
+                // the image buffer.
+                if (!foundIHDR && chunkType != 0x49484452) return false;
+                if (!ValidateChunkCrc(data, pos, chunkLength)) return false;
+
                 // IHDR chunk: 0x49484452
                 if (chunkType == 0x49484452) {
-                    if (chunkLen != 13) return false; // IHDR is always 13 bytes
+                    if (chunkLength != 13) return false; // IHDR is always 13 bytes
 
                     width = (int)ReadBE32(data, pos + 8);
                     height = (int)ReadBE32(data, pos + 12);
@@ -2192,8 +2205,8 @@ namespace guideXOS.Misc {
                     // Must have IHDR first
                     if (!foundIHDR) return false;
 
-                    idatTotalSize += (int)chunkLen;
-                    if (idatTotalSize > MAX_COMPRESSED_SIZE) return false;
+                    if (chunkLength > MAX_COMPRESSED_SIZE - idatTotalSize) return false;
+                    idatTotalSize += chunkLength;
                 }
                 // IEND chunk: 0x49454E44
                 else if (chunkType == 0x49454E44) {
@@ -2204,7 +2217,7 @@ namespace guideXOS.Misc {
                 // This includes PLTE, tRNS, cHRM, gAMA, iCCP, sBIT, sRGB, etc.
 
                 // Move to next chunk (length + type + data + CRC)
-                pos += 12 + (int)chunkLen;
+                pos += 12 + chunkLength;
             }
 
             // Validate we found required chunks
@@ -2220,12 +2233,21 @@ namespace guideXOS.Misc {
             pos = 8;
             int compressedPos = 0;
 
-            while (pos + 12 <= data.Length && compressedPos < idatTotalSize) {
+            while (pos <= data.Length - 12 && compressedPos < idatTotalSize) {
                 uint chunkLen = ReadBE32(data, pos);
+                if (chunkLen > 0x7FFFFFFF) {
+                    compressedData.Dispose();
+                    return false;
+                }
+                int chunkLength = (int)chunkLen;
+                if (chunkLength > data.Length - pos - 12) {
+                    compressedData.Dispose();
+                    return false;
+                }
                 uint chunkType = ReadBE32(data, pos + 4);
 
                 if (chunkType == 0x49444154) { // IDAT
-                    int copyLen = (int)chunkLen;
+                    int copyLen = chunkLength;
                     if (compressedPos + copyLen > idatTotalSize) {
                         copyLen = idatTotalSize - compressedPos;
                     }
@@ -2238,14 +2260,28 @@ namespace guideXOS.Misc {
                     break;
                 }
 
-                pos += 12 + (int)chunkLen;
+                pos += 12 + chunkLength;
+            }
+
+            if (compressedPos != idatTotalSize) {
+                compressedData.Dispose();
+                return false;
             }
 
             // Calculate expected decompressed size
             // For RGBA (4 bytes per pixel) + 1 filter byte per scanline
             int bytesPerPixel = 4;
-            int scanlineBytes = width * bytesPerPixel;
-            int expectedSize = height * (scanlineBytes + 1);
+            long scanlineBytesLong = (long)width * bytesPerPixel;
+            long expectedSizeLong = (long)height * (scanlineBytesLong + 1);
+            long rgbaBytesLong = (long)width * height * bytesPerPixel;
+            if (scanlineBytesLong <= 0 || scanlineBytesLong > int.MaxValue ||
+                expectedSizeLong <= 0 || expectedSizeLong > int.MaxValue ||
+                rgbaBytesLong <= 0 || rgbaBytesLong > MAX_DECODED_RGBA_BYTES) {
+                compressedData.Dispose();
+                return false;
+            }
+            int scanlineBytes = (int)scanlineBytesLong;
+            int expectedSize = (int)expectedSizeLong;
 
             // Allocate decompressed data buffer
             byte[] rawPixels = new byte[expectedSize];
@@ -2258,7 +2294,7 @@ namespace guideXOS.Misc {
             bool decompressOk = DecompressZlib(compressedData, compressedPos, rawPixels, expectedSize, out int actualSize);
             compressedData.Dispose();
 
-            if (!decompressOk) {
+            if (!decompressOk || actualSize != expectedSize) {
                 rawPixels.Dispose();
                 return false;
             }
@@ -2361,6 +2397,32 @@ namespace guideXOS.Misc {
         }
 
         /// <summary>
+        /// Validate the CRC stored at the end of a PNG chunk.
+        /// chunkPos points at the four-byte length field.
+        /// </summary>
+        private static bool ValidateChunkCrc(byte[] data, int chunkPos, int dataLength) {
+            if (data == null || chunkPos < 0 || dataLength < 0) return false;
+            if (chunkPos > data.Length - 12 - dataLength) return false;
+
+            uint crc = 0xFFFFFFFFu;
+            int crcStart = chunkPos + 4;
+            int crcBytes = 4 + dataLength;
+            for (int i = 0; i < crcBytes; i++) {
+                crc ^= data[crcStart + i];
+                for (int bit = 0; bit < 8; bit++) {
+                    crc = (crc & 1u) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+                }
+            }
+            crc = ~crc;
+            int storedPos = crcStart + crcBytes;
+            uint stored = ((uint)data[storedPos] << 24) |
+                          ((uint)data[storedPos + 1] << 16) |
+                          ((uint)data[storedPos + 2] << 8) |
+                          data[storedPos + 3];
+            return crc == stored;
+        }
+
+        /// <summary>
         /// Apply PNG filter to unfilter a scanline.
         ///
         /// Filter types (per PNG spec):
@@ -2448,6 +2510,13 @@ namespace guideXOS.Misc {
 
             if (input == null || inputLen < 6) return false;
             if (output == null || outputMax <= 0) return false;
+            if (inputLen > input.Length || outputMax > output.Length) return false;
+
+            // The final four bytes are the zlib Adler-32 trailer.  Keep them
+            // outside the DEFLATE reader so truncated or trailing data cannot
+            // be consumed as compressed bits.
+            int deflateEnd = inputLen - 4;
+            if (deflateEnd <= 2) return false;
 
             // Parse zlib header
             // CMF (Compression Method and flags)
@@ -2474,13 +2543,13 @@ namespace guideXOS.Misc {
 
             bool lastBlock = false;
 
-            while (!lastBlock && outPos < outputMax && inPos < inputLen) {
+            while (!lastBlock) {
                 // Safety: prevent infinite loops
                 if (++iterations > MAX_DECODE_ITERATIONS) return false;
 
                 // Read BFINAL (1 bit)
                 if (bitCount < 1) {
-                    if (inPos >= inputLen) return false;
+                    if (inPos >= deflateEnd) return false;
                     bitBuf |= input[inPos++] << bitCount;
                     bitCount += 8;
                 }
@@ -2490,7 +2559,7 @@ namespace guideXOS.Misc {
 
                 // Read BTYPE (2 bits)
                 if (bitCount < 2) {
-                    if (inPos >= inputLen) return false;
+                    if (inPos >= deflateEnd) return false;
                     bitBuf |= input[inPos++] << bitCount;
                     bitCount += 8;
                 }
@@ -2504,7 +2573,7 @@ namespace guideXOS.Misc {
                     bitBuf = 0;
                     bitCount = 0;
 
-                    if (inPos + 4 > inputLen) return false;
+                    if (inPos + 4 > deflateEnd) return false;
 
                     int len = input[inPos] | (input[inPos + 1] << 8);
                     int nlen = input[inPos + 2] | (input[inPos + 3] << 8);
@@ -2515,25 +2584,45 @@ namespace guideXOS.Misc {
 
                     // Copy literal data
                     for (int i = 0; i < len; i++) {
-                        if (inPos >= inputLen || outPos >= outputMax) return false;
+                        if (inPos >= deflateEnd || outPos >= outputMax) return false;
                         output[outPos++] = input[inPos++];
                     }
                 }
                 else if (blockType == 1) {
                     // Fixed Huffman codes
-                    bool ok = DecodeFixedHuffman(input, inputLen, output, outputMax, ref inPos, ref outPos, ref bitBuf, ref bitCount);
+                    bool ok = DecodeFixedHuffman(input, deflateEnd, output, outputMax, ref inPos, ref outPos, ref bitBuf, ref bitCount);
                     if (!ok) return false;
                 }
                 else if (blockType == 2) {
                     // Dynamic Huffman codes
-                    bool ok = DecodeDynamicHuffman(input, inputLen, output, outputMax, ref inPos, ref outPos, ref bitBuf, ref bitCount);
+                    bool ok = DecodeDynamicHuffman(input, deflateEnd, output, outputMax, ref inPos, ref outPos, ref bitBuf, ref bitCount);
                     if (!ok) return false;
                 }
                 else {
                     // Block type 3 is reserved/invalid
                     return false;
                 }
+
+                if (outPos > outputMax) return false;
             }
+
+            if (!lastBlock || outPos != outputMax || inPos != deflateEnd) return false;
+
+            uint adlerS1 = 1;
+            uint adlerS2 = 0;
+            for (int i = 0; i < outPos; i++) {
+                adlerS1 += output[i];
+                if (adlerS1 >= 65521) adlerS1 -= 65521;
+                adlerS2 += adlerS1;
+                if (adlerS2 >= 65521) adlerS2 -= 65521;
+            }
+            uint calculatedAdler = (adlerS2 << 16) | adlerS1;
+            int adlerPos = deflateEnd;
+            uint storedAdler = ((uint)input[adlerPos] << 24) |
+                               ((uint)input[adlerPos + 1] << 16) |
+                               ((uint)input[adlerPos + 2] << 8) |
+                               input[adlerPos + 3];
+            if (calculatedAdler != storedAdler) return false;
 
             outputLen = outPos;
             return true;
@@ -2805,7 +2894,7 @@ namespace guideXOS.Misc {
             int len = entry & 0xF;
             int sym = entry >> 4;
 
-            if (len == 0) return -1; // Invalid code
+            if (len == 0 || len > bitCount) return -1; // Invalid or truncated code
 
             bitBuf >>= len;
             bitCount -= len;
@@ -2822,7 +2911,7 @@ namespace guideXOS.Misc {
 
             int iterations = 0;
 
-            while (outPos < outputMax) {
+            while (true) {
                 if (++iterations > MAX_DECODE_ITERATIONS) return false;
 
                 // Ensure we have enough bits for longest code (15 bits)
@@ -2848,6 +2937,12 @@ namespace guideXOS.Misc {
                     return true;
                 }
                 else {
+                    // A valid stream must terminate with an end-of-block
+                    // symbol even when its final literal fills the expected
+                    // output buffer.  Do not accept another data symbol once
+                    // the destination is full.
+                    if (outPos >= outputMax) return false;
+
                     // Length code (257-285)
                     int length = GetLength(sym, ref bitBuf, ref bitCount, input, inputLen, ref inPos);
                     if (length < 0) return false;
@@ -2866,7 +2961,7 @@ namespace guideXOS.Misc {
                     if (distance < 0) return false;
 
                     // Validate distance
-                    if (distance > outPos) return false;
+                    if (distance <= 0 || distance > outPos) return false;
 
                     // Copy from output buffer (LZ77 back-reference)
                     for (int i = 0; i < length; i++) {
@@ -2955,25 +3050,43 @@ namespace guideXOS.Misc {
         private static int GetDistance(int code, ref int bitBuf, ref int bitCount, byte[] input, int inputLen, ref int inPos) {
             if (code < 0 || code > 29) return -1;
 
-            // Distance base values (indexed by code)
-            // Assumption: These values are fixed by DEFLATE spec
+            // RFC 1951 distance bases.  The previous arithmetic expression
+            // produced 9 for code 4 instead of 5 and could silently rebuild
+            // corrupted scanlines for ordinary filtered images.  Keep this
+            // allocation-free because this helper runs for every backref.
             int baseDist;
             int extraBits;
-
-            if (code < 4) {
-                baseDist = 1 + code;
-                extraBits = 0;
-            }
-            else {
-                // For codes 4-29:
-                // Extra bits = (code - 2) / 2
-                // Base = 1 + (1 << ((code/2) + 1)) + ((code & 1) << (code/2))
-                extraBits = (code - 2) >> 1;
-                int halfCode = code >> 1;
-                baseDist = 1 + (1 << (halfCode + 1));
-                if ((code & 1) != 0) {
-                    baseDist += 1 << halfCode;
-                }
+            switch (code) {
+                case 0: baseDist = 1; extraBits = 0; break;
+                case 1: baseDist = 2; extraBits = 0; break;
+                case 2: baseDist = 3; extraBits = 0; break;
+                case 3: baseDist = 4; extraBits = 0; break;
+                case 4: baseDist = 5; extraBits = 1; break;
+                case 5: baseDist = 7; extraBits = 1; break;
+                case 6: baseDist = 9; extraBits = 2; break;
+                case 7: baseDist = 13; extraBits = 2; break;
+                case 8: baseDist = 17; extraBits = 3; break;
+                case 9: baseDist = 25; extraBits = 3; break;
+                case 10: baseDist = 33; extraBits = 4; break;
+                case 11: baseDist = 49; extraBits = 4; break;
+                case 12: baseDist = 65; extraBits = 5; break;
+                case 13: baseDist = 97; extraBits = 5; break;
+                case 14: baseDist = 129; extraBits = 6; break;
+                case 15: baseDist = 193; extraBits = 6; break;
+                case 16: baseDist = 257; extraBits = 7; break;
+                case 17: baseDist = 385; extraBits = 7; break;
+                case 18: baseDist = 513; extraBits = 8; break;
+                case 19: baseDist = 769; extraBits = 8; break;
+                case 20: baseDist = 1025; extraBits = 9; break;
+                case 21: baseDist = 1537; extraBits = 9; break;
+                case 22: baseDist = 2049; extraBits = 10; break;
+                case 23: baseDist = 3073; extraBits = 10; break;
+                case 24: baseDist = 4097; extraBits = 11; break;
+                case 25: baseDist = 6145; extraBits = 11; break;
+                case 26: baseDist = 8193; extraBits = 12; break;
+                case 27: baseDist = 12289; extraBits = 12; break;
+                case 28: baseDist = 16385; extraBits = 13; break;
+                default: baseDist = 24577; extraBits = 13; break;
             }
 
             if (extraBits > 0) {
