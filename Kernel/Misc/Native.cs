@@ -90,6 +90,12 @@ static unsafe class Native {
     public extern static void Nop();
 
     [DllImport("*")]
+    public extern static ulong ReadRSP();
+
+    [DllImport("*")]
+    public extern static ulong ReadCallSite();
+
+    [DllImport("*")]
     public extern static void Fxsave64(void* ptr);
 
     [DllImport("*")]

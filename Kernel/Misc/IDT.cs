@@ -100,6 +100,10 @@ public static class IDT {
     public struct IDTStackGeneric {
         public RegistersStack rs;
         public ulong errorCode;
+        // Native ISR metadata kept between the managed error slot and the
+        // CPU return frame. This keeps sizeof(IDTStackGeneric) equal to the
+        // complete native frame used by the scheduler copy path.
+        public ulong vectorSlot;
         public InterruptReturnStack irs;
     }
 
@@ -175,6 +179,62 @@ public static class IDT {
         ulong* pt = (ulong*)(pde & ~0xFFFUL);
         ulong pte = pt[(virtualAddress >> 12) & 0x1FFUL];
         SerialWriteHexLine64("PT_PTE=", pte);
+        if (virtualAddress == 0x00000000000A0000UL) {
+            SerialWriteHexLine64("TARGET_PHYS=", pte & ~0xFFFUL);
+            SerialWriteHexLine64("TARGET_FLAGS=", pte & 0xFFFUL);
+            SerialWriteLineLiteral((pte & Present) != 0 ?
+                "TARGET_MAPPED=1" : "TARGET_MAPPED=0");
+            SerialWriteLineLiteral((pte & Present) != 0 && (pte & (1UL << 63)) == 0 ?
+                "TARGET_EXECUTABLE=1" : "TARGET_EXECUTABLE=0");
+            SerialWriteLineLiteral("TARGET_CLASS=LOW_MEMORY_VGA_APERTURE");
+        }
+    }
+
+    private static unsafe bool IsMapped(ulong virtualAddress) {
+        if (virtualAddress == 0 || (virtualAddress >> 48) != 0) return false;
+        ulong cr3 = Native.ReadCR3() & ~0xFFFUL;
+        ulong* pml4 = (ulong*)cr3;
+        ulong pml4e = pml4[(virtualAddress >> 39) & 0x1FFUL];
+        if ((pml4e & 1) == 0) return false;
+        ulong* pdpt = (ulong*)(pml4e & ~0xFFFUL);
+        ulong pdpte = pdpt[(virtualAddress >> 30) & 0x1FFUL];
+        if ((pdpte & 1) == 0) return false;
+        if ((pdpte & (1UL << 7)) != 0) return true;
+        ulong* pd = (ulong*)(pdpte & ~0xFFFUL);
+        ulong pde = pd[(virtualAddress >> 21) & 0x1FFUL];
+        if ((pde & 1) == 0) return false;
+        if ((pde & (1UL << 7)) != 0) return true;
+        ulong* pt = (ulong*)(pde & ~0xFFFUL);
+        return (pt[(virtualAddress >> 12) & 0x1FFUL] & 1) != 0;
+    }
+
+    private static unsafe void SerialWriteStackNeighborhood(ulong rsp) {
+        SerialWriteLineLiteral("STACK_WINDOW_BEGIN");
+        if (rsp < 0x1000 || rsp > 0x00007FFFFFFFF000UL ||
+            !IsMapped(rsp - 64) || !IsMapped(rsp + 64)) {
+            SerialWriteLineLiteral("STACK_WINDOW_UNAVAILABLE");
+            return;
+        }
+
+        ulong* p = (ulong*)rsp;
+        SerialWriteHexLine64("STACK[-8]=", p[-8]);
+        SerialWriteHexLine64("STACK[-7]=", p[-7]);
+        SerialWriteHexLine64("STACK[-6]=", p[-6]);
+        SerialWriteHexLine64("STACK[-5]=", p[-5]);
+        SerialWriteHexLine64("STACK[-4]=", p[-4]);
+        SerialWriteHexLine64("STACK[-3]=", p[-3]);
+        SerialWriteHexLine64("STACK[-2]=", p[-2]);
+        SerialWriteHexLine64("STACK[-1]=", p[-1]);
+        SerialWriteHexLine64("STACK[+0]=", p[0]);
+        SerialWriteHexLine64("STACK[+1]=", p[1]);
+        SerialWriteHexLine64("STACK[+2]=", p[2]);
+        SerialWriteHexLine64("STACK[+3]=", p[3]);
+        SerialWriteHexLine64("STACK[+4]=", p[4]);
+        SerialWriteHexLine64("STACK[+5]=", p[5]);
+        SerialWriteHexLine64("STACK[+6]=", p[6]);
+        SerialWriteHexLine64("STACK[+7]=", p[7]);
+        SerialWriteHexLine64("STACK[+8]=", p[8]);
+        SerialWriteLineLiteral("STACK_WINDOW_END");
     }
 
     private static unsafe ulong GetInterruptedRsp(InterruptReturnStack* irs) {
@@ -211,10 +271,27 @@ public static class IDT {
         if (irs != null) {
             SerialWriteHexLine64("RIP=", irs->rip);
             SerialWriteHexLine64("RSP=", GetInterruptedRsp(irs));
+            SerialWriteHexLine64("CPU_FRAME_RAW_RSP_SLOT=", irs->rsp);
+            SerialWriteHexLine64("CPU_FRAME_RAW_SS_SLOT=", irs->ss);
+            SerialWriteStackNeighborhood(GetInterruptedRsp(irs));
         }
 
         if (regs != null) {
+            SerialWriteHexLine64("REG_RAX=", regs->rax);
+            SerialWriteHexLine64("REG_RCX=", regs->rcx);
+            SerialWriteHexLine64("REG_RDX=", regs->rdx);
+            SerialWriteHexLine64("REG_RBX=", regs->rbx);
             SerialWriteHexLine64("RBP=", regs->rbp);
+            SerialWriteHexLine64("REG_RSI=", regs->rsi);
+            SerialWriteHexLine64("REG_RDI=", regs->rdi);
+            SerialWriteHexLine64("REG_R8=", regs->r8);
+            SerialWriteHexLine64("REG_R9=", regs->r9);
+            SerialWriteHexLine64("REG_R10=", regs->r10);
+            SerialWriteHexLine64("REG_R11=", regs->r11);
+            SerialWriteHexLine64("REG_R12=", regs->r12);
+            SerialWriteHexLine64("REG_R13=", regs->r13);
+            SerialWriteHexLine64("REG_R14=", regs->r14);
+            SerialWriteHexLine64("REG_R15=", regs->r15);
         }
 
         SerialWritePageTableWalk(irq == 14 ? Native.ReadCR2() : (irs != null ? irs->rip : 0));
@@ -244,14 +321,17 @@ public static class IDT {
                     // isr_common always pushes a dummy errorCode slot.  For
                     // CPU error-code exceptions, the real error code follows
                     // that slot, then the CPU's return frame.
-                    actualErrorCode = *((ulong*)(((byte*)stack) + sizeof(RegistersStack) + sizeof(ulong)));
-                    irs = (InterruptReturnStack*)(((byte*)stack) + sizeof(RegistersStack) + sizeof(ulong) + sizeof(ulong));
+                    // native_stubs.asm adds a native-only vector slot between
+                    // the dummy error slot and the CPU frame.
+                    actualErrorCode = *((ulong*)(((byte*)stack) + sizeof(RegistersStack) + sizeof(ulong) + sizeof(ulong)));
+                    irs = (InterruptReturnStack*)(((byte*)stack) + sizeof(RegistersStack) + sizeof(ulong) + sizeof(ulong) + sizeof(ulong));
                     hasErrorCode = true;
                     break;
                 default:
                     // isr_common always leaves a dummy errorCode slot before
-                    // the CPU return frame, even for no-error exceptions.
-                    irs = (InterruptReturnStack*)(((byte*)stack) + sizeof(RegistersStack) + sizeof(ulong));
+                    // the native-only vector slot and CPU return frame, even
+                    // for no-error exceptions.
+                    irs = (InterruptReturnStack*)(((byte*)stack) + sizeof(RegistersStack) + sizeof(ulong) + sizeof(ulong));
                     hasErrorCode = false;
                     break;
             }
@@ -263,12 +343,15 @@ public static class IDT {
             }
 
             // Display enhanced graphical panic screen
+            InterruptReturnStack displayStack = *irs;
+            displayStack.rsp = GetInterruptedRsp(irs);
+            if ((displayStack.cs & 3UL) == 0) displayStack.ss = 0;
             Panic.ShowEnhancedCrashScreen(
                 irq,
                 actualErrorCode,
                 hasErrorCode,
                 &stack->rs,
-                irs,
+                &displayStack,
                 null
             );
             

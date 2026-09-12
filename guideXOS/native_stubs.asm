@@ -54,6 +54,18 @@ Nop:
     nop
     ret
 
+; Return the caller's RSP before the CALL instruction.
+global ReadRSP
+ReadRSP:
+    lea rax, [rsp + 8]
+    ret
+
+; Return the caller's return address. This is a cheap code-site breadcrumb.
+global ReadCallSite
+ReadCallSite:
+    mov rax, [rsp]
+    ret
+
 global Rdtsc
 Rdtsc:
     rdtsc
@@ -283,12 +295,14 @@ extern intr_handler
 %endmacro
 
 ; A common ISR entry used by all vectors.
-; On entry: AL contains vector number.
+; On entry: the per-vector stub has reserved a native-only vector slot at
+; [RSP] without clobbering any interrupted register.
 ;
-; IDTStackGeneric layout in C#:
+; IDTStackGeneric layout in C# (with one native-only vector slot):
 ;   struct IDTStackGeneric {
 ;       RegistersStack rs;        // 15 * 8 = 120 bytes (rax, rcx, rdx, rbx, rbp, rsi, rdi, r8-r15)
 ;       ulong errorCode;          // 8 bytes
+;       ulong vectorSlot;         // native-only, not part of the C# struct
 ;       InterruptReturnStack irs; // 5 * 8 = 40 bytes (rip, cs, rflags, rsp, ss) - pushed by CPU
 ;   }
 ;
@@ -297,53 +311,41 @@ extern intr_handler
 ;
 global isr_common
 isr_common:
-    ; Save vector number temporarily
-    push rax                ; Save vector (in AL, but push full RAX) [will be at highest addr]
-    
     ; Push dummy error code FIRST (it comes AFTER RegistersStack in memory, but we push it first
     ; because stack grows down, so it ends up at higher address)
     ; Actually no - we need the MEMORY LAYOUT to match the struct.
     ; Stack grows DOWN, so what we push LAST is at the LOWEST address.
-    ; C# struct has RegistersStack at offset 0 (lowest), errorCode at offset 120, irs at offset 128.
-    ; So we need: [RSP+0]=GPRs, [RSP+120]=errorCode, [RSP+128]=irs
+; C# struct has RegistersStack at offset 0 (lowest), errorCode at offset 120.
+; The native-only vector slot is at offset 128 and the CPU frame starts at 136.
     ; 
-    ; Currently on stack after 'push rax' for vector:
-    ;   [RSP+0] = saved vector RAX
-    ;   [RSP+8] = RIP (from CPU)
-    ;   [RSP+16] = CS
-    ;   [RSP+24] = RFLAGS  
-    ;   [RSP+32] = RSP
-    ;   [RSP+40] = SS
+; The vector slot is above the CPU frame. The CPU frame remains immediately
+; below the slot and is either 3 qwords (no error code) or 4 qwords (error).
     ;
     ; We need to build the struct so that when we pass RSP to managed code:
     ;   [RSP+0..119] = RegistersStack (15 regs)
     ;   [RSP+120] = errorCode
-    ;   [RSP+128..167] = InterruptReturnStack (5 qwords from CPU)
+;   [RSP+128] = native-only vector slot
+;   [RSP+136..175] = InterruptReturnStack (CPU frame)
     ;
     ; The CPU's frame is already at the right place if we push:
     ;   - errorCode (8 bytes)
     ;   - GPRs (120 bytes, pushed in reverse order so first reg is at lowest addr)
     ;
-    ; Wait, let's think again. After CPU interrupt:
-    ;   [RSP] = RIP, [RSP+8] = CS, ... [RSP+32] = SS (the irs)
-    ;
-    ; We need final layout:
-    ;   [RSP+0] = rax (first of RegistersStack)
+; Final layout:
+;   [RSP+0] = rax (first of RegistersStack)
     ;   ...
     ;   [RSP+112] = r15 (last of RegistersStack)  
     ;   [RSP+120] = errorCode
-    ;   [RSP+128] = RIP (irs.rip)
-    ;   [RSP+136] = CS
-    ;   [RSP+144] = RFLAGS
-    ;   [RSP+152] = RSP
-    ;   [RSP+160] = SS
+;   [RSP+128] = vectorSlot
+;   [RSP+136] = RIP (irs.rip)
+;   [RSP+144] = CS
+;   [RSP+152] = RFLAGS
+;   [RSP+160] = RSP
+;   [RSP+168] = SS
     ;
     ; So we push errorCode first (goes above irs), then GPRs (go above errorCode)
-    ; Total pushed by us: 1 (errorCode) + 15 (GPRs) = 16 qwords = 128 bytes
-    ; Plus 1 for saved vector = 136 bytes from CPU's frame
-    
-    ; Pop the vector we just saved (we'll save it differently)
-    pop rax                 ; Get vector back into AL
+; Total pushed by common: 1 (errorCode) + 15 (GPRs) = 128 bytes. The
+; per-vector stub's native-only slot is already at the next qword.
     
     ; Now push in correct order to build IDTStackGeneric:
     ; First push dummy error code (will be at offset 120 relative to final RSP)
@@ -366,29 +368,38 @@ isr_common:
     push rbx
     push rdx
     push rcx
-    ; Save RAX last but we need to preserve the vector first
-    movzx ecx, al           ; Save vector in ECX (it was in AL)
-    push rax                ; Now push RAX (may have been modified, but we have vector in ECX)
+    ; Save RAX last; the vector remains in the native-only slot.
+    push rax
 
     ; Now RSP points to IDTStackGeneric:
     ;   [RSP+0] = rax ... [RSP+112] = r15 (RegistersStack, 120 bytes but r15 is last so +112)
     ; Wait, let me recalculate:
     ;   [RSP+0] = rax, [RSP+8] = rcx, ..., [RSP+112] = r15
     ;   [RSP+120] = errorCode
-    ;   [RSP+128] = RIP (irs.rip from CPU)
+;   [RSP+128] = vectorSlot (native-only)
+;   [RSP+136] = RIP (irs.rip from CPU)
     ;   ...
-    ; That's 15 regs * 8 = 120 bytes for GPRs, + 8 for error code = 128 bytes we pushed
-    ; Plus CPU pushed 40 bytes (5 qwords for irs)
+; That's 15 regs * 8 = 120 bytes for GPRs, + 8 for error code = 128 bytes,
+; plus the native-only vector slot and CPU frame.
     
-    ; RCX already has vector number (first param)
+    ; Load vector number from the native-only slot.
+    mov ecx, dword [rsp + 128]
     mov rdx, rsp            ; RDX = pointer to IDTStackGeneric (second param)
 
-    ; Align stack and add shadow space for MS x64 ABI
-    sub rsp, 32             ; Shadow space
+    ; Align the managed call independently of the interrupted RSP. Reserve
+    ; shadow space plus a recovery slot below the saved register frame. A
+    ; 0x20-byte allocation would place the recovery slot at [B] when B is
+    ; already aligned, overwriting the saved RAX; 0x30 avoids that edge case.
+    mov r11, rsp            ; struct base
+    and rsp, ~0Fh
+    sub rsp, 30h            ; MS x64 shadow space plus recovery slot
+    mov [rsp + 20h], r11    ; recovery pointer, below the saved frame
 
     call intr_handler
 
-    add rsp, 32             ; Remove shadow space
+    mov rax, [rsp + 20h]    ; Recover struct base
+    add rsp, 30h
+    mov rsp, rax
 
     ; Restore GPRs (in reverse order of how we pushed them)
     pop rax
@@ -407,17 +418,21 @@ isr_common:
     pop r14
     pop r15
     
-    ; Pop error code
+    ; Pop error code and the native-only vector slot
+    add rsp, 8
     add rsp, 8
 
     ; Now RSP points to interrupt return frame: RIP, CS, RFLAGS, RSP, SS
     iretq
 
-; Generate stubs for 0..255 that load AL=vector and jump to common.
+; Generate stubs for 0..255. Record the vector in a native-only stack slot
+; without clobbering any interrupted general-purpose register.
 %macro DEFINE_ISR 1
 global isr%1
 isr%1:
-    mov al, %1
+    sub rsp, 8
+    mov dword [rsp], %1
+    mov dword [rsp + 4], 0
     jmp isr_common
 %endmacro
 

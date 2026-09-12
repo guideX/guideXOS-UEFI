@@ -101,9 +101,9 @@ unsafe class Program {
     // Bounded UEFI desktop regression controls. The runner temporarily patches
     // these constants for a fresh test build and restores the source afterward.
     private const bool UEFI_ENABLE_UTINY_DIAGNOSTIC = false;
-    private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = false;
+    private const bool UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME = true;
     private const bool UEFI_ENABLE_NORMAL_DESKTOP_BOUNDED = false;
-    private const int UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET = 120;
+    private const int UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET = 0;
 
     // Deliberate phase boundary: the recovered normal desktop is still bounded
     // until sustained operation is explicitly validated in the next phase.
@@ -137,19 +137,64 @@ unsafe class Program {
 
     internal static int UefiMultiFrameCurrentFrame => _uefiMultiFrameCurrentFrame;
     internal static int UefiMultiFrameStage => _uefiMultiFrameStage;
+    internal static int UefiMultiFrameSubstage => _uefiMultiFrameSubstage;
+    internal static int UefiMultiFrameLastBoundary => _uefiMultiFrameLastBoundary;
+    internal static ulong UefiMultiFrameStackLowWater => _uefiMultiFrameStackLowWater;
+    internal static ulong UefiMultiFrameLastCodeAddress => _uefiMultiFrameLastCodeAddress;
 
     internal static void LogUefiMultiFrameFaultContext() {
         SerialBreadcrumb("UEFI_FRAME_FAULT_CONTEXT");
         SerialBreadcrumb("UEFI_FRAME_CURRENT=" + _uefiMultiFrameCurrentFrame.ToString());
         SerialBreadcrumb("UEFI_FRAME_LAST_COMPLETED=" + _uefiMultiFrameLastCompletedFrame.ToString());
         SerialBreadcrumb("UEFI_FRAME_STAGE=" + _uefiMultiFrameStage.ToString());
+        SerialBreadcrumb("UEFI_FRAME_STAGE_NAME=" + UefiStageName(_uefiMultiFrameStage));
+        SerialBreadcrumb("UEFI_FRAME_SUBSTAGE=" + _uefiMultiFrameSubstage.ToString());
+        SerialBreadcrumb("UEFI_FRAME_LAST_BOUNDARY=" + _uefiMultiFrameLastBoundary.ToString());
+        SerialBreadcrumb("UEFI_FRAME_LAST_CODE_DEC=" + _uefiMultiFrameLastCodeAddress.ToString());
+        SerialBreadcrumb("UEFI_STACK_LOW_WATER_DEC=" + _uefiMultiFrameStackLowWater.ToString());
+        SerialBreadcrumb("UEFI_TIMER_TICKS=" + GetUefiTimerTicks().ToString());
     }
 
     private static bool _uefiMultiFrameActive = false;
     private static int _uefiMultiFrameCurrentFrame = 0;
     private static int _uefiMultiFrameLastCompletedFrame = 0;
     private static int _uefiMultiFrameStage = 0;
+    private static int _uefiMultiFrameSubstage = 0;
+    private static int _uefiMultiFrameLastBoundary = 0;
+    private static ulong _uefiMultiFrameStackLowWater = 0;
+    private static ulong _uefiMultiFrameLastCodeAddress = 0;
     private static ulong _uefiMultiFrameStartTicks = 0;
+
+    private static string UefiStageName(int stage) {
+        return stage switch {
+            1 => "BACKGROUND",
+            2 => "DESKTOP",
+            3 => "TASKBAR",
+            4 => "WINDOWS",
+            5 => "CURSOR",
+            6 => "PRESENT",
+            7 => "FRAME_END",
+            _ => "UNKNOWN"
+        };
+    }
+
+    private static void SetUefiFrameBreadcrumb(int stage, int substage, int boundary) {
+        _uefiMultiFrameStage = stage;
+        _uefiMultiFrameSubstage = substage;
+        _uefiMultiFrameLastBoundary = boundary;
+        if (Framebuffer.Graphics != null && (ulong)Framebuffer.OriginalVideoMemory != 0 &&
+            (ulong)Framebuffer.Graphics.VideoMemory != (ulong)Framebuffer.OriginalVideoMemory) {
+            SerialBreadcrumb("UEFI_GRAPHICS_POINTER_MISMATCH_STAGE=" + stage.ToString());
+            SerialBreadcrumb("UEFI_GRAPHICS_POINTER_MISMATCH_BOUNDARY=" + boundary.ToString());
+            SerialBreadcrumb("UEFI_GRAPHICS_POINTER_ACTUAL=" +
+                ((ulong)Framebuffer.Graphics.VideoMemory).ToString());
+            SerialBreadcrumb("UEFI_GRAPHICS_POINTER_EXPECTED=" +
+                ((ulong)Framebuffer.OriginalVideoMemory).ToString());
+        }
+        ulong rsp = Native.ReadRSP();
+        if (_uefiMultiFrameStackLowWater == 0 || rsp < _uefiMultiFrameStackLowWater)
+            _uefiMultiFrameStackLowWater = rsp;
+    }
 
     #endregion
     /// <summary>
@@ -805,28 +850,47 @@ unsafe class Program {
             return false;
         }
 
-        _uefiMultiFrameStage = 1;
+        SetUefiFrameBreadcrumb(1, 0, 100);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         BackgroundRotationManager.DrawBackground();
 
-        _uefiMultiFrameStage = 2;
+        SetUefiFrameBreadcrumb(1, 1, 101);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
+        SetUefiFrameBreadcrumb(2, 0, 200);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         Desktop.Update(_cachedDocumentIcon, _cachedFolderIcon,
             _cachedImageIcon, _cachedAudioIcon, 48);
 
-        _uefiMultiFrameStage = 3;
+        SetUefiFrameBreadcrumb(2, 1, 201);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
+        SetUefiFrameBreadcrumb(3, 0, 300);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         if (Desktop.Taskbar != null) Desktop.Taskbar.DrawWorkspaceSwitcher();
 
-        _uefiMultiFrameStage = 4;
+        SetUefiFrameBreadcrumb(3, 1, 301);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
+        SetUefiFrameBreadcrumb(4, 0, 400);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         WindowManager.DrawAllExceptTaskManager();
         WindowManager.DrawTaskManager();
         WindowManager.CleanupClosedWindows();
 
-        _uefiMultiFrameStage = 5;
+        SetUefiFrameBreadcrumb(4, 1, 401);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
+        SetUefiFrameBreadcrumb(5, 0, 500);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         DrawUefiCursor();
 
-        _uefiMultiFrameStage = 6;
+        SetUefiFrameBreadcrumb(5, 1, 501);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
+        SetUefiFrameBreadcrumb(6, 0, 600);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         Framebuffer.Update();
 
-        _uefiMultiFrameStage = 7;
+        SetUefiFrameBreadcrumb(6, 1, 601);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
+        SetUefiFrameBreadcrumb(7, 0, 700);
+        _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         return true;
     }
 
@@ -871,6 +935,10 @@ unsafe class Program {
         _uefiMultiFrameCurrentFrame = 0;
         _uefiMultiFrameLastCompletedFrame = 0;
         _uefiMultiFrameStage = 0;
+        _uefiMultiFrameSubstage = 0;
+        _uefiMultiFrameLastBoundary = 0;
+        _uefiMultiFrameStackLowWater = 0;
+        _uefiMultiFrameLastCodeAddress = 0;
         _uefiMultiFrameStartTicks = GetUefiTimerTicks();
         SerialBreadcrumb("MULTIFRAME_BEGIN");
         SerialBreadcrumb("MULTIFRAME_TARGET=" + target.ToString());
@@ -905,6 +973,8 @@ unsafe class Program {
         SerialBreadcrumb(endTicks >= _uefiMultiFrameStartTicks
             ? "MULTIFRAME_TIMER_TICKING=1"
             : "MULTIFRAME_TIMER_TICKING=0");
+        SerialBreadcrumb("UEFI_STACK_LOW_WATER_DEC=" + _uefiMultiFrameStackLowWater.ToString());
+        SerialBreadcrumb("UEFI_FRAME_LAST_CODE_DEC=" + _uefiMultiFrameLastCodeAddress.ToString());
         SerialBreadcrumb("MULTIFRAME_LAST_COMPLETED_FRAME=" +
             _uefiMultiFrameLastCompletedFrame.ToString());
         SerialBreadcrumb("MULTIFRAME_COMPLETE");
