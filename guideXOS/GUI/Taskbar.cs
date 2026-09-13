@@ -230,9 +230,19 @@ namespace guideXOS.GUI {
                        Control.MousePosition.X >= startX &&
                        Control.MousePosition.X <= startX + startSize &&
                        Control.MousePosition.Y >= startY &&
-                       Control.MousePosition.Y <= startY + startSize) {
+                Control.MousePosition.Y <= startY + startSize) {
                 if (Desktop.Apps != null) {
-                    if (StartMenu == null) StartMenu = new StartMenu();
+                    // CleanupClosedWindows disposes hidden transient Start
+                    // menus.  Do not reactivate a disposed object that is no
+                    // longer registered with WindowManager.
+                    if (StartMenu == null || WindowManager.Windows.IndexOf(StartMenu) < 0) {
+                        StartMenu = new StartMenu();
+                    }
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime("START_TOGGLE;registered=" +
+                        (WindowManager.Windows.IndexOf(StartMenu) >= 0 ? "1" : "0") +
+                        ";before=" + (StartMenu.Visible ? "1" : "0"));
+#endif
                     StartMenu.Visible = !StartMenu.Visible;
                     if (StartMenu.Visible) Program.MarkUefiStartMenuOpened();
                 } else {

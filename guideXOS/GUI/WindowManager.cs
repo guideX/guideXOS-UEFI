@@ -473,6 +473,12 @@ namespace guideXOS.GUI {
                 if (w is WidgetContainer) {
                     continue;
                 }
+                // Start is a shell-owned singleton referenced by Taskbar. It
+                // is intentionally persistent while hidden; disposing and
+                // removing it leaves Taskbar holding a stale window object.
+                if (w is StartMenu) {
+                    continue;
+                }
                 // Remove windows that are not visible and not animating (i.e., fully closed)
                 if (!w.Visible && !w.IsMinimized && !w.IsTombstoned) {
                     // Check if window has no ongoing animation
@@ -480,7 +486,15 @@ namespace guideXOS.GUI {
                     Windows.RemoveAt(i);
                     // FIXED: Dispose the window to free its resources
                     if (w != null) {
+                        string closedTitle = w.Title ?? "";
                         w.Dispose();
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                        Program.MarkUefiAppRuntime("WINDOW_CLOSED=title=" +
+                            closedTitle + ";type=WINDOW" +
+                            ";windows=" + Windows.Count.ToString() +
+                            ";memory=" + Allocator.MemoryInUse.ToString() +
+                            ";corrupt=" + Allocator.FreeFailCorruptRun.ToString());
+#endif
                     }
                 }
             }

@@ -58,6 +58,11 @@ namespace guideXOS.DefaultApps {
         private string _search = string.Empty;
         private bool _searchFocus = false;
         private byte _lastScan; private bool _keyDown;
+        private bool _leftDownPrev;
+        private bool _suppressMouseUntilRelease = true;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+        private bool _mouseGuardTraced;
+#endif
 
         private FileSystem _fs;
         private List<DriveInfo> _drives;
@@ -79,6 +84,16 @@ namespace guideXOS.DefaultApps {
             Keyboard.OnKeyChanged += Keyboard_OnKeyChanged;
 
             PushHistory("");
+            // A drive child can be constructed during its parent's held
+            // mouse press. Consume that inherited state so the child waits
+            // for a fresh press edge before opening a file.
+            _suppressMouseUntilRelease = true;
+            _leftDownPrev = true;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("FILES_WINDOW_BOUNDS=x=" + X.ToString() +
+                ";y=" + Y.ToString() + ";w=" + Width.ToString() +
+                ";h=" + Height.ToString());
+#endif
         }
 
         public ComputerFiles(int X, int Y, int W = 640, int H = 480) : base(X, Y, W, H) {
@@ -96,6 +111,13 @@ namespace guideXOS.DefaultApps {
             Keyboard.OnKeyChanged += Keyboard_OnKeyChanged;
             RefreshDrives();
             PushHistory(null);
+            _suppressMouseUntilRelease = true;
+            _leftDownPrev = true;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("FILES_WINDOW_BOUNDS=x=" + X.ToString() +
+                ";y=" + Y.ToString() + ";w=" + Width.ToString() +
+                ";h=" + Height.ToString());
+#endif
         }
 
         private void Keyboard_OnKeyChanged(object sender, ConsoleKeyInfo key) {
@@ -117,6 +139,9 @@ namespace guideXOS.DefaultApps {
             if (ch >= ' ' && ch <= '~') { 
                 string charStr = ch.ToString();
                 _search = _search + charStr;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FILES_SEARCH_TEXT=text=" + _search);
+#endif
             }
         }
 
@@ -248,6 +273,24 @@ namespace guideXOS.DefaultApps {
             MarkEntriesDirty();
         }
 
+        private void OpenRootChooserFromShell() {
+            var shellObject = guideXOS.OS.ShellObjectRegistry.Resolve("Root");
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("SHELL_RESOLVE=name=Root;kind=" +
+                shellObject.Kind.ToString() + ";success=" +
+                (shellObject.Success ? "1" : "0"));
+#endif
+            if (!shellObject.Success) return;
+            _showDrives = true;
+            _currentPath = "";
+            PushHistory(null);
+            _scroll = 0;
+            MarkEntriesDirty();
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("SHELL_ROUTE=ROOT;result=COMPUTER_FILES_ROOT");
+#endif
+        }
+
         private void GoTo(string path) {
             if (_historyIndex < _historyCount - 1) {
                 // Clear "forward" history
@@ -303,7 +346,33 @@ namespace guideXOS.DefaultApps {
         }
 
         public override void OnInput() {
+            bool currentLeftDown = Control.MouseButtons.HasFlag(MouseButtons.Left);
+            if (_suppressMouseUntilRelease) {
+                if (!currentLeftDown) {
+                    _suppressMouseUntilRelease = false;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    if (!_mouseGuardTraced) {
+                        Program.MarkUefiAppRuntime("FILES_MOUSE_GUARD=release");
+                        _mouseGuardTraced = true;
+                    }
+#endif
+                } else {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    if (!_mouseGuardTraced) {
+                        Program.MarkUefiAppRuntime("FILES_MOUSE_GUARD=held");
+                        _mouseGuardTraced = true;
+                    }
+#endif
+                    // Do not let common window handling or content hit
+                    // testing see the press that created this child.
+                    if (IsUnderMouse()) WindowManager.MouseHandled = true;
+                    return;
+                }
+            }
             base.OnInput(); if (!Visible) return;
+            bool leftDown = currentLeftDown;
+            bool clickEdge = leftDown && !_leftDownPrev;
+            _leftDownPrev = leftDown;
 
             int tbH = WindowManager.font.FontSize + 12;
             int contentY = Y + 8 + tbH; int contentW = Width - 16; int contentH = Height - 16 - tbH; int leftW = 180; int mx = Control.MousePosition.X; int my = Control.MousePosition.Y;
@@ -337,7 +406,7 @@ namespace guideXOS.DefaultApps {
                 return;
             }
 
-            if (Control.MouseButtons == MouseButtons.Left) {
+            if (leftDown) {
                 // Toolbar buttons
                 int btnW = 80; int btnH = WindowManager.font.FontSize + 8; int gap = 6;
                 int tbY = Y + 6;
@@ -348,15 +417,15 @@ namespace guideXOS.DefaultApps {
                 // Size options start after Forward, add a gap
                 int sizeStartX = bx2 + btnW + gap + 10;
 
-                if (mx >= bx0 && mx <= bx0 + btnW && my >= tbY && my <= tbY + btnH) { GoBack(); return; }
-                if (mx >= bx1 && mx <= bx1 + btnW && my >= tbY && my <= tbY + btnH) { GoUpLevel(); return; }
-                if (mx >= bx2 && mx <= bx2 + btnW && my >= tbY && my <= tbY + btnH) { GoForward(); return; }
+                if (clickEdge && mx >= bx0 && mx <= bx0 + btnW && my >= tbY && my <= tbY + btnH) { GoBack(); return; }
+                if (clickEdge && mx >= bx1 && mx <= bx1 + btnW && my >= tbY && my <= tbY + btnH) { GoUpLevel(); return; }
+                if (clickEdge && mx >= bx2 && mx <= bx2 + btnW && my >= tbY && my <= tbY + btnH) { GoForward(); return; }
 
                 // Size buttons
                 int sx = sizeStartX;
                 for (int i = 0; i < _sizes.Length; i++) {
                     int w = 36;
-                    if (mx >= sx && mx <= sx + w && my >= tbY && my <= tbY + btnH) {
+                    if (clickEdge && mx >= sx && mx <= sx + w && my >= tbY && my <= tbY + btnH) {
                         _sizeIndex = i;
                         LoadIcons();
                         return;
@@ -367,7 +436,14 @@ namespace guideXOS.DefaultApps {
                 // Click in search box
                 int searchW = 180; int searchH = btnH;
                 int searchX = X + Width - 8 - searchW; int searchY = tbY;
-                if (mx >= searchX && mx <= searchX + searchW && my >= searchY && my <= searchY + searchH) { _searchFocus = true; return; } else if (my >= tbY && my <= tbY + btnH) { _searchFocus = false; }
+                if (clickEdge && mx >= searchX && mx <= searchX + searchW && my >= searchY && my <= searchY + searchH) {
+                    _searchFocus = true;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime("FILES_SEARCH_FOCUS=x=" + mx.ToString() +
+                        ";y=" + my.ToString());
+#endif
+                    return;
+                } else if (my >= tbY && my <= tbY + btnH) { _searchFocus = false; }
 
                 // Left navigation clicks (below toolbar)
                 int leftX0 = X + 1;
@@ -375,16 +451,18 @@ namespace guideXOS.DefaultApps {
                 int leftY0 = contentY;
                 int cursorY = leftY0 + 10;
                 int iconH = _iconFolder != null ? _iconFolder.Height : 48;
-                if (mx >= leftX0 && mx <= leftX1 && my >= leftY0 && my <= leftY0 + contentH) {
+                if (clickEdge && mx >= leftX0 && mx <= leftX1 && my >= leftY0 && my <= leftY0 + contentH) {
                     // Desktop
                     if (my >= cursorY && my <= cursorY + iconH) {
                         // Go to root chooser (drives/root)
-                        _showDrives = true; _currentPath = ""; PushHistory(null); _scroll = 0; MarkEntriesDirty(); return;
+                        OpenRootChooserFromShell();
+                        return;
                     }
                     cursorY += iconH + 10;
                     // Computer Files root
                     if (my >= cursorY && my <= cursorY + iconH) {
-                        _showDrives = true; _currentPath = ""; PushHistory(null); _scroll = 0; MarkEntriesDirty(); return;
+                        OpenRootChooserFromShell();
+                        return;
                     }
                     cursorY += iconH + 10;
                     // USB entry
@@ -402,7 +480,7 @@ namespace guideXOS.DefaultApps {
                 // Scrollbar drag start (right content area)
                 int sbW = 10;
                 int sbX = X + Width - 6 - sbW;
-                if (mx >= sbX && mx <= sbX + sbW && my >= contentY && my <= contentY + contentH) {
+                if (clickEdge && mx >= sbX && mx <= sbX + sbW && my >= contentY && my <= contentY + contentH) {
                     _scrollDrag = true; _scrollDragStartY = my; _scrollDragStartScroll = _scroll; return;
                 }
 
@@ -426,9 +504,12 @@ namespace guideXOS.DefaultApps {
 
                         if (gy + tileH < contentY || gy > contentY + contentH) continue;
 
-                        if (mx >= gx && mx <= gx + icon && my >= gy && my <= gy + icon)
+                        if (clickEdge && mx >= gx && mx <= gx + icon && my >= gy && my <= gy + icon)
                         {
                             var drive = _drives[i];
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                            Program.MarkUefiAppRuntime("FILES_DRIVE_SELECT=name=" + drive.Name);
+#endif
                             if (drive.FileSystem != null)
                             {
                                 var cf = new ComputerFiles(X + 20, Y + 20, 540, 400, drive.FileSystem, drive.Name);
@@ -442,6 +523,7 @@ namespace guideXOS.DefaultApps {
                     EnsureEntries(); var list = _entriesCache; if (list == null) return;
                     int icon = _iconFolder != null ? _iconFolder.Width : 48; int tileW = icon + pad * 2; int tileH = icon + WindowManager.font.FontSize * 2 + pad;
                     int rcX = X + leftW + 8; int rcW = contentW - leftW - 8; int cols = tileW > 0 ? rcW / tileW : 1; if (cols < 1) cols = 1;
+                    int visibleIndex = 0;
                     for (int i = 0; i < list.Count; i++) {
                         // Apply search filter
                         string name = list[i].Name; bool matches = true;
@@ -450,15 +532,23 @@ namespace guideXOS.DefaultApps {
                             matches = ContainsIgnoreCase(name, _search);
                         }
                         if (!matches) continue;
-                        int gridX = i % cols; int gridY = i / cols;
+                        int gridX = visibleIndex % cols; int gridY = visibleIndex / cols;
+                        visibleIndex++;
                         int gx = rcX + gridX * tileW + pad;
                         int gy = contentY + gridY * tileH + pad - _scroll;
                         if (gy + tileH < contentY || gy > contentY + contentH) continue;
-                        if (mx >= gx && mx <= gx + icon && my >= gy && my <= gy + icon) {
+                        if (clickEdge && mx >= gx && mx <= gx + icon && my >= gy && my <= gy + icon) {
                             bool isDir = list[i].Attribute == FileAttribute.Directory;
                             if (isDir) { // open directory
-                                string newPath = _currentPath + name + "/"; _currentPath = newPath; PushHistory(_currentPath); _scroll = 0; MarkEntriesDirty(); return;
+                                string newPath = _currentPath + name + "/";
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                                Program.MarkUefiAppRuntime("FILES_DIR_OPEN=path=" + newPath);
+#endif
+                                _currentPath = newPath; PushHistory(_currentPath); _scroll = 0; MarkEntriesDirty(); return;
                             } else { // open file via Desktop handler
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                                Program.MarkUefiAppRuntime("FILES_FILE_CLICK=path=" + _currentPath + name);
+#endif
                                 Desktop.Dir = _currentPath; Desktop.OnClick(name, false, gx, gy); return;
                             }
                         }
@@ -659,8 +749,9 @@ namespace guideXOS.DefaultApps {
             } else {
                 EnsureEntries(); var list = _entriesCache; if (list != null) {
                     int icon = _iconFolder != null ? _iconFolder.Width : 48; int tileW = icon + pad * 2; int tileH = icon + WindowManager.font.FontSize * 2 + pad; int cols = tileW > 0 ? rcW / tileW : 1; if (cols < 1) cols = 1;
+                    int visibleIndex = 0;
                     for (int i = 0; i < list.Count; i++) {
-                        string name = list[i].Name; bool matches = string.IsNullOrEmpty(_search) || ContainsIgnoreCase(name, _search); if (!matches) continue; int gridX = i % cols; int gridY = i / cols; int gx = rcX + gridX * tileW + pad; int gy = contentY + gridY * tileH + pad - _scroll; if (gy + tileH < contentY || gy > contentY + contentH) continue; bool isDir = list[i].Attribute == FileAttribute.Directory; if (isDir) { if (_iconFolder != null) Framebuffer.Graphics.DrawImage(gx, gy, _iconFolder); } else { if (_iconDoc != null) Framebuffer.Graphics.DrawImage(gx, gy, _iconDoc); }
+                        string name = list[i].Name; bool matches = string.IsNullOrEmpty(_search) || ContainsIgnoreCase(name, _search); if (!matches) continue; int gridX = visibleIndex % cols; int gridY = visibleIndex / cols; visibleIndex++; int gx = rcX + gridX * tileW + pad; int gy = contentY + gridY * tileH + pad - _scroll; if (gy + tileH < contentY || gy > contentY + contentH) continue; bool isDir = list[i].Attribute == FileAttribute.Directory; if (isDir) { if (_iconFolder != null) Framebuffer.Graphics.DrawImage(gx, gy, _iconFolder); } else { if (_iconDoc != null) Framebuffer.Graphics.DrawImage(gx, gy, _iconDoc); }
                         // Draw label clipped to icon width to prevent overhang into adjacent tiles
                         WindowManager.font.DrawString(gx, gy + icon + 6, name, icon, WindowManager.font.FontSize * 2);
                     }

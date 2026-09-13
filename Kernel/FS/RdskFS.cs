@@ -106,15 +106,35 @@ namespace guideXOS.FS {
                     break;
                 }
 
-                if (path != null && IsInDirectory(path, directory)) {
-                    int slash = path.LastIndexOf('/');
-                    string name = path.Substring(slash + 1);
-                    FileInfo info = new FileInfo();
-                    info.Name = name;
-                    info.Attribute = FileAttribute.Archive;
-                    info.Param0 = offset;
-                    info.Param1 = dataLen;
-                    result.Add(info);
+                if (path != null && IsUnderDirectory(path, directory)) {
+                    // RDSK stores file paths only, so synthesize one entry for
+                    // each direct child directory and retain normal file
+                    // entries.  Without this, the real desktop can display a
+                    // root file but can never navigate to nested fixtures.
+                    string child = directory.Length == 0 ? path :
+                        path.Substring(directory.Length);
+                    int slash = child.IndexOf('/');
+                    string name = slash >= 0 ? child.Substring(0, slash) :
+                        path.Substring(path.LastIndexOf('/') + 1);
+
+                    if (name != null && !ContainsResultName(result, name)) {
+                        FileInfo info = new FileInfo();
+                        info.Name = name;
+                        if (slash >= 0) {
+                            info.Attribute = FileAttribute.Directory;
+                        } else {
+                            info.Attribute = FileAttribute.Archive;
+                            info.Param0 = offset;
+                            info.Param1 = dataLen;
+                        }
+                        result.Add(info);
+                    } else if (name != null) {
+                        name.Dispose();
+                    }
+
+                    if (directory.Length != 0 && child != null) {
+                        child.Dispose();
+                    }
                 }
 
                 if (path != null) path.Dispose();
@@ -122,6 +142,24 @@ namespace guideXOS.FS {
             }
 
             return result;
+        }
+
+        private static bool IsUnderDirectory(string path, string directory) {
+            if (directory == null || path == null || path.Length < directory.Length) {
+                return false;
+            }
+            for (int i = 0; i < directory.Length; i++) {
+                if (path[i] != directory[i]) return false;
+            }
+            return true;
+        }
+
+        private static bool ContainsResultName(List<FileInfo> result, string name) {
+            for (int i = 0; i < result.Count; i++) {
+                if (result[i] != null && result[i].Name != null &&
+                    result[i].Name.Equals(name)) return true;
+            }
+            return false;
         }
         
         public override void Delete(string Name) { }

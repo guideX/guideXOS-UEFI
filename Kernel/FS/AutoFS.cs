@@ -15,7 +15,9 @@ namespace guideXOS.FS {
             // Peek at sector 0
             var buf = new byte[SectorSize];
             fixed (byte* p = buf) disk.Read(0, 1, p);
-            if (LooksLikeTar(buf)) {
+            if (LooksLikeRdsk(buf)) {
+                _impl = new RdskFS();
+            } else if (LooksLikeTar(buf)) {
                 _impl = new TarFS(disk);
             } else if (LooksLikeFat(buf)) {
                 _impl = new FAT(disk);
@@ -30,7 +32,9 @@ namespace guideXOS.FS {
             // Peek at sector 0
             var buf = new byte[SectorSize];
             fixed (byte* p = buf) Disk.Instance.Read(0, 1, p);
-            if (LooksLikeTar(buf)) {
+            if (LooksLikeRdsk(buf)) {
+                _impl = new RdskFS();
+            } else if (LooksLikeTar(buf)) {
                 _impl = new TarFS();
             } else if (LooksLikeFat(buf)) {
                 _impl = new FAT();
@@ -53,6 +57,12 @@ namespace guideXOS.FS {
             if (sector0.Length < 512) return false;
             return sector0[257] == (byte)'u' && sector0[258] == (byte)'s' && sector0[259] == (byte)'t' &&
                    sector0[260] == (byte)'a' && sector0[261] == (byte)'r';
+        }
+
+        private static bool LooksLikeRdsk(byte[] sector0) {
+            return sector0 != null && sector0.Length >= 4 &&
+                   sector0[0] == (byte)'R' && sector0[1] == (byte)'D' &&
+                   sector0[2] == (byte)'S' && sector0[3] == (byte)'K';
         }
         /// <summary>
         /// Looks like a FAT filesystem?

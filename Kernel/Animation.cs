@@ -53,6 +53,12 @@ namespace guideXOS {
     public static class Animator {
         static List<Animation> Animations;
 
+        private static void EnsureCollection() {
+            if (Animations == null) {
+                Animations = new List<Animation>();
+            }
+        }
+
         /// <summary>
         /// Initializes the animator system and sets up interrupt handling for animation updates.
         /// </summary>
@@ -66,6 +72,7 @@ namespace guideXOS {
         /// </summary>
         /// <param name="ani">The animation to add.</param>
         public static void AddAnimation(Animation ani) {
+            EnsureCollection();
             Animations.Add(ani);
         }
 
@@ -74,6 +81,7 @@ namespace guideXOS {
         /// </summary>
         /// <param name="ani">The animation to dispose.</param>
         public static void DisposeAnimation(Animation ani) {
+            if (Animations == null) return;
             Animations.Remove(ani);
             ani.Dispose();
         }

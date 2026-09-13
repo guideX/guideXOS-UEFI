@@ -205,7 +205,8 @@ namespace guideXOS.GUI {
         }
 
         internal static ImageViewer EnsureImageViewer() {
-            if (imageViewer == null) {
+            if (imageViewer == null ||
+                WindowManager.Windows.IndexOf(imageViewer) < 0) {
                 imageViewer = new ImageViewer(400, 400);
                 imageViewer.Visible = false;
             }
@@ -213,7 +214,7 @@ namespace guideXOS.GUI {
         }
 
         internal static MessageBox EnsureMessageBox() {
-            if (msgbox == null) {
+            if (msgbox == null || WindowManager.Windows.IndexOf(msgbox) < 0) {
                 msgbox = new MessageBox(100, 300);
                 msgbox.Visible = false;
             }
@@ -221,7 +222,8 @@ namespace guideXOS.GUI {
         }
 
         internal static WAVPlayer EnsureWavPlayer() {
-            if (wavplayer == null) {
+            if (wavplayer == null ||
+                WindowManager.Windows.IndexOf(wavplayer) < 0) {
                 wavplayer = new WAVPlayer(450, 200);
                 wavplayer.Visible = false;
             }
@@ -413,11 +415,12 @@ namespace guideXOS.GUI {
             if (clickEdge && !WindowManager.MouseHandled &&
                 Control.MousePosition.X >= 48 && Control.MousePosition.X <= 112 &&
                 Control.MousePosition.Y >= 96 && Control.MousePosition.Y <= 160) {
-                if (compFiles == null || !compFiles.Visible) {
-                    compFiles = new ComputerFiles(300, 200, 540, 380);
-                    WindowManager.MoveToEnd(compFiles);
-                    compFiles.Visible = true;
-                }
+                // Route the real UEFI FILES tile through the same alias and
+                // shell-object resolver used by the legacy-compatible path.
+                // Reset the legacy click latch because this UEFI tile is
+                // handled directly rather than through ClickEvent.
+                OnClick("File Explorer", false, 48, 96);
+                ClickLock = false;
                 Program.MarkUefiDesktopFilesClickRouted();
                 Program.MarkUefiGuiMouseRouted();
             }
@@ -911,25 +914,44 @@ namespace guideXOS.GUI {
             }
         }
 
-        private static void ShowOpenError(int x, int y, string text) {
-            MessageBox box = EnsureMessageBox();
-            box.X = x;
-            box.Y = y;
-            box.SetText(text);
-            WindowManager.MoveToEnd(box);
-            box.Visible = true;
-        }
+    private static void ShowOpenError(int x, int y, string text) {
+        MessageBox box = EnsureMessageBox();
+        box.X = x;
+        box.Y = y;
+        box.SetText(text);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+        // Keep the bounded diagnostic error route closeable by the same title
+        // bar path used for application windows. MessageBox normally sizes
+        // itself on draw; mirror that calculation before emitting bounds so
+        // the harness can dismiss the visible error deterministically.
+        box.Width = WindowManager.font.MeasureString(text);
+        Program.MarkUefiAppRuntime("ERROR_WINDOW_BOUNDS=x=" + x.ToString() +
+            ";y=" + y.ToString() + ";w=" + box.Width.ToString());
+#endif
+        WindowManager.MoveToEnd(box);
+        box.Visible = true;
+    }
 
         private static bool TryOpenAssociatedFile(string path, string name,
                                                    int itemX, int itemY) {
             FileAssociationResolution association =
                 FileAssociationRegistry.ResolvePath(name);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("ASSOC_RESOLVE=name=" + (name ?? "") +
+                ";ext=" + (association.Extension ?? "") +
+                ";app=" + (association.AppId ?? "") +
+                ";kind=" + association.Kind.ToString() +
+                ";success=" + (association.Success ? "1" : "0"));
+#endif
             if (!association.Success) return false;
 
             if (association.Kind == AppKind.FileAssociation &&
                 association.DispatchName == "Image Viewer") {
                 byte[] buffer = File.ReadAllBytes(path);
                 if (buffer == null) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=Image Viewer;reason=READ");
+#endif
                     ShowOpenError(itemX + 60, itemY + 60, "Unable to read image file.");
                     return true;
                 }
@@ -937,26 +959,41 @@ namespace guideXOS.GUI {
                 Image decoded = DecodeDesktopImage(buffer, isPng);
                 buffer.Dispose();
                 if (decoded == null) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=Image Viewer;reason=DECODE");
+#endif
                     ShowOpenError(itemX + 60, itemY + 60, "Unable to decode image file.");
                     return true;
                 }
 
                 ImageViewer viewer = EnsureImageViewer();
                 viewer.SetImage(decoded);
-                decoded.Dispose();
                 WindowManager.MoveToEnd(viewer);
                 viewer.Visible = true;
                 RecentManager.AddDocument(path, Icons.ImageIcon(32));
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=Image Viewer;content=decoded");
+#endif
                 return true;
             }
 
             if (association.Kind == AppKind.FileAssociation &&
                 association.DispatchName == "Notepad") {
                 Notepad notepad = new Notepad(itemX + 40, itemY + 40);
-                notepad.OpenFile(path);
+                if (!notepad.OpenFile(path)) {
+                    notepad.Visible = false;
+                    ShowOpenError(itemX + 60, itemY + 60, "Unable to read text file.");
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=Notepad;reason=READ");
+#endif
+                    return true;
+                }
                 WindowManager.MoveToEnd(notepad);
                 notepad.Visible = true;
                 RecentManager.AddDocument(path, Icons.DocumentIcon(32));
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=Notepad;content=loaded");
+#endif
                 return true;
             }
 
@@ -964,6 +1001,9 @@ namespace guideXOS.GUI {
                 byte[] buffer = File.ReadAllBytes(path);
                 if (buffer == null) {
                     ShowOpenError(itemX + 60, itemY + 60, "Unable to read executable.");
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=GXM;reason=READ");
+#endif
                     return true;
                 }
                 string err;
@@ -975,6 +1015,18 @@ namespace guideXOS.GUI {
                 } else {
                     RecentManager.AddDocument(path, Icons.DocumentIcon(32));
                 }
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FILE_RESULT=path=" + path + ";app=GXM;ok=" + (ok ? "1" : "0"));
+                // Defer UI-error probes until after the positive shell/file
+                // route has reached a real GXM fixture.  This keeps the
+                // initial Start-menu interaction free of a modal error window.
+                if (path == "Programs/calculator.gxm") {
+                    OnClick("missing.txt", false, 100, 100);
+                    OnClick("missing.png", false, 100, 100);
+                    OnClick("USB Drive 0", false, 100, 100);
+                    Program.MarkUefiAppRuntime("NEGATIVE_MISSING_FILES=2");
+                }
+#endif
                 return true;
             }
 
@@ -983,11 +1035,17 @@ namespace guideXOS.GUI {
                 if (!Audio.HasAudioDevice) {
                     ShowOpenError(itemX + 75, itemY + 75,
                         "Audio controller is unavailable!");
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=WAV Player;reason=NO_AUDIO_DEVICE");
+#endif
                     return true;
                 }
                 byte[] buffer = File.ReadAllBytes(path);
                 if (buffer == null) {
                     ShowOpenError(itemX + 75, itemY + 75, "Unable to read audio file.");
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=WAV Player;reason=READ");
+#endif
                     return true;
                 }
                 WAVPlayer player = EnsureWavPlayer();
@@ -996,6 +1054,9 @@ namespace guideXOS.GUI {
                     fixed (char* ptr = name) player.Play(buffer, new string(ptr));
                 }
                 RecentManager.AddDocument(path, Icons.AudioIcon(32));
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=WAV Player;content=dispatched");
+#endif
                 return true;
             }
 
@@ -1012,8 +1073,16 @@ namespace guideXOS.GUI {
         public static void OnClick(string name, bool isDirectory, int itemX, int itemY) {
             ClickLock = true;
             var shellObject = ShellObjectRegistry.Resolve(name);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("SHELL_RESOLVE=name=" + (name ?? "") +
+                ";kind=" + shellObject.Kind.ToString() +
+                ";success=" + (shellObject.Success ? "1" : "0"));
+#endif
             // Special desktop controls
             if (shellObject.Success && shellObject.Kind == ShellObjectKind.FileSystemLocation && HomeMode) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("SHELL_ROUTE=ROOT;result=DESKTOP_FILESYSTEM");
+#endif
                 HomeMode = false;
                 _dirCacheDirty = true;
                 IndexClicked = -1;
@@ -1025,6 +1094,9 @@ namespace guideXOS.GUI {
             }
             // Launch HD installer from desktop icon
             if (shellObject.Success && shellObject.Kind == ShellObjectKind.SystemAction && HomeMode) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("SHELL_ROUTE=INSTALLER;result=HD_INSTALLER");
+#endif
                 var installer = new guideXOS.DefaultApps.HDInstaller(itemX + 60, itemY + 60);
                 WindowManager.MoveToEnd(installer);
                 installer.Visible = true;
@@ -1033,6 +1105,9 @@ namespace guideXOS.GUI {
             }
             if (shellObject.Success && shellObject.Kind == ShellObjectKind.BuiltInApp &&
                 shellObject.AppId == "gxos.builtin.files" && HomeMode) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("SHELL_ROUTE=COMPUTER_FILES;result=WINDOW");
+#endif
                 // Always create a new ComputerFiles window (old one may have been disposed on close)
                 compFiles = new ComputerFiles(300, 200, 540, 380);
                 WindowManager.MoveToEnd(compFiles);
@@ -1041,6 +1116,17 @@ namespace guideXOS.GUI {
             // Click on USB drive icon opens Computer Files too (when on Home desktop)
             if (HomeMode) {
                 if (shellObject.Success && shellObject.Kind == ShellObjectKind.DeviceVolume) {
+                    if (Kernel.Drivers.USBStorage.Count == 0) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                        Program.MarkUefiAppRuntime("SHELL_ROUTE=USB;result=UNAVAILABLE");
+#endif
+                        ShowOpenError(itemX + 60, itemY + 60,
+                            "USB storage is unavailable.");
+                        return;
+                    }
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime("SHELL_ROUTE=USB;result=WINDOW");
+#endif
                     // Always create a new ComputerFiles window (old one may have been disposed)
                     compFiles = new ComputerFiles(300, 200, 540, 380);
                     WindowManager.MoveToEnd(compFiles);

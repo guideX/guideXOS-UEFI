@@ -71,6 +71,7 @@ namespace guideXOS.GUI {
             Title = "Start";
             BarHeight = 0;
             ShowInTaskbar = false; // do not show a taskbar button for Start menu
+            ShowInStartMenu = false; // the shell popup is not an application entry
             ShowMaximize = false;
             ShowMinimize = false;
             _showAllPrograms = false;
@@ -90,6 +91,8 @@ namespace guideXOS.GUI {
             if (value) {
                 // Always bring Start Menu to front when shown
                 WindowManager.MoveToEnd(this);
+                _leftDownPrev = false;
+                _scrollDrag = false;
                 // Rebuild background blur cache once
                 _bgCacheReady = false;
                 if (_bgBlurCache != null) { _bgBlurCache.Dispose(); _bgBlurCache = null; }
@@ -101,6 +104,14 @@ namespace guideXOS.GUI {
                 // dispose caches when hidden to free memory
                 if (_bgBlurCache != null) { _bgBlurCache.Dispose(); _bgBlurCache = null; }
                 if (_frameCache != null) { _frameCache.Dispose(); _frameCache = null; }
+                // A reopened Start menu begins in its normal recent-items
+                // view.  Do not retain a transient all-programs/scroll state
+                // from the previous activation.
+                _showAllPrograms = false;
+                _scroll = 0;
+                _powerMenuVisible = false;
+                _docsPopupVisible = false;
+                _leftDownPrev = false;
                 _bgCacheReady = false; _frameDirty = true;
             }
         }
@@ -240,6 +251,14 @@ namespace guideXOS.GUI {
             int allBtnX = X + Padding;
             int allBtnY = bottomY; // align with shutdown row
 
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            if (clickEdge) {
+                Program.MarkUefiAppRuntime("START_CLICK_EDGE;x=" + mx.ToString() +
+                    ";y=" + my.ToString() + ";all=" +
+                    (_showAllPrograms ? "1" : "0"));
+            }
+#endif
+
             // Scrollbar hit - now wider (20px instead of 8px)
             int sbW = 20;
             int sbX = listX + listW - sbW;
@@ -274,6 +293,11 @@ namespace guideXOS.GUI {
                 // All Programs button
                 if (mx >= allBtnX && mx <= allBtnX + allBtnW && my >= allBtnY && my <= allBtnY + allBtnH) {
                     ToggleAllPrograms(); _frameDirty = true;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime("START_ALL_PROGRAMS=visible=" +
+                        (_showAllPrograms ? "1" : "0"));
+#endif
+                    _leftDownPrev = leftDown;
                     return;
                 }
 
@@ -287,12 +311,19 @@ namespace guideXOS.GUI {
                 // Up arrow click: scroll up one page
                 if (mx >= sbX && mx <= sbX + sbW && my >= scrollArrowUpY && my < scrollArrowUpY + ScrollArrowH) {
                     int ns = _scroll - listH; if (ns < 0) ns = 0;
-                    if (ns != _scroll) { _scroll = ns; _frameDirty = true; } return;
+                    if (ns != _scroll) { _scroll = ns; _frameDirty = true; }
+                    _leftDownPrev = leftDown;
+                    return;
                 }
                 // Down arrow click: scroll down one page
                 if (mx >= sbX && mx <= sbX + sbW && my >= scrollArrowDnY && my <= scrollArrowDnY + ScrollArrowH) {
                     int ns = _scroll + listH; if (ns > maxScrollArrow) ns = maxScrollArrow;
-                    if (ns != _scroll) { _scroll = ns; _frameDirty = true; } return;
+                    if (ns != _scroll) { _scroll = ns; _frameDirty = true; }
+                    // The arrow branch returns before the common edge-state
+                    // update below. Preserve the press edge while the host
+                    // button is held so one click cannot repeat every frame.
+                    _leftDownPrev = leftDown;
+                    return;
                 }
                 // Scrollbar drag start (only in track between arrows)
                 if (mx >= sbX && mx <= sbX + sbW && my >= trackY && my <= trackY + trackH) { _scrollDrag = true; _scrollStartY = my; _scrollStartScroll = _scroll; return; }
@@ -415,6 +446,12 @@ namespace guideXOS.GUI {
                                 ih = icon.Height;
                                 if (my >= iy2 && my <= iy2 + ih) {
                                     string appName = Desktop.Apps.Name(ai);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                                    Program.MarkUefiAppRuntime("START_ROW=index=" +
+                                        i.ToString() + ";name=" + appName);
+                                    Program.MarkUefiAppRuntime("START_SELECT=name=" +
+                                        appName + ";route=all-programs;index=" + i.ToString());
+#endif
                                     Desktop.Apps.Load(appName);
                                     appName.Dispose();
                                     Visible = false;
@@ -836,6 +873,17 @@ namespace guideXOS.GUI {
             
             // Get windows with ShowInStartMenu = true
             _allProgramsWindows = WindowManager.GetStartMenuWindows();
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            int layoutListH = Height - Padding * 2 -
+                (ShutdownBtnH + Gap + Padding);
+            int layoutTotal = (n + _allProgramsWindows.Count) * Spacing;
+            int layoutMaxScroll = layoutTotal - layoutListH;
+            if (layoutMaxScroll < 0) layoutMaxScroll = 0;
+            Program.MarkUefiAppRuntime("START_ALL_LAYOUT=apps=" + n.ToString() +
+                ";windows=" + _allProgramsWindows.Count.ToString() +
+                ";listH=" + layoutListH.ToString() +
+                ";maxscroll=" + layoutMaxScroll.ToString());
+#endif
             
             // simple selection sort by name (case-insensitive)
             for (int i = 0; i < n - 1; i++) {

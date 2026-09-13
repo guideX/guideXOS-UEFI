@@ -165,6 +165,11 @@ unsafe class Program {
 #else
     private const bool UEFI_ENABLE_APP_MODEL_DIAGNOSTIC = false;
 #endif
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+    private const bool UEFI_ENABLE_APP_RUNTIME_DIAGNOSTIC = true;
+#else
+    private const bool UEFI_ENABLE_APP_RUNTIME_DIAGNOSTIC = false;
+#endif
 #if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
     private const bool UEFI_ENABLE_INPUT_DIAGNOSTIC_TARGET = true;
 #else
@@ -273,9 +278,16 @@ unsafe class Program {
     }
 
     internal static void MarkUefiStartMenuOpened() {
-#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS || UEFI_DIAGNOSTIC_APP_RUNTIME
         if (!IsUefiMode) return;
         SerialBreadcrumb("START_MENU_OPENED");
+#endif
+    }
+
+    internal static void MarkUefiAppRuntime(string breadcrumb) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+        if (!IsUefiMode || breadcrumb == null) return;
+        SerialBreadcrumb("APP_RUNTIME_" + breadcrumb);
 #endif
     }
 
@@ -907,6 +919,12 @@ unsafe class Program {
             return;
         }
 
+        if (UEFI_ENABLE_APP_RUNTIME_DIAGNOSTIC) {
+            SerialBreadcrumb("SMAIN_DISPATCH_REASON=APP_RUNTIME");
+            SerialBreadcrumb("APP_RUNTIME_MODEL_READY=apps=" +
+                (Desktop.Apps == null ? "0" : Desktop.Apps.Length.ToString()));
+        }
+
         if (UEFI_ENABLE_FONT_DIAGNOSTIC) {
             SerialBreadcrumb("SMAIN_DISPATCH_REASON=FONT_PROBE");
             RenderLoopUefiFontProbe();
@@ -974,6 +992,42 @@ unsafe class Program {
         } catch {
             if (IsUefiMode) BootConsole.WriteLine("[APP_MODEL] unavailable");
         }
+
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+        if (IsUefiMode && Desktop.Apps != null) {
+            // Keep negative coverage bounded and before host-driven positive
+            // interaction.  The missing-file probes intentionally use the
+            // same Desktop.OnClick path as a real shell item.
+            AppLaunchResolution unknownId =
+                AppLaunchResolver.Resolve("gxos.builtin.notreal");
+            AppLaunchResolution unknownAlias =
+                AppLaunchResolver.Resolve("Definitely Not A Real App");
+            FileAssociationResolution unknownExtension =
+                FileAssociationRegistry.ResolvePath("fixture.unknown");
+            ShellObjectResolution unknownShell =
+                ShellObjectRegistry.Resolve("Unsupported Shell Object");
+            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_STAGE=RESOLVED");
+            byte[] malformedPath = File.ReadAllBytes("malformed/path");
+            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_STAGE=MALFORMED_READ");
+            if (malformedPath != null) malformedPath.Dispose();
+            bool unknownLoad = !Desktop.Apps.Load("gxos.builtin.notreal");
+            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_UNKNOWN_LOAD=" +
+                (unknownLoad ? "PASS" : "FAIL"));
+            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_STAGE=UNKNOWN_LOAD");
+            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_STAGE=UI_NEGATIVES_DEFERRED");
+            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_UNKNOWN_ID=" +
+                (!unknownId.Success ? "PASS" : "FAIL"));
+            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_UNKNOWN_ALIAS=" +
+                (!unknownAlias.Success ? "PASS" : "FAIL"));
+            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_UNKNOWN_EXTENSION=" +
+                (!unknownExtension.Success ? "PASS" : "FAIL"));
+            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_MALFORMED_PATH=" +
+                (malformedPath == null ? "PASS" : "FAIL"));
+            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_UNKNOWN_SHELL=" +
+                (!unknownShell.Success ? "PASS" : "FAIL"));
+            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_MISSING_FILES=DEFERRED");
+        }
+#endif
 
         // Context menus
         SetupContextMenus();

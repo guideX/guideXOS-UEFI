@@ -453,7 +453,7 @@ namespace guideXOS.OS {
                     Kind = ShellObjectKind.BuiltInApp,
                     AppId = files.AppId,
                     DispatchName = files.DispatchName,
-                    LegacyAliases = new string[] { "Computer Files" }
+                    LegacyAliases = new string[] { "Computer Files", "File Explorer" }
                 });
             }
 
@@ -550,6 +550,8 @@ namespace guideXOS.OS {
             string failure = null;
 
             Check("Computer Files", ShellObjectKind.BuiltInApp,
+                "gxos.builtin.files", null, ref passed, ref failed, ref failure);
+            Check("File Explorer", ShellObjectKind.BuiltInApp,
                 "gxos.builtin.files", null, ref passed, ref failed, ref failure);
             Check("Root", ShellObjectKind.FileSystemLocation,
                 null, "", ref passed, ref failed, ref failure);

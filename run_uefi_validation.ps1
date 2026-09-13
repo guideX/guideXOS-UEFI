@@ -63,6 +63,10 @@
     Build and run the bounded app-model, file-association, and shell-object
     resolver self-tests.
 
+.PARAMETER AppRuntime
+    Run real UEFI Start-menu application launches, close/return cycles, shell
+    routes, and file-association opens through QMP input.
+
 .PARAMETER TimeoutSeconds
     Host-side validation limit. The guest has no corresponding timeout.
 
@@ -90,6 +94,7 @@ param(
     [switch]$Background,
     [switch]$BackgroundRotation,
     [switch]$AppModel,
+    [switch]$AppRuntime,
     [Alias('Input')]
     [switch]$NativeInput,
     [Alias('InputStress')]
@@ -118,6 +123,7 @@ $selectorCount = @(
     $(if ($Background) { 1 } else { 0 }),
     $(if ($BackgroundRotation) { 1 } else { 0 }),
     $(if ($AppModel) { 1 } else { 0 }),
+    $(if ($AppRuntime) { 1 } else { 0 }),
     $(if ($NativeInput) { 1 } else { 0 }),
     $(if ($NativeInputStress) { 1 } else { 0 }),
     $(if ($ContextMenu) { 1 } else { 0 }),
@@ -140,7 +146,7 @@ if ($Frames -gt 0 -and $Frames -ne 300) {
 if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Font -and
     -not $Background -and -not $BackgroundRotation -and
-    -not $AppModel -and
+    -not $AppModel -and -not $AppRuntime -and
     -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
     -not $ContextMenuSoak -and -not $Widget -and -not $WidgetStress -and
     -not $WidgetSoak -and
@@ -163,6 +169,8 @@ if ($Tiny) {
     $diagnosticMode = 'BackgroundRotation'
 } elseif ($AppModel) {
     $diagnosticMode = 'AppModel'
+} elseif ($AppRuntime) {
+    $diagnosticMode = 'AppRuntime'
 } elseif ($Frames -gt 0) {
     $diagnosticMode = 'Frames'
 } elseif ($NativeInput) {
@@ -182,7 +190,8 @@ $isWidgetValidation = $diagnosticMode -in @('Widget', 'WidgetStress', 'WidgetSoa
 $isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Widget', 'WidgetStress')
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu')
 $isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress')
-$isInteractiveValidation = $isInputValidation -or $isWidgetValidation
+$isAppRuntimeValidation = $diagnosticMode -eq 'AppRuntime'
+$isInteractiveValidation = $isInputValidation -or $isWidgetValidation -or $isAppRuntimeValidation
 $isContinuousValidation = -not $isBoundedDiagnostic
 $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'Tiny' { 'UTINY_COMPLETE'; break }
@@ -193,6 +202,7 @@ $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'Background' { 'BACKGROUND_PROBE_COMPLETE'; break }
     'BackgroundRotation' { 'BACKGROUND_ROTATION_COMPLETE'; break }
     'AppModel' { 'APP_MODEL_COMPLETE'; break }
+    'AppRuntime' { 'APP_RUNTIME_COMPLETE'; break }
     'Widget' { 'WIDGET_COMPLETE'; break }
     'WidgetStress' { 'WIDGET_STRESS_COMPLETE'; break }
     'WidgetSoak' { 'WIDGET_SOAK_COMPLETE'; break }
@@ -329,6 +339,17 @@ function Send-QmpEvents {
     }
 }
 
+function Send-QmpMonitorKey {
+    param($Qmp, [string]$KeyCode)
+    $request = @{ execute = 'human-monitor-command'; arguments = @{ 'command-line' = "sendkey $KeyCode" } } |
+        ConvertTo-Json -Compress
+    $Qmp.Writer.WriteLine($request)
+    $response = Read-QmpMessage $Qmp.Reader
+    if ($null -eq $response -or $response.error) {
+        throw "QMP sendkey failed: $request"
+    }
+}
+
 function New-QmpKeyEvent {
     param([string]$KeyCode, [bool]$Down)
     return @{ type = 'key'; data = @{ down = $Down; key = @{ type = 'qcode'; data = $KeyCode } } }
@@ -436,9 +457,371 @@ function Send-QmpWorkload {
     # serial file is buffered by QEMU, so validate START_MENU_OPENED from the
     # flushed final log instead of waiting on a live marker.
     Start-Sleep -Milliseconds 1000
-    Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
-    Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+    Send-QmpMonitorKey $Qmp 'esc'
     Start-Sleep -Milliseconds 120
+}
+
+function Open-QmpStartApplication {
+    param(
+        $Qmp,
+        [string]$Name,
+        [int]$Index
+    )
+
+    $startBefore = Get-ContextMarkerCount '(?m)^START_MENU_OPENED$'
+    $startOpened = $false
+    for ($attempt = 0; $attempt -lt 2 -and -not $startOpened; $attempt++) {
+        Set-QmpPointer $Qmp 30 780
+        Send-QmpMouseClick $Qmp 'left'
+        try {
+            Wait-ForContextMarkerCount '(?m)^START_MENU_OPENED$' ($startBefore + 1) 5000
+            $startOpened = $true
+        } catch {
+            if ($attempt -eq 1) { throw }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    # First-show blur construction and the normal fade-in both run on the
+    # render thread; allow them to settle before the first menu click.
+    Start-Sleep -Milliseconds 700
+
+    # StartMenu geometry is fixed by the existing UEFI layout: the All
+    # Programs button is x=33..173, y=679..707, and rows begin at y=63 with
+    # 58px spacing.  The final row is reached through the existing down arrow.
+    $allBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_START_ALL_PROGRAMS=visible=1$'
+    $allOpened = $false
+    for ($attempt = 0; $attempt -lt 2 -and -not $allOpened; $attempt++) {
+        Set-QmpPointer $Qmp 80 694
+        Send-QmpMouseClick $Qmp 'left'
+        try {
+            Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_START_ALL_PROGRAMS=visible=1$' ($allBefore + 1) 5000
+            $allOpened = $true
+        } catch {
+            if ($attempt -eq 1) { throw }
+            Start-Sleep -Milliseconds 300
+        }
+    }
+    # The all-programs transition rebuilds the list and its blur-backed panel
+    # on the render thread. Give that one-time transition a full frame budget
+    # before deriving and clicking the requested row.
+    Start-Sleep -Milliseconds 650
+    $rowY = 63 + ($Index * 58) + 16
+    if ($Index -ge 10) {
+        # The last two registered apps are below the visible list viewport.
+        # Read the live layout bound emitted by the diagnostic guest, page to
+        # the bounded maximum through the existing arrow, then derive the row
+        # from the same 58px item pitch.
+        $layout = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+        $layoutMatches = [regex]::Matches($layout,
+            '(?m)^APP_RUNTIME_START_ALL_LAYOUT=apps=\d+;windows=\d+;listH=\d+;maxscroll=(\d+)$')
+        if ($layoutMatches.Count -eq 0) {
+            throw 'Start all-programs layout marker is missing.'
+        }
+        $maxScroll = [int]$layoutMatches[$layoutMatches.Count - 1].Groups[1].Value
+        for ($page = 0; $page -lt 4; $page++) {
+            Set-QmpPointer $Qmp 241 645
+            Send-QmpMouseClick $Qmp 'left'
+            if ($maxScroll -eq 0) { break }
+        }
+        $rowY -= $maxScroll
+    }
+
+    $selectBefore = Get-ContextMarkerCount (
+        '(?m)^APP_RUNTIME_START_SELECT=name=' + [regex]::Escape($Name) + ';')
+    $launchBefore = Get-ContextMarkerCount (
+        '(?m)^APP_RUNTIME_LAUNCH_OK=.*;name=' + [regex]::Escape($Name) + ';')
+    $selectPattern = '(?m)^APP_RUNTIME_START_SELECT=name=' + [regex]::Escape($Name) + ';'
+    $selected = $false
+    for ($attempt = 0; $attempt -lt 2 -and -not $selected; $attempt++) {
+        Set-QmpPointer $Qmp 80 $rowY
+        Send-QmpMouseClick $Qmp 'left'
+        try {
+            Wait-ForContextMarkerCount $selectPattern ($selectBefore + 1) 5000
+            $selected = $true
+        } catch {
+            if ($attempt -eq 1) { throw }
+            # A busy first-show/menu redraw can consume the first host click
+            # after the all-programs transition. Re-position and retry once.
+            Start-Sleep -Milliseconds 300
+        }
+    }
+    Wait-ForContextMarkerCount (
+        '(?m)^APP_RUNTIME_LAUNCH_OK=.*;name=' + [regex]::Escape($Name) + ';') ($launchBefore + 1) 8000
+
+    # Escape is the normal global-key close route.  The cleanup breadcrumb is
+    # the point at which the window is removed and its owner memory reclaimed.
+    # StartMenu hides immediately after dispatch, but its cleanup is performed
+    # by the next render pass.  Let that pass remove the popup before Esc is
+    # sent to the launched window.
+    Start-Sleep -Milliseconds 350
+    Send-QmpMonitorKey $Qmp 'a'
+    Start-Sleep -Milliseconds 120
+    $closedBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED='
+    Close-QmpLastLaunchedWindow $Qmp
+    Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+    Start-Sleep -Milliseconds 160
+}
+
+function Close-QmpLastLaunchedWindow {
+    param($Qmp)
+    if (-not (Test-Path -LiteralPath $serialPath)) {
+        throw 'No runtime serial log is available for launch bounds.'
+    }
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    $matches = [regex]::Matches($content,
+        '(?m)^APP_RUNTIME_LAUNCH_OK=.*;bounds=(\d+),(\d+),(\d+),(\d+);')
+    if ($matches.Count -eq 0) {
+        throw 'Last runtime launch did not expose window bounds.'
+    }
+    $match = $matches[$matches.Count - 1]
+    $x = [int]$match.Groups[1].Value
+    $y = [int]$match.Groups[2].Value
+    $w = [int]$match.Groups[3].Value
+    if ($w -lt 40) { throw 'Last runtime launch exposed invalid window width.' }
+    # Window.ComputeButtonRects uses the default 40px bar and a 28px button;
+    # click the center of the rightmost close button derived from those fields.
+    Set-QmpPointer $Qmp ($x + $w - 22) ($y - 26)
+    Send-QmpMouseClick $Qmp 'left'
+}
+
+function Open-QmpComputerFilesFromHome {
+    param($Qmp)
+    $routeBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_SHELL_ROUTE=COMPUTER_FILES;result=WINDOW$'
+    # UEFI Desktop.UpdateUefi draws the FILES tile at x=48..112,y=96..160.
+    Set-QmpPointer $Qmp 80 120
+    Send-QmpMouseClick $Qmp 'left'
+    Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_SHELL_ROUTE=COMPUTER_FILES;result=WINDOW$' ($routeBefore + 1) 6000
+}
+
+function Close-QmpTopWindow {
+    param($Qmp)
+    $closedBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED='
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    $errorMatches = [regex]::Matches($content,
+        '(?m)^APP_RUNTIME_ERROR_WINDOW_BOUNDS=x=(\d+);y=(\d+);w=(\d+)$')
+    if ($errorMatches.Count -gt 0) {
+        $errorBounds = $errorMatches[$errorMatches.Count - 1]
+        $errorX = [int]$errorBounds.Groups[1].Value
+        $errorY = [int]$errorBounds.Groups[2].Value
+        $errorW = [int]$errorBounds.Groups[3].Value
+        Set-QmpPointer $Qmp ($errorX + $errorW - 22) ($errorY - 26)
+        Send-QmpMouseClick $Qmp 'left'
+    } else {
+        Send-QmpMonitorKey $Qmp 'esc'
+    }
+    Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+    Start-Sleep -Milliseconds 160
+}
+
+function Close-QmpComputerFilesWindow {
+    param($Qmp)
+    $closedBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED='
+    # Computer Files is opened by the UEFI shell route at (300,200) with the
+    # default 40px title bar; derive its close-button center from the fixed
+    # 540px shell window width.
+    Set-QmpPointer $Qmp 818 174
+    Send-QmpMouseClick $Qmp 'left'
+    Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+    Start-Sleep -Milliseconds 160
+}
+
+function Send-QmpComputerFilesSearch {
+    param(
+        $Qmp,
+        [int]$WindowX,
+        [int]$WindowY,
+        [string]$Text
+    )
+    # ComputerFiles places its 180px search box at the right side of the
+    # toolbar. Center coordinates are derived from the fixed 540px child
+    # window width and the existing toolbar padding.
+    Set-QmpPointer $Qmp ($WindowX + 442) ($WindowY + 20)
+    Send-QmpMouseClick $Qmp 'left'
+    for ($i = 0; $i -lt $Text.Length; $i++) {
+        Send-QmpMonitorKey $Qmp $Text[$i].ToString().ToLowerInvariant()
+        Start-Sleep -Milliseconds 35
+    }
+    Start-Sleep -Milliseconds 120
+}
+
+function Clear-QmpComputerFilesSearch {
+    param($Qmp, [int]$Length)
+    for ($i = 0; $i -lt $Length; $i++) {
+        Send-QmpMonitorKey $Qmp 'backspace'
+        Start-Sleep -Milliseconds 25
+    }
+    Start-Sleep -Milliseconds 100
+}
+
+function Get-QmpLatestComputerFilesBounds {
+    if (-not (Test-Path -LiteralPath $serialPath)) { return $null }
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    $matches = [regex]::Matches($content,
+        '(?m)^APP_RUNTIME_FILES_WINDOW_BOUNDS=x=(\d+);y=(\d+);w=(\d+);h=(\d+)$')
+    if ($matches.Count -eq 0) { return $null }
+    $match = $matches[$matches.Count - 1]
+    return @{
+        X = [int]$match.Groups[1].Value
+        Y = [int]$match.Groups[2].Value
+        W = [int]$match.Groups[3].Value
+        H = [int]$match.Groups[4].Value
+    }
+}
+
+function Open-QmpFileFromCurrentComputerFiles {
+    param(
+        $Qmp,
+        [ref]$WindowX,
+        [ref]$WindowY,
+        [ValidateSet('ScriptsText', 'ImagesPng', 'ProgramsGxm')]
+        [string]$Fixture
+    )
+
+    # The caller has already selected Hard Disk and passes the resulting
+    # child origin.  Do not replace it with the older shell-window bounds
+    # marker: that would search the drive chooser and make the next click
+    # select the first root item instead of the requested directory.
+    $x = $WindowX.Value
+    $y = $WindowY.Value
+
+    # The Computer Files window uses a 180px left pane and a 48px icon grid.
+    # Every Hard Disk selection creates its child at (+20,+20), so track the
+    # actual nested window origin instead of assuming one global coordinate.
+    if ($Fixture -eq 'ScriptsText') {
+        # The RDSK root is laid out from the registered file order: README.md
+        # is the first tile, followed by the synthesized directory entries.
+        # Scripts is therefore the third tile on the second row for the
+        # 48px icon geometry used by ComputerFiles.
+        $dirBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_FILES_DIR_OPEN=path=Scripts/$'
+        Set-QmpPointer $Qmp ($x + 404) ($y + 180)
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_FILES_DIR_OPEN=path=Scripts/$' ($dirBefore + 1) 6000
+        Set-QmpPointer $Qmp ($x + 232) ($y + 80)
+        $assocBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=notepad\.gxm\.txt;'
+        $fileBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_FILE_OK=path=Scripts/notepad\.gxm\.txt;app=Notepad;'
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=notepad\.gxm\.txt;' ($assocBefore + 1) 6000
+        Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_FILE_OK=path=Scripts/notepad\.gxm\.txt;app=Notepad;' ($fileBefore + 1) 8000
+        # File-dispatched Notepad is placed at the clicked tile (+40,+40),
+        # so derive its title-bar close center from the same child origin.
+        $closedBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED='
+        Set-QmpPointer $Qmp ($x + 926) ($y + 74)
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+        return
+    }
+
+    # Return from the current directory to the drive chooser using the
+    # existing left-pane Computer Files entry (second icon). The row center
+    # is derived from the current window origin and 48px icon pitch.
+    Set-QmpPointer $Qmp ($x + 30) ($y + 145)
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 120
+    # Select Hard Disk in the chooser and open a fresh root child window.
+    Set-QmpPointer $Qmp ($x + 230) ($y + 80)
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 160
+    $bounds = Get-QmpLatestComputerFilesBounds
+    if ($null -ne $bounds) {
+        $x = $bounds.X
+        $y = $bounds.Y
+    } else {
+        $x += 20
+        $y += 20
+    }
+    $WindowX.Value = $x
+    $WindowY.Value = $y
+
+    if ($Fixture -eq 'ImagesPng') {
+        $dirBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_FILES_DIR_OPEN=path=Images/$'
+        # Images is the first tile on the second row of the root grid after
+        # the fresh Hard Disk child is created.
+        Set-QmpPointer $Qmp ($x + 228) ($y + 190)
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_FILES_DIR_OPEN=path=Images/$' ($dirBefore + 1) 6000
+        Set-QmpPointer $Qmp ($x + 232) ($y + 80)
+        $assocBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=audiopause\.png;'
+        $fileBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_FILE_OK=path=Images/audiopause\.png;app=Image Viewer;'
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=audiopause\.png;' ($assocBefore + 1) 6000
+        Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_FILE_OK=path=Images/audiopause\.png;app=Image Viewer;' ($fileBefore + 1) 12000
+        # Desktop reuses its ImageViewer singleton at (400,400), which the
+        # existing screen clamp places at (400,350), with a 600px client
+        # width; close it through the normal title-bar route.
+        $closedBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED='
+        Set-QmpPointer $Qmp 978 324
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+        return
+    }
+
+    $dirBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_FILES_DIR_OPEN=path=Programs/$'
+    # Programs is the middle tile on the second root row.
+    Set-QmpPointer $Qmp ($x + 316) ($y + 190)
+    Send-QmpMouseClick $Qmp 'left'
+    Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_FILES_DIR_OPEN=path=Programs/$' ($dirBefore + 1) 6000
+    Set-QmpPointer $Qmp ($x + 232) ($y + 80)
+    Set-QmpPointer $Qmp ($x + 232) ($y + 80)
+    $assocBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=calculator\.gxm;'
+    $fileBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_FILE_RESULT=path=Programs/calculator\.gxm;app=GXM;'
+    Send-QmpMouseClick $Qmp 'left'
+    Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=calculator\.gxm;' ($assocBefore + 1) 6000
+    Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_FILE_RESULT=path=Programs/calculator\.gxm;app=GXM;' ($fileBefore + 1) 12000
+}
+
+function Send-QmpAppRuntimeWorkload {
+    param($Qmp)
+
+    $apps = @(
+        'Calculator', 'Computer Files', 'Console', 'Devices', 'Disk Manager',
+        'Display Options', 'Firewall', 'Image Viewer', 'Notepad', 'Paint',
+        'Task Manager', 'WAV Player'
+    )
+    for ($i = 0; $i -lt $apps.Count; $i++) {
+        Open-QmpStartApplication $Qmp $apps[$i] $i
+    }
+
+    # Repeated launches of a light and a text application expose duplicate
+    # registrations, stale state, and owner-memory cleanup defects.
+    for ($cycle = 0; $cycle -lt 3; $cycle++) {
+        Open-QmpStartApplication $Qmp 'Calculator' 0
+        Open-QmpStartApplication $Qmp 'Notepad' 8
+    }
+
+    # Exercise the actual desktop shell-object route, then the hard-disk
+    # installer object. In QEMU no USB storage is present, so probe that
+    # unavailable object through Desktop.OnClick's guarded route later.
+    Open-QmpComputerFilesFromHome $Qmp
+    # Computer Files' left-pane root entry is the available UEFI route for
+    # the registered Root shell object. Its geometry is derived from the
+    # 180px navigation pane and the 48px icon pitch in ComputerFiles.OnInput.
+    $rootBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_SHELL_ROUTE=ROOT;result=COMPUTER_FILES_ROOT$'
+    Set-QmpPointer $Qmp 340 325
+    Send-QmpMouseClick $Qmp 'left'
+    Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_SHELL_ROUTE=ROOT;result=COMPUTER_FILES_ROOT$' ($rootBefore + 1) 6000
+    Close-QmpComputerFilesWindow $Qmp
+
+    Open-QmpComputerFilesFromHome $Qmp
+    # Desktop shell route uses a 540px window at (300,200). Hard Disk is the
+    # first chooser tile at (508,256); the fresh child is at (320,220).
+    Set-QmpPointer $Qmp 530 280
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 180
+    # The initial Hard Disk selection above creates the first drive-specific
+    # child at the parent shell window origin plus (20,20).
+    $computerFilesX = 320
+    $computerFilesY = 220
+    Open-QmpFileFromCurrentComputerFiles $Qmp ([ref]$computerFilesX) ([ref]$computerFilesY) 'ScriptsText'
+    Open-QmpFileFromCurrentComputerFiles $Qmp ([ref]$computerFilesX) ([ref]$computerFilesY) 'ImagesPng'
+    Open-QmpFileFromCurrentComputerFiles $Qmp ([ref]$computerFilesX) ([ref]$computerFilesY) 'ProgramsGxm'
+
+    # Close the remaining Computer Files windows until the shell is idle.
+    for ($i = 0; $i -lt 4; $i++) {
+        try { Close-QmpTopWindow $Qmp } catch { break }
+    }
+
+    Set-QmpPointer $Qmp 80 120
+    Start-Sleep -Milliseconds 250
 }
 
 function Reset-QmpPointer {
@@ -844,6 +1227,9 @@ try {
                     Write-Host '  injecting bounded native keyboard/mouse workload' -ForegroundColor Green
                     if ($diagnosticMode -eq 'ContextMenu') {
                         Send-QmpContextMenuWorkload $qmp
+                    } elseif ($isAppRuntimeValidation) {
+                        Send-QmpAppRuntimeWorkload $qmp
+                        $status = 'APP_RUNTIME_COMPLETE'
                     } elseif ($isWidgetValidation) {
                         if ($WidgetSoak) {
                             Send-QmpWidgetSoak $qmp 600
@@ -869,6 +1255,9 @@ try {
                         break
                     }
                     if ($isWidgetValidation) {
+                        break
+                    }
+                    if ($isAppRuntimeValidation) {
                         break
                     }
                 } catch {
@@ -902,7 +1291,7 @@ try {
 
             $faultMatches = [regex]::Matches(
                 $content,
-                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|BACKGROUND_PROBE_FAIL[^\r\n]*|BACKGROUND_ROTATION_FAIL[^\r\n]*|BACKGROUND_PROBE_RENDER_OK=0|BACKGROUND_ROTATION_RENDER_OK=0|FONT_PROBE_FAIL[^\r\n]*|FONT_PROBE_INIT_OK=0|FONT_PROBE_MEASURE_OK=0|FONT_RENDER_OK=0|CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|TASKBAR_CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|TASKBAR_CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|WIDGET_INIT=[^\r\n]*,ok=0|WIDGET_INIT=[^\r\n]*,bounds=0|WIDGET_DRAW=[^\r\n]*bounds=0|WIDGET_MENU_BOUNDS=[^\r\n]*,ok=0|WIDGET_MENU_DRAWN=[^\r\n]*,font=0|WIDGET_RUNTIME_FAULT=[^\r\n]*|CPU_FAULT_[A-Z_]+|#UD|#GP|#PF|GENERAL_PROTECTION|PAGE_FAULT|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
+                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|APP_RUNTIME_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|BACKGROUND_PROBE_FAIL[^\r\n]*|BACKGROUND_ROTATION_FAIL[^\r\n]*|BACKGROUND_PROBE_RENDER_OK=0|BACKGROUND_ROTATION_RENDER_OK=0|FONT_PROBE_FAIL[^\r\n]*|FONT_PROBE_INIT_OK=0|FONT_PROBE_MEASURE_OK=0|FONT_RENDER_OK=0|CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|TASKBAR_CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|TASKBAR_CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|WIDGET_INIT=[^\r\n]*,ok=0|WIDGET_INIT=[^\r\n]*,bounds=0|WIDGET_DRAW=[^\r\n]*bounds=0|WIDGET_MENU_BOUNDS=[^\r\n]*,ok=0|WIDGET_MENU_DRAWN=[^\r\n]*,font=0|WIDGET_RUNTIME_FAULT=[^\r\n]*|CPU_FAULT_[A-Z_]+|#UD|#GP|#PF|GENERAL_PROTECTION|PAGE_FAULT|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
             if ($faultMatches.Count -gt 0) {
                 $faultText = $faultMatches[$faultMatches.Count - 1].Value
                 $status = 'FAULT'
@@ -1227,6 +1616,96 @@ if ($isWidgetValidation) {
     }
 }
 
+$runtimeValidation = $null
+if ($isAppRuntimeValidation) {
+    $runtimeApps = @(
+        'Calculator', 'Computer Files', 'Console', 'Devices', 'Disk Manager',
+        'Display Options', 'Firewall', 'Image Viewer', 'Notepad', 'Paint',
+        'Task Manager', 'WAV Player'
+    )
+    $runtimeSelects = 0
+    $runtimeLaunches = 0
+    foreach ($runtimeApp in $runtimeApps) {
+        $escapedRuntimeApp = [regex]::Escape($runtimeApp)
+        $runtimeSelects += [regex]::Matches($finalContent,
+            '(?m)^APP_RUNTIME_START_SELECT=name=' + $escapedRuntimeApp + ';').Count
+        $runtimeLaunches += [regex]::Matches($finalContent,
+            '(?m)^APP_RUNTIME_LAUNCH_OK=.*;name=' + $escapedRuntimeApp + ';').Count
+    }
+    $runtimeCloses = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_WINDOW_CLOSED=').Count
+    $runtimeAssoc = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_ASSOC_RESOLVE=.*;success=1').Count
+    $runtimeTxt = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_FILE_OK=path=Scripts/notepad\.gxm\.txt;app=Notepad;').Count
+    $runtimePng = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_FILE_OK=path=Images/audiopause\.png;app=Image Viewer;').Count
+    $runtimeGxm = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_FILE_RESULT=path=Programs/calculator\.gxm;app=GXM;').Count
+    $runtimeFileFails = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_FILE_FAIL=').Count
+    $runtimeNegativePass = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_NEGATIVE_[A-Z_]+=PASS').Count
+    $runtimeShellComputer = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_SHELL_ROUTE=COMPUTER_FILES;result=WINDOW$').Count
+    $runtimeShellRoot = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_SHELL_ROUTE=ROOT;result=COMPUTER_FILES_ROOT$').Count
+    $runtimeUsbUnavailable = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_SHELL_ROUTE=USB;result=UNAVAILABLE$').Count
+    $runtimeLaunchFail = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_LAUNCH_FAIL=').Count
+    $runtimeFaults = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_FAULT=').Count
+    $runtimeThreadPoolUnlocked = [regex]::Matches($finalContent,
+        '(?m)^CONTINUOUS_HEARTBEAT_THREADPOOL_LOCKED=0$').Count -gt 0
+    $runtimeBalancedInput =
+        $inputStat.KEY_DROPPED -eq 0 -and
+        $inputStat.MOUSE_DROPPED -eq 0 -and
+        $inputStat.KEY_DOWN -eq $inputStat.KEY_UP -and
+        $inputStat.MOUSE_LEFT_DOWN -eq $inputStat.MOUSE_LEFT_UP
+    $runtimePass =
+        $status -eq 'APP_RUNTIME_COMPLETE' -and
+        $runtimeSelects -ge 15 -and $runtimeLaunches -ge 15 -and
+        $runtimeCloses -ge 15 -and $runtimeAssoc -ge 5 -and
+        $runtimeTxt -ge 1 -and $runtimePng -ge 1 -and $runtimeGxm -ge 1 -and
+        $runtimeFileFails -ge 2 -and $runtimeNegativePass -ge 5 -and
+        $runtimeShellComputer -ge 2 -and $runtimeShellRoot -ge 1 -and
+        $runtimeUsbUnavailable -ge 1 -and $runtimeLaunchFail -ge 1 -and
+        $runtimeFaults -eq 0 -and $runtimeThreadPoolUnlocked -and
+        $runtimeBalancedInput -and $graphicsValid -eq $true
+    $runtimeLastClose = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_WINDOW_CLOSED=.*;memory=(\d+);corrupt=(\d+)')
+    $runtimeMemory = if ($runtimeLastClose.Count -gt 0) {
+        [UInt64]$runtimeLastClose[$runtimeLastClose.Count - 1].Groups[1].Value
+    } else { 0 }
+    $runtimeCorrupt = if ($runtimeLastClose.Count -gt 0) {
+        [UInt64]$runtimeLastClose[$runtimeLastClose.Count - 1].Groups[2].Value
+    } else { 0 }
+    $runtimeValidation = [ordered]@{
+        pass = $runtimePass
+        startSelections = $runtimeSelects
+        successfulLaunches = $runtimeLaunches
+        closedWindows = $runtimeCloses
+        associationResolutions = $runtimeAssoc
+        textOpens = $runtimeTxt
+        pngOpens = $runtimePng
+        gxmResults = $runtimeGxm
+        fileFailures = $runtimeFileFails
+        negativePasses = $runtimeNegativePass
+        computerFilesRoutes = $runtimeShellComputer
+        rootRoutes = $runtimeShellRoot
+        usbUnavailableRoutes = $runtimeUsbUnavailable
+        launchFailures = $runtimeLaunchFail
+        runtimeFaults = $runtimeFaults
+        lastCloseMemory = $runtimeMemory
+        lastCloseCorrupt = $runtimeCorrupt
+        balancedInput = $runtimeBalancedInput
+    }
+    if ($status -eq 'APP_RUNTIME_COMPLETE' -and -not $runtimePass) {
+        $status = 'APP_RUNTIME_VALIDATION_FAILED'
+    }
+}
+
 $startMenuOpenedCount = [regex]::Matches(
     $finalContent, '(?m)^START_MENU_OPENED(?:=|$)').Count
 if ($isStartMenuValidation -and $inputInjected -and $startMenuOpenedCount -lt 1) {
@@ -1237,7 +1716,7 @@ Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '   Validation Summary' -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
-Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
+Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'APP_RUNTIME_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
 Write-Host "Dispatch selected: $dispatchSelected" -ForegroundColor Gray
 Write-Host "Continuous entered: $continuousEntered" -ForegroundColor Gray
 Write-Host "Heartbeats: $heartbeatCount (last frame $lastHeartbeatFrame)" -ForegroundColor Gray
@@ -1275,12 +1754,20 @@ if ($widgetValidation) {
     Write-Host "Desktop/taskbar popups, hover, right input: $($widgetValidation.desktopTaskbarPopup), $($widgetValidation.hover), $($widgetValidation.rightInput)" -ForegroundColor Gray
     Write-Host "Drag start/end, soak timer delta/wall seconds, runtime faults: $($widgetValidation.dragStartEnd), $($widgetValidation.soakTimerDelta)/$($widgetValidation.soakWallSeconds), $($widgetValidation.runtimeFaults)" -ForegroundColor Gray
 }
+if ($runtimeValidation) {
+    Write-Host "App runtime validation: $($runtimeValidation.pass)" -ForegroundColor $(if ($runtimeValidation.pass) { 'Green' } else { 'Red' })
+    Write-Host "Start selections/launches/closes: $($runtimeValidation.startSelections)/$($runtimeValidation.successfulLaunches)/$($runtimeValidation.closedWindows)" -ForegroundColor Gray
+    Write-Host "Associations txt/png/gxm, failures: $($runtimeValidation.associationResolutions), $($runtimeValidation.textOpens)/$($runtimeValidation.pngOpens)/$($runtimeValidation.gxmResults), $($runtimeValidation.fileFailures)" -ForegroundColor Gray
+    Write-Host "Shell Computer Files/Root/USB unavailable: $($runtimeValidation.computerFilesRoutes)/$($runtimeValidation.rootRoutes)/$($runtimeValidation.usbUnavailableRoutes)" -ForegroundColor Gray
+    Write-Host "Negative passes/launch failures/runtime faults: $($runtimeValidation.negativePasses)/$($runtimeValidation.launchFailures)/$($runtimeValidation.runtimeFaults)" -ForegroundColor Gray
+    Write-Host "Last close memory/corruption, balanced input: $($runtimeValidation.lastCloseMemory)/$($runtimeValidation.lastCloseCorrupt), $($runtimeValidation.balancedInput)" -ForegroundColor Gray
+}
 if ($faultText) {
     Write-Host "Fault: $faultText" -ForegroundColor Red
 }
 Write-Host "Serial log: $serialPath" -ForegroundColor Cyan
 
-if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'INPUT_VALIDATION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED', 'WIDGET_VALIDATION_FAILED')) {
+if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'INPUT_VALIDATION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED', 'APP_RUNTIME_VALIDATION_FAILED', 'WIDGET_VALIDATION_FAILED')) {
     exit 1
 }
 exit 0

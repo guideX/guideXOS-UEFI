@@ -183,7 +183,8 @@ namespace guideXOS.DefaultApps {
                 _originalImage = null;
             }
             
-            // Store original
+            // Store original.  Ownership transfers to ImageViewer; callers
+            // must not dispose the image after SetImage returns.
             _originalImage = image;
             
             // Reset zoom and pan

@@ -645,7 +645,7 @@ namespace guideXOS.DefaultApps {
                         Name = name
                     };
                     ToolBtns.Add(btn);
-                    _toolMap[btn] = tool;
+                    _toolMap.Add(btn, tool);
                 }
             } catch {
                 // Ignore button creation error
@@ -663,7 +663,7 @@ namespace guideXOS.DefaultApps {
                         Name = name
                     };
                     SizeBtns.Add(btn);
-                    _sizeMap[btn] = size;
+                    _sizeMap.Add(btn, size);
                 }
             } catch {
                 // Ignore button creation error

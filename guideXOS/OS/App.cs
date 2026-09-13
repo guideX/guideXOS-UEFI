@@ -112,9 +112,26 @@ namespace guideXOS.OS {
         /// <param name="name"></param>
         public bool Load(string name) {
             var b = false;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("LAUNCH_ENTER");
+#endif
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("LAUNCH_NOTIFY_BEGIN");
+#endif
             guideXOS.GUI.NotificationManager.Add(new Notify("Loading App: " + name));
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("LAUNCH_NOTIFY_DONE");
+            Program.MarkUefiAppRuntime("LAUNCH_RESOLVE_BEGIN");
+#endif
             var resolution = AppLaunchResolver.Resolve(name);
             string dispatchName = resolution.Success ? resolution.DispatchName : name;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("LAUNCH_RESOLVE=input=" + (name ?? "") +
+                ";id=" + (resolution.AppId ?? "") +
+                ";kind=" + resolution.ResolvedKind.ToString() +
+                ";dispatch=" + (dispatchName ?? "") +
+                ";success=" + (resolution.Success ? "1" : "0"));
+#endif
             if (AppLaunchResolver.EnableResolutionDiagnostics) {
                 try {
                     guideXOS.GUI.NotificationManager.Add(new Notify(
@@ -135,7 +152,13 @@ namespace guideXOS.OS {
                         case "Paint": _apps[i].AppObject = new Paint(500, 200); b = true; break;
                         case "Notepad": _apps[i].AppObject = new Notepad(360, 200); b = true; break;
                         case "Console": 
-                            if (Program.FConsole == null) Program.FConsole = new FConsole(160, 120); 
+                            if (Program.FConsole == null ||
+                                WindowManager.Windows.IndexOf(Program.FConsole) < 0) {
+                                Program.FConsole = new FConsole(160, 120);
+                            } else {
+                                Program.FConsole.Visible = true;
+                                WindowManager.MoveToEnd(Program.FConsole);
+                            }
                             _apps[i].AppObject = Program.FConsole; b = true; break;
                         case "Task Manager": _apps[i].AppObject = new TaskManager(500, 500); b = true; break;
                         case "nexIRC": _apps[i].AppObject = new nexIRC(260, 220); b = true; break;
@@ -176,9 +199,27 @@ namespace guideXOS.OS {
                             w.TaskbarIcon = _apps[i].Icon;
                             w.ShowInTaskbar = true;
                         }
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                        guideXOS.GUI.Window launchedWindow =
+                            _apps[i].AppObject as guideXOS.GUI.Window;
+                        Program.MarkUefiAppRuntime("LAUNCH_OK=id=" +
+                            (resolution.AppId ?? "") + ";name=" + dispatchName +
+                            ";type=" + (launchedWindow != null ? "WINDOW" :
+                            (_apps[i].AppObject == null ? "NONE" : "NON_WINDOW")) +
+                            ";bounds=" + (launchedWindow == null ? "0,0,0,0" :
+                            launchedWindow.X.ToString() + "," + launchedWindow.Y.ToString() + "," +
+                            launchedWindow.Width.ToString() + "," + launchedWindow.Height.ToString()) +
+                            ";windows=" + WindowManager.Windows.Count.ToString());
+#endif
                     }
                 }
             }
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            if (!b) {
+                Program.MarkUefiAppRuntime("LAUNCH_FAIL=input=" + (name ?? "") +
+                    ";reason=" + (resolution.FailureReason ?? "UNAVAILABLE_IMPLEMENTATION"));
+            }
+#endif
             return b;
         }
         /// <summary>
