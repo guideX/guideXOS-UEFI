@@ -1014,7 +1014,6 @@ unsafe class Program {
             SerialBreadcrumb("APP_RUNTIME_NEGATIVE_UNKNOWN_LOAD=" +
                 (unknownLoad ? "PASS" : "FAIL"));
             SerialBreadcrumb("APP_RUNTIME_NEGATIVE_STAGE=UNKNOWN_LOAD");
-            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_STAGE=UI_NEGATIVES_DEFERRED");
             SerialBreadcrumb("APP_RUNTIME_NEGATIVE_UNKNOWN_ID=" +
                 (!unknownId.Success ? "PASS" : "FAIL"));
             SerialBreadcrumb("APP_RUNTIME_NEGATIVE_UNKNOWN_ALIAS=" +
@@ -1025,7 +1024,6 @@ unsafe class Program {
                 (malformedPath == null ? "PASS" : "FAIL"));
             SerialBreadcrumb("APP_RUNTIME_NEGATIVE_UNKNOWN_SHELL=" +
                 (!unknownShell.Success ? "PASS" : "FAIL"));
-            SerialBreadcrumb("APP_RUNTIME_NEGATIVE_MISSING_FILES=DEFERRED");
         }
 #endif
 

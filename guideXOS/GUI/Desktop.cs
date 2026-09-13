@@ -1021,10 +1021,19 @@ namespace guideXOS.GUI {
                 // route has reached a real GXM fixture.  This keeps the
                 // initial Start-menu interaction free of a modal error window.
                 if (path == "Programs/calculator.gxm") {
+                    // Exercise the live-mode installer shell object through
+                    // the same desktop route as its visible icon. The
+                    // diagnostic workload closes this window before it
+                    // returns to the desktop; production builds do not run
+                    // this probe.
+                    OnClick("Install to Hard Drive", false, 100, 100);
                     OnClick("missing.txt", false, 100, 100);
                     OnClick("missing.png", false, 100, 100);
+                    OnClick("missing.bmp", false, 100, 100);
+                    OnClick("missing.wav", false, 100, 100);
+                    OnClick("missing.mue", false, 100, 100);
                     OnClick("USB Drive 0", false, 100, 100);
-                    Program.MarkUefiAppRuntime("NEGATIVE_MISSING_FILES=2");
+                    Program.MarkUefiAppRuntime("NEGATIVE_FILE_ASSOCIATIONS=5");
                 }
 #endif
                 return true;
@@ -1100,6 +1109,10 @@ namespace guideXOS.GUI {
                 var installer = new guideXOS.DefaultApps.HDInstaller(itemX + 60, itemY + 60);
                 WindowManager.MoveToEnd(installer);
                 installer.Visible = true;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("INSTALLER_BOUNDS=x=" + installer.X.ToString() +
+                    ";y=" + installer.Y.ToString() + ";w=" + installer.Width.ToString());
+#endif
                 IndexClicked = -1;
                 return;
             }

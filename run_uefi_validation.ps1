@@ -816,9 +816,36 @@ function Send-QmpAppRuntimeWorkload {
     Open-QmpFileFromCurrentComputerFiles $Qmp ([ref]$computerFilesX) ([ref]$computerFilesY) 'ProgramsGxm'
 
     # Close the remaining Computer Files windows until the shell is idle.
-    for ($i = 0; $i -lt 4; $i++) {
+    for ($i = 0; $i -lt 6; $i++) {
         try { Close-QmpTopWindow $Qmp } catch { break }
     }
+
+    # The diagnostic shell probe creates the installer before the bounded
+    # missing-file MessageBox probes. Close it from its actual runtime bounds
+    # after the final error window is dismissed; this avoids stale error
+    # bounds and proves the installer lifecycle explicitly.
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    $installerBounds = [regex]::Matches($content,
+        '(?m)^APP_RUNTIME_INSTALLER_BOUNDS=x=(\d+);y=(\d+);w=(\d+)$')
+    if ($installerBounds.Count -eq 0) { throw 'Installer runtime bounds marker was not emitted.' }
+    $installerMatch = $installerBounds[$installerBounds.Count - 1]
+    $installerX = [int]$installerMatch.Groups[1].Value
+    $installerY = [int]$installerMatch.Groups[2].Value
+    $installerW = [int]$installerMatch.Groups[3].Value
+    # Window.BarHeight is 40 and the close-button center is six pixels above
+    # the title-bar midpoint used by the existing close helper.
+    Set-QmpPointer $Qmp ($installerX + $installerW - 22) ($installerY - 26)
+    Send-QmpMouseClick $Qmp 'left'
+    # Serial output is buffered by QEMU; the final validation pass below
+    # asserts the exact close marker after the guest has drained the click.
+    Start-Sleep -Milliseconds 1200
+
+    # If the final close click was still in the guest's native input queue,
+    # explicitly drain the release transition before ending the workload.
+    # PS/2 transition accounting ignores a duplicate release when no button is
+    # held, so this is safe in both states and prevents captured input.
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $false))
+    Start-Sleep -Milliseconds 300
 
     Set-QmpPointer $Qmp 80 120
     Start-Sleep -Milliseconds 250
@@ -1642,6 +1669,14 @@ if ($isAppRuntimeValidation) {
         '(?m)^APP_RUNTIME_FILE_OK=path=Images/audiopause\.png;app=Image Viewer;').Count
     $runtimeGxm = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_FILE_RESULT=path=Programs/calculator\.gxm;app=GXM;').Count
+    $runtimeBmp = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=missing\.bmp;ext=\.bmp;.*;success=1$').Count
+    $runtimeWav = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=missing\.wav;ext=\.wav;.*;success=1$').Count
+    $runtimeMue = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=missing\.mue;ext=\.mue;.*;success=1$').Count
+    $runtimeFileAssocMarker = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_NEGATIVE_FILE_ASSOCIATIONS=5$').Count
     $runtimeFileFails = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_FILE_FAIL=').Count
     $runtimeNegativePass = [regex]::Matches($finalContent,
@@ -1650,6 +1685,10 @@ if ($isAppRuntimeValidation) {
         '(?m)^APP_RUNTIME_SHELL_ROUTE=COMPUTER_FILES;result=WINDOW$').Count
     $runtimeShellRoot = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_SHELL_ROUTE=ROOT;result=COMPUTER_FILES_ROOT$').Count
+    $runtimeInstaller = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_SHELL_ROUTE=INSTALLER;result=HD_INSTALLER$').Count
+    $runtimeInstallerClosed = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_WINDOW_CLOSED=title=Install guideXOS to Hard Drive;').Count
     $runtimeUsbUnavailable = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_SHELL_ROUTE=USB;result=UNAVAILABLE$').Count
     $runtimeLaunchFail = [regex]::Matches($finalContent,
@@ -1666,10 +1705,14 @@ if ($isAppRuntimeValidation) {
     $runtimePass =
         $status -eq 'APP_RUNTIME_COMPLETE' -and
         $runtimeSelects -ge 15 -and $runtimeLaunches -ge 15 -and
-        $runtimeCloses -ge 15 -and $runtimeAssoc -ge 5 -and
+        $runtimeCloses -ge 15 -and $runtimeAssoc -ge 8 -and
         $runtimeTxt -ge 1 -and $runtimePng -ge 1 -and $runtimeGxm -ge 1 -and
-        $runtimeFileFails -ge 2 -and $runtimeNegativePass -ge 5 -and
+        $runtimeBmp -ge 1 -and $runtimeWav -ge 1 -and $runtimeMue -ge 1 -and
+        $runtimeFileFails -ge 5 -and $runtimeFileAssocMarker -ge 1 -and
+        $runtimeNegativePass -ge 5 -and
         $runtimeShellComputer -ge 2 -and $runtimeShellRoot -ge 1 -and
+        $runtimeInstaller -ge 1 -and
+        $runtimeInstallerClosed -ge 1 -and
         $runtimeUsbUnavailable -ge 1 -and $runtimeLaunchFail -ge 1 -and
         $runtimeFaults -eq 0 -and $runtimeThreadPoolUnlocked -and
         $runtimeBalancedInput -and $graphicsValid -eq $true
@@ -1689,11 +1732,17 @@ if ($isAppRuntimeValidation) {
         associationResolutions = $runtimeAssoc
         textOpens = $runtimeTxt
         pngOpens = $runtimePng
+        bmpDispatches = $runtimeBmp
+        wavDispatches = $runtimeWav
         gxmResults = $runtimeGxm
+        mueDispatches = $runtimeMue
         fileFailures = $runtimeFileFails
+        fileAssociationNegativeMarker = $runtimeFileAssocMarker
         negativePasses = $runtimeNegativePass
         computerFilesRoutes = $runtimeShellComputer
         rootRoutes = $runtimeShellRoot
+        installerRoutes = $runtimeInstaller
+        installerClosed = $runtimeInstallerClosed
         usbUnavailableRoutes = $runtimeUsbUnavailable
         launchFailures = $runtimeLaunchFail
         runtimeFaults = $runtimeFaults
@@ -1757,8 +1806,8 @@ if ($widgetValidation) {
 if ($runtimeValidation) {
     Write-Host "App runtime validation: $($runtimeValidation.pass)" -ForegroundColor $(if ($runtimeValidation.pass) { 'Green' } else { 'Red' })
     Write-Host "Start selections/launches/closes: $($runtimeValidation.startSelections)/$($runtimeValidation.successfulLaunches)/$($runtimeValidation.closedWindows)" -ForegroundColor Gray
-    Write-Host "Associations txt/png/gxm, failures: $($runtimeValidation.associationResolutions), $($runtimeValidation.textOpens)/$($runtimeValidation.pngOpens)/$($runtimeValidation.gxmResults), $($runtimeValidation.fileFailures)" -ForegroundColor Gray
-    Write-Host "Shell Computer Files/Root/USB unavailable: $($runtimeValidation.computerFilesRoutes)/$($runtimeValidation.rootRoutes)/$($runtimeValidation.usbUnavailableRoutes)" -ForegroundColor Gray
+    Write-Host "Associations txt/png/bmp/wav/gxm/mue, failures: $($runtimeValidation.associationResolutions), $($runtimeValidation.textOpens)/$($runtimeValidation.pngOpens)/$($runtimeValidation.bmpDispatches)/$($runtimeValidation.wavDispatches)/$($runtimeValidation.gxmResults)/$($runtimeValidation.mueDispatches), $($runtimeValidation.fileFailures)" -ForegroundColor Gray
+    Write-Host "Shell Computer Files/Root/Installer/InstallerClosed/USB unavailable: $($runtimeValidation.computerFilesRoutes)/$($runtimeValidation.rootRoutes)/$($runtimeValidation.installerRoutes)/$($runtimeValidation.installerClosed)/$($runtimeValidation.usbUnavailableRoutes)" -ForegroundColor Gray
     Write-Host "Negative passes/launch failures/runtime faults: $($runtimeValidation.negativePasses)/$($runtimeValidation.launchFailures)/$($runtimeValidation.runtimeFaults)" -ForegroundColor Gray
     Write-Host "Last close memory/corruption, balanced input: $($runtimeValidation.lastCloseMemory)/$($runtimeValidation.lastCloseCorrupt), $($runtimeValidation.balancedInput)" -ForegroundColor Gray
 }
