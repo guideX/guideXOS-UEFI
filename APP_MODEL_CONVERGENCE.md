@@ -1093,11 +1093,11 @@ Read-only inspection covered:
 The architecture relies on the supplied and existing runtime proof for the
 current C# baseline. It does not claim that this phase re-ran QEMU/UEFI.
 
-## 16. Change control
+## 16. Change control for the architecture investigation
 
 - Server modified: **No**.
 - Legacy modified: **No**.
-- C# runtime/code modified: **No**.
+- C# runtime/code modified during the architecture investigation: **No**.
 - Tracked architecture document added: **Yes**, this file.
 - Commit created: **No**.
 - Push performed: **No**.
@@ -1105,3 +1105,49 @@ current C# baseline. It does not claim that this phase re-ran QEMU/UEFI.
 The next coding phase should begin from the same clean C# baseline and treat
 this document as the design checkpoint before adding the Phase 1 adapter.
 
+## 17. Phase 1 implementation status — semantic descriptor and launch-request adapters
+
+Phase 1 is implemented in the C# UEFI repository as a compatibility seam over
+the existing runtime.  The following common concepts now exist:
+
+- `ApplicationDescriptor` and `ApplicationDescriptorRegistry` project the
+  canonical twelve legacy registrations into bounded, read-only semantic
+  metadata with stable IDs, aliases, resource keys, application class,
+  associations, launch-entry metadata, and shell policy.
+- `LaunchRequest` carries an application ID or alias, bounded arguments,
+  document, verb, source shell-object ID, target kind, typed shell target, and
+  activation intent without referencing `Window`, renderer state, Start, or
+  taskbar objects.
+- `LaunchResult` and `LaunchErrorCode` provide the bounded result vocabulary
+  from this document.  `InstanceId` remains intentionally unset because the
+  application-instance lifecycle is deferred.
+- `ApplicationAssociationRegistry`, `ModernFileAssociationAdapter`, and
+  `ModernShellAdapter` project the existing association and shell registries
+  into common request/target values.
+- `AppLaunchCompatibilityAdapter` resolves modern application requests and
+  dispatches them to the existing `AppCollection` backend.  The old
+  `AppCollection.Load(string)` remains the public compatibility facade.
+
+The following are compatibility adapters only and still use legacy behavior:
+
+- Start ordering and the twelve `App` objects remain the existing C# list.
+- Built-in creation, window ownership, taskbar registration, focus return,
+  helper-window reuse, and visible error UI remain in the existing
+  `AppCollection` and `Desktop` implementations.
+- File opening still uses the existing direct Notepad, Image Viewer, WAV
+  Player, and GXM helpers after the request is constructed.
+- GXM still uses `GXMLoader` and `GXMScriptWindow`; it is represented as a
+  typed GXM document target rather than moved to a new backend.
+- Shell-object execution still uses the existing Computer Files, Root, USB,
+  and installer routes.  The typed shell request records the route context but
+  does not replace its execution policy.
+
+Phase 1 validation adds deterministic projection, alias, association,
+document/argument/source preservation, unknown-target, malformed-request, and
+typed shell-request checks to the AppModel self-test.  It does not introduce
+the application-instance lifecycle, descriptor discovery, process support,
+window migration, or taskbar/Start redesign.  Those remain Phase 2 and later
+work.  The implementation must be considered complete only after the full
+AppModel, AppRuntime, NativeInput, ContextMenu, and production continuous-boot
+matrix is green; a host-side selector failure is reported separately from a
+guest runtime regression.

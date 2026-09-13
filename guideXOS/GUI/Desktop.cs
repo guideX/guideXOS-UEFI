@@ -933,7 +933,18 @@ namespace guideXOS.GUI {
     }
 
         private static bool TryOpenAssociatedFile(string path, string name,
+                                                   string sourceShellObjectId,
                                                    int itemX, int itemY) {
+            ApplicationAssociation modernAssociation;
+            LaunchRequest request;
+            LaunchResult requestFailure;
+            if (!ModernFileAssociationAdapter.TryCreateLaunchRequest(
+                    path, sourceShellObjectId, out modernAssociation,
+                    out request, out requestFailure)) return false;
+
+            // Keep the existing resolution object for the proven direct
+            // handlers and visible error behavior.  The typed request above
+            // is now the semantic input to this compatibility route.
             FileAssociationResolution association =
                 FileAssociationRegistry.ResolvePath(name);
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
@@ -942,11 +953,15 @@ namespace guideXOS.GUI {
                 ";app=" + (association.AppId ?? "") +
                 ";kind=" + association.Kind.ToString() +
                 ";success=" + (association.Success ? "1" : "0"));
+            Program.MarkUefiAppRuntime("ASSOC_REQUEST=target=" +
+                (request.TargetAppId ?? "") + ";document=" +
+                (request.Document ?? "") + ";source=" +
+                (request.SourceShellObjectId ?? ""));
 #endif
-            if (!association.Success) return false;
+            if (!association.Success || modernAssociation == null) return false;
 
             if (association.Kind == AppKind.FileAssociation &&
-                association.DispatchName == "Image Viewer") {
+                request.TargetAppId == "gxos.builtin.imageviewer") {
                 byte[] buffer = File.ReadAllBytes(path);
                 if (buffer == null) {
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
@@ -978,7 +993,7 @@ namespace guideXOS.GUI {
             }
 
             if (association.Kind == AppKind.FileAssociation &&
-                association.DispatchName == "Notepad") {
+                request.TargetAppId == "gxos.builtin.notepad") {
                 Notepad notepad = new Notepad(itemX + 40, itemY + 40);
                 if (!notepad.OpenFile(path)) {
                     notepad.Visible = false;
@@ -997,7 +1012,7 @@ namespace guideXOS.GUI {
                 return true;
             }
 
-            if (association.Kind == AppKind.GxmApp) {
+            if (request.TargetKind == LaunchRequestTargetKind.GxmDocument) {
                 byte[] buffer = File.ReadAllBytes(path);
                 if (buffer == null) {
                     ShowOpenError(itemX + 60, itemY + 60, "Unable to read executable.");
@@ -1040,7 +1055,7 @@ namespace guideXOS.GUI {
             }
 
             if (association.Kind == AppKind.FileAssociation &&
-                association.DispatchName == "WAV Player") {
+                request.TargetAppId == "gxos.builtin.wavplayer") {
                 if (!Audio.HasAudioDevice) {
                     ShowOpenError(itemX + 75, itemY + 75,
                         "Audio controller is unavailable!");
@@ -1082,10 +1097,23 @@ namespace guideXOS.GUI {
         public static void OnClick(string name, bool isDirectory, int itemX, int itemY) {
             ClickLock = true;
             var shellObject = ShellObjectRegistry.Resolve(name);
+            ShellObjectTarget shellTarget;
+            LaunchRequest shellRequest;
+            ShellObjectResolution typedShellResolution;
+            LaunchResult shellRequestFailure;
+            bool typedShellRequest = ModernShellAdapter.TryCreateLaunchRequest(
+                name, out shellTarget, out shellRequest,
+                out typedShellResolution, out shellRequestFailure);
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
             Program.MarkUefiAppRuntime("SHELL_RESOLVE=name=" + (name ?? "") +
                 ";kind=" + shellObject.Kind.ToString() +
-                ";success=" + (shellObject.Success ? "1" : "0"));
+                ";success=" + (shellObject.Success ? "1" : "0") +
+                ";typed=" + (typedShellRequest ? "1" : "0") +
+                ";id=" + (shellTarget == null ? "" : shellTarget.ShellObjectId) +
+                ";source=" + (shellRequest == null ? "" :
+                    (shellRequest.SourceShellObjectId ?? "")) +
+                ";target=" + (shellRequest == null ? "" :
+                    (shellRequest.TargetAppId ?? "")));
 #endif
             // Special desktop controls
             if (shellObject.Success && shellObject.Kind == ShellObjectKind.FileSystemLocation && HomeMode) {
@@ -1173,7 +1201,9 @@ namespace guideXOS.GUI {
                 if (_customPosIds != null) _customPosIds.Clear();
                 if (_customPosX != null) _customPosX.Clear();
                 if (_customPosY != null) _customPosY.Clear();
-            } else if (!TryOpenAssociatedFile(path, name, itemX, itemY)) {
+            } else if (!TryOpenAssociatedFile(path, name,
+                       shellObject.Success ? shellObject.ShellId : null,
+                       itemX, itemY)) {
                 if (Apps == null) InitializeAppModel();
                 if (!Apps.Load(name)) {
                     ShowOpenError(itemX + 75, itemY + 75,

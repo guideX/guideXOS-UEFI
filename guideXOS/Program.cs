@@ -1857,14 +1857,21 @@ unsafe class Program {
                 failure = "FILE_ASSOCIATION";
             } else if (!ShellObjectRegistry.RunSelfTest()) {
                 failure = "SHELL_OBJECT";
+            } else if (!ApplicationDescriptorRegistry.RunSelfTest()) {
+                failure = "MODERN_DESCRIPTOR_REQUEST";
             } else {
                 SerialBreadcrumb("APP_MODEL_APP_COUNT=" + Desktop.Apps.Length.ToString());
+                SerialBreadcrumb("APP_MODEL_MODERN_DESCRIPTOR_COUNT=" +
+                    ApplicationDescriptorRegistry.Count.ToString());
+                SerialBreadcrumb("APP_MODEL_MODERN_DESCRIPTOR_VALID=" +
+                    (ApplicationDescriptorRegistry.IsValid ? "1" : "0"));
                 SerialBreadcrumb("APP_MODEL_ALIAS_OK=" +
                     (AppLaunchResolver.Resolve("File Explorer").Success ? "1" : "0"));
                 SerialBreadcrumb("APP_MODEL_ASSOCIATION_OK=" +
                     (FileAssociationRegistry.ResolvePath("README.TXT").Success ? "1" : "0"));
                 SerialBreadcrumb("APP_MODEL_SHELL_OK=" +
                     (ShellObjectRegistry.Resolve("USB Drive 0").Success ? "1" : "0"));
+                SerialBreadcrumb("APP_MODEL_MODERN_REQUEST_OK=1");
             }
         } catch {
             failure = "EXCEPTION";

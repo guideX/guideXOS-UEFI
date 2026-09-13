@@ -81,6 +81,10 @@ namespace guideXOS.OS {
         /// </summary>
         private void LoadDefaultApps() {
             AppLaunchResolver.InitializeDefaultDescriptors();
+            // Build the immutable semantic projection at the same safe,
+            // post-EBS initialization point as the existing app collection.
+            // The legacy list below remains the Start/UI compatibility list.
+            ApplicationDescriptorRegistry.Initialize();
             _apps.Add(new App("Calculator", Icons.CalculatorIcon(32)));
             _apps.Add(new App("Computer Files", Icons.FolderIcon(32)));
             _apps.Add(new App("Console", Icons.EditIcon(32)));
@@ -110,37 +114,12 @@ namespace guideXOS.OS {
         /// Load
         /// </summary>
         /// <param name="name"></param>
-        public bool Load(string name) {
+        internal bool LoadLegacyBackend(LaunchRequest request,
+                                        AppLaunchResolution resolution) {
             var b = false;
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-            Program.MarkUefiAppRuntime("LAUNCH_ENTER");
-#endif
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-            Program.MarkUefiAppRuntime("LAUNCH_NOTIFY_BEGIN");
-#endif
-            guideXOS.GUI.NotificationManager.Add(new Notify("Loading App: " + name));
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-            Program.MarkUefiAppRuntime("LAUNCH_NOTIFY_DONE");
-            Program.MarkUefiAppRuntime("LAUNCH_RESOLVE_BEGIN");
-#endif
-            var resolution = AppLaunchResolver.Resolve(name);
-            string dispatchName = resolution.Success ? resolution.DispatchName : name;
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-            Program.MarkUefiAppRuntime("LAUNCH_RESOLVE=input=" + (name ?? "") +
-                ";id=" + (resolution.AppId ?? "") +
-                ";kind=" + resolution.ResolvedKind.ToString() +
-                ";dispatch=" + (dispatchName ?? "") +
-                ";success=" + (resolution.Success ? "1" : "0"));
-#endif
-            if (AppLaunchResolver.EnableResolutionDiagnostics) {
-                try {
-                    guideXOS.GUI.NotificationManager.Add(new Notify(
-                        "input=" + name + " resolvedAppId=" +
-                        (resolution.AppId ?? "") + " resolvedKind=" +
-                        resolution.ResolvedKind + " dispatchName=" +
-                        (dispatchName ?? "") + " success=" + resolution.Success));
-                } catch { }
-            }
+            string name = request == null ? null : request.TargetNameOrAlias;
+            string dispatchName = resolution != null && resolution.Success
+                ? resolution.DispatchName : name;
             for (int i = 0; i < _apps.Count; i++) {
                 if (_apps[i].Name == dispatchName) {
                     switch (dispatchName) {
@@ -222,6 +201,92 @@ namespace guideXOS.OS {
 #endif
             return b;
         }
+
+        /// <summary>
+        /// Compatibility facade retained for all current callers.  It creates
+        /// a common request, resolves it through the modern descriptor
+        /// projection, then invokes the unchanged managed backend above.
+        /// </summary>
+        public bool Load(string name) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("LAUNCH_ENTER");
+            Program.MarkUefiAppRuntime("LAUNCH_NOTIFY_BEGIN");
+#endif
+            guideXOS.GUI.NotificationManager.Add(new Notify("Loading App: " + name));
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("LAUNCH_NOTIFY_DONE");
+            Program.MarkUefiAppRuntime("LAUNCH_RESOLVE_BEGIN");
+#endif
+            LaunchRequest request = LaunchRequest.ForName(name);
+            AppLaunchResolution resolution;
+            ApplicationDescriptor modernDescriptor;
+            LaunchResult resolutionFailure;
+            bool canDispatch = AppLaunchCompatibilityAdapter.TryResolveForLegacyCollection(
+                this, request, out resolution, out modernDescriptor,
+                out resolutionFailure);
+            string dispatchName = resolution != null && resolution.Success
+                ? resolution.DispatchName : name;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("LAUNCH_RESOLVE=input=" + (name ?? "") +
+                ";id=" + (resolution == null ? "" : (resolution.AppId ?? "")) +
+                ";kind=" + (resolution == null ? AppKind.Unknown.ToString() :
+                    resolution.ResolvedKind.ToString()) +
+                ";dispatch=" + (dispatchName ?? "") +
+                ";success=" + (resolution != null && resolution.Success ? "1" : "0"));
+            Program.MarkUefiAppRuntime("LAUNCH_REQUEST=target=" +
+                (request.TargetAppId ?? "") + ";name=" +
+                (request.TargetNameOrAlias ?? "") + ";document=" +
+                (request.Document ?? "") + ";args=" +
+                request.ArgumentCount.ToString() + ";source=" +
+                (request.SourceShellObjectId ?? "") + ";intent=" +
+                request.ActivationIntent.ToString());
+            Program.MarkUefiAppRuntime("LAUNCH_ADAPTER=modern;descriptor=" +
+                (modernDescriptor == null ? "" : modernDescriptor.AppId) +
+                ";resolution=" + (canDispatch ? "1" : "0"));
+#endif
+            if (AppLaunchResolver.EnableResolutionDiagnostics) {
+                try {
+                    guideXOS.GUI.NotificationManager.Add(new Notify(
+                        "input=" + name + " resolvedAppId=" +
+                        (resolution == null ? "" : (resolution.AppId ?? "")) +
+                        " resolvedKind=" + (resolution == null ? AppKind.Unknown :
+                        resolution.ResolvedKind) + " dispatchName=" +
+                        (dispatchName ?? "") + " success=" +
+                        (resolution != null && resolution.Success)));
+                } catch { }
+            }
+            if (!canDispatch) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("LAUNCH_RESULT=code=" +
+                    (resolutionFailure == null ? LaunchErrorCode.NotFound.ToString() :
+                        resolutionFailure.ErrorCode.ToString()) + ";success=0");
+                Program.MarkUefiAppRuntime("LAUNCH_FAIL=input=" + (name ?? "") +
+                    ";reason=" + (resolutionFailure == null ?
+                        "UNAVAILABLE_IMPLEMENTATION" :
+                        (resolutionFailure.BoundedDiagnostic ?? "NOT_FOUND")));
+#endif
+                return false;
+            }
+
+            LaunchResult result = AppLaunchCompatibilityAdapter.DispatchToLegacyBackend(
+                this, request, resolution);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("LAUNCH_RESULT=code=" +
+                result.ErrorCode.ToString() + ";success=" +
+                (result.Success ? "1" : "0") + ";app=" +
+                (result.AppId ?? ""));
+#endif
+            return result.Success;
+        }
+
+        internal bool HasLegacyAppName(string name) {
+            if (string.IsNullOrEmpty(name)) return false;
+            for (int i = 0; i < _apps.Count; i++) {
+                if (_apps[i].Name == name) return true;
+            }
+            return false;
+        }
+
         /// <summary>
         /// Launch GXM app from file
         /// </summary>

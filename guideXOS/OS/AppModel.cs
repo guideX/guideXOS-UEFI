@@ -152,6 +152,22 @@ namespace guideXOS.OS {
             return false;
         }
 
+        // Internal enumeration is the narrow bridge used by the immutable
+        // modern descriptor projection.  AppLaunchResolver remains the
+        // compatibility source for IDs, aliases, and their established order.
+        internal static int DescriptorCount {
+            get {
+                InitializeDefaultDescriptors();
+                return _descriptors.Count;
+            }
+        }
+
+        internal static AppDescriptor GetDescriptorAt(int index) {
+            InitializeDefaultDescriptors();
+            if (index < 0 || index >= _descriptors.Count) return null;
+            return _descriptors[index];
+        }
+
         private static bool StringEqualsIgnoreCase(string a, string b) {
             if (a == null || b == null || a.Length != b.Length) return false;
             for (int i = 0; i < a.Length; i++) {
@@ -263,6 +279,21 @@ namespace guideXOS.OS {
                 AppId = appId,
                 Kind = kind
             });
+        }
+
+        // Internal enumeration is used only to project the canonical
+        // association table into the Phase 1 common contract.
+        internal static int DescriptorCount {
+            get {
+                InitializeDefaultAssociations();
+                return _descriptors.Count;
+            }
+        }
+
+        internal static FileAssociationDescriptor GetDescriptorAt(int index) {
+            InitializeDefaultAssociations();
+            if (index < 0 || index >= _descriptors.Count) return null;
+            return _descriptors[index];
         }
 
         public static FileAssociationResolution Resolve(string extension) {
