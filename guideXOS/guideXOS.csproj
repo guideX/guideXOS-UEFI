@@ -69,6 +69,18 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'WidgetSoak'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET_SOAK</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'WidgetOnlyPerformance'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET;UEFI_DIAGNOSTIC_WIDGET_ONLY_PERFORMANCE</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'WidgetOnlyClock'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET;UEFI_DIAGNOSTIC_WIDGET_ONLY_CLOCK</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'WidgetOnlyMonitor'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET;UEFI_DIAGNOSTIC_WIDGET_ONLY_MONITOR</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'WidgetOnlyUptime'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET;UEFI_DIAGNOSTIC_WIDGET_ONLY_UPTIME</DefineConstants>
+	</PropertyGroup>
 
 	<Target Name="PrepareForILLink">
 	</Target>

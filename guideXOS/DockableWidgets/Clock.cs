@@ -103,24 +103,22 @@ namespace guideXOS.DockableWidgets {
         }
         
         public override void DrawContent(int contentX, int contentY, int contentWidth) {
-            // FIXED: Cache time string and only update when minute changes to prevent per-frame allocations
-            if (_cachedTimeString == null || _lastMinute != RTC.Minute || _lastHour != RTC.Hour) {
+            // Cache time text and rebuild it only when the displayed minute changes.
+            int currentHour = RTC.Hour;
+            int currentMinute = RTC.Minute;
+            if (_cachedTimeString == null || _lastMinute != currentMinute || _lastHour != currentHour) {
                 // Dispose old cached string
                 if (_cachedTimeString != null) {
                     _cachedTimeString.Dispose();
                 }
                 
-                // Create new time string
-                string shour = RTC.Hour.ToString();
-                string sminute = RTC.Minute < 10 ? "0" + RTC.Minute.ToString() : RTC.Minute.ToString();
-                _cachedTimeString = shour + ":" + sminute; // Removed seconds from display
-                
-                // Dispose temporary strings
-                shour.Dispose();
-                sminute.Dispose();
-                
-                _lastMinute = RTC.Minute;
-                _lastHour = RTC.Hour;
+                // Build the five-character display directly.  The custom
+                // runtime does not reclaim managed temporaries, so avoid
+                // ToString()/concatenation intermediates here.
+                _cachedTimeString = FormatTime(currentHour, currentMinute);
+
+                _lastMinute = currentMinute;
+                _lastHour = currentHour;
             }
             if (_lastSecond != RTC.Second) {
                 _lastSecond = RTC.Second;
@@ -141,6 +139,17 @@ namespace guideXOS.DockableWidgets {
             int hour = (RTC.Hour >= 12 ? RTC.Hour - 12 : RTC.Hour) * 30;
             DrawHand(centerX, centerY, hour, contentWidth / 6, 0xFFFFFFFF);
         }
+
+        private static unsafe string FormatTime(int hour, int minute) {
+            char* buffer = stackalloc char[5];
+            int length = 0;
+            if (hour >= 10) buffer[length++] = (char)('0' + hour / 10);
+            buffer[length++] = (char)('0' + hour % 10);
+            buffer[length++] = ':';
+            buffer[length++] = (char)('0' + minute / 10);
+            buffer[length++] = (char)('0' + minute % 10);
+            return new string(buffer, 0, length);
+        }
         
         /// <summary>
         /// Draw Hand
@@ -152,39 +161,37 @@ namespace guideXOS.DockableWidgets {
         /// <param name="color"></param>
         void DrawHand(int xStart, int yStart, int angle, int radius, uint color) {
             if (angle >= 0 && angle <= 360) {
-                lock (this) {
-                    angle /= 6;
-                    int xEnd, yEnd, quadrant, x_flip, y_flip;
-                    quadrant = angle / 15;
-                    switch (quadrant) {
-                        case 0:
-                            x_flip = 1;
-                            y_flip = -1;
-                            break;
-                        case 1:
-                            angle = Math.Abs(angle - 30);
-                            x_flip = y_flip = 1;
-                            break;
-                        case 2:
-                            angle = angle - 30;
-                            x_flip = -1;
-                            y_flip = 1;
-                            break;
-                        case 3:
-                            angle = Math.Abs(angle - 60);
-                            x_flip = y_flip = -1;
-                            break;
-                        default:
-                            x_flip = y_flip = 1;
-                            break;
-                    }
-                    if (angle > sine.Length - 1) { } else {
-                        xEnd = xStart;
-                        yEnd = yStart;
-                        xEnd += x_flip * (sine[angle] * radius >> 8);
-                        yEnd += y_flip * (sine[15 - angle] * radius >> 8);
-                        Framebuffer.Graphics.DrawLine(xStart, yStart, xEnd, yEnd, color);
-                    }
+                angle /= 6;
+                int xEnd, yEnd, quadrant, x_flip, y_flip;
+                quadrant = angle / 15;
+                switch (quadrant) {
+                    case 0:
+                        x_flip = 1;
+                        y_flip = -1;
+                        break;
+                    case 1:
+                        angle = Math.Abs(angle - 30);
+                        x_flip = y_flip = 1;
+                        break;
+                    case 2:
+                        angle = angle - 30;
+                        x_flip = -1;
+                        y_flip = 1;
+                        break;
+                    case 3:
+                        angle = Math.Abs(angle - 60);
+                        x_flip = y_flip = -1;
+                        break;
+                    default:
+                        x_flip = y_flip = 1;
+                        break;
+                }
+                if (angle > sine.Length - 1) { } else {
+                    xEnd = xStart;
+                    yEnd = yStart;
+                    xEnd += x_flip * (sine[angle] * radius >> 8);
+                    yEnd += y_flip * (sine[15 - angle] * radius >> 8);
+                    Framebuffer.Graphics.DrawLine(xStart, yStart, xEnd, yEnd, color);
                 }
             }
         }

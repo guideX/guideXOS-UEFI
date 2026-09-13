@@ -325,7 +325,7 @@ unsafe class Program {
         else if (name == "Monitor") count = ++_uefiWidgetUpdateMonitor;
         else if (name == "Uptime") count = ++_uefiWidgetUpdateUptime;
         if (count == 1 || count == 2 || count == 3 || (count % 10) == 0) {
-            SerialBreadcrumb("WIDGET_UPDATE=" + name + ",count=" + count.ToString());
+            SerialWidgetUpdate(name, count);
         }
         if (name == "PerformanceWidget" && count == 1) {
             SerialBreadcrumb("WIDGET_PROBE_UPDATE_OK");
@@ -1141,6 +1141,7 @@ unsafe class Program {
         int widgetX = Framebuffer.Width - 220;
         int widgetY = 80;
 
+#if !UEFI_DIAGNOSTIC_WIDGET_ONLY_CLOCK && !UEFI_DIAGNOSTIC_WIDGET_ONLY_MONITOR && !UEFI_DIAGNOSTIC_WIDGET_ONLY_UPTIME
         try {
             PerfWidget = new PerformanceWidget();
             PerfWidget.Visible = false;
@@ -1155,7 +1156,9 @@ unsafe class Program {
             MarkUefiWidgetInitialization("PerformanceWidget", false, 0, 0, 0, 0);
             BootConsole.WriteLine("[WIDGETS] PerformanceWidget skipped");
         }
+#endif
 
+#if !UEFI_DIAGNOSTIC_WIDGET_ONLY_PERFORMANCE && !UEFI_DIAGNOSTIC_WIDGET_ONLY_MONITOR && !UEFI_DIAGNOSTIC_WIDGET_ONLY_UPTIME
         try {
             ClockWidget = new Clock(widgetX, widgetY);
             ClockWidget.Visible = false;
@@ -1168,7 +1171,9 @@ unsafe class Program {
             MarkUefiWidgetInitialization("Clock", false, 0, 0, 0, 0);
             BootConsole.WriteLine("[WIDGETS] Clock skipped");
         }
+#endif
 
+#if !UEFI_DIAGNOSTIC_WIDGET_ONLY_PERFORMANCE && !UEFI_DIAGNOSTIC_WIDGET_ONLY_CLOCK && !UEFI_DIAGNOSTIC_WIDGET_ONLY_UPTIME
         try {
             MonitorWidget = new Monitor();
             MonitorWidget.Visible = false;
@@ -1181,7 +1186,9 @@ unsafe class Program {
             MarkUefiWidgetInitialization("Monitor", false, 0, 0, 0, 0);
             BootConsole.WriteLine("[WIDGETS] Monitor skipped");
         }
+#endif
 
+#if !UEFI_DIAGNOSTIC_WIDGET_ONLY_PERFORMANCE && !UEFI_DIAGNOSTIC_WIDGET_ONLY_CLOCK && !UEFI_DIAGNOSTIC_WIDGET_ONLY_MONITOR
         try {
             int uptimeY = widgetY + (ClockWidget == null ? 0 : ClockWidget.PreferredHeight) + 20;
             UptimeWidget = new Uptime(widgetX, uptimeY);
@@ -1195,6 +1202,7 @@ unsafe class Program {
             MarkUefiWidgetInitialization("Uptime", false, 0, 0, 0, 0);
             BootConsole.WriteLine("[WIDGETS] Uptime skipped");
         }
+#endif
 
         if (widgetCount == 0) {
             BootConsole.WriteLine("[WIDGETS] unavailable");
@@ -1265,11 +1273,42 @@ unsafe class Program {
         Native.Out8(0x3F8, (byte)c);
     }
 
+    private static void SerialText(string text) {
+        if (text == null) return;
+        for (int i = 0; i < text.Length; i++) {
+            SerialChar(text[i]);
+        }
+    }
+
+    private static void SerialUnsigned(ulong value) {
+        char* digits = stackalloc char[20];
+        int length = 0;
+        do {
+            digits[length++] = (char)('0' + (value % 10));
+            value /= 10;
+        } while (value != 0);
+        while (length > 0) SerialChar(digits[--length]);
+    }
+
+    private static void SerialWidgetUpdate(string name, int count) {
+        SerialText("WIDGET_UPDATE=");
+        SerialText(name);
+        SerialText(",count=");
+        SerialUnsigned((ulong)count);
+        SerialChar('\n');
+
+        SerialText("WIDGET_UPDATE_STATE=timer=");
+        SerialUnsigned(Timer.Ticks);
+        SerialText(",locked=");
+        SerialChar(ThreadPool.Locked ? '1' : '0');
+        SerialText(",locker=");
+        SerialUnsigned((ulong)ThreadPool.Locker);
+        SerialChar('\n');
+    }
+
     private static void SerialBreadcrumb(string breadcrumb) {
         if (breadcrumb == null) return;
-        for (int i = 0; i < breadcrumb.Length; i++) {
-            SerialChar(breadcrumb[i]);
-        }
+        SerialText(breadcrumb);
         SerialChar('\n');
     }
 
@@ -1547,6 +1586,20 @@ unsafe class Program {
             (graphicsValid ? "1" : "0"));
         SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_BYTES=" +
             Allocator.MemoryInUse.ToString());
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_CALLS=" +
+            Allocator.FreeCallCount.ToString());
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_SUCCESS=" +
+            Allocator.FreeSuccessCount.ToString());
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_INVALID=" +
+            Allocator.FreeFailInvalidPtr.ToString());
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_NOPAGES=" +
+            Allocator.FreeFailNoPages.ToString());
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_CORRUPT=" +
+            Allocator.FreeFailCorruptRun.ToString());
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_THREADPOOL_LOCKED=" +
+            (ThreadPool.Locked ? "1" : "0"));
+        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_THREADPOOL_LOCKER=" +
+            ThreadPool.Locker.ToString());
         if (PS2Keyboard.IrqCount != 0 || PS2Mouse.InterruptCount != 0) {
             SerialBreadcrumb("INPUT_STATS_KEY_IRQ=" + PS2Keyboard.IrqCount.ToString());
             SerialBreadcrumb("INPUT_STATS_KEY_DROPPED=" + PS2Keyboard.DroppedScancodeCount.ToString());

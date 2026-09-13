@@ -8,7 +8,7 @@ namespace guideXOS.DockableWidgets {
     /// <summary>
     /// Uptime - Displays system uptime since boot
     /// </summary>
-    internal class Uptime : DockableWidget {
+    internal unsafe class Uptime : DockableWidget {
         private const int WidgetWidth = 200;
         private const int WidgetHeight = 100;
         
@@ -101,38 +101,10 @@ namespace guideXOS.DockableWidgets {
                 ulong minutes = (totalSeconds % 3600) / 60;
                 ulong seconds = totalSeconds % 60;
                 
-                // Format uptime string
-                string timeString;
-                
-                if (days > 0) {
-                    // Show days + hours
-                    string daysStr = days.ToString();
-                    string hoursStr = hours.ToString();
-                    timeString = daysStr + "d " + hoursStr + "h";
-                    daysStr.Dispose();
-                    hoursStr.Dispose();
-                } else if (hours > 0) {
-                    // Show hours + minutes
-                    string hoursStr = hours.ToString();
-                    string minutesStr = minutes < 10 ? "0" + minutes.ToString() : minutes.ToString();
-                    timeString = hoursStr + ":" + minutesStr + ":" + (seconds < 10 ? "0" : "") + seconds.ToString();
-                    hoursStr.Dispose();
-                    minutesStr.Dispose();
-                } else if (minutes > 0) {
-                    // Show minutes + seconds
-                    string minutesStr = minutes.ToString();
-                    string secondsStr = seconds < 10 ? "0" + seconds.ToString() : seconds.ToString();
-                    timeString = minutesStr + ":" + secondsStr;
-                    minutesStr.Dispose();
-                    secondsStr.Dispose();
-                } else {
-                    // Show just seconds
-                    string secondsStr = seconds.ToString();
-                    timeString = secondsStr + "s";
-                    secondsStr.Dispose();
-                }
-                
-                _cachedUptimeValue = timeString;
+                // Build the complete display in one allocation.  Chained
+                // binary string concatenation leaks its intermediate strings
+                // in this non-GC runtime even when the final value is cached.
+                _cachedUptimeValue = FormatUptime(days, hours, minutes, seconds);
                 Program.MarkUefiWidgetUpdated("Uptime");
                 
                 _lastUpdateTick = currentTick;
@@ -151,6 +123,53 @@ namespace guideXOS.DockableWidgets {
                 int textWidth = WindowManager.font.MeasureString(_cachedUptimeValue);
                 int centeredX = contentX + (contentWidth - textWidth) / 2;
                 WindowManager.font.DrawString(centeredX, yOffset + lineHeight, _cachedUptimeValue);
+            }
+        }
+
+        private static string FormatUptime(ulong days, ulong hours,
+                                           ulong minutes, ulong seconds) {
+            char* buffer = stackalloc char[32];
+            int length = 0;
+
+            if (days > 0) {
+                AppendNumber(buffer, ref length, days);
+                buffer[length++] = 'd';
+                buffer[length++] = ' ';
+                AppendNumber(buffer, ref length, hours);
+                buffer[length++] = 'h';
+            } else if (hours > 0) {
+                AppendNumber(buffer, ref length, hours);
+                buffer[length++] = ':';
+                AppendTwoDigits(buffer, ref length, minutes);
+                buffer[length++] = ':';
+                AppendTwoDigits(buffer, ref length, seconds);
+            } else if (minutes > 0) {
+                AppendNumber(buffer, ref length, minutes);
+                buffer[length++] = ':';
+                AppendTwoDigits(buffer, ref length, seconds);
+            } else {
+                AppendNumber(buffer, ref length, seconds);
+                buffer[length++] = 's';
+            }
+
+            return new string(buffer, 0, length);
+        }
+
+        private static void AppendTwoDigits(char* buffer, ref int length, ulong value) {
+            buffer[length++] = (char)('0' + (value / 10) % 10);
+            buffer[length++] = (char)('0' + value % 10);
+        }
+
+        private static void AppendNumber(char* buffer, ref int length, ulong value) {
+            char* digits = stackalloc char[20];
+            int digitCount = 0;
+            do {
+                digits[digitCount++] = (char)('0' + value % 10);
+                value /= 10;
+            } while (value != 0);
+
+            while (digitCount > 0) {
+                buffer[length++] = digits[--digitCount];
             }
         }
     }
