@@ -1,4 +1,5 @@
 using guideXOS.Kernel.Drivers;
+using guideXOS.Kernel.Drivers.Input;
 using System.Collections.Generic;
 using System.Windows.Forms;
 
@@ -21,6 +22,7 @@ namespace guideXOS.GUI {
         private int _dragOffsetX, _dragOffsetY;
         private bool _closeHover = false;
         private int _hoverWidgetIndex = -1; // Track which widget is being hovered for undocking
+        private bool _rightClickLatch;
         
         public WidgetContainer(int x, int y) : base(x, y, 140, 90) {
             Title = "Widgets";
@@ -55,6 +57,17 @@ namespace guideXOS.GUI {
                 widget.DockedContainer = this;
                 UpdateLayout();
             }
+        }
+
+        /// <summary>
+        /// Show the persistent widget surface without exposing its docked
+        /// children as independent WindowManager draw/input owners.
+        /// </summary>
+        public void ShowWidgets() {
+            _autoHidden = false;
+            _lastRevealCheckMs = (long)Timer.Ticks;
+            Visible = true;
+            WindowManager.MoveToEnd(this);
         }
         
         public void RemoveWidget(DockableWidget widget) {
@@ -125,6 +138,18 @@ namespace guideXOS.GUI {
             // Update container size
             Width = maxWidth;
             Height = totalHeight;
+
+            // Layout can make the container larger than the constructor's
+            // initial bounds. Keep the actual draw surface inside the current
+            // framebuffer before the next frame.
+            int maxX = Framebuffer.Width - Width;
+            int maxY = Framebuffer.Height - Height;
+            if (maxX < 0) maxX = 0;
+            if (maxY < 0) maxY = 0;
+            if (X < 0) X = 0;
+            if (Y < 0) Y = 0;
+            if (X > maxX) X = maxX;
+            if (Y > maxY) Y = maxY;
         }
         
         public override void OnInput() {
@@ -175,6 +200,12 @@ namespace guideXOS.GUI {
             int my = Control.MousePosition.Y;
             bool leftDown = Control.MouseButtons.HasFlag(MouseButtons.Left);
             bool rightClick = Control.MouseButtons.HasFlag(MouseButtons.Right);
+            bool leftPressed = MouseEventDispatcher.WasPressedThisFrame(MouseButtons.Left);
+            bool rightPressed = MouseEventDispatcher.WasPressedThisFrame(MouseButtons.Right);
+            bool leftActive = leftDown || leftPressed;
+            bool rightActive = rightClick || rightPressed;
+
+            if (!rightClick && !rightPressed) _rightClickLatch = false;
             
             // Close button hit test
             int closeX = X + Width - Padding - CloseBtnSize;
@@ -183,8 +214,9 @@ namespace guideXOS.GUI {
                           my >= closeY && my <= closeY + CloseBtnSize);
             
             // Update hover widget index
+            int previousHover = _hoverWidgetIndex;
             _hoverWidgetIndex = -1;
-            if (!leftDown && _widgets.Count > 1) {
+            if (!leftActive && _widgets.Count > 1) {
                 int currentY = Y + Padding;
                 for (int i = 0; i < _widgets.Count; i++) {
                     var widget = _widgets[i];
@@ -202,9 +234,12 @@ namespace guideXOS.GUI {
                     }
                 }
             }
+            if (_hoverWidgetIndex != previousHover) {
+                Program.MarkUefiWidgetHover(_hoverWidgetIndex);
+            }
             
             // Handle right-click for context menu on widgets
-            if (rightClick && !_dragging) {
+            if (rightActive && !_rightClickLatch && !_dragging) {
                 int currentY = Y + Padding;
                 for (int i = 0; i < _widgets.Count; i++) {
                     var widget = _widgets[i];
@@ -214,6 +249,8 @@ namespace guideXOS.GUI {
                         my >= currentY && my <= currentY + widgetHeight) {
                         // Show context menu for this docked widget
                         if (Program.widgetContextMenu != null) {
+                            _rightClickLatch = true;
+                            Program.MarkUefiWidgetInput("RIGHT");
                             Program.widgetContextMenu.ShowForDockedWidget(widget, this, mx, my);
                         }
                         return;
@@ -226,9 +263,11 @@ namespace guideXOS.GUI {
                 }
             }
             
-            if (leftDown) {
+            if (leftActive) {
                 // Check if clicking close button
                 if (_closeHover) {
+                    Program.MarkUefiWidgetInput("LEFT");
+                    Program.CloseWidgetContextMenu();
                     // Close all widgets
                     for (int i = 0; i < _widgets.Count; i++) {
                         _widgets[i].Visible = false;
@@ -241,6 +280,7 @@ namespace guideXOS.GUI {
                 
                 // Check if clicking on a specific widget to undock it
                 if (!_dragging && _widgets.Count > 1 && _hoverWidgetIndex >= 0) {
+                    Program.MarkUefiWidgetInput("LEFT");
                     UndockWidget(_widgets[_hoverWidgetIndex], mx, my);
                     return;
                 }
@@ -248,6 +288,7 @@ namespace guideXOS.GUI {
                 // Start dragging container
                 if (!_dragging && mx >= X && mx <= X + Width && my >= Y && my <= Y + Height) {
                     _dragging = true;
+                    Program.MarkUefiWidgetInput("DRAG_START");
                     _dragOffsetX = mx - X;
                     _dragOffsetY = my - Y;
                 }
@@ -320,7 +361,26 @@ namespace guideXOS.GUI {
                     );
                 }
                 
-                widget.DrawContent(contentX, currentY, contentWidth);
+                try {
+                    widget.DrawContent(contentX, currentY, contentWidth);
+                    if (widget is guideXOS.DockableWidgets.PerformanceWidget) {
+                        Program.MarkUefiWidgetDrawn("PerformanceWidget", contentX, currentY,
+                            contentWidth, widgetHeight);
+                    } else if (widget is guideXOS.DockableWidgets.Clock) {
+                        Program.MarkUefiWidgetDrawn("Clock", contentX, currentY,
+                            contentWidth, widgetHeight);
+                    } else if (widget is guideXOS.DockableWidgets.Monitor) {
+                        Program.MarkUefiWidgetDrawn("Monitor", contentX, currentY,
+                            contentWidth, widgetHeight);
+                    } else if (widget is guideXOS.DockableWidgets.Uptime) {
+                        Program.MarkUefiWidgetDrawn("Uptime", contentX, currentY,
+                            contentWidth, widgetHeight);
+                    }
+                } catch {
+                    // One widget must not prevent the remaining docked
+                    // widgets or desktop windows from drawing.
+                    Program.MarkUefiWidgetRuntimeFault("DRAW", "WIDGET");
+                }
                 
                 currentY += widgetHeight;
                 
@@ -368,23 +428,14 @@ namespace guideXOS.GUI {
 
         private void RevealWidgets() {
             _autoHidden = false;
-            
+
             // Position container at right edge of screen with some margin
             X = Framebuffer.Width - Width - 10;
             if (Y < 0 || Y > Framebuffer.Height - Height) {
                 Y = 80; // Default Y position if not set properly
             }
             
-            Visible = true;
-            
-            // Make all widgets visible again
-            for (int i = 0; i < _widgets.Count; i++) {
-                var w = _widgets[i];
-                if (w != null) w.Visible = true;
-            }
-            
-            // Bring container to front
-            WindowManager.MoveToEnd(this);
+            ShowWidgets();
             
             // Optionally trigger slide animation (not implemented here, just state hook)
             // Respect UISettings.EnableAutoHideWidgetsSlideAnimation and AutoHideWidgetsSlideDurationMs if rendering anims are available

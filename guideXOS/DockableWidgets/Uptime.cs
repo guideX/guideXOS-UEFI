@@ -13,7 +13,7 @@ namespace guideXOS.DockableWidgets {
         private const int WidgetHeight = 100;
         
         // Cache for formatted uptime string to prevent per-frame allocations
-        private static string _cachedUptimeString = null;
+        private static string _cachedUptimeValue = null;
         private static ulong _lastUpdateTick = 0;
         private const ulong UpdateIntervalMs = 1000; // Update every second
         
@@ -85,14 +85,14 @@ namespace guideXOS.DockableWidgets {
         public override void DrawContent(int contentX, int contentY, int contentWidth) {
             // Update uptime string only once per second to prevent allocations
             ulong currentTick = Timer.Ticks;
-            if (_cachedUptimeString == null || (currentTick - _lastUpdateTick) >= UpdateIntervalMs) {
-                // Dispose old cached string
-                if (_cachedUptimeString != null) {
-                    _cachedUptimeString.Dispose();
+            if (_cachedUptimeValue == null || (currentTick - _lastUpdateTick) >= UpdateIntervalMs) {
+                if (_cachedUptimeValue != null) {
+                    _cachedUptimeValue.Dispose();
                 }
                 
                 // Calculate uptime in milliseconds
-                ulong uptimeMs = currentTick - BootTimeTicks;
+                ulong uptimeMs = currentTick >= BootTimeTicks
+                    ? currentTick - BootTimeTicks : 0;
                 
                 // Convert to days, hours, minutes, seconds
                 ulong totalSeconds = uptimeMs / 1000;
@@ -102,7 +102,6 @@ namespace guideXOS.DockableWidgets {
                 ulong seconds = totalSeconds % 60;
                 
                 // Format uptime string
-                string uptimeText = "System Uptime:";
                 string timeString;
                 
                 if (days > 0) {
@@ -133,9 +132,8 @@ namespace guideXOS.DockableWidgets {
                     secondsStr.Dispose();
                 }
                 
-                _cachedUptimeString = uptimeText + "\n" + timeString;
-                uptimeText.Dispose();
-                timeString.Dispose();
+                _cachedUptimeValue = timeString;
+                Program.MarkUefiWidgetUpdated("Uptime");
                 
                 _lastUpdateTick = currentTick;
             }
@@ -145,38 +143,14 @@ namespace guideXOS.DockableWidgets {
                 WindowManager.font.DrawString(contentX + 4, contentY + 4, "Uptime");
             }
             
-            // Draw cached uptime string (no allocations per frame)
-            if (WindowManager.font != null && _cachedUptimeString != null) {
-                // Split the string by newline and draw each line
+            // Draw cached uptime value (no per-frame Substring allocations).
+            if (WindowManager.font != null && _cachedUptimeValue != null) {
                 int lineHeight = 20;
                 int yOffset = contentY + 28;
-                
-                // Find newline position
-                int newlinePos = -1;
-                for (int i = 0; i < _cachedUptimeString.Length; i++) {
-                    if (_cachedUptimeString[i] == '\n') {
-                        newlinePos = i;
-                        break;
-                    }
-                }
-                
-                if (newlinePos >= 0) {
-                    // Draw first line (label)
-                    string line1 = _cachedUptimeString.Substring(0, newlinePos);
-                    WindowManager.font.DrawString(contentX + 4, yOffset, line1);
-                    line1.Dispose();
-                    
-                    // Draw second line (time value)
-                    string line2 = _cachedUptimeString.Substring(newlinePos + 1);
-                    // Center the time value
-                    int textWidth = WindowManager.font.MeasureString(line2);
-                    int centeredX = contentX + (contentWidth - textWidth) / 2;
-                    WindowManager.font.DrawString(centeredX, yOffset + lineHeight, line2);
-                    line2.Dispose();
-                } else {
-                    // Single line fallback
-                    WindowManager.font.DrawString(contentX + 4, yOffset, _cachedUptimeString);
-                }
+                WindowManager.font.DrawString(contentX + 4, yOffset, "System Uptime:");
+                int textWidth = WindowManager.font.MeasureString(_cachedUptimeValue);
+                int centeredX = contentX + (contentWidth - textWidth) / 2;
+                WindowManager.font.DrawString(centeredX, yOffset + lineHeight, _cachedUptimeValue);
             }
         }
     }

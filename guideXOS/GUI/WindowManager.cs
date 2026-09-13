@@ -462,6 +462,17 @@ namespace guideXOS.GUI {
             // FIXED: Remove windows that are no longer visible and dispose them properly
             for (int i = Windows.Count - 1; i >= 0; i--) {
                 var w = Windows[i];
+                // Docked widgets are owned and drawn by their persistent
+                // WidgetContainer. They may be hidden while the container is
+                // auto-hidden, but must not be disposed or removed from the
+                // manager while that relationship is still live.
+                if (w is DockableWidget dockedWidget &&
+                    dockedWidget.DockedContainer != null) {
+                    continue;
+                }
+                if (w is WidgetContainer) {
+                    continue;
+                }
                 // Remove windows that are not visible and not animating (i.e., fully closed)
                 if (!w.Visible && !w.IsMinimized && !w.IsTombstoned) {
                     // Check if window has no ongoing animation

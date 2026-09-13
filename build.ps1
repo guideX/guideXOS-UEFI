@@ -35,7 +35,8 @@
 
 .PARAMETER UefiDiagnosticMode
     Optional UEFI regression build variant: Tiny, FirstFrame, Frames, Input,
-    InputStress, ContextMenu, Png, Font, Background, or BackgroundRotation
+    InputStress, ContextMenu, Png, Font, Background, BackgroundRotation,
+    Widget, WidgetStress, or WidgetSoak
 
 .EXAMPLE
     .\build.ps1
@@ -58,7 +59,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-    [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation')]
+    [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'Widget', 'WidgetStress', 'WidgetSoak')]
     [string]$UefiDiagnosticMode = ''
 )
 

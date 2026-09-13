@@ -22,6 +22,7 @@ namespace guideXOS.DockableWidgets {
         private static string _cachedTimeString = null;
         private static int _lastMinute = -1;
         private static int _lastHour = -1;
+        private static int _lastSecond = -1;
         
         public override int PreferredHeight => WidgetHeight - Padding * 2;
         
@@ -110,18 +111,20 @@ namespace guideXOS.DockableWidgets {
                 }
                 
                 // Create new time string
-                string devider = ":";
                 string shour = RTC.Hour.ToString();
                 string sminute = RTC.Minute < 10 ? "0" + RTC.Minute.ToString() : RTC.Minute.ToString();
-                _cachedTimeString = shour + devider + sminute; // Removed seconds from display
+                _cachedTimeString = shour + ":" + sminute; // Removed seconds from display
                 
                 // Dispose temporary strings
-                devider.Dispose();
                 shour.Dispose();
                 sminute.Dispose();
                 
                 _lastMinute = RTC.Minute;
                 _lastHour = RTC.Hour;
+            }
+            if (_lastSecond != RTC.Second) {
+                _lastSecond = RTC.Second;
+                Program.MarkUefiWidgetUpdated("Clock");
             }
             
             // Draw cached time string (no allocations per frame)

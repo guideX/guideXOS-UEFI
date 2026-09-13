@@ -27,8 +27,7 @@ namespace guideXOS.GUI {
             if (left && _hover) {
                 // Show widgets container if available
                 if (Program.WidgetsContainer != null) {
-                    Program.WidgetsContainer.Visible = true;
-                    WindowManager.MoveToEnd(Program.WidgetsContainer);
+                    Program.WidgetsContainer.ShowWidgets();
                 }
                 // Hide this button
                 this.Visible = false;

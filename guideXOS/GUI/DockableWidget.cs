@@ -1,4 +1,5 @@
 using guideXOS.Kernel.Drivers;
+using guideXOS.Kernel.Drivers.Input;
 using System.Windows.Forms;
 using System.Drawing;
 
@@ -41,6 +42,8 @@ namespace guideXOS.GUI {
             int mx = Control.MousePosition.X;
             int my = Control.MousePosition.Y;
             bool leftDown = Control.MouseButtons.HasFlag(MouseButtons.Left);
+            bool leftPressed = MouseEventDispatcher.WasPressedThisFrame(MouseButtons.Left);
+            bool leftActive = leftDown || leftPressed;
             bool rightClick = Control.MouseButtons.HasFlag(MouseButtons.Right);
             
             // Handle right-click for context menu (only when standalone)
@@ -48,16 +51,18 @@ namespace guideXOS.GUI {
                 if (mx >= X && mx <= X + Width && my >= Y && my <= Y + Height) {
                     // Show context menu for standalone widget
                     if (Program.widgetContextMenu != null) {
+                        Program.MarkUefiWidgetInput("RIGHT");
                         Program.widgetContextMenu.ShowForStandaloneWidget(this, mx, my);
                     }
                     return;
                 }
             }
             
-            if (leftDown) {
+            if (leftActive) {
                 // Start dragging if clicked anywhere in the widget (except close button)
                 if (!_dragging && !_closeHover && mx >= X && mx <= X + Width && my >= Y && my <= Y + Height) {
                     _dragging = true;
+                    Program.MarkUefiWidgetInput("DRAG_START");
                     _dragOffsetX = mx - X;
                     _dragOffsetY = my - Y;
                     
@@ -82,6 +87,7 @@ namespace guideXOS.GUI {
                 if (_dragging) {
                     // Check for docking when releasing
                     CheckForDocking();
+                    Program.MarkUefiWidgetInput("DRAG_END");
                 }
                 _dragging = false;
             }

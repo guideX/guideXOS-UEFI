@@ -83,7 +83,7 @@ namespace guideXOS.DockableWidgets {
         
         public override void DrawContent(int contentX, int contentY, int contentWidth) {
             // Update performance metrics periodically (works both standalone and in container)
-            if (Timer.Ticks - _lastUpdateTick >= UpdateIntervalMs) {
+            if (_lastUpdateTick == 0 || Timer.Ticks - _lastUpdateTick >= UpdateIntervalMs) {
                 UpdateMetrics();
                 _lastUpdateTick = Timer.Ticks;
             }
@@ -150,6 +150,8 @@ namespace guideXOS.DockableWidgets {
             if (_memPct != oldMem) {
                 _memText = StringPool.GetPercentage(_memPct);
             }
+
+            Program.MarkUefiWidgetUpdated("PerformanceWidget");
         }
     }
 }

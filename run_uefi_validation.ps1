@@ -36,6 +36,16 @@
     Run the normal context-menu workload, then keep the UEFI desktop running
     while periodically opening and dismissing the popup for five minutes.
 
+.PARAMETER Widget
+    Initialize and interact with the normal UEFI widget subsystem.
+
+.PARAMETER WidgetStress
+    Run a bounded widget hover, menu, activation, and dismissal workload.
+
+.PARAMETER WidgetSoak
+    Run the widget workload and keep the widget-enabled desktop alive for at
+    least ten minutes.
+
 .PARAMETER Png
     Build and run the bounded post-EBS PNG decode/render proof.
 
@@ -81,6 +91,9 @@ param(
     [switch]$NativeInputStress,
     [switch]$ContextMenu,
     [switch]$ContextMenuSoak,
+    [switch]$Widget,
+    [switch]$WidgetStress,
+    [switch]$WidgetSoak,
     [int]$Frames = 0,
     [ValidateRange(1, 86400)]
     [int]$TimeoutSeconds = 300,
@@ -103,6 +116,9 @@ $selectorCount = @(
     $(if ($NativeInputStress) { 1 } else { 0 }),
     $(if ($ContextMenu) { 1 } else { 0 }),
     $(if ($ContextMenuSoak) { 1 } else { 0 }),
+    $(if ($Widget) { 1 } else { 0 }),
+    $(if ($WidgetStress) { 1 } else { 0 }),
+    $(if ($WidgetSoak) { 1 } else { 0 }),
     [int]($Frames -gt 0)
 ) | Measure-Object -Sum | Select-Object -ExpandProperty Sum
 
@@ -119,7 +135,8 @@ if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Font -and
     -not $Background -and -not $BackgroundRotation -and
     -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
-    -not $ContextMenuSoak -and
+    -not $ContextMenuSoak -and -not $Widget -and -not $WidgetStress -and
+    -not $WidgetSoak -and
     -not $Continuous) {
     $Continuous = $true
 }
@@ -145,9 +162,17 @@ if ($Tiny) {
     $diagnosticMode = 'InputStress'
 } elseif ($ContextMenu -or $ContextMenuSoak) {
     $diagnosticMode = 'ContextMenu'
+} elseif ($Widget) {
+    $diagnosticMode = 'Widget'
+} elseif ($WidgetStress) {
+    $diagnosticMode = 'WidgetStress'
+} elseif ($WidgetSoak) {
+    $diagnosticMode = 'WidgetSoak'
 }
-$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation')
+$isWidgetValidation = $diagnosticMode -in @('Widget', 'WidgetStress', 'WidgetSoak')
+$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'Widget', 'WidgetStress')
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu')
+$isInteractiveValidation = $isInputValidation -or $isWidgetValidation
 $isContinuousValidation = -not $isBoundedDiagnostic
 $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'Tiny' { 'UTINY_COMPLETE'; break }
@@ -157,7 +182,14 @@ $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'Font' { 'FONT_PROBE_COMPLETE'; break }
     'Background' { 'BACKGROUND_PROBE_COMPLETE'; break }
     'BackgroundRotation' { 'BACKGROUND_ROTATION_COMPLETE'; break }
+    'Widget' { 'WIDGET_COMPLETE'; break }
+    'WidgetStress' { 'WIDGET_STRESS_COMPLETE'; break }
+    'WidgetSoak' { 'WIDGET_SOAK_COMPLETE'; break }
     default { '' }
+}
+
+if ($WidgetSoak -and $TimeoutSeconds -lt 720) {
+    $TimeoutSeconds = 720
 }
 
 $qemuPath = 'C:\Program Files\qemu\qemu-system-x86_64.exe'
@@ -576,6 +608,145 @@ function Send-QmpContextMenuSoak {
     Set-QmpPointer $Qmp 80 120
 }
 
+function Send-QmpWidgetWorkload {
+    param(
+        $Qmp,
+        [bool]$Stress = $false
+    )
+
+    # The diagnostic widget build makes the normal container visible. Start
+    # over the PerformanceWidget, then alternate between the first two real
+    # widget rows to exercise hover routing.
+    Set-QmpPointer $Qmp 1100 120
+    $hoverCycles = if ($Stress) { 50 } else { 3 }
+    for ($i = 0; $i -lt $hoverCycles; $i++) {
+        Send-QmpRelative $Qmp 0 80
+        Send-QmpRelative $Qmp 0 -80
+        Start-Sleep -Milliseconds 5
+    }
+    Set-QmpPointer $Qmp 1100 120
+
+    # Right-click a docked widget and activate the existing Undock command.
+    # This proves the normal WidgetContextMenu ownership path.
+    $openedBefore = Get-ContextMarkerCount '(?m)^WIDGET_MENU_OPENED='
+    Open-QmpContextMenu $Qmp 1100 120
+    Wait-ForContextMarkerCount '(?m)^WIDGET_MENU_OPENED=' ($openedBefore + 1)
+    Set-QmpPointer $Qmp 1108 132
+    $activatedBefore = Get-ContextMarkerCount '(?m)^WIDGET_MENU_ACTIVATED=UNDOCK'
+    Send-QmpMouseClick $Qmp 'left'
+    Wait-ForContextMarkerCount '(?m)^WIDGET_MENU_ACTIVATED=UNDOCK' ($activatedBefore + 1)
+
+    if (-not $Stress) {
+        # Drag the now-standalone widget to the lower-right boundary. The
+        # widget menu must clamp there without drawing beyond the framebuffer.
+        Set-QmpPointer $Qmp 1100 150
+        Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $true))
+        Start-Sleep -Milliseconds 90
+        for ($i = 0; $i -lt 100; $i += 100) {
+            Send-QmpRelative $Qmp 100 0
+        }
+        for ($i = 0; $i -lt 550; $i += 100) {
+            Send-QmpRelative $Qmp 0 ([Math]::Min(100, 550 - $i))
+        }
+        Start-Sleep -Milliseconds 120
+        Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $false))
+        Start-Sleep -Milliseconds 180
+
+        $openedBefore = Get-ContextMarkerCount '(?m)^WIDGET_MENU_OPENED='
+        Open-QmpContextMenu $Qmp 1200 700
+        Wait-ForContextMarkerCount '(?m)^WIDGET_MENU_OPENED=' ($openedBefore + 1)
+        Set-QmpPointer $Qmp 1170 714
+        Start-Sleep -Milliseconds 100
+        $activatedBefore = Get-ContextMarkerCount '(?m)^WIDGET_MENU_ACTIVATED=DOCK'
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^WIDGET_MENU_ACTIVATED=DOCK' ($activatedBefore + 1)
+
+        # Prove click-away dismissal for the widget popup, then prove that the
+        # existing desktop and taskbar popups can still be opened afterward.
+        Open-QmpContextMenu $Qmp 1200 700
+        Set-QmpPointer $Qmp 500 220
+        $dismissedBefore = Get-ContextMarkerCount '(?m)^WIDGET_MENU_DISMISSED=CLICK_AWAY'
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^WIDGET_MENU_DISMISSED=CLICK_AWAY' ($dismissedBefore + 1)
+
+        Open-QmpContextMenu $Qmp 1200 700
+        Set-QmpPointer $Qmp 500 220
+        $escapeBefore = Get-ContextMarkerCount '(?m)^WIDGET_MENU_DISMISSED=ESCAPE'
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+        Wait-ForContextMarkerCount '(?m)^WIDGET_MENU_DISMISSED=ESCAPE' ($escapeBefore + 1)
+
+        $desktopPopupBefore = Get-ContextMarkerCount '(?m)^WIDGET_DESKTOP_MENU_OPENED='
+        Open-QmpContextMenu $Qmp 500 220
+        Wait-ForContextMarkerCount '(?m)^WIDGET_DESKTOP_MENU_OPENED=' ($desktopPopupBefore + 1)
+        Set-QmpPointer $Qmp 600 320
+        Send-QmpMouseClick $Qmp 'left'
+
+        $taskbarPopupBefore = Get-ContextMarkerCount '(?m)^WIDGET_TASKBAR_MENU_OPENED='
+        Open-QmpContextMenu $Qmp 400 790
+        Wait-ForContextMarkerCount '(?m)^WIDGET_TASKBAR_MENU_OPENED=' ($taskbarPopupBefore + 1)
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+        Start-Sleep -Milliseconds 120
+    } else {
+        # After the first Undock, the standalone PerformanceWidget remains at
+        # its known diagnostic location. Repeated Dock commands are harmless
+        # existing actions and close the reused popup each time.
+        for ($i = 0; $i -lt 25; $i++) {
+            $openedBefore = Get-ContextMarkerCount '(?m)^WIDGET_MENU_OPENED='
+            Open-QmpContextMenu $Qmp 1100 150
+            Wait-ForContextMarkerCount '(?m)^WIDGET_MENU_OPENED=' ($openedBefore + 1)
+            Set-QmpPointer $Qmp 1108 162
+            $activatedBefore = Get-ContextMarkerCount '(?m)^WIDGET_MENU_ACTIVATED=DOCK'
+            Send-QmpMouseClick $Qmp 'left'
+            Wait-ForContextMarkerCount '(?m)^WIDGET_MENU_ACTIVATED=DOCK' ($activatedBefore + 1)
+        }
+
+        for ($i = 0; $i -lt 25; $i++) {
+            $openedBefore = Get-ContextMarkerCount '(?m)^WIDGET_MENU_OPENED='
+            Open-QmpContextMenu $Qmp 1100 150
+            Wait-ForContextMarkerCount '(?m)^WIDGET_MENU_OPENED=' ($openedBefore + 1)
+            Set-QmpPointer $Qmp 700 470
+            $dismissedBefore = Get-ContextMarkerCount '(?m)^WIDGET_MENU_DISMISSED=CLICK_AWAY'
+            Send-QmpMouseClick $Qmp 'left'
+            Wait-ForContextMarkerCount '(?m)^WIDGET_MENU_DISMISSED=CLICK_AWAY' ($dismissedBefore + 1)
+        }
+
+        Open-QmpContextMenu $Qmp 1100 150
+        Set-QmpPointer $Qmp 700 470
+        $escapeBefore = Get-ContextMarkerCount '(?m)^WIDGET_MENU_DISMISSED=ESCAPE'
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+        Wait-ForContextMarkerCount '(?m)^WIDGET_MENU_DISMISSED=ESCAPE' ($escapeBefore + 1)
+
+        # Keep popup coexistence covered in the stress build as well.
+        $desktopPopupBefore = Get-ContextMarkerCount '(?m)^WIDGET_DESKTOP_MENU_OPENED='
+        Open-QmpContextMenu $Qmp 500 220
+        Wait-ForContextMarkerCount '(?m)^WIDGET_DESKTOP_MENU_OPENED=' ($desktopPopupBefore + 1)
+        Set-QmpPointer $Qmp 900 500
+        Send-QmpMouseClick $Qmp 'left'
+
+        $taskbarPopupBefore = Get-ContextMarkerCount '(?m)^WIDGET_TASKBAR_MENU_OPENED='
+        Open-QmpContextMenu $Qmp 400 790
+        Wait-ForContextMarkerCount '(?m)^WIDGET_TASKBAR_MENU_OPENED=' ($taskbarPopupBefore + 1)
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+    }
+
+    Set-QmpPointer $Qmp 80 120
+}
+
+function Send-QmpWidgetSoak {
+    param(
+        $Qmp,
+        [int]$DurationSeconds = 600
+    )
+
+    Send-QmpWidgetWorkload $Qmp $false
+    Write-Host "  widget-enabled continuous soak: $DurationSeconds seconds" -ForegroundColor Green
+    Start-Sleep -Seconds $DurationSeconds
+}
+
 $qemuArgs = @(
     '-machine', 'pc-q35-8.2',
     '-drive', 'if=pflash,format=raw,readonly=on,file=bin/qemu-firmware/edk2-x86_64-code.fd',
@@ -591,7 +762,7 @@ $qemuArgs = @(
 )
 
 $qmpPort = 0
-if ($isInputValidation) {
+if ($isInteractiveValidation) {
     $qmpPort = Get-Random -Minimum 43000 -Maximum 43999
     $qemuArgs += @('-qmp', "tcp:127.0.0.1:$qmpPort,server=on,wait=off")
 }
@@ -600,7 +771,7 @@ Write-Host "Serial log: $serialPath" -ForegroundColor Gray
 Write-Host 'Starting QEMU...' -ForegroundColor Green
 $qemu = Start-Process -FilePath $qemuPath -ArgumentList $qemuArgs -PassThru
 $qmp = $null
-if ($isInputValidation) {
+if ($isInteractiveValidation) {
     Write-Host "QMP input port: $qmpPort" -ForegroundColor Gray
     $qmp = Initialize-Qmp $qmpPort
 }
@@ -639,13 +810,25 @@ try {
                 $continuousEntered = $true
             }
 
-            if ($isInputValidation -and $continuousEntered -and
+            if ($isInteractiveValidation -and $continuousEntered -and
                 $content -match 'CONTINUOUS_HEARTBEAT_FRAME=' -and
                 -not $inputInjected) {
                 try {
                     Write-Host '  injecting bounded native keyboard/mouse workload' -ForegroundColor Green
                     if ($diagnosticMode -eq 'ContextMenu') {
                         Send-QmpContextMenuWorkload $qmp
+                    } elseif ($isWidgetValidation) {
+                        if ($WidgetSoak) {
+                            Send-QmpWidgetSoak $qmp 600
+                            $status = 'WIDGET_SOAK_COMPLETE'
+                        } else {
+                            Send-QmpWidgetWorkload $qmp $WidgetStress
+                            $status = if ($WidgetStress) {
+                                'WIDGET_STRESS_COMPLETE'
+                            } else {
+                                'WIDGET_COMPLETE'
+                            }
+                        }
                     } else {
                         Send-QmpWorkload $qmp $NativeInputStress
                     }
@@ -656,6 +839,9 @@ try {
                             Send-QmpContextMenuSoak $qmp 300
                         }
                         $status = 'CONTEXT_MENU_COMPLETE'
+                        break
+                    }
+                    if ($isWidgetValidation) {
                         break
                     }
                 } catch {
@@ -689,7 +875,7 @@ try {
 
             $faultMatches = [regex]::Matches(
                 $content,
-                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|BACKGROUND_PROBE_FAIL[^\r\n]*|BACKGROUND_ROTATION_FAIL[^\r\n]*|BACKGROUND_PROBE_RENDER_OK=0|BACKGROUND_ROTATION_RENDER_OK=0|FONT_PROBE_FAIL[^\r\n]*|FONT_PROBE_INIT_OK=0|FONT_PROBE_MEASURE_OK=0|FONT_RENDER_OK=0|CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|TASKBAR_CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|TASKBAR_CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|CPU_FAULT_[A-Z_]+|#UD|#GP|#PF|GENERAL_PROTECTION|PAGE_FAULT|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
+                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|BACKGROUND_PROBE_FAIL[^\r\n]*|BACKGROUND_ROTATION_FAIL[^\r\n]*|BACKGROUND_PROBE_RENDER_OK=0|BACKGROUND_ROTATION_RENDER_OK=0|FONT_PROBE_FAIL[^\r\n]*|FONT_PROBE_INIT_OK=0|FONT_PROBE_MEASURE_OK=0|FONT_RENDER_OK=0|CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|TASKBAR_CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|TASKBAR_CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|WIDGET_INIT=[^\r\n]*,ok=0|WIDGET_INIT=[^\r\n]*,bounds=0|WIDGET_DRAW=[^\r\n]*bounds=0|WIDGET_MENU_BOUNDS=[^\r\n]*,ok=0|WIDGET_MENU_DRAWN=[^\r\n]*,font=0|WIDGET_RUNTIME_FAULT=[^\r\n]*|CPU_FAULT_[A-Z_]+|#UD|#GP|#PF|GENERAL_PROTECTION|PAGE_FAULT|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
             if ($faultMatches.Count -gt 0) {
                 $faultText = $faultMatches[$faultMatches.Count - 1].Value
                 $status = 'FAULT'
@@ -718,7 +904,7 @@ try {
                 $status = 'QEMU_EXITED'
             } elseif ($isContinuousValidation -and $heartbeatAdvanced -and
                       $dispatchSelected -and $continuousEntered) {
-                if ($isInputValidation -and -not $inputInjected) {
+                if ($isInteractiveValidation -and -not $inputInjected) {
                     $status = 'TIMEOUT_NO_INPUT'
                 } else {
                     $status = 'TIMEOUT_SUCCESS'
@@ -771,6 +957,7 @@ if ($finalTimerMatches.Count -gt 0) {
     $firstHeartbeatTimer = [UInt64]$finalTimerMatches[0].Groups[1].Value
     $lastHeartbeatTimer = [UInt64]$finalTimerMatches[$finalTimerMatches.Count - 1].Groups[1].Value
 }
+$validationElapsedSeconds = [int][Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
 
 $stackLowWaterMatches = [regex]::Matches(
     $finalContent,
@@ -877,11 +1064,137 @@ if ($diagnosticMode -eq 'ContextMenu') {
     }
 }
 
+$widgetValidation = $null
+if ($isWidgetValidation) {
+    $widgetInitGood = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_INIT=[^\r\n]*,ok=1,bounds=1').Count
+    $widgetInitBad = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_INIT=[^\r\n]*,(?:ok=0|bounds=0)').Count
+    $widgetDrawGood = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_DRAW=[^\r\n]*,bounds=1,font=1').Count
+    $widgetDrawBad = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_DRAW=[^\r\n]*(?:bounds=0|font=0)').Count
+    $widgetMenuOpened = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_MENU_OPENED=').Count
+    $widgetMenuDrawn = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_MENU_DRAWN=[^\r\n]*,font=1').Count
+    $widgetMenuGoodBounds = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_MENU_BOUNDS=[^\r\n]*,ok=1').Count
+    $widgetMenuBadBounds = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_MENU_BOUNDS=[^\r\n]*,ok=0').Count
+    $widgetMenuHover = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_MENU_HOVER=').Count
+    $widgetUndock = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_MENU_ACTIVATED=UNDOCK').Count
+    $widgetDock = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_MENU_ACTIVATED=DOCK').Count
+    $widgetClickAway = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_MENU_DISMISSED=CLICK_AWAY').Count
+    $widgetEscape = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_MENU_DISMISSED=ESCAPE').Count
+    $widgetDesktopPopup = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_DESKTOP_MENU_OPENED=').Count
+    $widgetTaskbarPopup = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_TASKBAR_MENU_OPENED=').Count
+    $widgetFaults = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_RUNTIME_FAULT=').Count
+
+    $widgetUpdateCounts = [ordered]@{}
+    foreach ($widgetName in @('PerformanceWidget', 'Clock', 'Monitor', 'Uptime')) {
+        $updateMatches = [regex]::Matches($finalContent,
+            "(?m)^WIDGET_UPDATE=$widgetName,count=(\d+)")
+        $widgetUpdateCounts[$widgetName] = if ($updateMatches.Count -gt 0) {
+            [int]$updateMatches[$updateMatches.Count - 1].Groups[1].Value
+        } else { 0 }
+    }
+    $widgetUpdatesPass = ($widgetUpdateCounts.Values | Where-Object { $_ -lt 1 }).Count -eq 0
+
+    $hoverCountMatches = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_HOVER=[^\r\n]*,count=(\d+)')
+    $widgetHoverCount = if ($hoverCountMatches.Count -gt 0) {
+        [int]$hoverCountMatches[$hoverCountMatches.Count - 1].Groups[1].Value
+    } else { 0 }
+    $rightInputMatches = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_INPUT=RIGHT,count=(\d+)')
+    $widgetRightInputCount = if ($rightInputMatches.Count -gt 0) {
+        [int]$rightInputMatches[$rightInputMatches.Count - 1].Groups[1].Value
+    } else { 0 }
+    $dragStartMatches = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_INPUT=DRAG_START,count=(\d+)')
+    $widgetDragStarts = if ($dragStartMatches.Count -gt 0) {
+        [int]$dragStartMatches[$dragStartMatches.Count - 1].Groups[1].Value
+    } else { 0 }
+    $dragEndMatches = [regex]::Matches($finalContent,
+        '(?m)^WIDGET_INPUT=DRAG_END,count=(\d+)')
+    $widgetDragEnds = if ($dragEndMatches.Count -gt 0) {
+        [int]$dragEndMatches[$dragEndMatches.Count - 1].Groups[1].Value
+    } else { 0 }
+
+    $widgetInitialized = [regex]::Matches($finalContent,
+        '(?m)^WIDGETS_INITIALIZED=1,count=4,visible=1').Count -gt 0
+    $widgetExpectedStatus = if ($WidgetSoak) {
+        'WIDGET_SOAK_COMPLETE'
+    } elseif ($WidgetStress) {
+        'WIDGET_STRESS_COMPLETE'
+    } else {
+        'WIDGET_COMPLETE'
+    }
+    $widgetExpectedMenus = if ($WidgetStress) { 51 } else { 3 }
+    $widgetExpectedDock = if ($WidgetStress) { 25 } else { 1 }
+    $widgetExpectedClickAway = if ($WidgetStress) { 25 } else { 1 }
+    $widgetExpectedHover = if ($WidgetStress) { 50 } else { 1 }
+    $widgetSoakTimerDelta = if ($lastHeartbeatTimer -ge $firstHeartbeatTimer) {
+        $lastHeartbeatTimer - $firstHeartbeatTimer
+    } else { 0 }
+    $widgetPass =
+        $status -eq $widgetExpectedStatus -and
+        $widgetInitialized -and
+        $widgetInitGood -ge 4 -and $widgetInitBad -eq 0 -and
+        $widgetDrawGood -ge 4 -and $widgetDrawBad -eq 0 -and
+        $widgetUpdatesPass -and
+        $widgetMenuOpened -ge $widgetExpectedMenus -and
+        $widgetMenuDrawn -ge $widgetExpectedMenus -and
+        $widgetMenuGoodBounds -ge $widgetExpectedMenus -and
+        $widgetMenuBadBounds -eq 0 -and $widgetMenuHover -gt 0 -and
+        $widgetUndock -ge 1 -and $widgetDock -ge $widgetExpectedDock -and
+        $widgetClickAway -ge $widgetExpectedClickAway -and
+        $widgetEscape -ge 1 -and $widgetDesktopPopup -ge 1 -and
+        $widgetTaskbarPopup -ge 1 -and $widgetFaults -eq 0 -and
+        $widgetHoverCount -ge $widgetExpectedHover -and
+        $widgetRightInputCount -ge $(if ($WidgetStress) { 26 } else { 2 }) -and
+        $(if ($WidgetStress) { $true } else { $widgetDragStarts -ge 1 -and $widgetDragEnds -ge 1 }) -and
+        $(if ($WidgetSoak) { $validationElapsedSeconds -ge 540 } else { $true })
+    $widgetValidation = [ordered]@{
+        pass = $widgetPass
+        initialized = $widgetInitialized
+        initGoodBad = "$widgetInitGood/$widgetInitBad"
+        drawsGoodBad = "$widgetDrawGood/$widgetDrawBad"
+        updates = (($widgetUpdateCounts.GetEnumerator() | ForEach-Object {
+            "$($_.Key)=$($_.Value)"
+        }) -join ',')
+        menuOpenedDrawn = "$widgetMenuOpened/$widgetMenuDrawn"
+        menuBoundsGoodBad = "$widgetMenuGoodBounds/$widgetMenuBadBounds"
+        menuHover = $widgetMenuHover
+        undockDock = "$widgetUndock/$widgetDock"
+        clickAwayEscape = "$widgetClickAway/$widgetEscape"
+        desktopTaskbarPopup = "$widgetDesktopPopup/$widgetTaskbarPopup"
+        hover = $widgetHoverCount
+        rightInput = $widgetRightInputCount
+        dragStartEnd = "$widgetDragStarts/$widgetDragEnds"
+        soakTimerDelta = $widgetSoakTimerDelta
+        soakWallSeconds = $validationElapsedSeconds
+        runtimeFaults = $widgetFaults
+    }
+    if ($status -eq $widgetExpectedStatus -and -not $widgetPass) {
+        $status = 'WIDGET_VALIDATION_FAILED'
+    }
+}
+
 Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '   Validation Summary' -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
-Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'CONTEXT_MENU_COMPLETE')) { 'Green' } else { 'Red' })
+Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
 Write-Host "Dispatch selected: $dispatchSelected" -ForegroundColor Gray
 Write-Host "Continuous entered: $continuousEntered" -ForegroundColor Gray
 Write-Host "Heartbeats: $heartbeatCount (last frame $lastHeartbeatFrame)" -ForegroundColor Gray
@@ -889,7 +1202,7 @@ Write-Host "Timer: $firstHeartbeatTimer -> $lastHeartbeatTimer" -ForegroundColor
 Write-Host "Stack top: $stackTop" -ForegroundColor Gray
 Write-Host "Stack low-water: $lastStackLowWater" -ForegroundColor Gray
 Write-Host "Graphics invariants: $(if ($null -eq $graphicsValid) { 'not sampled' } else { $graphicsValid })" -ForegroundColor Gray
-if ($isInputValidation) {
+if ($isInteractiveValidation) {
     Write-Host "Input injected: $inputInjected" -ForegroundColor Gray
     Write-Host "Keyboard IRQ/down/up/dropped: $($inputStat.KEY_IRQ)/$($inputStat.KEY_DOWN)/$($inputStat.KEY_UP)/$($inputStat.KEY_DROPPED)" -ForegroundColor Gray
     Write-Host "Mouse IRQ/packets/moves/dropped: $($inputStat.MOUSE_IRQ)/$($inputStat.MOUSE_PACKETS)/$($inputStat.MOUSE_MOVES)/$($inputStat.MOUSE_DROPPED)" -ForegroundColor Gray
@@ -909,12 +1222,21 @@ if ($contextValidation) {
     Write-Host "Taskbar opens/draws/good-bounds/Escape: $($contextValidation.taskbarOpened)/$($contextValidation.taskbarDrawn)/$($contextValidation.taskbarGoodBounds)/$($contextValidation.taskbarEscape)" -ForegroundColor Gray
     Write-Host "Right-button down/up: $($contextValidation.rightDownUp)" -ForegroundColor Gray
 }
+if ($widgetValidation) {
+    Write-Host "Widget validation: $($widgetValidation.pass)" -ForegroundColor $(if ($widgetValidation.pass) { 'Green' } else { 'Red' })
+    Write-Host "Init good/bad, draws good/bad: $($widgetValidation.initGoodBad), $($widgetValidation.drawsGoodBad)" -ForegroundColor Gray
+    Write-Host "Updates: $($widgetValidation.updates)" -ForegroundColor Gray
+    Write-Host "Widget menu opens/draws, bounds good/bad: $($widgetValidation.menuOpenedDrawn), $($widgetValidation.menuBoundsGoodBad)" -ForegroundColor Gray
+    Write-Host "Widget menu hover, undock/dock, click-away/Escape: $($widgetValidation.menuHover), $($widgetValidation.undockDock), $($widgetValidation.clickAwayEscape)" -ForegroundColor Gray
+    Write-Host "Desktop/taskbar popups, hover, right input: $($widgetValidation.desktopTaskbarPopup), $($widgetValidation.hover), $($widgetValidation.rightInput)" -ForegroundColor Gray
+    Write-Host "Drag start/end, soak timer delta/wall seconds, runtime faults: $($widgetValidation.dragStartEnd), $($widgetValidation.soakTimerDelta)/$($widgetValidation.soakWallSeconds), $($widgetValidation.runtimeFaults)" -ForegroundColor Gray
+}
 if ($faultText) {
     Write-Host "Fault: $faultText" -ForegroundColor Red
 }
 Write-Host "Serial log: $serialPath" -ForegroundColor Cyan
 
-if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED')) {
+if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED', 'WIDGET_VALIDATION_FAILED')) {
     exit 1
 }
 exit 0

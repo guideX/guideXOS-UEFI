@@ -90,6 +90,11 @@ namespace guideXOS.GUI {
             }
         }
 
+        public void CloseContextMenu() {
+            if (_menu != null) _menu.Visible = false;
+            _rightClickLatch = false;
+        }
+
         /// <summary>
         /// Show the workspace switcher overlay
         /// </summary>
@@ -194,6 +199,10 @@ namespace guideXOS.GUI {
             bool onBar = my >= yTop && my < Framebuffer.Height;
             if ((rightDown || rightPressed) && onBar) {
                 if (!_rightClickLatch) {
+                    Program.CloseWidgetContextMenu();
+                    if (Program.RightMenu != null && Program.RightMenu.Visible) {
+                        Program.RightMenu.Visible = false;
+                    }
                     if (_menu == null) {
                         _menu = new TaskbarMenu(mx, my);
                     } else {
@@ -205,6 +214,8 @@ namespace guideXOS.GUI {
                     WindowManager.MouseHandled = true;
                     Program.MarkUefiTaskbarContextMenuOpened(_menu.X, _menu.Y,
                                                             _menu.Width, _menu.Height);
+                    Program.MarkUefiWidgetTaskbarMenuOpened(_menu.X, _menu.Y,
+                                                           _menu.Width, _menu.Height);
                 }
             } else if (!rightDown) {
                 _rightClickLatch = false;

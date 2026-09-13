@@ -17,9 +17,9 @@ namespace guideXOS.DockableWidgets {
             public int lastValue;
             public string name;
             public int writeX;
-            // FIXED: Cache the label string to prevent per-frame allocations
-            public string cachedLabel;
-            public int cachedPct = -1;
+            // Keep one label for each bounded percentage value.  The monitor is
+            // drawn every frame, so changing values must not churn the heap.
+            public string[] cachedLabels;
             
             public Chart(int Width, int Height, string Name) {
                 image = new Image(Width, Height);
@@ -27,8 +27,7 @@ namespace guideXOS.DockableWidgets {
                 lastValue = 100;
                 name = Name;
                 writeX = 0;
-                cachedLabel = null;
-                cachedPct = -1;
+                cachedLabels = new string[101];
             }
         }
         
@@ -39,6 +38,8 @@ namespace guideXOS.DockableWidgets {
         private const int ChartHeight = 80;
         private const int WidgetWidth = ChartWidth * 2 + Padding * 3;
         private const int WidgetHeight = ChartHeight + Padding * 3 + 20; // Extra space for labels
+        private ulong _lastUpdateTick;
+        private const ulong UpdateIntervalMs = 500;
         
         public override int PreferredHeight => ChartHeight + Padding + 20;
         
@@ -94,12 +95,6 @@ namespace guideXOS.DockableWidgets {
             int cx = X + Padding;
             int contentWidth = Width - Padding * 2;
             
-            // Update charts periodically
-            if (Timer.Ticks % 5 == 0) {
-                DrawLineChart((int)ThreadPool.CPUUsage, ref CPUUsage.lastValue, CPUUsage, 0xFF5DADE2);
-                DrawLineChart((int)(Allocator.MemoryInUse * 100 / (Allocator.MemorySize == 0 ? 1 : Allocator.MemorySize)), ref RAMUsage.lastValue, RAMUsage, 0xFF58D68D);
-            }
-            
             // DrawContent handles rendering
             DrawContent(cx, cy, contentWidth);
             
@@ -110,10 +105,12 @@ namespace guideXOS.DockableWidgets {
         }
         
         public override void DrawContent(int contentX, int contentY, int contentWidth) {
-            // Update charts periodically (when in container)
-            if (Timer.Ticks % 5 == 0) {
+            ulong now = Timer.Ticks;
+            if (_lastUpdateTick == 0 || now - _lastUpdateTick >= UpdateIntervalMs) {
                 DrawLineChart((int)ThreadPool.CPUUsage, ref CPUUsage.lastValue, CPUUsage, 0xFF5DADE2);
                 DrawLineChart((int)(Allocator.MemoryInUse * 100 / (Allocator.MemorySize == 0 ? 1 : Allocator.MemorySize)), ref RAMUsage.lastValue, RAMUsage, 0xFF58D68D);
+                _lastUpdateTick = now;
+                Program.MarkUefiWidgetUpdated("Monitor");
             }
             
             int aX = contentX;
@@ -122,23 +119,19 @@ namespace guideXOS.DockableWidgets {
         }
         
         private void Render(ref int aX, int baseY, Chart chart, int pct) {
-            // FIXED: Cache label string and only update when percentage changes
-            if (chart.cachedLabel == null || chart.cachedPct != pct) {
-                // Dispose old cached label
-                if (chart.cachedLabel != null) {
-                    chart.cachedLabel.Dispose();
-                }
-                
-                // Create new cached label using StringPool - ensure no stray characters
-                string pctStr = pct.ToString() + "%";
-                chart.cachedLabel = chart.name + " " + pctStr;
-                pctStr.Dispose();
-                chart.cachedPct = pct;
+            if (pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+
+            string cachedLabel = chart.cachedLabels[pct];
+            if (cachedLabel == null) {
+                // StringPool owns the percentage string; retain the combined
+                // label for the life of this small, fixed-range chart.
+                cachedLabel = chart.name + " " + StringPool.GetPercentage(pct);
+                chart.cachedLabels[pct] = cachedLabel;
             }
-            
-            // Use cached label - NO allocations per frame!
-            int textWidth = WindowManager.font.MeasureString(chart.cachedLabel);
-            WindowManager.font.DrawString(aX + chart.graphics.Width / 2 - textWidth / 2, baseY, chart.cachedLabel);
+
+            int textWidth = WindowManager.font.MeasureString(cachedLabel);
+            WindowManager.font.DrawString(aX + chart.graphics.Width / 2 - textWidth / 2, baseY, cachedLabel);
             
             // Draw chart image
             int chartY = baseY + WindowManager.font.FontSize + 4;

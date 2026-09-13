@@ -60,6 +60,15 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'BackgroundRotation'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_BACKGROUND_ROTATION</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Widget'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'WidgetStress'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET_STRESS</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'WidgetSoak'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET_SOAK</DefineConstants>
+	</PropertyGroup>
 
 	<Target Name="PrepareForILLink">
 	</Target>

@@ -51,6 +51,18 @@ unsafe class Program {
     /// </summary>
     public static PerformanceWidget PerfWidget;
     /// <summary>
+    /// Clock widget retained by the normal widget container.
+    /// </summary>
+    public static Clock ClockWidget;
+    /// <summary>
+    /// Monitor widget retained by the normal widget container.
+    /// </summary>
+    public static Monitor MonitorWidget;
+    /// <summary>
+    /// Uptime widget retained by the normal widget container.
+    /// </summary>
+    public static Uptime UptimeWidget;
+    /// <summary>
     /// Widget Context Menu
     /// </summary>
     public static WidgetContextMenu widgetContextMenu;
@@ -153,6 +165,11 @@ unsafe class Program {
 #else
     private const bool UEFI_ENABLE_INPUT_DIAGNOSTIC_TARGET = false;
 #endif
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+    private const bool UEFI_ENABLE_WIDGET_DIAGNOSTIC = true;
+#else
+    private const bool UEFI_ENABLE_WIDGET_DIAGNOSTIC = false;
+#endif
     private const int UEFI_NORMAL_DESKTOP_BOUNDED_FRAME_TARGET = 300;
 
     // The ordinary UEFI path is the recovered desktop. Diagnostic modes above
@@ -167,6 +184,9 @@ unsafe class Program {
 
     private static bool IsUefiMode =>
         BootConsole.CurrentMode == guideXOS.BootMode.UEFI;
+
+    private static bool IsUefiWidgetDiagnostic =>
+        IsUefiMode && UEFI_ENABLE_WIDGET_DIAGNOSTIC;
 
     private static bool UseUefiNormalDesktopFirstFrame() {
         return IsUefiMode && UEFI_ENABLE_NORMAL_DESKTOP_FIRST_FRAME;
@@ -221,6 +241,20 @@ unsafe class Program {
     private static bool _uefiTaskbarTextRendered;
     private static bool _uefiLoginTextRendered;
 
+    private static int _uefiWidgetUpdatePerformance;
+    private static int _uefiWidgetUpdateClock;
+    private static int _uefiWidgetUpdateMonitor;
+    private static int _uefiWidgetUpdateUptime;
+    private static bool _uefiWidgetDrawPerformance;
+    private static bool _uefiWidgetDrawClock;
+    private static bool _uefiWidgetDrawMonitor;
+    private static bool _uefiWidgetDrawUptime;
+    private static int _uefiWidgetHoverCount;
+    private static int _uefiWidgetLeftClickCount;
+    private static int _uefiWidgetRightClickCount;
+    private static int _uefiWidgetDragStartCount;
+    private static int _uefiWidgetDragEndCount;
+
     internal static void MarkUefiGuiKeyRouted() {
         if (!IsUefiMode || _uefiGuiKeyRouted) return;
         _uefiGuiKeyRouted = true;
@@ -255,6 +289,175 @@ unsafe class Program {
         if (!IsUefiMode || _uefiLoginTextRendered || !WindowManager.RealFontEnabled) return;
         _uefiLoginTextRendered = true;
         SerialBreadcrumb("INPUT_GUI_TEXT_RENDERED=1");
+    }
+
+    internal static void MarkUefiWidgetsInitialized(int count, bool visible) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("WIDGETS_INITIALIZED=1,count=" + count.ToString() +
+            ",visible=" + (visible ? "1" : "0"));
+#endif
+    }
+
+    internal static void MarkUefiWidgetInitialization(string name, bool ok,
+                                                       int x, int y, int width, int height) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode || name == null) return;
+        bool boundsOk = x >= 0 && y >= 0 && width > 0 && height > 0 &&
+                        x + width <= Framebuffer.Width && y + height <= Framebuffer.Height;
+        SerialBreadcrumb("WIDGET_INIT=" + name + ",ok=" + (ok ? "1" : "0") +
+            ",bounds=" + (boundsOk ? "1" : "0") + ",x=" + x.ToString() +
+            ",y=" + y.ToString() + ",w=" + width.ToString() +
+            ",h=" + height.ToString());
+        if (name == "PerformanceWidget" && ok) {
+            SerialBreadcrumb("WIDGET_PROBE_TYPE=PerformanceWidget");
+            SerialBreadcrumb("WIDGET_PROBE_INIT_OK");
+        }
+#endif
+    }
+
+    internal static void MarkUefiWidgetUpdated(string name) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode || name == null) return;
+        int count = 0;
+        if (name == "PerformanceWidget") count = ++_uefiWidgetUpdatePerformance;
+        else if (name == "Clock") count = ++_uefiWidgetUpdateClock;
+        else if (name == "Monitor") count = ++_uefiWidgetUpdateMonitor;
+        else if (name == "Uptime") count = ++_uefiWidgetUpdateUptime;
+        if (count == 1 || count == 2 || count == 3 || (count % 10) == 0) {
+            SerialBreadcrumb("WIDGET_UPDATE=" + name + ",count=" + count.ToString());
+        }
+        if (name == "PerformanceWidget" && count == 1) {
+            SerialBreadcrumb("WIDGET_PROBE_UPDATE_OK");
+        }
+#endif
+    }
+
+    internal static void MarkUefiWidgetDrawn(string name, int x, int y,
+                                             int width, int height) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode || name == null) return;
+        bool already = name == "PerformanceWidget" ? _uefiWidgetDrawPerformance :
+                       name == "Clock" ? _uefiWidgetDrawClock :
+                       name == "Monitor" ? _uefiWidgetDrawMonitor : _uefiWidgetDrawUptime;
+        if (already) return;
+        if (name == "PerformanceWidget") _uefiWidgetDrawPerformance = true;
+        else if (name == "Clock") _uefiWidgetDrawClock = true;
+        else if (name == "Monitor") _uefiWidgetDrawMonitor = true;
+        else _uefiWidgetDrawUptime = true;
+        bool boundsOk = x >= 0 && y >= 0 && width > 0 && height > 0 &&
+                        x + width <= Framebuffer.Width && y + height <= Framebuffer.Height;
+        SerialBreadcrumb("WIDGET_DRAW=" + name + ",bounds=" + (boundsOk ? "1" : "0") +
+            ",font=" + (WindowManager.RealFontEnabled ? "1" : "0") +
+            ",x=" + x.ToString() + ",y=" + y.ToString() +
+            ",w=" + width.ToString() + ",h=" + height.ToString());
+        if (name == "PerformanceWidget") SerialBreadcrumb("WIDGET_PROBE_DRAW_OK");
+#endif
+    }
+
+    internal static void MarkUefiWidgetHover(int index) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode) return;
+        _uefiWidgetHoverCount++;
+        if (_uefiWidgetHoverCount <= 3 || (_uefiWidgetHoverCount % 25) == 0) {
+            SerialBreadcrumb("WIDGET_HOVER=" + index.ToString() +
+                ",count=" + _uefiWidgetHoverCount.ToString());
+        }
+#endif
+    }
+
+    internal static void MarkUefiWidgetInput(string kind) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode || kind == null) return;
+        int count = 0;
+        if (kind == "LEFT") count = ++_uefiWidgetLeftClickCount;
+        else if (kind == "RIGHT") count = ++_uefiWidgetRightClickCount;
+        else if (kind == "DRAG_START") count = ++_uefiWidgetDragStartCount;
+        else if (kind == "DRAG_END") count = ++_uefiWidgetDragEndCount;
+        if (count <= 3 || (count % 25) == 0) {
+            SerialBreadcrumb("WIDGET_INPUT=" + kind + ",count=" + count.ToString());
+        }
+#endif
+    }
+
+    internal static void MarkUefiWidgetMenuOpened(int x, int y, int width, int height,
+                                                  string item) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("WIDGET_MENU_OPENED=" + x.ToString() + "," + y.ToString() +
+            ",item=" + item);
+        SerialBreadcrumb("WIDGET_MENU_BOUNDS=" + x.ToString() + "," + y.ToString() +
+            "," + width.ToString() + "," + height.ToString() + ",ok=" +
+            ((x >= 0 && y >= 0 && x + width <= Framebuffer.Width &&
+              y + height <= Framebuffer.Height) ? "1" : "0"));
+#endif
+    }
+
+    internal static void MarkUefiWidgetMenuDrawn(int x, int y, int width, int height) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("WIDGET_MENU_DRAWN=" + x.ToString() + "," + y.ToString() +
+            "," + width.ToString() + "," + height.ToString() + ",font=" +
+            (WindowManager.RealFontEnabled ? "1" : "0"));
+#endif
+    }
+
+    internal static void MarkUefiWidgetMenuHover(bool hovered) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("WIDGET_MENU_HOVER=" + (hovered ? "1" : "0"));
+#endif
+    }
+
+    internal static void MarkUefiWidgetMenuActivated(string command) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode || command == null) return;
+        SerialBreadcrumb("WIDGET_MENU_ACTIVATED=" + command);
+#endif
+    }
+
+    internal static void MarkUefiWidgetMenuDismissed(string reason) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode || reason == null) return;
+        SerialBreadcrumb("WIDGET_MENU_DISMISSED=" + reason);
+#endif
+    }
+
+    internal static void MarkUefiWidgetRuntimeFault(string stage, string name) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("WIDGET_RUNTIME_FAULT=" + (stage ?? "UNKNOWN") + "," +
+            (name ?? "UNKNOWN"));
+#endif
+    }
+
+    internal static void MarkUefiWidgetDesktopMenuOpened(int x, int y,
+                                                          int width, int height) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("WIDGET_DESKTOP_MENU_OPENED=" + x.ToString() + "," +
+            y.ToString() + "," + width.ToString() + "," + height.ToString());
+#endif
+    }
+
+    internal static void MarkUefiWidgetTaskbarMenuOpened(int x, int y,
+                                                          int width, int height) {
+#if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("WIDGET_TASKBAR_MENU_OPENED=" + x.ToString() + "," +
+            y.ToString() + "," + width.ToString() + "," + height.ToString());
+#endif
+    }
+
+    internal static void CloseWidgetContextMenu() {
+        if (widgetContextMenu != null && widgetContextMenu.Visible) {
+            widgetContextMenu.HideMenu();
+        }
+    }
+
+    internal static void CloseOtherContextMenusForWidget() {
+        if (RightMenu != null && RightMenu.Visible) RightMenu.Visible = false;
+        if (Desktop.Taskbar != null) Desktop.Taskbar.CloseContextMenu();
     }
 
     internal static void MarkUefiContextMenuOpened(int x, int y, int width, int height) {
@@ -907,9 +1110,7 @@ unsafe class Program {
             RightMenu = new RightMenu();
             RightMenu.Visible = false;
 
-            // WidgetContextMenu belongs to the normal widget subsystem. UEFI
-            // currently has no widgets, so do not create an unreachable menu.
-            if (!IsUefiMode) {
+            if (UISettings.EnableWidgetContextMenu) {
                 widgetContextMenu = new WidgetContextMenu();
                 widgetContextMenu.Visible = false;
                 WindowManager.MoveToEnd(widgetContextMenu);
@@ -925,57 +1126,110 @@ unsafe class Program {
     }
 
     /// <summary>
-    /// Initialize widgets (Legacy only)
+    /// Initialize the normal dockable widget subsystem.
     /// </summary>
     private static void SetupWidgets() {
         BootConsole.WriteLine("[SMAIN] Creating widgets");
-        if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy) {
+        PerfWidget = null;
+        ClockWidget = null;
+        MonitorWidget = null;
+        UptimeWidget = null;
+        // Preserve the widget's existing uptime semantics in both boot paths.
+        Uptime.BootTimeTicks = Timer.Ticks;
+        WidgetsContainer = null;
+        int widgetCount = 0;
+        int widgetX = Framebuffer.Width - 220;
+        int widgetY = 80;
+
+        try {
             PerfWidget = new PerformanceWidget();
             PerfWidget.Visible = false;
             WindowManager.MoveToEnd(PerfWidget);
+            widgetCount++;
+            MarkUefiWidgetInitialization("PerformanceWidget", true, PerfWidget.X,
+                PerfWidget.Y, PerfWidget.Width, PerfWidget.Height);
+            widgetX = PerfWidget.X;
+            widgetY = PerfWidget.Y + PerfWidget.Height + 10;
+        } catch {
+            PerfWidget = null;
+            MarkUefiWidgetInitialization("PerformanceWidget", false, 0, 0, 0, 0);
+            BootConsole.WriteLine("[WIDGETS] PerformanceWidget skipped");
+        }
 
-            var clockWidget = new guideXOS.DockableWidgets.Clock(
-                PerfWidget.X,
-                PerfWidget.Y + PerfWidget.Height + 10
-            );
-            clockWidget.Visible = false;
-            WindowManager.MoveToEnd(clockWidget);
+        try {
+            ClockWidget = new Clock(widgetX, widgetY);
+            ClockWidget.Visible = false;
+            WindowManager.MoveToEnd(ClockWidget);
+            widgetCount++;
+            MarkUefiWidgetInitialization("Clock", true, ClockWidget.X,
+                ClockWidget.Y, ClockWidget.Width, ClockWidget.Height);
+        } catch {
+            ClockWidget = null;
+            MarkUefiWidgetInitialization("Clock", false, 0, 0, 0, 0);
+            BootConsole.WriteLine("[WIDGETS] Clock skipped");
+        }
 
-            var monitorWidget = new guideXOS.DockableWidgets.Monitor();
-            monitorWidget.Visible = false;
-            WindowManager.MoveToEnd(monitorWidget);
+        try {
+            MonitorWidget = new Monitor();
+            MonitorWidget.Visible = false;
+            WindowManager.MoveToEnd(MonitorWidget);
+            widgetCount++;
+            MarkUefiWidgetInitialization("Monitor", true, MonitorWidget.X,
+                MonitorWidget.Y, MonitorWidget.Width, MonitorWidget.Height);
+        } catch {
+            MonitorWidget = null;
+            MarkUefiWidgetInitialization("Monitor", false, 0, 0, 0, 0);
+            BootConsole.WriteLine("[WIDGETS] Monitor skipped");
+        }
 
-            var uptimeWidget = new guideXOS.DockableWidgets.Uptime(
-                PerfWidget.X,
-                PerfWidget.Y + PerfWidget.Height + clockWidget.PreferredHeight + 20
-            );
-            uptimeWidget.Visible = false;
-            WindowManager.MoveToEnd(uptimeWidget);
+        try {
+            int uptimeY = widgetY + (ClockWidget == null ? 0 : ClockWidget.PreferredHeight) + 20;
+            UptimeWidget = new Uptime(widgetX, uptimeY);
+            UptimeWidget.Visible = false;
+            WindowManager.MoveToEnd(UptimeWidget);
+            widgetCount++;
+            MarkUefiWidgetInitialization("Uptime", true, UptimeWidget.X,
+                UptimeWidget.Y, UptimeWidget.Width, UptimeWidget.Height);
+        } catch {
+            UptimeWidget = null;
+            MarkUefiWidgetInitialization("Uptime", false, 0, 0, 0, 0);
+            BootConsole.WriteLine("[WIDGETS] Uptime skipped");
+        }
 
-            var widgetContainer = new WidgetContainer(
-                Framebuffer.Width - 220,
-                80
-            );
-            widgetContainer.AddWidget(PerfWidget);
-            widgetContainer.AddWidget(clockWidget);
-            widgetContainer.AddWidget(monitorWidget);
-            widgetContainer.AddWidget(uptimeWidget);
-            widgetContainer.Visible = UISettings.ShowWidgetsOnStartup;
+        if (widgetCount == 0) {
+            BootConsole.WriteLine("[WIDGETS] unavailable");
+            MarkUefiWidgetsInitialized(0, false);
+            return;
+        }
+
+        try {
+            var widgetContainer = new WidgetContainer(Framebuffer.Width - 220, 80);
+            if (PerfWidget != null) widgetContainer.AddWidget(PerfWidget);
+            if (ClockWidget != null) widgetContainer.AddWidget(ClockWidget);
+            if (MonitorWidget != null) widgetContainer.AddWidget(MonitorWidget);
+            if (UptimeWidget != null) widgetContainer.AddWidget(UptimeWidget);
+
+            if (IsUefiWidgetDiagnostic) {
+                UISettings.EnableAutoHideWidgets = false;
+                UISettings.EnableAutoHideWidgetsVisuals = false;
+                widgetContainer.ShowWidgets();
+            } else {
+                widgetContainer.Visible = UISettings.ShowWidgetsOnStartup;
+            }
             WindowManager.MoveToEnd(widgetContainer);
+            WidgetsContainer = widgetContainer;
 
-            Program.WidgetsContainer = widgetContainer;
-
-            if (!UISettings.ShowWidgetsOnStartup) {
+            if (!widgetContainer.Visible && UISettings.EnableWidgetVisibilityToggle) {
                 var toggle = new WidgetToggleButton(Framebuffer.Width - 26, 6);
                 WindowManager.MoveToEnd(toggle);
                 toggle.Visible = true;
             }
-            BootConsole.WriteLine("[SMAIN] Widgets created (Legacy)");
-        } else {
-            BootConsole.WriteLine("[SMAIN] Widgets skipped (UEFI mode)");
-            PerfWidget = null;
-            widgetContextMenu = null;
-            Program.WidgetsContainer = null;
+            BootConsole.WriteLine("[WIDGETS] initialized");
+            MarkUefiWidgetsInitialized(widgetCount, widgetContainer.Visible);
+        } catch {
+            WidgetsContainer = null;
+            BootConsole.WriteLine("[WIDGETS] container unavailable");
+            MarkUefiWidgetsInitialized(widgetCount, false);
         }
     }
 
@@ -1030,10 +1284,14 @@ unsafe class Program {
                 !WindowManager.MouseHandled) {
                 RightClicked = true;
                 if (RightMenu != null) {
+                    CloseWidgetContextMenu();
+                    if (Desktop.Taskbar != null) Desktop.Taskbar.CloseContextMenu();
                     int x = Control.MousePosition.X;
                     int y = Control.MousePosition.Y;
                     RightMenu.ShowAt(x, y);
                     MarkUefiContextMenuOpened(RightMenu.X, RightMenu.Y,
+                        RightMenu.Width, RightMenu.Height);
+                    MarkUefiWidgetDesktopMenuOpened(RightMenu.X, RightMenu.Y,
                         RightMenu.Width, RightMenu.Height);
                 }
             }
