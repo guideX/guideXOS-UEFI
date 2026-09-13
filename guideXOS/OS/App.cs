@@ -80,6 +80,7 @@ namespace guideXOS.OS {
         /// Load Default Apps
         /// </summary>
         private void LoadDefaultApps() {
+            AppLaunchResolver.InitializeDefaultDescriptors();
             _apps.Add(new App("Calculator", Icons.CalculatorIcon(32)));
             _apps.Add(new App("Computer Files", Icons.FolderIcon(32)));
             _apps.Add(new App("Console", Icons.EditIcon(32)));
@@ -112,9 +113,20 @@ namespace guideXOS.OS {
         public bool Load(string name) {
             var b = false;
             guideXOS.GUI.NotificationManager.Add(new Notify("Loading App: " + name));
+            var resolution = AppLaunchResolver.Resolve(name);
+            string dispatchName = resolution.Success ? resolution.DispatchName : name;
+            if (AppLaunchResolver.EnableResolutionDiagnostics) {
+                try {
+                    guideXOS.GUI.NotificationManager.Add(new Notify(
+                        "input=" + name + " resolvedAppId=" +
+                        (resolution.AppId ?? "") + " resolvedKind=" +
+                        resolution.ResolvedKind + " dispatchName=" +
+                        (dispatchName ?? "") + " success=" + resolution.Success));
+                } catch { }
+            }
             for (int i = 0; i < _apps.Count; i++) {
-                if (_apps[i].Name == name) {
-                    switch (name) {
+                if (_apps[i].Name == dispatchName) {
+                    switch (dispatchName) {
                         case "Devices": _apps[i].AppObject = new Devices(400, 300); b = true; break;
                         case "Lock": Lockscreen.Run(); b = true; break;
                         case "Calculator": _apps[i].AppObject = new Calculator(300, 500); b = true; break;
@@ -134,21 +146,17 @@ namespace guideXOS.OS {
                         case "Display Options": _apps[i].AppObject = new DisplayOptions(200, 150, 800, 600); b = true; break;
                         case "Firewall": _apps[i].AppObject = new FirewallWindow(300, 200); b = true; break;
                         case "Image Viewer": 
-                            if (Desktop.imageViewer != null) {
-                                Desktop.imageViewer.Visible = true;
-                                WindowManager.MoveToEnd(Desktop.imageViewer);
-                                _apps[i].AppObject = Desktop.imageViewer;
-                                b = true;
-                            }
+                            _apps[i].AppObject = Desktop.EnsureImageViewer();
+                            Desktop.imageViewer.Visible = true;
+                            WindowManager.MoveToEnd(Desktop.imageViewer);
+                            b = true;
                             break;
                         case "On Screen Keyboard": _apps[i].AppObject = new OnScreenKeyboard(300, 100); b = true; break;
                         case "WAV Player": 
-                            if (Desktop.wavplayer != null) {
-                                Desktop.wavplayer.Visible = true;
-                                WindowManager.MoveToEnd(Desktop.wavplayer);
-                                _apps[i].AppObject = Desktop.wavplayer;
-                                b = true;
-                            }
+                            _apps[i].AppObject = Desktop.EnsureWavPlayer();
+                            Desktop.wavplayer.Visible = true;
+                            WindowManager.MoveToEnd(Desktop.wavplayer);
+                            b = true;
                             break;
                         case "Web Browser": _apps[i].AppObject = new WebBrowser(200, 150); b = true; break;
                         case "Welcome": _apps[i].AppObject = new Welcome(300, 200); b = true; break;
@@ -162,7 +170,7 @@ namespace guideXOS.OS {
                     }
                     if (b) {
                         // record recents
-                        RecentManager.AddProgram(_apps[i].Name, _apps[i].Icon);
+                        RecentManager.AddProgram(dispatchName, _apps[i].Icon);
                         // apply taskbar icon if window
                         if (_apps[i].AppObject is guideXOS.GUI.Window w) {
                             w.TaskbarIcon = _apps[i].Icon;

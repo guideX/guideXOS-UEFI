@@ -60,6 +60,9 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'BackgroundRotation'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_BACKGROUND_ROTATION</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'AppModel'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_APP_MODEL</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Widget'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET</DefineConstants>
 	</PropertyGroup>

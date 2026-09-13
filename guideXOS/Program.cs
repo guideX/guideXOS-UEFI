@@ -160,6 +160,11 @@ unsafe class Program {
 #else
     private const bool UEFI_ENABLE_BACKGROUND_ROTATION_DIAGNOSTIC = false;
 #endif
+#if UEFI_DIAGNOSTIC_APP_MODEL
+    private const bool UEFI_ENABLE_APP_MODEL_DIAGNOSTIC = true;
+#else
+    private const bool UEFI_ENABLE_APP_MODEL_DIAGNOSTIC = false;
+#endif
 #if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
     private const bool UEFI_ENABLE_INPUT_DIAGNOSTIC_TARGET = true;
 #else
@@ -265,6 +270,13 @@ unsafe class Program {
         if (!IsUefiMode || _uefiGuiMouseRouted) return;
         _uefiGuiMouseRouted = true;
         SerialBreadcrumb("INPUT_GUI_MOUSE_ROUTED");
+    }
+
+    internal static void MarkUefiStartMenuOpened() {
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+        if (!IsUefiMode) return;
+        SerialBreadcrumb("START_MENU_OPENED");
+#endif
     }
 
     internal static void MarkUefiDesktopFilesClickRouted() {
@@ -889,6 +901,12 @@ unsafe class Program {
             return;
         }
 
+        if (UEFI_ENABLE_APP_MODEL_DIAGNOSTIC) {
+            SerialBreadcrumb("SMAIN_DISPATCH_REASON=APP_MODEL");
+            RenderLoopUefiAppModelDiagnostic();
+            return;
+        }
+
         if (UEFI_ENABLE_FONT_DIAGNOSTIC) {
             SerialBreadcrumb("SMAIN_DISPATCH_REASON=FONT_PROBE");
             RenderLoopUefiFontProbe();
@@ -947,6 +965,15 @@ unsafe class Program {
         // UEFI setup keeps firmware-owned paths out of the post-EBS recovery
         // path, but its managed image assets are now safe to initialize here.
         SetupIcons();
+
+        // The early UEFI Desktop.Initialize phase defers descriptor/icon
+        // construction until the post-EBS managed asset path is ready.
+        try {
+            Desktop.InitializeAppModel();
+            if (IsUefiMode) BootConsole.WriteLine("[APP_MODEL] initialized");
+        } catch {
+            if (IsUefiMode) BootConsole.WriteLine("[APP_MODEL] unavailable");
+        }
 
         // Context menus
         SetupContextMenus();
@@ -1764,6 +1791,37 @@ unsafe class Program {
         for (;;) {
             Native.Hlt();
         }
+    }
+
+    private static void RenderLoopUefiAppModelDiagnostic() {
+        string failure = null;
+        try {
+            SerialBreadcrumb("APP_MODEL_BEGIN");
+            if (Desktop.Apps == null) {
+                failure = "APP_COLLECTION_UNAVAILABLE";
+            } else if (!AppLaunchResolver.RunSelfTest()) {
+                failure = "APP_RESOLUTION";
+            } else if (!FileAssociationRegistry.RunSelfTest()) {
+                failure = "FILE_ASSOCIATION";
+            } else if (!ShellObjectRegistry.RunSelfTest()) {
+                failure = "SHELL_OBJECT";
+            } else {
+                SerialBreadcrumb("APP_MODEL_APP_COUNT=" + Desktop.Apps.Length.ToString());
+                SerialBreadcrumb("APP_MODEL_ALIAS_OK=" +
+                    (AppLaunchResolver.Resolve("File Explorer").Success ? "1" : "0"));
+                SerialBreadcrumb("APP_MODEL_ASSOCIATION_OK=" +
+                    (FileAssociationRegistry.ResolvePath("README.TXT").Success ? "1" : "0"));
+                SerialBreadcrumb("APP_MODEL_SHELL_OK=" +
+                    (ShellObjectRegistry.Resolve("USB Drive 0").Success ? "1" : "0"));
+            }
+        } catch {
+            failure = "EXCEPTION";
+        }
+
+        if (failure == null) SerialBreadcrumb("APP_MODEL_COMPLETE");
+        else SerialBreadcrumb("APP_MODEL_FAIL=" + failure);
+        SerialBreadcrumb("APP_MODEL_HALT_ENTER");
+        for (;;) Native.Hlt();
     }
 
     /// <summary>

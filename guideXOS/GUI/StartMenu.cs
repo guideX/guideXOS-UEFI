@@ -65,6 +65,7 @@ namespace guideXOS.GUI {
         private const ulong MinRedrawMs = 120;
 
         private bool _leftDownPrev; // edge detect
+        private bool _constructed;
 
         public unsafe StartMenu() : base(_x, _y, _x2, _y2) {
             Title = "Start";
@@ -74,9 +75,17 @@ namespace guideXOS.GUI {
             ShowMinimize = false;
             _showAllPrograms = false;
             _frameDirty = true;
+
+            // Window's base constructor invokes the virtual visibility hook
+            // before this derived object is initialized. Do not build the
+            // large blur cache from that callback, and keep a newly-created
+            // menu hidden so the first taskbar click opens it.
+            _constructed = true;
+            _visible = false;
         }
 
         public override void OnSetVisible(bool value) {
+            if (!_constructed) return;
             base.OnSetVisible(value);
             if (value) {
                 // Always bring Start Menu to front when shown

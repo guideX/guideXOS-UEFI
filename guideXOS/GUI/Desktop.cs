@@ -193,6 +193,40 @@ namespace guideXOS.GUI {
             _customPosX = new List<int>();
             _customPosY = new List<int>();
         }
+
+        /// <summary>
+        /// Complete the shared app model after UEFI post-EBS assets and the
+        /// managed font have been initialized.  The early UEFI desktop setup
+        /// intentionally leaves this deferred so icon construction never
+        /// touches firmware-owned paths.
+        /// </summary>
+        internal static void InitializeAppModel() {
+            if (Apps == null) Apps = new AppCollection();
+        }
+
+        internal static ImageViewer EnsureImageViewer() {
+            if (imageViewer == null) {
+                imageViewer = new ImageViewer(400, 400);
+                imageViewer.Visible = false;
+            }
+            return imageViewer;
+        }
+
+        internal static MessageBox EnsureMessageBox() {
+            if (msgbox == null) {
+                msgbox = new MessageBox(100, 300);
+                msgbox.Visible = false;
+            }
+            return msgbox;
+        }
+
+        internal static WAVPlayer EnsureWavPlayer() {
+            if (wavplayer == null) {
+                wavplayer = new WAVPlayer(450, 200);
+                wavplayer.Visible = false;
+            }
+            return wavplayer;
+        }
         /// <summary>
         /// Get custom position for an icon by its id. Returns true if found.
         /// </summary>
@@ -860,6 +894,114 @@ namespace guideXOS.GUI {
         }
         static bool ClickLock = false;
         static int IndexClicked;
+
+        private static Image DecodeDesktopImage(byte[] data, bool png) {
+            if (data == null || data.Length == 0) return null;
+            if (png && BootConsole.CurrentMode == BootMode.UEFI) {
+                if (!PngLoader.Initialize()) return null;
+                if (PngLoader.Load(data, out Image decoded) && decoded != null &&
+                    decoded.RawData != null) return decoded;
+                if (decoded != null) decoded.Dispose();
+                return null;
+            }
+            try {
+                return png ? (Image)new PNG(data) : (Image)new Bitmap(data);
+            } catch {
+                return null;
+            }
+        }
+
+        private static void ShowOpenError(int x, int y, string text) {
+            MessageBox box = EnsureMessageBox();
+            box.X = x;
+            box.Y = y;
+            box.SetText(text);
+            WindowManager.MoveToEnd(box);
+            box.Visible = true;
+        }
+
+        private static bool TryOpenAssociatedFile(string path, string name,
+                                                   int itemX, int itemY) {
+            FileAssociationResolution association =
+                FileAssociationRegistry.ResolvePath(name);
+            if (!association.Success) return false;
+
+            if (association.Kind == AppKind.FileAssociation &&
+                association.DispatchName == "Image Viewer") {
+                byte[] buffer = File.ReadAllBytes(path);
+                if (buffer == null) {
+                    ShowOpenError(itemX + 60, itemY + 60, "Unable to read image file.");
+                    return true;
+                }
+                bool isPng = association.Extension == ".png";
+                Image decoded = DecodeDesktopImage(buffer, isPng);
+                buffer.Dispose();
+                if (decoded == null) {
+                    ShowOpenError(itemX + 60, itemY + 60, "Unable to decode image file.");
+                    return true;
+                }
+
+                ImageViewer viewer = EnsureImageViewer();
+                viewer.SetImage(decoded);
+                decoded.Dispose();
+                WindowManager.MoveToEnd(viewer);
+                viewer.Visible = true;
+                RecentManager.AddDocument(path, Icons.ImageIcon(32));
+                return true;
+            }
+
+            if (association.Kind == AppKind.FileAssociation &&
+                association.DispatchName == "Notepad") {
+                Notepad notepad = new Notepad(itemX + 40, itemY + 40);
+                notepad.OpenFile(path);
+                WindowManager.MoveToEnd(notepad);
+                notepad.Visible = true;
+                RecentManager.AddDocument(path, Icons.DocumentIcon(32));
+                return true;
+            }
+
+            if (association.Kind == AppKind.GxmApp) {
+                byte[] buffer = File.ReadAllBytes(path);
+                if (buffer == null) {
+                    ShowOpenError(itemX + 60, itemY + 60, "Unable to read executable.");
+                    return true;
+                }
+                string err;
+                bool ok = GXMLoader.TryExecute(buffer, out err);
+                buffer.Dispose();
+                if (!ok) {
+                    ShowOpenError(itemX + 60, itemY + 60,
+                        err ?? "Failed to run executable");
+                } else {
+                    RecentManager.AddDocument(path, Icons.DocumentIcon(32));
+                }
+                return true;
+            }
+
+            if (association.Kind == AppKind.FileAssociation &&
+                association.DispatchName == "WAV Player") {
+                if (!Audio.HasAudioDevice) {
+                    ShowOpenError(itemX + 75, itemY + 75,
+                        "Audio controller is unavailable!");
+                    return true;
+                }
+                byte[] buffer = File.ReadAllBytes(path);
+                if (buffer == null) {
+                    ShowOpenError(itemX + 75, itemY + 75, "Unable to read audio file.");
+                    return true;
+                }
+                WAVPlayer player = EnsureWavPlayer();
+                player.Visible = true;
+                unsafe {
+                    fixed (char* ptr = name) player.Play(buffer, new string(ptr));
+                }
+                RecentManager.AddDocument(path, Icons.AudioIcon(32));
+                return true;
+            }
+
+            return false;
+        }
+
         /// <summary>
         /// On Click
         /// </summary>
@@ -869,8 +1011,9 @@ namespace guideXOS.GUI {
         /// <param name="itemY"></param>
         public static void OnClick(string name, bool isDirectory, int itemX, int itemY) {
             ClickLock = true;
+            var shellObject = ShellObjectRegistry.Resolve(name);
             // Special desktop controls
-            if (name == "Root" && HomeMode) {
+            if (shellObject.Success && shellObject.Kind == ShellObjectKind.FileSystemLocation && HomeMode) {
                 HomeMode = false;
                 _dirCacheDirty = true;
                 IndexClicked = -1;
@@ -881,14 +1024,15 @@ namespace guideXOS.GUI {
                 return;
             }
             // Launch HD installer from desktop icon
-            if (name == "Install to Hard Drive" && HomeMode) {
+            if (shellObject.Success && shellObject.Kind == ShellObjectKind.SystemAction && HomeMode) {
                 var installer = new guideXOS.DefaultApps.HDInstaller(itemX + 60, itemY + 60);
                 WindowManager.MoveToEnd(installer);
                 installer.Visible = true;
                 IndexClicked = -1;
                 return;
             }
-            if (name == "Computer Files" && HomeMode) {
+            if (shellObject.Success && shellObject.Kind == ShellObjectKind.BuiltInApp &&
+                shellObject.AppId == "gxos.builtin.files" && HomeMode) {
                 // Always create a new ComputerFiles window (old one may have been disposed on close)
                 compFiles = new ComputerFiles(300, 200, 540, 380);
                 WindowManager.MoveToEnd(compFiles);
@@ -896,18 +1040,7 @@ namespace guideXOS.GUI {
             }
             // Click on USB drive icon opens Computer Files too (when on Home desktop)
             if (HomeMode) {
-                string usbPrefix = "USB Drive";
-                bool isUsb = name.Length >= usbPrefix.Length;
-                if (isUsb) {
-                    for (int pi = 0; pi < usbPrefix.Length; pi++) {
-                        if (name[pi] != usbPrefix[pi]) {
-                            isUsb = false;
-                            break;
-                        }
-                    }
-                }
-                // FIXED: NEVER dispose string literals - they are constants!
-                if (isUsb) {
+                if (shellObject.Success && shellObject.Kind == ShellObjectKind.DeviceVolume) {
                     // Always create a new ComputerFiles window (old one may have been disposed)
                     compFiles = new ComputerFiles(300, 200, 540, 380);
                     WindowManager.MoveToEnd(compFiles);
@@ -941,65 +1074,12 @@ namespace guideXOS.GUI {
                 if (_customPosIds != null) _customPosIds.Clear();
                 if (_customPosX != null) _customPosX.Clear();
                 if (_customPosY != null) _customPosY.Clear();
-            } else if (name.EndsWith(".png")) {
-                byte[] buffer = File.ReadAllBytes(path);
-                PNG png = new(buffer);
-                buffer.Dispose();
-                imageViewer.SetImage(png);
-                png.Dispose();
-                WindowManager.MoveToEnd(imageViewer);
-                imageViewer.Visible = true;
-                RecentManager.AddDocument(path, Icons.ImageIcon(32));
-            } else if (name.EndsWith(".bmp")) {
-                byte[] buffer = File.ReadAllBytes(path);
-                Bitmap png = new(buffer);
-                buffer.Dispose();
-                imageViewer.SetImage(png);
-                png.Dispose();
-                WindowManager.MoveToEnd(imageViewer);
-                imageViewer.Visible = true;
-                RecentManager.AddDocument(path, Icons.ImageIcon(32));
-            } else if (name.EndsWith(".txt")) {
-                // Open in Notepad
-                var notepad = new Notepad(itemX + 40, itemY + 40);
-                notepad.OpenFile(path);
-                WindowManager.MoveToEnd(notepad);
-                notepad.Visible = true;
-                RecentManager.AddDocument(path, Icons.DocumentIcon(32));
-            } else if (name.EndsWith(".gxm") || name.EndsWith(".mue")) {
-                byte[] buffer = File.ReadAllBytes(path);
-                string err;
-                bool ok = GXMLoader.TryExecute(buffer, out err);
-                if (!ok) {
-                    msgbox.X = itemX + 60;
-                    msgbox.Y = itemY + 60;
-                    msgbox.SetText(err ?? "Failed to run executable");
-                    WindowManager.MoveToEnd(msgbox);
-                    msgbox.Visible = true;
-                } else {
-                    RecentManager.AddDocument(path, Icons.DocumentIcon(32));
+            } else if (!TryOpenAssociatedFile(path, name, itemX, itemY)) {
+                if (Apps == null) InitializeAppModel();
+                if (!Apps.Load(name)) {
+                    ShowOpenError(itemX + 75, itemY + 75,
+                        "No application can open this file!");
                 }
-            } else if (name.EndsWith(".wav")) {
-                if (Audio.HasAudioDevice) {
-                    wavplayer.Visible = true;
-                    byte[] buffer = File.ReadAllBytes(path);
-                    unsafe {
-                        fixed (char* ptr = name) wavplayer.Play(buffer, new string(ptr));
-                    }
-                    RecentManager.AddDocument(path, Icons.AudioIcon(32));
-                } else {
-                    msgbox.X = itemX + 75;
-                    msgbox.Y = itemY + 75;
-                    msgbox.SetText("Audio controller is unavailable!");
-                    WindowManager.MoveToEnd(msgbox);
-                    msgbox.Visible = true;
-                }
-            } else if (!Apps.Load(name)) {
-                msgbox.X = itemX + 75;
-                msgbox.Y = itemY + 75;
-                msgbox.SetText("No application can open this file!");
-                WindowManager.MoveToEnd(msgbox);
-                msgbox.Visible = true;
             }
             path.Dispose();
             devider.Dispose();

@@ -221,9 +221,8 @@ namespace guideXOS.GUI {
                 _rightClickLatch = false;
             }
 
-            // The recovered UEFI taskbar has no legacy StartMenu object. Use
-            // its existing start tile as the narrow, safe route to the
-            // already-supported on-screen keyboard window.
+            // Reuse the existing UEFI tile for the mature shell route.  Keep
+            // the keyboard fallback only if app-model initialization failed.
             bool leftDown = (Control.MouseButtons & MouseButtons.Left) == MouseButtons.Left;
             if (!leftDown) {
                 _oskClickLatch = false;
@@ -232,8 +231,15 @@ namespace guideXOS.GUI {
                        Control.MousePosition.X <= startX + startSize &&
                        Control.MousePosition.Y >= startY &&
                        Control.MousePosition.Y <= startY + startSize) {
-                OpenOnScreenKeyboard();
+                if (Desktop.Apps != null) {
+                    if (StartMenu == null) StartMenu = new StartMenu();
+                    StartMenu.Visible = !StartMenu.Visible;
+                    if (StartMenu.Visible) Program.MarkUefiStartMenuOpened();
+                } else {
+                    OpenOnScreenKeyboard();
+                }
                 _oskClickLatch = true;
+                WindowManager.MouseHandled = true;
                 Program.MarkUefiGuiMouseRouted();
             }
         }

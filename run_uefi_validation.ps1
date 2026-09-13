@@ -59,6 +59,10 @@
 .PARAMETER BackgroundRotation
     Build and run five bounded normal background transitions.
 
+.PARAMETER AppModel
+    Build and run the bounded app-model, file-association, and shell-object
+    resolver self-tests.
+
 .PARAMETER TimeoutSeconds
     Host-side validation limit. The guest has no corresponding timeout.
 
@@ -85,6 +89,7 @@ param(
     [switch]$Font,
     [switch]$Background,
     [switch]$BackgroundRotation,
+    [switch]$AppModel,
     [Alias('Input')]
     [switch]$NativeInput,
     [Alias('InputStress')]
@@ -112,6 +117,7 @@ $selectorCount = @(
     $(if ($Font) { 1 } else { 0 }),
     $(if ($Background) { 1 } else { 0 }),
     $(if ($BackgroundRotation) { 1 } else { 0 }),
+    $(if ($AppModel) { 1 } else { 0 }),
     $(if ($NativeInput) { 1 } else { 0 }),
     $(if ($NativeInputStress) { 1 } else { 0 }),
     $(if ($ContextMenu) { 1 } else { 0 }),
@@ -134,6 +140,7 @@ if ($Frames -gt 0 -and $Frames -ne 300) {
 if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Font -and
     -not $Background -and -not $BackgroundRotation -and
+    -not $AppModel -and
     -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
     -not $ContextMenuSoak -and -not $Widget -and -not $WidgetStress -and
     -not $WidgetSoak -and
@@ -154,6 +161,8 @@ if ($Tiny) {
     $diagnosticMode = 'Background'
 } elseif ($BackgroundRotation) {
     $diagnosticMode = 'BackgroundRotation'
+} elseif ($AppModel) {
+    $diagnosticMode = 'AppModel'
 } elseif ($Frames -gt 0) {
     $diagnosticMode = 'Frames'
 } elseif ($NativeInput) {
@@ -170,8 +179,9 @@ if ($Tiny) {
     $diagnosticMode = 'WidgetSoak'
 }
 $isWidgetValidation = $diagnosticMode -in @('Widget', 'WidgetStress', 'WidgetSoak')
-$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'Widget', 'WidgetStress')
+$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Widget', 'WidgetStress')
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu')
+$isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress')
 $isInteractiveValidation = $isInputValidation -or $isWidgetValidation
 $isContinuousValidation = -not $isBoundedDiagnostic
 $diagnosticCompletionMarker = switch ($diagnosticMode) {
@@ -182,6 +192,7 @@ $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'Font' { 'FONT_PROBE_COMPLETE'; break }
     'Background' { 'BACKGROUND_PROBE_COMPLETE'; break }
     'BackgroundRotation' { 'BACKGROUND_ROTATION_COMPLETE'; break }
+    'AppModel' { 'APP_MODEL_COMPLETE'; break }
     'Widget' { 'WIDGET_COMPLETE'; break }
     'WidgetStress' { 'WIDGET_STRESS_COMPLETE'; break }
     'WidgetSoak' { 'WIDGET_SOAK_COMPLETE'; break }
@@ -412,6 +423,22 @@ function Send-QmpWorkload {
     Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $true))
     Start-Sleep -Milliseconds 250
     Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $false))
+
+    # The UEFI start tile uses the existing mature StartMenu once the app
+    # model is initialized. Open it once, then dismiss it through the normal
+    # keyboard path so this route is covered without selecting an app.
+    # The QEMU UEFI framebuffer is 800px high in this workload, so the
+    # 40px taskbar occupies y=760..799.
+    Set-QmpPointer $Qmp 30 780
+    Send-QmpMouseClick $Qmp 'left'
+    # First-show blur/cache construction is intentionally one-time and can be
+    # slower than the generic popup marker budget on this NativeAOT guest. The
+    # serial file is buffered by QEMU, so validate START_MENU_OPENED from the
+    # flushed final log instead of waiting on a live marker.
+    Start-Sleep -Milliseconds 1000
+    Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
+    Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+    Start-Sleep -Milliseconds 120
 }
 
 function Reset-QmpPointer {
@@ -936,8 +963,18 @@ try {
 }
 
 $finalContent = ''
-if (Test-Path -LiteralPath $serialPath) {
-    $finalContent = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+# QEMU's redirected serial stream can finish writing just after the guest
+# process is stopped. Give the host-side file handle a short, bounded settle
+# window before evaluating markers; this does not extend the guest workload
+# timeout or mask a missing marker.
+for ($flushAttempt = 0; $flushAttempt -lt 20; $flushAttempt++) {
+    if (Test-Path -LiteralPath $serialPath) {
+        $finalContent = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    }
+    if (-not $isStartMenuValidation -or $finalContent -match '(?m)^START_MENU_OPENED(?:=|$)') {
+        break
+    }
+    Start-Sleep -Milliseconds 250
 }
 
 # Context-menu QMP workloads complete from inside the injection function, so
@@ -1190,6 +1227,12 @@ if ($isWidgetValidation) {
     }
 }
 
+$startMenuOpenedCount = [regex]::Matches(
+    $finalContent, '(?m)^START_MENU_OPENED(?:=|$)').Count
+if ($isStartMenuValidation -and $inputInjected -and $startMenuOpenedCount -lt 1) {
+    $status = 'INPUT_VALIDATION_FAILED'
+}
+
 Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '   Validation Summary' -ForegroundColor Cyan
@@ -1210,6 +1253,7 @@ if ($isInteractiveValidation) {
     Write-Host "Mouse right down/up: $($inputStat.MOUSE_RIGHT_DOWN)/$($inputStat.MOUSE_RIGHT_UP)" -ForegroundColor Gray
     Write-Host "GUI key routed: $($finalContent -match 'INPUT_GUI_KEY_ROUTED')" -ForegroundColor Gray
     Write-Host "GUI mouse routed: $($finalContent -match 'INPUT_GUI_MOUSE_ROUTED')" -ForegroundColor Gray
+    Write-Host "Start menu opened: $startMenuOpenedCount" -ForegroundColor Gray
     if ($inputInjectionError) {
         Write-Host "Input error: $inputInjectionError" -ForegroundColor Red
     }
@@ -1236,7 +1280,7 @@ if ($faultText) {
 }
 Write-Host "Serial log: $serialPath" -ForegroundColor Cyan
 
-if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED', 'WIDGET_VALIDATION_FAILED')) {
+if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'INPUT_VALIDATION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED', 'WIDGET_VALIDATION_FAILED')) {
     exit 1
 }
 exit 0
