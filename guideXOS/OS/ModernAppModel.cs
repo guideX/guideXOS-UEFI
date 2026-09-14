@@ -267,9 +267,13 @@ namespace guideXOS.OS {
         public string Verb { get; private set; }
         public string SourceShellObjectId { get; private set; }
         public LaunchRequestTargetKind TargetKind { get; private set; }
+        public string TargetKindName { get { return TargetKindNameOf(TargetKind); } }
         public ApplicationShellTargetKind ShellTargetKind { get; private set; }
         public string ShellTargetValue { get; private set; }
         public LaunchActivationIntent ActivationIntent { get; private set; }
+        public string ActivationIntentName {
+            get { return ActivationIntentNameOf(ActivationIntent); }
+        }
         public bool IsValid { get; private set; }
         public string ValidationError { get; private set; }
         public int ArgumentCount { get { return _arguments.Length; } }
@@ -390,6 +394,42 @@ namespace guideXOS.OS {
 
         private static string[] CopyStrings(string[] values) {
             return CloneStrings(values);
+        }
+
+        /// <summary>
+        /// Create a canonical request after name/alias resolution without
+        /// changing the bounded launch context.  Factories receive the stable
+        /// application identity even when the original caller used a legacy
+        /// display name.
+        /// </summary>
+        internal LaunchRequest WithTargetAppId(string appId) {
+            if (string.IsNullOrEmpty(appId) ||
+                (TargetAppId != null && TargetAppId == appId)) return this;
+            return new LaunchRequest(appId, null, _arguments, Document, Verb,
+                SourceShellObjectId, TargetKind, ShellTargetKind,
+                ShellTargetValue, ActivationIntent);
+        }
+
+        public static string TargetKindNameOf(LaunchRequestTargetKind kind) {
+            switch (kind) {
+                case LaunchRequestTargetKind.Application: return "Application";
+                case LaunchRequestTargetKind.FileOpen: return "FileOpen";
+                case LaunchRequestTargetKind.GxmDocument: return "GxmDocument";
+                case LaunchRequestTargetKind.ShellObject: return "ShellObject";
+                default: return "Unknown";
+            }
+        }
+
+        public static string ActivationIntentNameOf(
+                LaunchActivationIntent intent) {
+            switch (intent) {
+                case LaunchActivationIntent.PolicyDefault: return "PolicyDefault";
+                case LaunchActivationIntent.Launch: return "Launch";
+                case LaunchActivationIntent.ActivateExisting:
+                    return "ActivateExisting";
+                case LaunchActivationIntent.NewInstance: return "NewInstance";
+                default: return "Unknown";
+            }
         }
     }
 
@@ -686,7 +726,11 @@ namespace guideXOS.OS {
                 "gxos.builtin.notepad", "Programs/document.txt", arguments,
                 "open", "gxos.shell.computerfiles", false,
                 LaunchActivationIntent.Launch);
-            Check(documentRequest.IsValid && documentRequest.Document == "Programs/document.txt" &&
+            Check(documentRequest.IsValid &&
+                  documentRequest.TargetAppId == "gxos.builtin.notepad" &&
+                  documentRequest.TargetKind == LaunchRequestTargetKind.FileOpen &&
+                  documentRequest.Document == "Programs/document.txt" &&
+                  documentRequest.Verb == "open" &&
                   documentRequest.ArgumentCount == 2 &&
                   documentRequest.Arguments[0] == "--safe" &&
                   documentRequest.SourceShellObjectId == "gxos.shell.computerfiles" &&

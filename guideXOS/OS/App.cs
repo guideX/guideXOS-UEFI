@@ -86,6 +86,7 @@ namespace guideXOS.OS {
             // post-EBS initialization point as the existing app collection.
             // The legacy list below remains the Start/UI compatibility list.
             ApplicationDescriptorRegistry.Initialize();
+            ApplicationFactoryRegistry.Initialize();
             _apps.Add(new App("Calculator", Icons.CalculatorIcon(32)));
             _apps.Add(new App("Computer Files", Icons.FolderIcon(32)));
             _apps.Add(new App("Console", Icons.EditIcon(32)));
@@ -136,7 +137,12 @@ namespace guideXOS.OS {
                         case "Monitor": _apps[i].AppObject = new Monitor(); b = true; break;
                         case "Clock": _apps[i].AppObject = new Clock(650, 500); b = true; break;
                         case "Paint": _apps[i].AppObject = new Paint(500, 200); b = true; break;
-                        case "Notepad": _apps[i].AppObject = new Notepad(360, 200); b = true; break;
+                        case "Notepad":
+                            Notepad notepad = new Notepad(360, 200);
+                            b = string.IsNullOrEmpty(request.Document) ||
+                                notepad.OpenFile(request.Document);
+                            _apps[i].AppObject = notepad;
+                            break;
                         case "Console": 
                             if (Program.FConsole == null ||
                                 WindowManager.Windows.IndexOf(Program.FConsole) < 0) {
@@ -154,11 +160,16 @@ namespace guideXOS.OS {
                         case "Disk Manager": _apps[i].AppObject = new DiskManager(400, 300); b = true; break;
                         case "Display Options": _apps[i].AppObject = new DisplayOptions(200, 150, 800, 600); b = true; break;
                         case "Firewall": _apps[i].AppObject = new FirewallWindow(300, 200); b = true; break;
-                        case "Image Viewer": 
-                            _apps[i].AppObject = Desktop.EnsureImageViewer();
-                            Desktop.imageViewer.Visible = true;
-                            WindowManager.MoveToEnd(Desktop.imageViewer);
-                            b = true;
+                        case "Image Viewer":
+                            ImageViewer imageViewer = Desktop.EnsureImageViewer();
+                            b = string.IsNullOrEmpty(request.Document) ||
+                                Desktop.TryLoadImageViewerDocument(imageViewer,
+                                    request.Document);
+                            _apps[i].AppObject = imageViewer;
+                            if (b) {
+                                imageViewer.Visible = true;
+                                WindowManager.MoveToEnd(imageViewer);
+                            }
                             break;
                         case "On Screen Keyboard": _apps[i].AppObject = new OnScreenKeyboard(300, 100); b = true; break;
                         case "WAV Player": 
@@ -230,6 +241,116 @@ namespace guideXOS.OS {
         }
 
         /// <summary>
+        /// Give a typed application/document request to the registered factory
+        /// backend.  A false result means no factory is bound and the caller may
+        /// explicitly select the compatibility backend.
+        /// </summary>
+        internal bool TryLaunchFactoryRequest(LaunchRequest request,
+                                               out LaunchResult result) {
+            result = null;
+            if (request == null || !request.IsValid) {
+                result = LaunchResult.Failed(LaunchErrorCode.MalformedRequest,
+                    request == null ? "Launch request is null" :
+                        request.ValidationError, null);
+                return true;
+            }
+
+            ApplicationDescriptor descriptor = null;
+            if (request.TargetKind == LaunchRequestTargetKind.Application) {
+                string matchedAlias;
+                LaunchResult resolutionFailure;
+                ApplicationDescriptorRegistry.TryResolve(request,
+                    out descriptor, out matchedAlias, out resolutionFailure);
+                if (descriptor == null) return false;
+            } else if (!string.IsNullOrEmpty(request.TargetAppId)) {
+                if (!ApplicationDescriptorRegistry.TryGetById(
+                        request.TargetAppId, out descriptor)) return false;
+            } else {
+                return false;
+            }
+
+            bool handled = ApplicationFactoryRegistry.TryLaunch(descriptor,
+                request, out result);
+            if (handled && result != null && result.Success) {
+                ApplyFactoryPresentation(descriptor, request, result);
+            }
+            return handled;
+        }
+
+        /// <summary>
+        /// Explicit compatibility route for a document-capable migrated app.
+        /// The association/UI layer asks for a backend; it does not construct
+        /// Notepad or Image Viewer directly.  The legacy switch remains the
+        /// temporary construction fallback until those backends are migrated.
+        /// </summary>
+        internal bool TryLaunchCompatibilityRequest(LaunchRequest request,
+                                                     out LaunchResult result) {
+            result = null;
+            if (request == null || !request.IsValid ||
+                    request.TargetKind != LaunchRequestTargetKind.FileOpen ||
+                    string.IsNullOrEmpty(request.TargetAppId)) return false;
+
+            AppLaunchResolution resolution = AppLaunchResolver.Resolve(
+                request.TargetAppId);
+            if (!resolution.Success) {
+                result = LaunchResult.Failed(LaunchErrorCode.NotFound,
+                    resolution.FailureReason ?? "Application is unavailable",
+                    request.TargetAppId);
+                return true;
+            }
+            if (resolution.DispatchName != "Notepad" &&
+                    resolution.DispatchName != "Image Viewer") return false;
+
+            result = AppLaunchCompatibilityAdapter.DispatchToLegacyBackend(
+                this, request, resolution);
+            return true;
+        }
+
+        private void ApplyFactoryPresentation(ApplicationDescriptor descriptor,
+                                              LaunchRequest request,
+                                              LaunchResult result) {
+            if (descriptor == null || result == null || !result.Success ||
+                    !result.InstanceHandle.IsValid) return;
+            ApplicationInstance instance;
+            if (!ApplicationInstanceRegistry.TryGet(result.InstanceHandle,
+                    out instance)) return;
+
+            App app = FindCompatibilityApp(descriptor);
+            Window firstWindow = null;
+            for (int i = 0; i < instance.OwnedWindowCount; i++) {
+                Window window = instance.GetOwnedWindowAt(i);
+                if (window == null) continue;
+                if (firstWindow == null) firstWindow = window;
+                if (app != null) window.TaskbarIcon = app.Icon;
+                if (descriptor.ShellPolicy != null) {
+                    window.ShowInTaskbar = descriptor.ShellPolicy.ShowInTaskbar;
+                    window.ShowInStartMenu = descriptor.ShellPolicy.ShowInStartMenu;
+                }
+            }
+            if (app != null) app.AppObject = firstWindow;
+            if (app != null && descriptor.ShellPolicy != null &&
+                    descriptor.ShellPolicy.RecordRecentPrograms) {
+                RecentManager.AddProgram(app.Name, app.Icon);
+            }
+            // Notepad records the document through OpenFile.  Image Viewer has
+            // no document-aware Window API, so retain its existing recent-file
+            // behavior at this backend boundary.
+            if (app != null && request != null &&
+                    !string.IsNullOrEmpty(request.Document) &&
+                    descriptor.AppId == "gxos.builtin.imageviewer") {
+                RecentManager.AddDocument(request.Document, app.Icon);
+            }
+        }
+
+        private App FindCompatibilityApp(ApplicationDescriptor descriptor) {
+            if (descriptor == null) return null;
+            for (int i = 0; i < _apps.Count; i++) {
+                if (_apps[i].Name == descriptor.DisplayName) return _apps[i];
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Compatibility facade retained for all current callers.  It creates
         /// a common request, resolves it through the modern descriptor
         /// projection, then invokes the unchanged managed backend above.
@@ -263,10 +384,11 @@ namespace guideXOS.OS {
             Program.MarkUefiAppRuntime("LAUNCH_REQUEST=target=" +
                 (request.TargetAppId ?? "") + ";name=" +
                 (request.TargetNameOrAlias ?? "") + ";document=" +
-                (request.Document ?? "") + ";args=" +
+                (request.Document ?? "") + ";verb=" + request.Verb +
+                ";kind=" + request.TargetKindName + ";args=" +
                 request.ArgumentCount.ToString() + ";source=" +
                 (request.SourceShellObjectId ?? "") + ";intent=" +
-                request.ActivationIntent.ToString());
+                request.ActivationIntentName);
             Program.MarkUefiAppRuntime("LAUNCH_ADAPTER=modern;descriptor=" +
                 (modernDescriptor == null ? "" : modernDescriptor.AppId) +
                 ";resolution=" + (canDispatch ? "1" : "0"));
@@ -296,8 +418,22 @@ namespace guideXOS.OS {
                 return false;
             }
 
-            LaunchResult result = AppLaunchCompatibilityAdapter.DispatchToLegacyBackend(
-                this, request, resolution);
+            LaunchResult result = null;
+            bool factoryHandled = modernDescriptor != null &&
+                ApplicationFactoryRegistry.TryLaunch(modernDescriptor, request,
+                    out result);
+            if (factoryHandled) {
+                if (result != null && result.Success) {
+                    ApplyFactoryPresentation(modernDescriptor, request, result);
+                }
+            } else {
+                ApplicationFactoryRegistry.RecordCompatibilityFallback(
+                    modernDescriptor == null ?
+                        (resolution == null ? null : resolution.AppId) :
+                        modernDescriptor.AppId);
+                result = AppLaunchCompatibilityAdapter.DispatchToLegacyBackend(
+                    this, request, resolution);
+            }
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
             Program.MarkUefiAppRuntime("LAUNCH_RESULT=code=" +
                 result.ErrorCodeName + ";success=" +

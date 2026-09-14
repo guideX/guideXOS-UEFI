@@ -1275,3 +1275,120 @@ additional Calculator/Notepad pairs, two additional Console launches, shell
 and association routes, and close cleanup completed without registry growth.
 The final guest state had no stale semantic window owners; reusable helper
 instances were allowed to remain inactive with zero windows as specified.
+
+## 19. Phase 3 — instance-aware application factories
+
+Phase 3 introduces the bounded construction seam required for incremental
+built-in migration.  The App Model now resolves the stable application
+descriptor and owns the `ApplicationInstance`; it no longer needs a
+descriptor-specific Window constructor for the migrated cohort.
+
+### 19.1 Factory contract
+
+`ApplicationFactory.TryCreateOrActivate` receives exactly the descriptor,
+the App Model-owned `ApplicationInstance`, and the bounded `LaunchRequest`.
+It returns an `ApplicationFactoryResult`, whose common success/failure
+vocabulary is the existing `LaunchResult` plus a bounded list of zero to
+eight window candidates.  The public contract does not expose framebuffer,
+taskbar, Start menu, shell-control, or UEFI-global state.  A factory may
+return zero, one, or multiple windows; the registry attaches them and the
+App Model remains authoritative for lifecycle transitions and activation.
+
+`LaunchRequest.WithTargetAppId` canonicalizes name/alias launches at the
+backend boundary without duplicating or expanding the bounded arguments,
+document, verb, source-shell-object, or activation-intent context.
+
+### 19.2 Registration and lifecycle
+
+`ApplicationFactoryRegistry` is a deterministic 32-entry descriptor-to-backend
+binding table, not a second application identity registry.  Startup binds the
+four Phase 3 cohort IDs in fixed order and rejects missing descriptors,
+duplicate bindings, incompatible application classes, and capacity overflow
+with bounded `LaunchResult` failures.
+
+The factory path is:
+
+`descriptor -> LaunchRequest -> ApplicationInstance(Loading) -> factory ->
+window ownership attach -> Initialized -> Running -> Activated -> LaunchResult`.
+
+Factory failure closes and detaches windows introduced by the attempt, removes
+new failed instances, and leaves a reused instance inactive while preserving
+its pre-existing owned windows.  The registry does not introduce a competing
+lifecycle state machine.  The existing compatibility backend remains an
+explicit fallback whenever a descriptor has no registered factory and is not
+deprecated-for-removal yet.
+
+### 19.3 Migrated cohort
+
+| Application | Factory behavior | Proof target |
+|---|---|---|
+| Calculator | Creates one ordinary window per launch | Independent multi-instance handles and close ownership |
+| Notepad | Creates a new window and passes `LaunchRequest.Document` to `OpenFile` | Start and `.txt` association launches |
+| Console | Reuses `Program.FConsole` under the reusable instance policy | One instance/window owner and repeated activation |
+| Image Viewer | Lazily reuses `Desktop.imageViewer`, decodes the request document, and transfers image ownership safely | `.png` association, reuse, and resource lifetime |
+
+All other current built-ins continue through the compatibility backend.  That
+includes Computer Files, Devices, Disk Manager, Display Options, Firewall,
+Paint, Task Manager, and WAV Player.  The old direct switch is retained as a
+temporary adapter for both those applications and the migrated applications'
+fallback path.
+
+### 19.4 Associations, Start, and GXM
+
+The association path for Notepad and Image Viewer is now:
+
+`file -> FileAssociationRegistry -> stable app ID -> LaunchRequest(Document) ->
+ApplicationInstance -> registered factory -> owned window`.
+
+Computer Files supplies `gxos.shell.computerfiles` to the desktop handoff, so
+the request retains its source-shell identity as well as its document, verb,
+and activation intent.  The association/UI layer still has no constructor
+knowledge of either migrated application.
+
+The Start path uses the same factory selection after descriptor resolution;
+Start retains only its existing display list and does not construct a
+Notepad, Calculator, Console, or Image Viewer window.  GXM remains a separate
+typed `gxos.external.gxm` backend in this phase.  Future work should choose
+between a generic external-application factory, a GXM-specific factory, or a
+typed launch backend after the built-in cohort is larger; GXM is intentionally
+not rewritten here.
+
+### 19.5 Diagnostics and deterministic coverage
+
+Conditional AppRuntime markers expose factory backend selection, registrations,
+factory launches, compatibility fallbacks, factory failures, reused factory
+activations, and windows attached per factory launch.  The AppModel diagnostic
+also runs the factory self-test for registration/duplicate/incompatible/missing
+bindings, document propagation, zero-window success, reused and multi-instance
+semantics, failed cleanup, multiple-window ownership, lifecycle completion, and
+stale generation protection.
+
+### 19.6 Next migration cohort
+
+The next bounded cohort should be selected after the Phase 3 UEFI matrix is
+green.  The natural candidates are Paint and WAV Player: Paint exercises an
+ordinary document-capable window once its descriptor association contract is
+made explicit, while WAV Player exercises another reusable lazy helper.  Shell
+objects and GXM remain separate until their backend ownership boundaries are
+reviewed.
+
+### 19.7 Validation evidence
+
+The post-edit Phase 3 matrix is green on the real UEFI/QEMU path.  The AppModel
+run reports 12 descriptors, four deterministic factory registrations, the
+instance and factory self-tests, zero stale ownership, and zero active
+instances at completion.  The AppRuntime run launches all 12 Start entries and
+records 23 successful launches: 15 factory launches, eight explicit
+compatibility fallbacks, three expected factory failures, four reused factory
+activations, and 15 attached factory windows.  The `.txt` and `.png` routes
+carry their documents through the stable IDs and return `Activated` instances;
+Console reuses one instance and one `FConsole` window.
+
+NativeInput passed with zero dropped input and balanced keyboard/mouse state;
+ContextMenu passed with 104/104 bounded desktop opens/draws and zero bad
+bounds; and the production continuous boot passed with advancing frames/timer
+and valid graphics invariants.  The Image Viewer proof is direct Start launch,
+close, PNG association reopen/decode for both `Images/audiopause.png` and
+`Images/audioplay.png`, close, and repeated failure-path probes.  All runs
+reported allocator corruption zero, no runtime faults, and no stale taskbar or
+instance ownership.

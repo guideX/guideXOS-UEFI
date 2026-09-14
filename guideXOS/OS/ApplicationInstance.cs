@@ -242,6 +242,14 @@ namespace guideXOS.OS {
             return true;
         }
 
+        internal bool OwnsWindow(Window window) {
+            if (window == null) return false;
+            for (int i = 0; i < _ownedWindowCount; i++) {
+                if (_ownedWindows[i] == window) return true;
+            }
+            return false;
+        }
+
         internal bool DetachWindow(Window window) {
             if (window == null) return false;
             int found = -1;
@@ -626,6 +634,12 @@ namespace guideXOS.OS {
                     return false;
                 }
                 _activatedCount++;
+            } else if (activate && instance.LifecycleState ==
+                       ApplicationInstanceLifecycleState.Activated) {
+                // Reused instances may already be in Activated state.  The
+                // activation event is still observable and must contribute to
+                // the bounded activation metric.
+                _activatedCount++;
             }
             return true;
         }
@@ -662,6 +676,9 @@ namespace guideXOS.OS {
                         "Application instance activation failed", instance.DescriptorId);
                     return false;
                 }
+                _activatedCount++;
+            } else if (instance.LifecycleState ==
+                       ApplicationInstanceLifecycleState.Activated) {
                 _activatedCount++;
             }
             return instance.LifecycleState == ApplicationInstanceLifecycleState.Activated;
@@ -700,7 +717,15 @@ namespace guideXOS.OS {
             instance.RecordFailure(diagnostic);
             if (reused) {
                 if (instance.LifecycleState ==
-                    ApplicationInstanceLifecycleState.Loading) {
+                        ApplicationInstanceLifecycleState.Loading ||
+                    instance.LifecycleState ==
+                        ApplicationInstanceLifecycleState.Running ||
+                    instance.LifecycleState ==
+                        ApplicationInstanceLifecycleState.Activated) {
+                    // A failed activation of a reusable instance must leave
+                    // the existing implementation available but inactive.
+                    // In particular, TryBeginLaunch can reuse an already
+                    // Activated instance without entering Loading first.
                     instance.TryTransition(ApplicationInstanceLifecycleState.Inactive);
                 }
                 return;
@@ -766,6 +791,53 @@ namespace guideXOS.OS {
 
         internal static void RecordStaleOwnership() {
             _staleOwnershipCount++;
+        }
+
+        /// <summary>
+        /// Close only windows introduced by a factory attempt.  Existing
+        /// windows owned by a reused instance are preserved when a new
+        /// document/resource launch fails.
+        /// </summary>
+        internal static void CleanupFactoryWindows(
+                ApplicationInstance instance, ApplicationFactoryResult result,
+                int startingWindowCount) {
+            if (instance == null) return;
+            if (result != null) {
+                for (int i = 0; i < result.AttachedWindowCount; i++) {
+                    if (result.WasAlreadyOwnedAt(i)) continue;
+                    CleanupFactoryWindow(instance, result.GetWindowAt(i));
+                }
+            }
+            if (WindowManager.Windows == null) return;
+            int start = startingWindowCount < 0 ? 0 : startingWindowCount;
+            if (start > WindowManager.Windows.Count) start = WindowManager.Windows.Count;
+            for (int i = start; i < WindowManager.Windows.Count; i++) {
+                Window window = WindowManager.Windows[i];
+                if (window == null) continue;
+                if (result != null && ContainsFactoryWindow(result, window)) continue;
+                if (window.ApplicationInstanceHandle == instance.Handle ||
+                    !window.ApplicationInstanceHandle.IsValid) {
+                    CleanupFactoryWindow(instance, window);
+                }
+            }
+        }
+
+        private static bool ContainsFactoryWindow(ApplicationFactoryResult result,
+                                                   Window window) {
+            for (int i = 0; i < result.AttachedWindowCount; i++) {
+                if (result.GetWindowAt(i) == window) return true;
+            }
+            return false;
+        }
+
+        private static void CleanupFactoryWindow(ApplicationInstance instance,
+                                                 Window window) {
+            if (window == null) return;
+            if (window.ApplicationInstanceHandle == instance.Handle &&
+                    instance.DetachWindow(window)) _windowDetachCount++;
+            if (!window.ApplicationInstanceHandle.IsValid) {
+                window.CloseForApplicationTermination();
+            }
         }
 
         internal static bool IsRegisteredInstance(ApplicationInstance instance) {
@@ -880,10 +952,23 @@ namespace guideXOS.OS {
                 ApplicationInstanceLifecycleState.Inactive);
             bool reactivated = TryActivate(instance, out failure) &&
                 instance.LifecycleState == ApplicationInstanceLifecycleState.Activated;
+            ApplicationInstanceHandle staleHandle = instance.Handle;
             bool terminated = TryTerminate(instance, "self-test termination") &&
-                !TryGet(instance.Handle, out ApplicationInstance ignored);
+                !TryGet(staleHandle, out ApplicationInstance ignored);
+            ApplicationInstance replacement = null;
+            bool replacementReused;
+            bool replacementStarted = TryBeginLaunch(id,
+                ApplicationInstancePolicy.MultiInstance,
+                LaunchRequest.ForAppId(id, null, null,
+                    LaunchActivationIntent.NewInstance), out replacement,
+                out replacementReused, out failure);
+            bool staleRejected = replacementStarted && replacement != null &&
+                !replacementReused && replacement.Handle != staleHandle &&
+                !TryGet(staleHandle, out ApplicationInstance staleInstance);
+            if (replacement != null) TryTerminate(replacement,
+                "self-test stale handle cleanup");
             return unique && invalidRejected && completed && inactive &&
-                reactivated && terminated;
+                reactivated && terminated && staleRejected;
         }
 
         private static bool ReuseAndMultiInstanceTest(ref string firstFailure) {
@@ -952,24 +1037,36 @@ namespace guideXOS.OS {
                         LaunchActivationIntent.NewInstance), out instance, out reused,
                     out failure)) return false;
             OwnershipProbeWindow window = null;
+            OwnershipProbeWindow secondWindow = null;
             bool result = false;
             try {
                 window = new OwnershipProbeWindow();
-                bool attached = TryAttachWindow(instance, window);
+                secondWindow = new OwnershipProbeWindow();
+                bool attached = TryAttachWindow(instance, window) &&
+                    TryAttachWindow(instance, secondWindow);
                 bool duplicate = TryAttachWindow(instance, window);
-                bool owned = instance.OwnedWindowCount == 1 &&
-                    window.ApplicationInstanceHandle == instance.Handle;
+                bool owned = instance.OwnedWindowCount == 2 &&
+                    window.ApplicationInstanceHandle == instance.Handle &&
+                    secondWindow.ApplicationInstanceHandle == instance.Handle;
                 OnWindowClosed(window);
-                bool detached = instance.OwnedWindowCount == 0 &&
-                    !window.ApplicationInstanceHandle.IsValid;
-                result = attached && duplicate && owned && detached;
+                bool firstDetached = instance.OwnedWindowCount == 1 &&
+                    !window.ApplicationInstanceHandle.IsValid &&
+                    TryGet(instance.Handle, out ApplicationInstance stillActive);
+                OnWindowClosed(secondWindow);
+                bool detached = !secondWindow.ApplicationInstanceHandle.IsValid &&
+                    !TryGet(instance.Handle, out ApplicationInstance terminatedInstance);
+                result = attached && duplicate && owned && firstDetached &&
+                    detached;
             } catch {
                 result = false;
             }
             if (window != null) {
                 window.CloseForApplicationTermination();
-                WindowManager.CleanupClosedWindows();
             }
+            if (secondWindow != null) {
+                secondWindow.CloseForApplicationTermination();
+            }
+            WindowManager.CleanupClosedWindows();
             TryTerminate(instance, "self-test window cleanup");
             return result;
         }

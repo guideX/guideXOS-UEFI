@@ -898,7 +898,7 @@ namespace guideXOS.GUI {
         static bool ClickLock = false;
         static int IndexClicked;
 
-        private static Image DecodeDesktopImage(byte[] data, bool png) {
+        internal static Image DecodeDesktopImage(byte[] data, bool png) {
             if (data == null || data.Length == 0) return null;
             if (png && BootConsole.CurrentMode == BootMode.UEFI) {
                 if (!PngLoader.Initialize()) return null;
@@ -911,6 +911,40 @@ namespace guideXOS.GUI {
                 return png ? (Image)new PNG(data) : (Image)new Bitmap(data);
             } catch {
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Compatibility-backend helper for an Image Viewer document launch.
+        /// The caller transfers the decoded image to the viewer; this method
+        /// owns the file buffer and releases it on every path.
+        /// </summary>
+        internal static bool TryLoadImageViewerDocument(ImageViewer viewer,
+                                                        string path) {
+            if (viewer == null || string.IsNullOrEmpty(path)) return false;
+            FileAssociationResolution association =
+                FileAssociationRegistry.ResolvePath(path);
+            if (!association.Success) return false;
+
+            byte[] buffer = File.ReadAllBytes(path);
+            if (buffer == null) return false;
+            Image decoded = null;
+            try {
+                decoded = DecodeDesktopImage(buffer,
+                    association.Extension == ".png");
+            } finally {
+                buffer.Dispose();
+            }
+            if (decoded == null) return false;
+
+            try {
+                viewer.SetImage(decoded);
+                decoded = null;
+                return true;
+            } catch {
+                return false;
+            } finally {
+                if (decoded != null) decoded.Dispose();
             }
         }
 
@@ -942,9 +976,9 @@ namespace guideXOS.GUI {
                     path, sourceShellObjectId, out modernAssociation,
                     out request, out requestFailure)) return false;
 
-            // Keep the existing resolution object for the proven direct
-            // handlers and visible error behavior.  The typed request above
-            // is now the semantic input to this compatibility route.
+            // Keep the existing resolution object for the remaining typed
+            // handlers and visible error behavior.  The request above is now
+            // the semantic input to every association route.
             FileAssociationResolution association =
                 FileAssociationRegistry.ResolvePath(name);
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
@@ -954,128 +988,70 @@ namespace guideXOS.GUI {
                 ";kind=" + association.Kind.ToString() +
                 ";success=" + (association.Success ? "1" : "0"));
             Program.MarkUefiAppRuntime("ASSOC_REQUEST=target=" +
-                (request.TargetAppId ?? "") + ";document=" +
-                (request.Document ?? "") + ";source=" +
-                (request.SourceShellObjectId ?? ""));
+                (request.TargetAppId ?? "") + ";kind=" +
+                request.TargetKindName + ";document=" +
+                (request.Document ?? "") + ";verb=" + request.Verb +
+                ";source=" +
+                (request.SourceShellObjectId ?? "") + ";intent=" +
+                request.ActivationIntentName);
 #endif
             if (!association.Success || modernAssociation == null) return false;
 
-            if (association.Kind == AppKind.FileAssociation &&
-                request.TargetAppId == "gxos.builtin.imageviewer") {
-                ApplicationInstance imageInstance;
-                bool imageReused;
-                LaunchResult imageFailure;
-                if (!ApplicationInstanceRegistry.TryBeginDescriptorLaunch(
-                        request.TargetAppId, request, out imageInstance,
-                        out imageReused, out imageFailure)) {
-                    ShowOpenError(itemX + 60, itemY + 60,
-                        "Unable to start Image Viewer.");
-                    return true;
+            // Migrated document handlers use the same instance-aware factory
+            // path as Start.  If a binding is absent, ask the AppCollection
+            // for its explicit compatibility backend; this association route
+            // never constructs an application Window directly.
+            if (request.TargetKind == LaunchRequestTargetKind.FileOpen &&
+                    (request.TargetAppId == "gxos.builtin.notepad" ||
+                     request.TargetAppId == "gxos.builtin.imageviewer")) {
+                if (Apps == null) InitializeAppModel();
+                LaunchResult launchResult = null;
+                bool handled = Apps != null && Apps.TryLaunchFactoryRequest(
+                    request, out launchResult);
+                if (!handled && Apps != null) {
+                    handled = Apps.TryLaunchCompatibilityRequest(request,
+                        out launchResult);
+                    if (handled) {
+                        ApplicationFactoryRegistry.RecordCompatibilityFallback(
+                            request.TargetAppId);
+                    }
                 }
-                byte[] buffer = File.ReadAllBytes(path);
-                if (buffer == null) {
-                    ApplicationInstanceRegistry.FailLaunch(imageInstance,
-                        imageReused, "Image file read failed");
+                if (handled) {
+                    ApplicationDescriptor descriptor;
+                    ApplicationDescriptorRegistry.TryGetById(
+                        request.TargetAppId, out descriptor);
+                    string appName = descriptor == null ?
+                        request.TargetAppId : descriptor.DisplayName;
+                    if (launchResult != null && launchResult.Success) {
+                        ApplicationInstance launchedInstance;
+                        string instanceId = "";
+                        string state = "";
+                        string owned = "0";
+                        if (ApplicationInstanceRegistry.TryGet(
+                                launchResult.InstanceHandle, out launchedInstance)) {
+                            instanceId = launchedInstance.Handle.ToString();
+                            state = launchedInstance.LifecycleStateName;
+                            owned = launchedInstance.OwnedWindowCount.ToString();
+                        }
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
-                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=Image Viewer;reason=READ");
+                        Program.MarkUefiAppRuntime("FILE_OK=path=" + path +
+                            ";app=" + appName + ";content=" +
+                            (appName == "Notepad" ? "loaded" : "decoded") +
+                            ";instance=" + instanceId + ";state=" + state +
+                            ";owned=" + owned);
 #endif
-                    ShowOpenError(itemX + 60, itemY + 60, "Unable to read image file.");
-                    return true;
-                }
-                bool isPng = association.Extension == ".png";
-                Image decoded = DecodeDesktopImage(buffer, isPng);
-                buffer.Dispose();
-                if (decoded == null) {
-                    ApplicationInstanceRegistry.FailLaunch(imageInstance,
-                        imageReused, "Image decode failed");
+                    } else {
+                        ShowOpenError(itemX + 60, itemY + 60,
+                            "Unable to open " + appName + " file.");
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
-                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=Image Viewer;reason=DECODE");
+                        Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path +
+                            ";app=" + appName + ";reason=" +
+                            (launchResult == null ? "FACTORY" :
+                                launchResult.ErrorCodeName));
 #endif
-                    ShowOpenError(itemX + 60, itemY + 60, "Unable to decode image file.");
+                    }
                     return true;
                 }
-
-                ImageViewer viewer = EnsureImageViewer();
-                if (!ApplicationInstanceRegistry.TryAttachWindow(imageInstance,
-                        viewer)) {
-                    decoded.Dispose();
-                    ApplicationInstanceRegistry.FailLaunch(imageInstance,
-                        imageReused, "Image Viewer window ownership failed");
-                    ShowOpenError(itemX + 60, itemY + 60,
-                        "Unable to attach Image Viewer window.");
-                    return true;
-                }
-                viewer.SetImage(decoded);
-                WindowManager.MoveToEnd(viewer);
-                viewer.Visible = true;
-                if (!ApplicationInstanceRegistry.TryCompleteLaunch(imageInstance,
-                        true, out imageFailure)) {
-                    ApplicationInstanceRegistry.FailLaunch(imageInstance,
-                        imageReused, "Image Viewer activation failed");
-                    ShowOpenError(itemX + 60, itemY + 60,
-                        "Unable to activate Image Viewer.");
-                    return true;
-                }
-                RecentManager.AddDocument(path, Icons.ImageIcon(32));
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=Image Viewer;content=decoded" +
-                    ";instance=" + imageInstance.Handle.ToString() +
-                    ";state=" + imageInstance.LifecycleStateName +
-                    ";owned=" + imageInstance.OwnedWindowCount.ToString());
-#endif
-                return true;
-            }
-
-            if (association.Kind == AppKind.FileAssociation &&
-                request.TargetAppId == "gxos.builtin.notepad") {
-                ApplicationInstance notepadInstance;
-                bool notepadReused;
-                LaunchResult notepadFailure;
-                if (!ApplicationInstanceRegistry.TryBeginDescriptorLaunch(
-                        request.TargetAppId, request, out notepadInstance,
-                        out notepadReused, out notepadFailure)) {
-                    ShowOpenError(itemX + 60, itemY + 60,
-                        "Unable to start Notepad.");
-                    return true;
-                }
-                Notepad notepad = new Notepad(itemX + 40, itemY + 40);
-                if (!ApplicationInstanceRegistry.TryAttachWindow(notepadInstance,
-                        notepad)) {
-                    notepad.CloseForApplicationTermination();
-                    ApplicationInstanceRegistry.FailLaunch(notepadInstance,
-                        notepadReused, "Notepad window ownership failed");
-                    ShowOpenError(itemX + 60, itemY + 60,
-                        "Unable to attach Notepad window.");
-                    return true;
-                }
-                if (!notepad.OpenFile(path)) {
-                    ApplicationInstanceRegistry.FailLaunch(notepadInstance,
-                        notepadReused, "Notepad file read failed");
-                    notepad.Visible = false;
-                    ShowOpenError(itemX + 60, itemY + 60, "Unable to read text file.");
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=Notepad;reason=READ");
-#endif
-                    return true;
-                }
-                WindowManager.MoveToEnd(notepad);
-                notepad.Visible = true;
-                if (!ApplicationInstanceRegistry.TryCompleteLaunch(notepadInstance,
-                        true, out notepadFailure)) {
-                    ApplicationInstanceRegistry.FailLaunch(notepadInstance,
-                        notepadReused, "Notepad activation failed");
-                    ShowOpenError(itemX + 60, itemY + 60,
-                        "Unable to activate Notepad.");
-                    return true;
-                }
-                RecentManager.AddDocument(path, Icons.DocumentIcon(32));
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=Notepad;content=loaded" +
-                    ";instance=" + notepadInstance.Handle.ToString() +
-                    ";state=" + notepadInstance.LifecycleStateName +
-                    ";owned=" + notepadInstance.OwnedWindowCount.ToString());
-#endif
-                return true;
             }
 
             if (request.TargetKind == LaunchRequestTargetKind.GxmDocument) {
@@ -1266,6 +1242,13 @@ namespace guideXOS.GUI {
         /// <param name="itemX"></param>
         /// <param name="itemY"></param>
         public static void OnClick(string name, bool isDirectory, int itemX, int itemY) {
+            OnClick(name, isDirectory, itemX, itemY, null);
+        }
+
+        // Computer Files supplies its stable shell-object identity so a file
+        // association request preserves its origin alongside the document.
+        internal static void OnClick(string name, bool isDirectory, int itemX,
+                                     int itemY, string sourceShellObjectId) {
             ClickLock = true;
             var shellObject = ShellObjectRegistry.Resolve(name);
             ShellObjectTarget shellTarget;
@@ -1419,7 +1402,8 @@ namespace guideXOS.GUI {
                 if (_customPosX != null) _customPosX.Clear();
                 if (_customPosY != null) _customPosY.Clear();
             } else if (!TryOpenAssociatedFile(path, name,
-                       shellObject.Success ? shellObject.ShellId : null,
+                       sourceShellObjectId ??
+                           (shellObject.Success ? shellObject.ShellId : null),
                        itemX, itemY)) {
                 if (Apps == null) InitializeAppModel();
                 if (!Apps.Load(name)) {

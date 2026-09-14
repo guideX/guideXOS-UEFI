@@ -549,7 +549,10 @@ namespace guideXOS.DefaultApps {
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                                 Program.MarkUefiAppRuntime("FILES_FILE_CLICK=path=" + _currentPath + name);
 #endif
-                                Desktop.Dir = _currentPath; Desktop.OnClick(name, false, gx, gy); return;
+                                Desktop.Dir = _currentPath;
+                                Desktop.OnClick(name, false, gx, gy,
+                                    "gxos.shell.computerfiles");
+                                return;
                             }
                         }
                     }

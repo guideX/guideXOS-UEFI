@@ -1872,6 +1872,8 @@ unsafe class Program {
                 failure = "MODERN_DESCRIPTOR_REQUEST";
             } else if (!ApplicationInstanceRegistry.RunSelfTest()) {
                 failure = "APPLICATION_INSTANCE_LIFECYCLE";
+            } else if (!ApplicationFactoryRegistry.RunSelfTest()) {
+                failure = "APPLICATION_FACTORY";
             } else {
                 SerialBreadcrumb("APP_MODEL_APP_COUNT=" + Desktop.Apps.Length.ToString());
                 SerialBreadcrumb("APP_MODEL_MODERN_DESCRIPTOR_COUNT=" +
@@ -1902,6 +1904,19 @@ unsafe class Program {
                 SerialBreadcrumb("APP_MODEL_INSTANCE_STALE=" +
                     ApplicationInstanceRegistry.StaleOwnershipCount.ToString());
                 SerialBreadcrumb("APP_MODEL_INSTANCE_SELFTEST_OK=1");
+                SerialBreadcrumb("APP_MODEL_FACTORY_REGISTRATIONS=" +
+                    ApplicationFactoryRegistry.FactoryRegistrations.ToString());
+                SerialBreadcrumb("APP_MODEL_FACTORY_LAUNCHES=" +
+                    ApplicationFactoryRegistry.FactoryLaunches.ToString());
+                SerialBreadcrumb("APP_MODEL_FACTORY_FALLBACKS=" +
+                    ApplicationFactoryRegistry.CompatibilityFallbackLaunches.ToString());
+                SerialBreadcrumb("APP_MODEL_FACTORY_FAILURES=" +
+                    ApplicationFactoryRegistry.FactoryFailures.ToString());
+                SerialBreadcrumb("APP_MODEL_FACTORY_REUSED_ACTIVATIONS=" +
+                    ApplicationFactoryRegistry.ReusedFactoryActivations.ToString());
+                SerialBreadcrumb("APP_MODEL_FACTORY_WINDOWS_ATTACHED=" +
+                    ApplicationFactoryRegistry.FactoryWindowsAttached.ToString());
+                SerialBreadcrumb("APP_MODEL_FACTORY_SELFTEST_OK=1");
             }
         } catch {
             failure = "EXCEPTION";
