@@ -2,6 +2,7 @@ using guideXOS.DefaultApps;
 using guideXOS.FS;
 using guideXOS.Misc;
 using guideXOS.Kernel.Drivers;
+using guideXOS.OS;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
@@ -453,6 +454,21 @@ namespace guideXOS.GUI {
             }
             return result;
         }
+
+        /// <summary>
+        /// Taskbar presentation remains window-based, but an attached window
+        /// must resolve to a live semantic instance before it can be activated.
+        /// Legacy/unattached shell windows remain valid compatibility entries.
+        /// </summary>
+        internal static bool IsTaskbarEntryValid(Window window) {
+            if (window == null || !window.ApplicationInstanceHandle.IsValid) return true;
+            if (ApplicationInstanceRegistry.TryGet(
+                    window.ApplicationInstanceHandle,
+                    out ApplicationInstance ignored)) return true;
+            ApplicationInstanceRegistry.RecordStaleOwnership();
+            window.ClearApplicationInstance();
+            return false;
+        }
         
         /// <summary>
         /// Clean up windows that have been closed/faded out
@@ -487,13 +503,19 @@ namespace guideXOS.GUI {
                     // FIXED: Dispose the window to free its resources
                     if (w != null) {
                         string closedTitle = w.Title ?? "";
+                        string closedInstance = w.ApplicationInstanceHandle.IsValid
+                            ? w.ApplicationInstanceHandle.ToString() : "";
+                        ApplicationInstanceRegistry.OnWindowClosed(w);
                         w.Dispose();
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                         Program.MarkUefiAppRuntime("WINDOW_CLOSED=title=" +
                             closedTitle + ";type=WINDOW" +
                             ";windows=" + Windows.Count.ToString() +
+                            ";instance=" + closedInstance +
                             ";memory=" + Allocator.MemoryInUse.ToString() +
-                            ";corrupt=" + Allocator.FreeFailCorruptRun.ToString());
+                            ";corrupt=" + Allocator.FreeFailCorruptRun.ToString() +
+                            ";active=" + ApplicationInstanceRegistry.ActiveCount.ToString() +
+                            ";stale=" + ApplicationInstanceRegistry.StaleOwnershipCount.ToString());
 #endif
                     }
                 }

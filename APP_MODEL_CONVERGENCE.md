@@ -1151,3 +1151,127 @@ work.  The implementation must be considered complete only after the full
 AppModel, AppRuntime, NativeInput, ContextMenu, and production continuous-boot
 matrix is green; a host-side selector failure is reported separately from a
 guest runtime regression.
+
+## 18. Phase 2 implementation status — application instances and lifecycle
+
+Phase 2 is implemented as a bounded semantic layer over the existing C#
+window/application backend.  The defining relationship is now:
+
+`ApplicationDescriptor -> ApplicationInstance -> zero/one/multiple Window`
+
+### 18.1 Instance identity and registry
+
+- `ApplicationInstance` is a first-class record with stable descriptor ID,
+  policy, bounded launch context, lifecycle state, activation state, failure
+  and termination diagnostics, and bounded owned-window relationships.
+- `ApplicationInstanceHandle` is a packed slot/generation value.  Its public
+  semantics are stable-handle based; descriptor IDs and instance handles are
+  distinct, and generation validation rejects stale references after slot
+  reuse.
+- `ApplicationInstanceRegistry` uses 32 fixed slots.  Terminal instances are
+  removed from active lookup, while cumulative counters preserve bounded
+  diagnostics for created, reused, activated, terminated, failed, attached,
+  detached, duplicate, and stale-ownership events.
+- Lookup supports handle lookup, first/by-descriptor lookup, bounded count, and
+  indexed enumeration by descriptor.  The registry is App Model state only;
+  it is not a process manager or scheduler.
+
+### 18.2 Lifecycle contract
+
+The implemented states are `Registered`, `Loading`, `Initialized`, `Running`,
+`Activated`, `Inactive`, `Suspended`, `Closing`, `Terminated`, and `Failed`.
+Normal launches transition through `Registered -> Loading -> Initialized ->
+Running -> Activated`.  Reusable instances can return to `Inactive` after a
+window closes and re-enter loading/running/activated on reuse.  Close moves an
+instance through `Closing -> Terminated`; preparation failures enter
+`Failed` and remove newly created instances.  Invalid transitions are
+rejected.  `Suspended` is represented in the contract but is not entered by
+the current backend because C# has no real suspension mechanism.
+
+### 18.3 Window and taskbar ownership
+
+`WindowManager` remains the graphical window owner.  Each semantically managed
+window can carry an `ApplicationInstanceHandle`; the instance registry owns
+the bounded relationship and WindowManager continues to own ordering,
+focus, drawing, fade-close, and disposal.  Duplicate attachment is harmless
+and counted.  A window close detaches its instance; ordinary multi-instance
+applications terminate when their final window closes, while reusable
+Console/Image Viewer/WAV Player instances may remain inactive with zero
+windows.  Instance termination closes/detaches all owned windows safely.
+
+The taskbar visual model remains unchanged.  Its existing window entries now
+reject stale semantic owners before presentation/activation, while legacy
+unattached shell windows remain compatible.  This preserves current taskbar
+behavior without introducing grouping UI.
+
+### 18.4 Compatibility backend and policies
+
+`LaunchRequest -> descriptor resolution -> ApplicationInstanceRegistry ->
+existing AppCollection/Desktop backend -> window attachment -> lifecycle
+completion -> LaunchResult` is the active launch path.  Built-in constructors
+were not converted wholesale, and the old boolean and named launch APIs
+remain available as compatibility facades.
+
+The descriptor projection records `MultiInstance` for ordinary recreated
+applications (including Calculator and Notepad) and `ReuseExisting` for
+Console, Image Viewer, and WAV Player.  Reuse is semantic instance reuse even
+when the legacy backend must recreate a disposed helper window.  Console keeps
+its existing `FConsole` behavior and activation ordering without duplicate
+ownership.  Image Viewer and WAV Player keep their lazy/reusable desktop
+helpers, with resource disposal remaining in their existing safe paths.
+
+Shell Computer Files and installer windows are also attached to bounded shell
+instances.  Root mode remains a desktop mode change rather than a fabricated
+window instance.  A failed shell/window attach closes the new window and
+removes or safely inactivates the instance.
+
+### 18.5 GXM mapping
+
+GXM launches use the dynamic application identity `gxos.external.gxm` with
+`MultiInstance` policy.  The instance retains the bounded GXM launch request
+and document/path context; GUI execution attaches the resulting
+`GXMScriptWindow`, while non-GUI execution retains instance lifecycle context
+without inventing a built-in descriptor.  `GXMLoader` and
+`GXMScriptWindow` remain the execution backend.
+
+### 18.6 Validation and deferred work
+
+The AppModel diagnostic includes deterministic identity, lifecycle, invalid
+transition, reuse, multi-instance, capacity, failure-cleanup, zero-window,
+attach/detach, duplicate-attach, and stale-handle checks.  AppRuntime emits
+bounded instance/result/ownership counters and exercises repeated Calculator,
+Notepad, and Console launch/close cycles plus association, shell, and GXM
+routes.
+
+Deferred work is full per-built-in migration away from the compatibility
+factory, actual suspension/resume, dynamic package discovery or process
+isolation, and visual taskbar grouping.  Those are intentionally outside
+Phase 2 and do not block the bounded instance/lifecycle contract.
+
+### 18.7 Phase 2 validation evidence
+
+The final Phase 2 evidence was collected from the real UEFI guest and the
+normal build path:
+
+- Host build: `dotnet build guideXOS\\guideXOS.csproj --no-restore` passed with
+  0 errors and the repository's existing warning set.
+- AppModel: `APP_MODEL_INSTANCE_SELFTEST_OK=1`, capacity `32`, active `0`,
+  stale ownership `0`, attach/detach `1/1` in the deterministic guest proof.
+- AppRuntime: `APP_RUNTIME_COMPLETE` and validation `True`; 20 Start
+  selections/launches, 29 window closes, 20 instance launch markers, Console
+  reuse on one handle, GXM and installer instance close routes, all six
+  association probes, five negative file failures, graphics valid, balanced
+  input, and allocator corruption `0`.
+- NativeInput: `TIMEOUT_SUCCESS`; keyboard and mouse drops were `0`, with
+  balanced key and left-button transitions.
+- ContextMenu: `CONTEXT_MENU_COMPLETE`; desktop opens/draws/good-bounds were
+  `104/104/104`, with bad-bounds `0`.
+- Production continuous boot: `TIMEOUT_SUCCESS`; five heartbeats, advancing
+  frame/timer values, valid graphics, allocator corruption `0`, and
+  `ThreadPool.Locked=0`.
+
+The bounded AppRuntime workload also serves as the Phase 2 stress pass: three
+additional Calculator/Notepad pairs, two additional Console launches, shell
+and association routes, and close cleanup completed without registry growth.
+The final guest state had no stale semantic window owners; reusable helper
+instances were allowed to remain inactive with zero windows as specified.

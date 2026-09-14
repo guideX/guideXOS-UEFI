@@ -962,8 +962,20 @@ namespace guideXOS.GUI {
 
             if (association.Kind == AppKind.FileAssociation &&
                 request.TargetAppId == "gxos.builtin.imageviewer") {
+                ApplicationInstance imageInstance;
+                bool imageReused;
+                LaunchResult imageFailure;
+                if (!ApplicationInstanceRegistry.TryBeginDescriptorLaunch(
+                        request.TargetAppId, request, out imageInstance,
+                        out imageReused, out imageFailure)) {
+                    ShowOpenError(itemX + 60, itemY + 60,
+                        "Unable to start Image Viewer.");
+                    return true;
+                }
                 byte[] buffer = File.ReadAllBytes(path);
                 if (buffer == null) {
+                    ApplicationInstanceRegistry.FailLaunch(imageInstance,
+                        imageReused, "Image file read failed");
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                     Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=Image Viewer;reason=READ");
 #endif
@@ -974,6 +986,8 @@ namespace guideXOS.GUI {
                 Image decoded = DecodeDesktopImage(buffer, isPng);
                 buffer.Dispose();
                 if (decoded == null) {
+                    ApplicationInstanceRegistry.FailLaunch(imageInstance,
+                        imageReused, "Image decode failed");
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                     Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=Image Viewer;reason=DECODE");
 #endif
@@ -982,20 +996,61 @@ namespace guideXOS.GUI {
                 }
 
                 ImageViewer viewer = EnsureImageViewer();
+                if (!ApplicationInstanceRegistry.TryAttachWindow(imageInstance,
+                        viewer)) {
+                    decoded.Dispose();
+                    ApplicationInstanceRegistry.FailLaunch(imageInstance,
+                        imageReused, "Image Viewer window ownership failed");
+                    ShowOpenError(itemX + 60, itemY + 60,
+                        "Unable to attach Image Viewer window.");
+                    return true;
+                }
                 viewer.SetImage(decoded);
                 WindowManager.MoveToEnd(viewer);
                 viewer.Visible = true;
+                if (!ApplicationInstanceRegistry.TryCompleteLaunch(imageInstance,
+                        true, out imageFailure)) {
+                    ApplicationInstanceRegistry.FailLaunch(imageInstance,
+                        imageReused, "Image Viewer activation failed");
+                    ShowOpenError(itemX + 60, itemY + 60,
+                        "Unable to activate Image Viewer.");
+                    return true;
+                }
                 RecentManager.AddDocument(path, Icons.ImageIcon(32));
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
-                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=Image Viewer;content=decoded");
+                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=Image Viewer;content=decoded" +
+                    ";instance=" + imageInstance.Handle.ToString() +
+                    ";state=" + imageInstance.LifecycleStateName +
+                    ";owned=" + imageInstance.OwnedWindowCount.ToString());
 #endif
                 return true;
             }
 
             if (association.Kind == AppKind.FileAssociation &&
                 request.TargetAppId == "gxos.builtin.notepad") {
+                ApplicationInstance notepadInstance;
+                bool notepadReused;
+                LaunchResult notepadFailure;
+                if (!ApplicationInstanceRegistry.TryBeginDescriptorLaunch(
+                        request.TargetAppId, request, out notepadInstance,
+                        out notepadReused, out notepadFailure)) {
+                    ShowOpenError(itemX + 60, itemY + 60,
+                        "Unable to start Notepad.");
+                    return true;
+                }
                 Notepad notepad = new Notepad(itemX + 40, itemY + 40);
+                if (!ApplicationInstanceRegistry.TryAttachWindow(notepadInstance,
+                        notepad)) {
+                    notepad.CloseForApplicationTermination();
+                    ApplicationInstanceRegistry.FailLaunch(notepadInstance,
+                        notepadReused, "Notepad window ownership failed");
+                    ShowOpenError(itemX + 60, itemY + 60,
+                        "Unable to attach Notepad window.");
+                    return true;
+                }
                 if (!notepad.OpenFile(path)) {
+                    ApplicationInstanceRegistry.FailLaunch(notepadInstance,
+                        notepadReused, "Notepad file read failed");
                     notepad.Visible = false;
                     ShowOpenError(itemX + 60, itemY + 60, "Unable to read text file.");
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
@@ -1005,16 +1060,38 @@ namespace guideXOS.GUI {
                 }
                 WindowManager.MoveToEnd(notepad);
                 notepad.Visible = true;
+                if (!ApplicationInstanceRegistry.TryCompleteLaunch(notepadInstance,
+                        true, out notepadFailure)) {
+                    ApplicationInstanceRegistry.FailLaunch(notepadInstance,
+                        notepadReused, "Notepad activation failed");
+                    ShowOpenError(itemX + 60, itemY + 60,
+                        "Unable to activate Notepad.");
+                    return true;
+                }
                 RecentManager.AddDocument(path, Icons.DocumentIcon(32));
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
-                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=Notepad;content=loaded");
+                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=Notepad;content=loaded" +
+                    ";instance=" + notepadInstance.Handle.ToString() +
+                    ";state=" + notepadInstance.LifecycleStateName +
+                    ";owned=" + notepadInstance.OwnedWindowCount.ToString());
 #endif
                 return true;
             }
 
             if (request.TargetKind == LaunchRequestTargetKind.GxmDocument) {
+                ApplicationInstance gxmInstance;
+                bool gxmReused;
+                LaunchResult gxmFailure;
+                if (!ApplicationInstanceRegistry.TryBeginGxmLaunch(request,
+                        out gxmInstance, out gxmReused, out gxmFailure)) {
+                    ShowOpenError(itemX + 60, itemY + 60,
+                        "Unable to start GXM application.");
+                    return true;
+                }
                 byte[] buffer = File.ReadAllBytes(path);
                 if (buffer == null) {
+                    ApplicationInstanceRegistry.FailLaunch(gxmInstance,
+                        gxmReused, "GXM document read failed");
                     ShowOpenError(itemX + 60, itemY + 60, "Unable to read executable.");
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                     Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=GXM;reason=READ");
@@ -1022,8 +1099,17 @@ namespace guideXOS.GUI {
                     return true;
                 }
                 string err;
-                bool ok = GXMLoader.TryExecute(buffer, out err);
+                bool ok = GXMLoader.TryExecute(buffer, out err, gxmInstance);
                 buffer.Dispose();
+                if (ok && !ApplicationInstanceRegistry.TryCompleteLaunch(
+                        gxmInstance, true, out gxmFailure)) {
+                    ok = false;
+                    ApplicationInstanceRegistry.FailLaunch(gxmInstance,
+                        gxmReused, "GXM activation failed");
+                } else if (!ok) {
+                    ApplicationInstanceRegistry.FailLaunch(gxmInstance,
+                        gxmReused, err ?? "GXM backend rejected launch");
+                }
                 if (!ok) {
                     ShowOpenError(itemX + 60, itemY + 60,
                         err ?? "Failed to run executable");
@@ -1031,7 +1117,10 @@ namespace guideXOS.GUI {
                     RecentManager.AddDocument(path, Icons.DocumentIcon(32));
                 }
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
-                Program.MarkUefiAppRuntime("FILE_RESULT=path=" + path + ";app=GXM;ok=" + (ok ? "1" : "0"));
+                Program.MarkUefiAppRuntime("FILE_RESULT=path=" + path + ";app=GXM;ok=" + (ok ? "1" : "0") +
+                    ";instance=" + gxmInstance.Handle.ToString() +
+                    ";state=" + gxmInstance.LifecycleStateName +
+                    ";owned=" + gxmInstance.OwnedWindowCount.ToString());
                 // Defer UI-error probes until after the positive shell/file
                 // route has reached a real GXM fixture.  This keeps the
                 // initial Start-menu interaction free of a modal error window.
@@ -1056,7 +1145,19 @@ namespace guideXOS.GUI {
 
             if (association.Kind == AppKind.FileAssociation &&
                 request.TargetAppId == "gxos.builtin.wavplayer") {
+                ApplicationInstance wavInstance;
+                bool wavReused;
+                LaunchResult wavFailure;
+                if (!ApplicationInstanceRegistry.TryBeginDescriptorLaunch(
+                        request.TargetAppId, request, out wavInstance,
+                        out wavReused, out wavFailure)) {
+                    ShowOpenError(itemX + 75, itemY + 75,
+                        "Unable to start WAV Player.");
+                    return true;
+                }
                 if (!Audio.HasAudioDevice) {
+                    ApplicationInstanceRegistry.FailLaunch(wavInstance,
+                        wavReused, "Audio device unavailable");
                     ShowOpenError(itemX + 75, itemY + 75,
                         "Audio controller is unavailable!");
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
@@ -1066,6 +1167,8 @@ namespace guideXOS.GUI {
                 }
                 byte[] buffer = File.ReadAllBytes(path);
                 if (buffer == null) {
+                    ApplicationInstanceRegistry.FailLaunch(wavInstance,
+                        wavReused, "WAV file read failed");
                     ShowOpenError(itemX + 75, itemY + 75, "Unable to read audio file.");
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                     Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=WAV Player;reason=READ");
@@ -1073,18 +1176,86 @@ namespace guideXOS.GUI {
                     return true;
                 }
                 WAVPlayer player = EnsureWavPlayer();
+                if (!ApplicationInstanceRegistry.TryAttachWindow(wavInstance,
+                        player)) {
+                    buffer.Dispose();
+                    ApplicationInstanceRegistry.FailLaunch(wavInstance,
+                        wavReused, "WAV Player window ownership failed");
+                    ShowOpenError(itemX + 75, itemY + 75,
+                        "Unable to attach WAV Player window.");
+                    return true;
+                }
                 player.Visible = true;
                 unsafe {
                     fixed (char* ptr = name) player.Play(buffer, new string(ptr));
                 }
+                if (!ApplicationInstanceRegistry.TryCompleteLaunch(wavInstance,
+                        true, out wavFailure)) {
+                    ApplicationInstanceRegistry.FailLaunch(wavInstance,
+                        wavReused, "WAV Player activation failed");
+                    ShowOpenError(itemX + 75, itemY + 75,
+                        "Unable to activate WAV Player.");
+                    return true;
+                }
                 RecentManager.AddDocument(path, Icons.AudioIcon(32));
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
-                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=WAV Player;content=dispatched");
+                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=WAV Player;content=dispatched" +
+                    ";instance=" + wavInstance.Handle.ToString() +
+                    ";state=" + wavInstance.LifecycleStateName +
+                    ";owned=" + wavInstance.OwnedWindowCount.ToString());
 #endif
                 return true;
             }
 
             return false;
+        }
+
+        private static bool LaunchComputerFilesInstance(LaunchRequest request,
+                                                        int x, int y) {
+            ApplicationInstance instance;
+            bool reused;
+            LaunchResult failure;
+            if (request == null) {
+                request = LaunchRequest.ForAppId("gxos.builtin.files", null,
+                    null, LaunchActivationIntent.Launch);
+            }
+            if (!ApplicationInstanceRegistry.TryBeginDescriptorLaunch(
+                    "gxos.builtin.files", request, out instance,
+                    out reused, out failure)) return false;
+
+            ComputerFiles files = null;
+            try {
+                files = new ComputerFiles(x, y, 540, 380);
+                if (!ApplicationInstanceRegistry.TryAttachWindow(instance, files)) {
+                    files.CloseForApplicationTermination();
+                    ApplicationInstanceRegistry.FailLaunch(instance, reused,
+                        "Computer Files window ownership failed");
+                    return false;
+                }
+                compFiles = files;
+                WindowManager.MoveToEnd(files);
+                files.Visible = true;
+                if (!ApplicationInstanceRegistry.TryCompleteLaunch(instance, true,
+                        out failure)) {
+                    ApplicationInstanceRegistry.FailLaunch(instance, reused,
+                        "Computer Files activation failed");
+                    return false;
+                }
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("SHELL_INSTANCE_OK=app=Computer Files" +
+                    ";instance=" + instance.Handle.ToString() +
+                    ";state=" + instance.LifecycleStateName +
+                    ";owned=" + instance.OwnedWindowCount.ToString());
+#endif
+                return true;
+            } catch {
+                if (files != null && !files.ApplicationInstanceHandle.IsValid) {
+                    files.CloseForApplicationTermination();
+                }
+                ApplicationInstanceRegistry.FailLaunch(instance, reused,
+                    "Computer Files backend rejected the launch");
+                return false;
+            }
         }
 
         /// <summary>
@@ -1134,13 +1305,57 @@ namespace guideXOS.GUI {
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                 Program.MarkUefiAppRuntime("SHELL_ROUTE=INSTALLER;result=HD_INSTALLER");
 #endif
-                var installer = new guideXOS.DefaultApps.HDInstaller(itemX + 60, itemY + 60);
-                WindowManager.MoveToEnd(installer);
-                installer.Visible = true;
+                if (shellRequest == null) {
+                    shellRequest = LaunchRequest.ForShellObject(
+                        shellObject.ShellId, null, "Install to Hard Drive",
+                        ApplicationShellTargetKind.Action, null,
+                        LaunchActivationIntent.Launch);
+                }
+                ApplicationInstance installerInstance;
+                bool installerReused;
+                LaunchResult installerFailure;
+                if (!ApplicationInstanceRegistry.TryBeginLaunch(
+                        "gxos.shell.installer", ApplicationInstancePolicy.ShellOwned,
+                        shellRequest, out installerInstance, out installerReused,
+                        out installerFailure)) {
+                    ShowOpenError(itemX + 60, itemY + 60,
+                        "Unable to activate installer.");
+                    return;
+                }
+                guideXOS.DefaultApps.HDInstaller installer = null;
+                try {
+                    installer = new guideXOS.DefaultApps.HDInstaller(itemX + 60, itemY + 60);
+                    if (!ApplicationInstanceRegistry.TryAttachWindow(installerInstance,
+                            installer)) {
+                        installer.CloseForApplicationTermination();
+                        ApplicationInstanceRegistry.FailLaunch(installerInstance,
+                            installerReused, "Installer window ownership failed");
+                        return;
+                    }
+                    WindowManager.MoveToEnd(installer);
+                    installer.Visible = true;
+                    if (!ApplicationInstanceRegistry.TryCompleteLaunch(installerInstance,
+                            true, out installerFailure)) {
+                        ApplicationInstanceRegistry.FailLaunch(installerInstance,
+                            installerReused, "Installer activation failed");
+                        return;
+                    }
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
-                Program.MarkUefiAppRuntime("INSTALLER_BOUNDS=x=" + installer.X.ToString() +
-                    ";y=" + installer.Y.ToString() + ";w=" + installer.Width.ToString());
+                    Program.MarkUefiAppRuntime("INSTALLER_INSTANCE_OK=instance=" +
+                        installerInstance.Handle.ToString() +
+                        ";state=" + installerInstance.LifecycleStateName +
+                        ";owned=" + installerInstance.OwnedWindowCount.ToString());
+                    Program.MarkUefiAppRuntime("INSTALLER_BOUNDS=x=" + installer.X.ToString() +
+                        ";y=" + installer.Y.ToString() + ";w=" + installer.Width.ToString());
 #endif
+                } catch {
+                    if (installer != null && !installer.ApplicationInstanceHandle.IsValid) {
+                        installer.CloseForApplicationTermination();
+                    }
+                    ApplicationInstanceRegistry.FailLaunch(installerInstance,
+                        installerReused, "Installer backend rejected the launch");
+                    return;
+                }
                 IndexClicked = -1;
                 return;
             }
@@ -1149,9 +1364,9 @@ namespace guideXOS.GUI {
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                 Program.MarkUefiAppRuntime("SHELL_ROUTE=COMPUTER_FILES;result=WINDOW");
 #endif
-                // Always create a new ComputerFiles window (old one may have been disposed on close)
-                compFiles = new ComputerFiles(300, 200, 540, 380);
-                WindowManager.MoveToEnd(compFiles);
+                // Always create a new semantic instance/window pair (old
+                // helper windows may have been disposed on close).
+                LaunchComputerFilesInstance(shellRequest, 300, 200);
                 return;
             }
             // Click on USB drive icon opens Computer Files too (when on Home desktop)
@@ -1168,9 +1383,11 @@ namespace guideXOS.GUI {
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                     Program.MarkUefiAppRuntime("SHELL_ROUTE=USB;result=WINDOW");
 #endif
-                    // Always create a new ComputerFiles window (old one may have been disposed)
-                    compFiles = new ComputerFiles(300, 200, 540, 380);
-                    WindowManager.MoveToEnd(compFiles);
+                    LaunchRequest usbRequest = LaunchRequest.ForShellObject(
+                        shellObject.ShellId, "gxos.builtin.files", "Computer Files",
+                        ApplicationShellTargetKind.FileSystem,
+                        shellObject.DeviceName, LaunchActivationIntent.Launch);
+                    LaunchComputerFilesInstance(usbRequest, 300, 200);
                     return;
                 }
             }

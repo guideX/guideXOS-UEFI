@@ -215,8 +215,11 @@ unsafe class Program {
             return false;
         }
 
+        uint* expectedGraphicsMemory = Framebuffer.TripleBuffered &&
+            Framebuffer.FirstBuffer != null
+            ? Framebuffer.FirstBuffer : Framebuffer.OriginalVideoMemory;
         if ((ulong)Framebuffer.VideoMemory != (ulong)Framebuffer.OriginalVideoMemory ||
-            (ulong)graphics.VideoMemory != (ulong)Framebuffer.VideoMemory) {
+            (ulong)graphics.VideoMemory != (ulong)expectedGraphicsMemory) {
             return false;
         }
 
@@ -643,14 +646,17 @@ unsafe class Program {
         _uefiMultiFrameStage = stage;
         _uefiMultiFrameSubstage = substage;
         _uefiMultiFrameLastBoundary = boundary;
-        if (Framebuffer.Graphics != null && (ulong)Framebuffer.OriginalVideoMemory != 0 &&
-            (ulong)Framebuffer.Graphics.VideoMemory != (ulong)Framebuffer.OriginalVideoMemory) {
+        uint* expectedGraphicsMemory = Framebuffer.TripleBuffered &&
+            Framebuffer.FirstBuffer != null
+            ? Framebuffer.FirstBuffer : Framebuffer.OriginalVideoMemory;
+        if (Framebuffer.Graphics != null && (ulong)expectedGraphicsMemory != 0 &&
+            (ulong)Framebuffer.Graphics.VideoMemory != (ulong)expectedGraphicsMemory) {
             SerialBreadcrumb("UEFI_GRAPHICS_POINTER_MISMATCH_STAGE=" + stage.ToString());
             SerialBreadcrumb("UEFI_GRAPHICS_POINTER_MISMATCH_BOUNDARY=" + boundary.ToString());
             SerialBreadcrumb("UEFI_GRAPHICS_POINTER_ACTUAL=" +
                 ((ulong)Framebuffer.Graphics.VideoMemory).ToString());
             SerialBreadcrumb("UEFI_GRAPHICS_POINTER_EXPECTED=" +
-                ((ulong)Framebuffer.OriginalVideoMemory).ToString());
+                ((ulong)expectedGraphicsMemory).ToString());
         }
         ulong rsp = Native.ReadRSP();
         if (_uefiMultiFrameStackLowWater == 0 || rsp < _uefiMultiFrameStackLowWater)
@@ -1059,9 +1065,14 @@ unsafe class Program {
         // Establish the known safe last-resort background. SetupIcons then
         // lets BackgroundRotationManager replace it with the managed asset.
         Framebuffer.Graphics.Clear(0xFF0D7D77u);
+        // Render the desktop into the existing back buffer and publish only
+        // completed frames. Drawing directly into the GOP framebuffer makes
+        // the clear at the start of a frame visible while a window or the
+        // Start menu is being composed.
+        Framebuffer.TripleBuffered = true;
         Wallpaper = null;
         BootConsole.WriteLine("[FRAMEBUFFER] initialized");
-        BootConsole.WriteLine("[UEFI] triple buffering disabled");
+        BootConsole.WriteLine("[UEFI] triple buffering enabled");
     }
 
     /// <summary>
@@ -1859,6 +1870,8 @@ unsafe class Program {
                 failure = "SHELL_OBJECT";
             } else if (!ApplicationDescriptorRegistry.RunSelfTest()) {
                 failure = "MODERN_DESCRIPTOR_REQUEST";
+            } else if (!ApplicationInstanceRegistry.RunSelfTest()) {
+                failure = "APPLICATION_INSTANCE_LIFECYCLE";
             } else {
                 SerialBreadcrumb("APP_MODEL_APP_COUNT=" + Desktop.Apps.Length.ToString());
                 SerialBreadcrumb("APP_MODEL_MODERN_DESCRIPTOR_COUNT=" +
@@ -1872,6 +1885,23 @@ unsafe class Program {
                 SerialBreadcrumb("APP_MODEL_SHELL_OK=" +
                     (ShellObjectRegistry.Resolve("USB Drive 0").Success ? "1" : "0"));
                 SerialBreadcrumb("APP_MODEL_MODERN_REQUEST_OK=1");
+                SerialBreadcrumb("APP_MODEL_INSTANCE_CAPACITY=" +
+                    ApplicationInstanceRegistry.Capacity.ToString());
+                SerialBreadcrumb("APP_MODEL_INSTANCE_CREATED=" +
+                    ApplicationInstanceRegistry.InstancesCreated.ToString());
+                SerialBreadcrumb("APP_MODEL_INSTANCE_REUSED=" +
+                    ApplicationInstanceRegistry.InstancesReused.ToString());
+                SerialBreadcrumb("APP_MODEL_INSTANCE_TERMINATED=" +
+                    ApplicationInstanceRegistry.InstancesTerminated.ToString());
+                SerialBreadcrumb("APP_MODEL_INSTANCE_ACTIVE=" +
+                    ApplicationInstanceRegistry.ActiveCount.ToString());
+                SerialBreadcrumb("APP_MODEL_INSTANCE_ATTACH=" +
+                    ApplicationInstanceRegistry.WindowAttachCount.ToString());
+                SerialBreadcrumb("APP_MODEL_INSTANCE_DETACH=" +
+                    ApplicationInstanceRegistry.WindowDetachCount.ToString());
+                SerialBreadcrumb("APP_MODEL_INSTANCE_STALE=" +
+                    ApplicationInstanceRegistry.StaleOwnershipCount.ToString());
+                SerialBreadcrumb("APP_MODEL_INSTANCE_SELFTEST_OK=1");
             }
         } catch {
             failure = "EXCEPTION";

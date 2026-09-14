@@ -81,6 +81,7 @@ namespace guideXOS.OS {
         /// </summary>
         private void LoadDefaultApps() {
             AppLaunchResolver.InitializeDefaultDescriptors();
+            ApplicationInstanceRegistry.Initialize();
             // Build the immutable semantic projection at the same safe,
             // post-EBS initialization point as the existing app collection.
             // The legacy list below remains the Start/UI compatibility list.
@@ -116,6 +117,12 @@ namespace guideXOS.OS {
         /// <param name="name"></param>
         internal bool LoadLegacyBackend(LaunchRequest request,
                                         AppLaunchResolution resolution) {
+            return LoadLegacyBackend(request, resolution, null);
+        }
+
+        internal bool LoadLegacyBackend(LaunchRequest request,
+                                        AppLaunchResolution resolution,
+                                        ApplicationInstance instance) {
             var b = false;
             string name = request == null ? null : request.TargetNameOrAlias;
             string dispatchName = resolution != null && resolution.Success
@@ -164,31 +171,51 @@ namespace guideXOS.OS {
                         case "Welcome": _apps[i].AppObject = new Welcome(300, 200); b = true; break;
                         // GXM apps
                         case "Hello Demo":
-                            b = LaunchGXMFromFile("Programs/hello.gxm", _apps[i].Icon);
+                            b = LaunchGXMFromFile("Programs/hello.gxm", _apps[i].Icon,
+                                instance);
                             break;
                         case "Minimal Demo":
-                            b = LaunchGXMFromFile("Programs/minimal.gxm", _apps[i].Icon);
+                            b = LaunchGXMFromFile("Programs/minimal.gxm", _apps[i].Icon,
+                                instance);
                             break;
                     }
                     if (b) {
+                        if (instance != null &&
+                            _apps[i].AppObject is guideXOS.GUI.Window launchedWindow &&
+                            !ApplicationInstanceRegistry.TryAttachWindow(instance,
+                                launchedWindow)) {
+                            // An attach failure must not leave a newly-created
+                            // window outside the semantic instance.  Never
+                            // close a window already owned by another instance.
+                            if (!launchedWindow.ApplicationInstanceHandle.IsValid) {
+                                launchedWindow.CloseForApplicationTermination();
+                            }
+                            b = false;
+                        }
                         // record recents
-                        RecentManager.AddProgram(dispatchName, _apps[i].Icon);
+                        if (b) RecentManager.AddProgram(dispatchName, _apps[i].Icon);
                         // apply taskbar icon if window
-                        if (_apps[i].AppObject is guideXOS.GUI.Window w) {
+                        if (b && _apps[i].AppObject is guideXOS.GUI.Window w) {
                             w.TaskbarIcon = _apps[i].Icon;
                             w.ShowInTaskbar = true;
                         }
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
-                        guideXOS.GUI.Window launchedWindow =
+                        guideXOS.GUI.Window diagnosticWindow =
                             _apps[i].AppObject as guideXOS.GUI.Window;
                         Program.MarkUefiAppRuntime("LAUNCH_OK=id=" +
                             (resolution.AppId ?? "") + ";name=" + dispatchName +
-                            ";type=" + (launchedWindow != null ? "WINDOW" :
+                            ";type=" + (diagnosticWindow != null ? "WINDOW" :
                             (_apps[i].AppObject == null ? "NONE" : "NON_WINDOW")) +
-                            ";bounds=" + (launchedWindow == null ? "0,0,0,0" :
-                            launchedWindow.X.ToString() + "," + launchedWindow.Y.ToString() + "," +
-                            launchedWindow.Width.ToString() + "," + launchedWindow.Height.ToString()) +
-                            ";windows=" + WindowManager.Windows.Count.ToString());
+                            ";bounds=" + (diagnosticWindow == null ? "0,0,0,0" :
+                            diagnosticWindow.X.ToString() + "," + diagnosticWindow.Y.ToString() + "," +
+                            diagnosticWindow.Width.ToString() + "," + diagnosticWindow.Height.ToString()) +
+                            ";windows=" + WindowManager.Windows.Count.ToString() +
+                            ";instance=" + (instance == null ? "" :
+                                instance.Handle.ToString()) +
+                            ";state=" + (instance == null ? "" :
+                                instance.LifecycleStateName) +
+                            ";owned=" + (instance == null ? "0" :
+                                instance.OwnedWindowCount.ToString()));
 #endif
                     }
                 }
@@ -258,8 +285,9 @@ namespace guideXOS.OS {
             if (!canDispatch) {
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                 Program.MarkUefiAppRuntime("LAUNCH_RESULT=code=" +
-                    (resolutionFailure == null ? LaunchErrorCode.NotFound.ToString() :
-                        resolutionFailure.ErrorCode.ToString()) + ";success=0");
+                    (resolutionFailure == null ?
+                        LaunchResult.ErrorCodeNameOf(LaunchErrorCode.NotFound) :
+                        resolutionFailure.ErrorCodeName) + ";success=0");
                 Program.MarkUefiAppRuntime("LAUNCH_FAIL=input=" + (name ?? "") +
                     ";reason=" + (resolutionFailure == null ?
                         "UNAVAILABLE_IMPLEMENTATION" :
@@ -272,9 +300,18 @@ namespace guideXOS.OS {
                 this, request, resolution);
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
             Program.MarkUefiAppRuntime("LAUNCH_RESULT=code=" +
-                result.ErrorCode.ToString() + ";success=" +
+                result.ErrorCodeName + ";success=" +
                 (result.Success ? "1" : "0") + ";app=" +
-                (result.AppId ?? ""));
+                (result.AppId ?? "") + ";instance=" +
+                (result.InstanceId ?? "") + ";state=" +
+                result.ActivationStateName + ";active=" +
+                ApplicationInstanceRegistry.ActiveCount.ToString() +
+                ";created=" + ApplicationInstanceRegistry.InstancesCreated.ToString() +
+                ";reused=" + ApplicationInstanceRegistry.InstancesReused.ToString() +
+                ";terminated=" + ApplicationInstanceRegistry.InstancesTerminated.ToString() +
+                ";attach=" + ApplicationInstanceRegistry.WindowAttachCount.ToString() +
+                ";detach=" + ApplicationInstanceRegistry.WindowDetachCount.ToString() +
+                ";stale=" + ApplicationInstanceRegistry.StaleOwnershipCount.ToString());
 #endif
             return result.Success;
         }
@@ -293,7 +330,8 @@ namespace guideXOS.OS {
         /// <param name="path">Path to GXM file</param>
         /// <param name="icon">Icon to use for recent items</param>
         /// <returns>True if successfully launched</returns>
-        private bool LaunchGXMFromFile(string path, Image icon) {
+        private bool LaunchGXMFromFile(string path, Image icon,
+                                       ApplicationInstance instance) {
             byte[] buffer = guideXOS.FS.File.ReadAllBytes(path);
             if (buffer == null) {
                 guideXOS.GUI.NotificationManager.Add(new Notify($"File not found: {path}"));
@@ -301,7 +339,8 @@ namespace guideXOS.OS {
             }
             
             string err;
-            bool ok = guideXOS.Misc.GXMLoader.TryExecute(buffer, out err);
+            bool ok = guideXOS.Misc.GXMLoader.TryExecute(buffer, out err,
+                instance);
             if (ok) {
                 guideXOS.GUI.RecentManager.AddProgram(path, icon);
             } else {

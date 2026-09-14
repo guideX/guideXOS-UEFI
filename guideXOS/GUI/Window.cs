@@ -2,6 +2,7 @@ using guideXOS.Enum;
 using guideXOS.Graph;
 using guideXOS.GUI.Base;
 using guideXOS.Kernel.Drivers;
+using guideXOS.OS;
 using System;
 using System.Drawing;
 using System.Windows.Forms;
@@ -26,6 +27,11 @@ namespace guideXOS.GUI {
         /// Added: tombstone state (freeze UI until restored)
         /// </summary>
         public bool IsTombstoned { get; private set; }
+        /// <summary>
+        /// Semantic owner.  WindowManager remains the graphical owner; this
+        /// handle links the window to its application instance.
+        /// </summary>
+        internal ApplicationInstanceHandle ApplicationInstanceHandle { get; private set; }
         #region "private variables"
         /// <summary>
         /// Owner ID
@@ -106,6 +112,7 @@ namespace guideXOS.GUI {
         private Image _blurredBarCache;
         private Graphics _blurredBarG; // persistent graphics for cache to avoid repeated allocations
         private int _cachedBarX, _cachedBarY, _cachedBarW, _cachedBarH;
+        private bool _disposed;
         #endregion
         #region "methods"
         /// <summary>
@@ -758,6 +765,12 @@ namespace guideXOS.GUI {
         /// Dispose window and free all associated memory
         /// </summary>
         public virtual new void Dispose() {
+            if (_disposed) return;
+            _disposed = true;
+            ApplicationInstanceRegistry.OnWindowClosed(this);
+            _visible = false;
+            IsMinimized = false;
+            IsTombstoned = false;
             // Dispose blur cache
             DisposeBlurCache();
             
@@ -800,6 +813,27 @@ namespace guideXOS.GUI {
             } catch {
                 // If memory cleanup fails, at least we tried
             }
+        }
+
+        internal void SetApplicationInstance(ApplicationInstanceHandle handle) {
+            ApplicationInstanceHandle = handle;
+        }
+
+        internal void ClearApplicationInstance() {
+            ApplicationInstanceHandle = ApplicationInstanceHandle.None;
+        }
+
+        /// <summary>
+        /// Close a window as part of semantic application termination.  The
+        /// manager will perform the existing disposal pass on the next frame.
+        /// </summary>
+        internal void CloseForApplicationTermination() {
+            _animType = WindowAnimationTypeEnum.None;
+            _currentEffect = WindowEffectType.None;
+            _overlayAlpha = 0;
+            IsMinimized = false;
+            IsTombstoned = false;
+            _visible = false;
         }
         #endregion
     }

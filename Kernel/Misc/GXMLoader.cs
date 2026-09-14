@@ -1,6 +1,7 @@
 using System;
 using guideXOS.GUI;
 using guideXOS.Kernel.Drivers;
+using guideXOS.OS;
 
 namespace guideXOS.Misc {
     // Minimal loader for GXM (formerly MUE) single-image executables.
@@ -11,6 +12,11 @@ namespace guideXOS.Misc {
     //         [16..]  raw image
     public static unsafe class GXMLoader {
         public static bool TryExecute(byte[] image, out string error) {
+            return TryExecute(image, out error, null);
+        }
+
+        public static bool TryExecute(byte[] image, out string error,
+                                      ApplicationInstance instance) {
             error = null; if (image == null || image.Length < 16) { error = "Executable too small"; return false; }
             byte b0 = image[0], b1 = image[1], b2 = image[2], b3 = image[3];
             bool sigGXM = (b0=='G' && b1=='X' && b2=='M' && b3==0);
@@ -25,6 +31,12 @@ namespace guideXOS.Misc {
             // If the bytes at [16..19] equal 'G','U','I'+'\0', then from [20..] until a double-NUL sequence is a UTF-8 script.
             if (size >= 20 && image[16]=='G' && image[17]=='U' && image[18]=='I' && image[19]==0) {
                 int pos = 20; int end = (int)size; var win = new GXMScriptWindow("Script", 420, 300);
+                if (instance != null &&
+                    !ApplicationInstanceRegistry.TryAttachWindow(instance, win)) {
+                    win.CloseForApplicationTermination();
+                    error = "Application instance window capacity exhausted";
+                    return false;
+                }
                 // parse lines separated by \n (0x0A), fields with '|'
                 int lineStart = pos;
                 int safetyCounter = 0; // Prevent infinite loops
@@ -54,7 +66,15 @@ namespace guideXOS.Misc {
                     }
                 }
                 // show window and return
-                WindowManager.MoveToEnd(win); win.Visible = true; return true;
+                WindowManager.MoveToEnd(win); win.Visible = true;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("GXM_INSTANCE_WINDOW_BOUNDS=x=" +
+                    win.X.ToString() + ";y=" + win.Y.ToString() +
+                    ";w=" + win.Width.ToString() + ";h=" +
+                    win.Height.ToString() + ";instance=" +
+                    (instance == null ? "" : instance.Handle.ToString()));
+#endif
+                return true;
             }
 
             ulong allocSize = AlignUp(size, 4096);

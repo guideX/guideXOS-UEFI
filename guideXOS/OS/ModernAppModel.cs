@@ -75,17 +75,27 @@ namespace guideXOS.OS {
         public bool RecordRecentPrograms { get; private set; }
         public bool AcceptsDocumentTargets { get; private set; }
         public bool AcceptsFolderTargets { get; private set; }
+        public ApplicationInstancePolicy InstancePolicy { get; private set; }
+        public bool CloseWhenLastWindowClosed { get; private set; }
+        public bool AllowZeroWindows { get; private set; }
 
         public ApplicationShellPolicy(bool showInStartMenu,
                                       bool showInTaskbar,
                                       bool recordRecentPrograms,
                                       bool acceptsDocumentTargets,
-                                      bool acceptsFolderTargets) {
+                                      bool acceptsFolderTargets,
+                                      ApplicationInstancePolicy instancePolicy =
+                                          ApplicationInstancePolicy.MultiInstance,
+                                      bool closeWhenLastWindowClosed = true,
+                                      bool allowZeroWindows = false) {
             ShowInStartMenu = showInStartMenu;
             ShowInTaskbar = showInTaskbar;
             RecordRecentPrograms = recordRecentPrograms;
             AcceptsDocumentTargets = acceptsDocumentTargets;
             AcceptsFolderTargets = acceptsFolderTargets;
+            InstancePolicy = instancePolicy;
+            CloseWhenLastWindowClosed = closeWhenLastWindowClosed;
+            AllowZeroWindows = allowZeroWindows;
         }
     }
 
@@ -265,6 +275,10 @@ namespace guideXOS.OS {
         public int ArgumentCount { get { return _arguments.Length; } }
         public string[] Arguments { get { return CopyStrings(_arguments); } }
 
+        public string GetArgument(int index) {
+            return index >= 0 && index < _arguments.Length ? _arguments[index] : null;
+        }
+
         public LaunchRequest(string targetAppId, string targetNameOrAlias,
                              string[] arguments, string document, string verb,
                              string sourceShellObjectId,
@@ -380,39 +394,81 @@ namespace guideXOS.OS {
     }
 
     /// <summary>
-    /// Typed/bounded launch result.  Phase 1 intentionally leaves InstanceId
-    /// null because application-instance lifecycle is a Phase 2 concern.
+    /// Typed/bounded launch result.  InstanceHandle is the stable Phase 2
+    /// identity; InstanceId remains a compatibility string projection.
     /// </summary>
     public sealed class LaunchResult {
         public bool Success { get; private set; }
         public string AppId { get; private set; }
-        public string InstanceId { get; private set; }
+        public ApplicationInstanceHandle InstanceHandle { get; private set; }
+        public string InstanceId {
+            get { return InstanceHandle.IsValid ? InstanceHandle.ToString() : null; }
+        }
         public LaunchActivationState ActivationState { get; private set; }
         public LaunchErrorCode ErrorCode { get; private set; }
+        public string ActivationStateName {
+            get { return ActivationStateNameOf(ActivationState); }
+        }
+        public string ErrorCodeName { get { return ErrorCodeNameOf(ErrorCode); } }
         public string BoundedDiagnostic { get; private set; }
 
-        private LaunchResult(bool success, string appId, string instanceId,
+        private LaunchResult(bool success, string appId,
+                             ApplicationInstanceHandle instanceHandle,
                              LaunchActivationState activationState,
                              LaunchErrorCode errorCode, string diagnostic) {
             Success = success;
             AppId = appId;
-            InstanceId = instanceId;
+            InstanceHandle = instanceHandle;
             ActivationState = activationState;
             ErrorCode = errorCode;
             BoundedDiagnostic = BoundDiagnostic(diagnostic);
         }
 
         public static LaunchResult Succeeded(string appId) {
-            return new LaunchResult(true, appId, null,
+            return new LaunchResult(true, appId, ApplicationInstanceHandle.None,
                 LaunchActivationState.Activated, LaunchErrorCode.Success, null);
+        }
+
+        internal static LaunchResult Succeeded(string appId,
+                                               ApplicationInstanceHandle handle,
+                                               LaunchActivationState activationState) {
+            return new LaunchResult(true, appId, handle, activationState,
+                LaunchErrorCode.Success, null);
         }
 
         public static LaunchResult Failed(LaunchErrorCode errorCode,
                                           string diagnostic, string appId) {
             if (errorCode == LaunchErrorCode.Success)
                 errorCode = LaunchErrorCode.InitializationFailed;
-            return new LaunchResult(false, appId, null,
+            return new LaunchResult(false, appId, ApplicationInstanceHandle.None,
                 LaunchActivationState.Failed, errorCode, diagnostic);
+        }
+
+        public static string ActivationStateNameOf(LaunchActivationState state) {
+            switch (state) {
+                case LaunchActivationState.None: return "None";
+                case LaunchActivationState.Created: return "Created";
+                case LaunchActivationState.Activated: return "Activated";
+                case LaunchActivationState.Failed: return "Failed";
+                default: return "Unknown";
+            }
+        }
+
+        public static string ErrorCodeNameOf(LaunchErrorCode code) {
+            switch (code) {
+                case LaunchErrorCode.Success: return "Success";
+                case LaunchErrorCode.NotFound: return "NotFound";
+                case LaunchErrorCode.AmbiguousTarget: return "AmbiguousTarget";
+                case LaunchErrorCode.UnsupportedTarget: return "UnsupportedTarget";
+                case LaunchErrorCode.MalformedRequest: return "MalformedRequest";
+                case LaunchErrorCode.ResourceUnavailable: return "ResourceUnavailable";
+                case LaunchErrorCode.PermissionDenied: return "PermissionDenied";
+                case LaunchErrorCode.InitializationFailed: return "InitializationFailed";
+                case LaunchErrorCode.ActivationFailed: return "ActivationFailed";
+                case LaunchErrorCode.AlreadyTerminated: return "AlreadyTerminated";
+                case LaunchErrorCode.BackendUnavailable: return "BackendUnavailable";
+                default: return "Unknown";
+            }
         }
 
         private static string BoundDiagnostic(string diagnostic) {
@@ -571,6 +627,30 @@ namespace guideXOS.OS {
             Check(IsValid, "descriptor validation", ref passed, ref failed,
                 ref failure);
 
+            ApplicationDescriptor calculator;
+            ApplicationDescriptor console;
+            ApplicationDescriptor imageViewer;
+            ApplicationDescriptor wavPlayer;
+            bool policyProjection =
+                TryGetById("gxos.builtin.calculator", out calculator) &&
+                TryGetById("gxos.builtin.console", out console) &&
+                TryGetById("gxos.builtin.imageviewer", out imageViewer) &&
+                TryGetById("gxos.builtin.wavplayer", out wavPlayer) &&
+                calculator.ShellPolicy.InstancePolicy ==
+                    ApplicationInstancePolicy.MultiInstance &&
+                calculator.ShellPolicy.CloseWhenLastWindowClosed &&
+                !calculator.ShellPolicy.AllowZeroWindows &&
+                console.ShellPolicy.InstancePolicy ==
+                    ApplicationInstancePolicy.ReuseExisting &&
+                !console.ShellPolicy.CloseWhenLastWindowClosed &&
+                console.ShellPolicy.AllowZeroWindows &&
+                imageViewer.ShellPolicy.InstancePolicy ==
+                    ApplicationInstancePolicy.ReuseExisting &&
+                wavPlayer.ShellPolicy.InstancePolicy ==
+                    ApplicationInstancePolicy.ReuseExisting;
+            Check(policyProjection, "instance policy projection", ref passed,
+                ref failed, ref failure);
+
             LaunchRequest aliasRequest = LaunchRequest.ForName("File Explorer");
             ApplicationDescriptor aliasDescriptor;
             string matchedAlias;
@@ -673,6 +753,20 @@ namespace guideXOS.OS {
                 ApplicationAssociationRegistry.GetForHandler(legacy.AppId);
             bool acceptsDocuments = associations.Length != 0;
             bool acceptsFolders = legacy.AppId == "gxos.builtin.files";
+            ApplicationInstancePolicy instancePolicy =
+                ApplicationInstancePolicy.MultiInstance;
+            bool closeWhenLastWindowClosed = true;
+            bool allowZeroWindows = false;
+            if (legacy.AppId == "gxos.builtin.console" ||
+                legacy.AppId == "gxos.builtin.imageviewer" ||
+                legacy.AppId == "gxos.builtin.wavplayer") {
+                // These three descriptors intentionally reuse the existing
+                // managed helper/window.  The singleton is an instance
+                // policy, not a replacement for descriptor identity.
+                instancePolicy = ApplicationInstancePolicy.ReuseExisting;
+                closeWhenLastWindowClosed = false;
+                allowZeroWindows = true;
+            }
             return new ApplicationDescriptor(
                 legacy.AppId,
                 legacy.DisplayName,
@@ -687,7 +781,8 @@ namespace guideXOS.OS {
                         "managed", "managed-csharp-uefi")
                 },
                 new ApplicationShellPolicy(true, true, true,
-                    acceptsDocuments, acceptsFolders));
+                    acceptsDocuments, acceptsFolders, instancePolicy,
+                    closeWhenLastWindowClosed, allowZeroWindows));
         }
 
         private static string ResourceKeyFor(string appId) {
@@ -1018,15 +1113,61 @@ namespace guideXOS.OS {
             if (collection == null)
                 return LaunchResult.Failed(LaunchErrorCode.BackendUnavailable,
                     "Application collection is unavailable", null);
-            bool launched = collection.LoadLegacyBackend(request,
-                legacyResolution);
-            if (launched) {
-                return LaunchResult.Succeeded(
-                    legacyResolution == null ? null : legacyResolution.AppId);
+
+            string appId = legacyResolution == null ? null :
+                legacyResolution.AppId;
+            ApplicationDescriptor descriptor = null;
+            ApplicationInstance instance;
+            bool reused;
+            LaunchResult failure;
+            bool began;
+            if (!string.IsNullOrEmpty(appId) &&
+                ApplicationDescriptorRegistry.TryGetById(appId, out descriptor)) {
+                began = ApplicationInstanceRegistry.TryBeginLaunch(descriptor,
+                    request, out instance, out reused, out failure);
+            } else {
+                // Retain AppCollection.Add's legacy extension point without
+                // making arbitrary legacy names descriptor identity.
+                string legacyId = "gxos.legacy." +
+                    (request == null ? "unknown" : request.TargetNameOrAlias);
+                began = ApplicationInstanceRegistry.TryBeginLaunch(legacyId,
+                    ApplicationInstancePolicy.MultiInstance, request,
+                    out instance, out reused, out failure);
+                appId = legacyResolution == null ? legacyId : legacyResolution.AppId;
             }
-            return LaunchResult.Failed(LaunchErrorCode.InitializationFailed,
-                "Existing C# application backend rejected the launch",
-                legacyResolution == null ? null : legacyResolution.AppId);
+            if (!began) return failure;
+
+            int startingWindowCount = guideXOS.GUI.WindowManager.Windows == null
+                ? 0 : guideXOS.GUI.WindowManager.Windows.Count;
+            bool launched = false;
+            try {
+                launched = collection.LoadLegacyBackend(request,
+                    legacyResolution, instance);
+                // This catches a GUI window created by a backend that does
+                // not publish it through AppObject, including GXM GUI scripts.
+                ApplicationInstanceRegistry.AttachWindowsCreatedSince(instance,
+                    startingWindowCount);
+            } catch {
+                launched = false;
+            }
+            if (!launched) {
+                ApplicationInstanceRegistry.FailLaunch(instance, reused,
+                    "Existing C# application backend rejected the launch");
+                return LaunchResult.Failed(LaunchErrorCode.InitializationFailed,
+                    "Existing C# application backend rejected the launch", appId);
+            }
+
+            if (!ApplicationInstanceRegistry.TryCompleteLaunch(instance, true,
+                    out failure)) {
+                ApplicationInstanceRegistry.FailLaunch(instance, reused,
+                    failure == null ? "Application initialization failed" :
+                        failure.BoundedDiagnostic);
+                return failure ?? LaunchResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    "Application initialization failed", appId);
+            }
+            return LaunchResult.Succeeded(appId, instance.Handle,
+                LaunchActivationState.Activated);
         }
     }
 }

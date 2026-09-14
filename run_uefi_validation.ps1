@@ -625,6 +625,43 @@ function Close-QmpComputerFilesWindow {
     Start-Sleep -Milliseconds 160
 }
 
+function Close-QmpGxmWindow {
+    param($Qmp)
+    # The diagnostic GXM association route also creates the installer shell
+    # probe immediately afterward.  It is therefore the frontmost window;
+    # dismiss it through the normal title-bar path before targeting GXM.
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    $installerBounds = [regex]::Matches($content,
+        '(?m)^APP_RUNTIME_INSTALLER_BOUNDS=x=(\d+);y=(\d+);w=(\d+)$')
+    if ($installerBounds.Count -gt 0) {
+        $installerMatch = $installerBounds[$installerBounds.Count - 1]
+        $installerX = [int]$installerMatch.Groups[1].Value
+        $installerY = [int]$installerMatch.Groups[2].Value
+        $installerW = [int]$installerMatch.Groups[3].Value
+        $installerClosedBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=title=Install guideXOS to Hard Drive;'
+        Set-QmpPointer $Qmp ($installerX + $installerW - 22) ($installerY - 26)
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=title=Install guideXOS to Hard Drive;' ($installerClosedBefore + 1) 6000
+        Start-Sleep -Milliseconds 180
+    }
+
+    $closedBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED='
+    $gxmBounds = [regex]::Matches($content,
+        '(?m)^APP_RUNTIME_GXM_INSTANCE_WINDOW_BOUNDS=x=(\d+);y=(\d+);w=(\d+);h=(\d+);instance=instance-[^;]+$')
+    if ($gxmBounds.Count -eq 0) { throw 'GXM instance window bounds marker is missing.' }
+    $match = $gxmBounds[$gxmBounds.Count - 1]
+    $x = [int]$match.Groups[1].Value
+    $y = [int]$match.Groups[2].Value
+    $w = [int]$match.Groups[3].Value
+    # GXM script controls are populated on the render thread; let the first
+    # settled frame compute the title-button hit rectangles.
+    Start-Sleep -Milliseconds 450
+    Set-QmpPointer $Qmp ($x + $w - 22) ($y - 26)
+    Send-QmpMouseClick $Qmp 'left'
+    Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+    Start-Sleep -Milliseconds 160
+}
+
 function Send-QmpComputerFilesSearch {
     param(
         $Qmp,
@@ -767,6 +804,7 @@ function Open-QmpFileFromCurrentComputerFiles {
     Send-QmpMouseClick $Qmp 'left'
     Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=calculator\.gxm;' ($assocBefore + 1) 6000
     Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_FILE_RESULT=path=Programs/calculator\.gxm;app=GXM;' ($fileBefore + 1) 12000
+    Close-QmpGxmWindow $Qmp
 }
 
 function Send-QmpAppRuntimeWorkload {
@@ -786,6 +824,12 @@ function Send-QmpAppRuntimeWorkload {
     for ($cycle = 0; $cycle -lt 3; $cycle++) {
         Open-QmpStartApplication $Qmp 'Calculator' 0
         Open-QmpStartApplication $Qmp 'Notepad' 8
+    }
+
+    # Console keeps its reusable FConsole backend, but its semantic owner is
+    # now a reusable application instance. Prove reuse with two extra cycles.
+    for ($cycle = 0; $cycle -lt 2; $cycle++) {
+        Open-QmpStartApplication $Qmp 'Console' 2
     }
 
     # Exercise the actual desktop shell-object route, then the hard-disk
@@ -832,13 +876,16 @@ function Send-QmpAppRuntimeWorkload {
     $installerX = [int]$installerMatch.Groups[1].Value
     $installerY = [int]$installerMatch.Groups[2].Value
     $installerW = [int]$installerMatch.Groups[3].Value
-    # Window.BarHeight is 40 and the close-button center is six pixels above
-    # the title-bar midpoint used by the existing close helper.
-    Set-QmpPointer $Qmp ($installerX + $installerW - 22) ($installerY - 26)
-    Send-QmpMouseClick $Qmp 'left'
-    # Serial output is buffered by QEMU; the final validation pass below
-    # asserts the exact close marker after the guest has drained the click.
-    Start-Sleep -Milliseconds 1200
+    $installerClosed = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=title=Install guideXOS to Hard Drive;'
+    if ($installerClosed -eq 0) {
+        # Window.BarHeight is 40 and the close-button center is six pixels
+        # above the title-bar midpoint used by the existing close helper.
+        Set-QmpPointer $Qmp ($installerX + $installerW - 22) ($installerY - 26)
+        Send-QmpMouseClick $Qmp 'left'
+        # Serial output is buffered by QEMU; the final validation pass below
+        # asserts the exact close marker after the guest has drained the click.
+        Start-Sleep -Milliseconds 1200
+    }
 
     # If the final close click was still in the guest's native input queue,
     # explicitly drain the release transition before ending the workload.
@@ -1659,6 +1706,39 @@ if ($isAppRuntimeValidation) {
         $runtimeLaunches += [regex]::Matches($finalContent,
             '(?m)^APP_RUNTIME_LAUNCH_OK=.*;name=' + $escapedRuntimeApp + ';').Count
     }
+    $runtimeInstanceLaunches = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_LAUNCH_OK=.*;instance=instance-[^;]+;state=Loading;owned=\d+$').Count
+    $runtimeInstanceResults = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_LAUNCH_RESULT=code=Success;success=1;app=.*;instance=instance-[^;]+;state=Activated;active=\d+;').Count
+    $runtimeOwnedLaunches = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_LAUNCH_OK=.*;instance=instance-[^;]+;state=Loading;owned=[1-8]$').Count
+    $runtimeStaleOwnership = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_WINDOW_CLOSED=.*;stale=[1-9]\d*$').Count
+    $consoleInstanceMatches = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_LAUNCH_OK=.*;name=Console;.*;instance=(instance-[^;]+);')
+    $consoleInstanceIds = @($consoleInstanceMatches | ForEach-Object {
+        $_.Groups[1].Value
+    } | Select-Object -Unique)
+    $runtimeConsoleInstances = $consoleInstanceIds.Count
+    $runtimeConsoleLaunches = $consoleInstanceMatches.Count
+    $runtimeCounterMatches = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_LAUNCH_RESULT=.*;created=(\d+);reused=(\d+);terminated=(\d+);attach=(\d+);detach=(\d+);stale=(\d+)$')
+    $runtimeMaxReused = 0
+    $runtimeMaxTerminated = 0
+    $runtimeMaxAttach = 0
+    $runtimeMaxDetach = 0
+    if ($runtimeCounterMatches.Count -gt 0) {
+        foreach ($counter in $runtimeCounterMatches) {
+            $runtimeMaxReused = [Math]::Max($runtimeMaxReused,
+                [int]$counter.Groups[2].Value)
+            $runtimeMaxTerminated = [Math]::Max($runtimeMaxTerminated,
+                [int]$counter.Groups[3].Value)
+            $runtimeMaxAttach = [Math]::Max($runtimeMaxAttach,
+                [int]$counter.Groups[4].Value)
+            $runtimeMaxDetach = [Math]::Max($runtimeMaxDetach,
+                [int]$counter.Groups[5].Value)
+        }
+    }
     $runtimeCloses = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_WINDOW_CLOSED=').Count
     $runtimeAssoc = [regex]::Matches($finalContent,
@@ -1669,6 +1749,10 @@ if ($isAppRuntimeValidation) {
         '(?m)^APP_RUNTIME_FILE_OK=path=Images/audiopause\.png;app=Image Viewer;').Count
     $runtimeGxm = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_FILE_RESULT=path=Programs/calculator\.gxm;app=GXM;').Count
+    $runtimeGxmInstances = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_FILE_RESULT=path=Programs/calculator\.gxm;app=GXM;.*;instance=instance-[^;]+;state=Activated;owned=[1-8]$').Count
+    $runtimeGxmWindows = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_GXM_INSTANCE_WINDOW_BOUNDS=.*;instance=instance-[^;]+$').Count
     $runtimeBmp = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=missing\.bmp;ext=\.bmp;.*;success=1$').Count
     $runtimeWav = [regex]::Matches($finalContent,
@@ -1705,8 +1789,15 @@ if ($isAppRuntimeValidation) {
     $runtimePass =
         $status -eq 'APP_RUNTIME_COMPLETE' -and
         $runtimeSelects -ge 15 -and $runtimeLaunches -ge 15 -and
+        $runtimeInstanceLaunches -ge 15 -and $runtimeInstanceResults -ge 15 -and
+        $runtimeOwnedLaunches -ge 15 -and
+        $runtimeConsoleLaunches -ge 3 -and $runtimeConsoleInstances -eq 1 -and
+        $runtimeMaxReused -ge 1 -and $runtimeMaxAttach -ge 15 -and
+        $runtimeMaxDetach -ge 15 -and $runtimeMaxTerminated -ge 15 -and
+        $runtimeStaleOwnership -eq 0 -and
         $runtimeCloses -ge 15 -and $runtimeAssoc -ge 8 -and
         $runtimeTxt -ge 1 -and $runtimePng -ge 1 -and $runtimeGxm -ge 1 -and
+        $runtimeGxmInstances -ge 1 -and $runtimeGxmWindows -ge 1 -and
         $runtimeBmp -ge 1 -and $runtimeWav -ge 1 -and $runtimeMue -ge 1 -and
         $runtimeFileFails -ge 5 -and $runtimeFileAssocMarker -ge 1 -and
         $runtimeNegativePass -ge 5 -and
@@ -1728,6 +1819,16 @@ if ($isAppRuntimeValidation) {
         pass = $runtimePass
         startSelections = $runtimeSelects
         successfulLaunches = $runtimeLaunches
+        instanceLaunches = $runtimeInstanceLaunches
+        instanceResults = $runtimeInstanceResults
+        ownedLaunches = $runtimeOwnedLaunches
+        consoleLaunches = $runtimeConsoleLaunches
+        consoleInstances = $runtimeConsoleInstances
+        maxReusedInstances = $runtimeMaxReused
+        maxTerminatedInstances = $runtimeMaxTerminated
+        maxWindowAttaches = $runtimeMaxAttach
+        maxWindowDetaches = $runtimeMaxDetach
+        staleOwnershipMarkers = $runtimeStaleOwnership
         closedWindows = $runtimeCloses
         associationResolutions = $runtimeAssoc
         textOpens = $runtimeTxt
@@ -1735,6 +1836,8 @@ if ($isAppRuntimeValidation) {
         bmpDispatches = $runtimeBmp
         wavDispatches = $runtimeWav
         gxmResults = $runtimeGxm
+        gxmInstanceResults = $runtimeGxmInstances
+        gxmInstanceWindows = $runtimeGxmWindows
         mueDispatches = $runtimeMue
         fileFailures = $runtimeFileFails
         fileAssociationNegativeMarker = $runtimeFileAssocMarker

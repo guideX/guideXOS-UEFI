@@ -59,6 +59,7 @@ namespace guideXOS.Kernel.Drivers {
                 if (Graphics == null) return;
                 if (VideoMemory == null) return;
                 if (Width == 0 || Height == 0) return;
+                if (value && (FirstBuffer == null || SecondBuffer == null)) return;
                 if (_TripleBuffered == value) return;
 
                 Graphics.VideoMemory = value ? FirstBuffer : VideoMemory;
@@ -97,13 +98,20 @@ namespace guideXOS.Kernel.Drivers {
                     Graphics.Height = Height;
                 }
             }
-            // STEP 2: If Graphics survived and already points at VideoMemory, we're done.
-            if (Graphics != null && (ulong)Graphics.VideoMemory == (ulong)VideoMemory) {
+            // When buffering is enabled, Graphics must continue to target the
+            // back buffer. VideoMemory remains the firmware-owned scanout
+            // buffer and is only touched by Update().
+            uint* renderMemory = TripleBuffered && FirstBuffer != null
+                ? FirstBuffer : VideoMemory;
+
+            // STEP 2: If Graphics survived and already points at the active
+            // render buffer, we're done.
+            if (Graphics != null && (ulong)Graphics.VideoMemory == (ulong)renderMemory) {
                 return;
             }
             // STEP 3: If Graphics exists but points elsewhere, fix it.
-            if (Graphics != null && (ulong)VideoMemory != 0) {
-                Graphics.VideoMemory = VideoMemory;
+            if (Graphics != null && (ulong)renderMemory != 0) {
+                Graphics.VideoMemory = renderMemory;
                 if (Width != 0 && Graphics.Width != Width) {
                     Graphics.Width = Width;
                 }
@@ -113,10 +121,10 @@ namespace guideXOS.Kernel.Drivers {
                 return;
             }
             // STEP 4: Recreate Graphics from scratch.
-            if ((ulong)VideoMemory == 0 || Width == 0 || Height == 0) {
+            if ((ulong)renderMemory == 0 || Width == 0 || Height == 0) {
                 return;
             }
-            Graphics = new Graphics(Width, Height, VideoMemory);
+            Graphics = new Graphics(Width, Height, renderMemory);
         }
 
         public static void SetBootInfo(UefiBootInfo* bootInfo) {
@@ -155,10 +163,10 @@ namespace guideXOS.Kernel.Drivers {
         }
 
         public static void Update() {
-            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
-                return;
-            }
             if (TripleBuffered) {
+                if (VideoMemory == null || FirstBuffer == null || SecondBuffer == null) {
+                    return;
+                }
                 for (int i = 0; i < Width * Height; i++) {
                     if (FirstBuffer[i] != SecondBuffer[i]) {
                         VideoMemory[i] = FirstBuffer[i];
