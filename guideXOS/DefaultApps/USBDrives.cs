@@ -72,9 +72,8 @@ namespace guideXOS.DefaultApps
                     if (my >= y && my < y + 40)
                     {
                         var drive = _drives[i];
-                        var cf = new ComputerFiles(X + 20, Y + 20, 540, 400, drive.FileSystem, drive.Name);
-                        WindowManager.MoveToEnd(cf);
-                        cf.Visible = true;
+                        Desktop.LaunchComputerFilesDrive(drive.Name,
+                            X + 20, Y + 20);
                         break;
                     }
                     y += 40;

@@ -1,9 +1,10 @@
 # guideXOS App Model Convergence
 
-**Status:** Architecture baseline and migration design  
-**Date:** 2026-09-13  
+**Status:** Phase 5 legacy launch-surface inventory and containment complete
+**Date:** 2026-09-15
 **Scope:** guideXOS Server ↔ guideXOS C# UEFI application platform  
-**Outcome:** Outcome A — convergence architecture defined
+**Outcome:** Outcome A — all registered built-ins factory-native; compatibility
+contained behind the typed launch boundary
 
 This document is the canonical design reference for converging the guideXOS
 Server and guideXOS C# application models. It defines the common application
@@ -63,14 +64,14 @@ semantics and bounded outcomes.
 | --- | --- |
 | Repository | `D:\dev\guideXOSUEFI` |
 | Branch | `main` |
-| HEAD | `b5f4d1a7ad0b5474ac12382c363432d1a3a53289` |
-| Subject | `The real UEFI path works end-to-end. No shared AppModel, window, allocator, input, graphics, or scheduler defect was found.` |
+| HEAD | `c58b9a59b90debe256025eee69b68e2b37c9ace8` |
+| Subject | `Instance Aware App Factories` |
 | Upstream | `origin/main` |
 | Ahead/behind | `0 / 0` |
 | Remote | `git@github.com:guideX/guideXOS-Legacy-UEFI.git` |
 | Worktree | Clean at preflight |
 
-The validated application-runtime changes are present in this HEAD. The
+The Phase 4 work starts from this clean, synchronized mainline HEAD. The
 repository history includes the App Launch Runtime proof and the associated
 AppModel, AppRuntime, native input, context-menu, continuous-boot, and
 association validation work.
@@ -1392,3 +1393,206 @@ close, PNG association reopen/decode for both `Images/audiopause.png` and
 `Images/audioplay.png`, close, and repeated failure-path probes.  All runs
 reported allocator corruption zero, no runtime faults, and no stale taskbar or
 instance ownership.
+
+## 20. Phase 4 — complete built-in factory migration
+
+Phase 4 moves the remaining eight registered built-ins behind the explicit
+instance-aware factory boundary.  The normal built-in path is now:
+
+`descriptor -> LaunchRequest -> ApplicationInstance -> ApplicationFactory ->
+owned Window(s)`.
+
+The compatibility adapter remains available only for legacy-only names,
+historical callers, and an explicitly selected external compatibility route.
+It is no longer selected when a registered built-in descriptor is resolved.
+The descriptor/factory validation boundary returns a bounded
+`BackendUnavailable` result for a missing or class-incompatible built-in
+binding.
+
+### 20.1 Built-in bindings and policies
+
+| Application | Stable descriptor | Factory policy | Ownership/resource notes |
+|---|---|---|---|
+| Calculator | `gxos.builtin.calculator` | `MultiInstance`; close last window | One fresh ordinary window per launch |
+| Computer Files | `gxos.builtin.files` | `MultiInstance`; close last window | Root and drive-specific filesystem objects are factory-owned; drive child windows own their per-window filesystem |
+| Console | `gxos.builtin.console` | `ReuseExisting`; retain zero-window instance | Reuses the existing `FConsole` helper and one semantic owner |
+| Devices | `gxos.builtin.devices` | `MultiInstance`; close last window | Existing device-management UI and failure behavior retained |
+| Disk Manager | `gxos.builtin.diskmanager` | `MultiInstance`; close last window | Existing disk/resource probing retained |
+| Display Options | `gxos.builtin.displayoptions` | `ReuseExisting`; close last window | Recreates after close; request bounds are bounded and optional |
+| Firewall | `gxos.builtin.firewall` | `ReuseExisting`; retain zero-window instance | Persistent firewall helper is recreated if its window was removed |
+| Notepad | `gxos.builtin.notepad` | `MultiInstance`; close last window | `LaunchRequest.Document` is passed to the existing document loader |
+| Paint | `gxos.builtin.paint` | `MultiInstance`; close last window | Fresh ordinary window; Paint internals are unchanged |
+| Task Manager | `gxos.builtin.taskmanager` | `ReuseExisting`; close last window | Recreates after close; task/runtime enumeration remains read-only to lifecycle |
+| Image Viewer | `gxos.builtin.imageviewer` | `ReuseExisting`; retain zero-window instance | Lazy helper and decoded-image ownership remain in the existing viewer path |
+| WAV Player | `gxos.builtin.wavplayer` | `ReuseExisting`; retain zero-window instance | Lazy helper; document activation fails boundedly without audio or a valid WAV |
+
+### 20.2 Association and shell backends
+
+All built-in file associations now resolve stable typed targets and enter the
+factory path where applicable:
+
+| Extension | Target |
+|---|---|
+| `.txt` | `gxos.builtin.notepad` factory |
+| `.png`, `.bmp` | `gxos.builtin.imageviewer` factory |
+| `.wav` | `gxos.builtin.wavplayer` factory |
+| `.gxm`, `.mue` | typed external `gxos.external.gxm` backend |
+
+Computer Files, File Explorer, Root, and USB Drive shell resolution retain
+typed shell-object IDs.  Computer Files and drive children produce the same
+descriptor/request handoff and no longer construct `ComputerFiles` in shell
+navigation code.  `Install to Hard Drive` is a typed `HDInstaller` shell-action
+backend with a shell-owned instance; it is intentionally not a built-in
+descriptor because it is an action target rather than a Start-visible
+application.
+
+GXM remains a separate typed external backend and is not counted as a built-in
+factory or compatibility fallback.
+
+### 20.3 Failure and registry contract
+
+Factory failures return bounded `LaunchResult` values.  A failed fresh launch
+closes/detaches every window introduced by that attempt and removes its
+instance.  A failed reusable launch leaves the stable instance inactive and
+does not destroy pre-existing owned resources.  WAV Player specifically keeps
+the reusable instance at zero windows after unavailable-device failure, and a
+malformed/undecodable buffer is consumed without replacing the prior valid
+song state.
+
+The bounded factory registry has capacity 32 and exactly 12 built-in bindings.
+Self-tests cover stable-ID lookup, duplicate rejection, descriptor/factory
+class mismatch, missing built-in bindings, capacity overflow, typed-backend
+distinction, document propagation, and failed cleanup.
+
+### 20.4 Compatibility scope and diagnostics
+
+Diagnostics distinguish `factory`, `typed-external`, `typed-shell-action`, and
+`compatibility` backend selection.  The canonical AppRuntime workload is
+expected to report zero compatibility fallbacks for normal built-in launches;
+GXM and installer counts are reported separately.  Remaining compatibility
+construction is limited to `App.LoadLegacyBackend` and explicit historical
+compatibility callers.  Direct constructor dispatch is not part of the
+registered built-in normal path.
+
+### 20.5 Phase 4 validation and next target
+
+The Phase 4 validation matrix covers the twelve real Start entries, repeated
+launch/close and reuse, Paint, WAV failure semantics, Computer Files aliases
+and filesystem navigation, Task Manager observation, all system-management
+applications, all six association targets, shell routes, installer action,
+registry failures, AppModel, AppRuntime, NativeInput, ContextMenu, and
+production continuous boot.  The required invariants remain allocator
+corruption zero, no exhaustion, `ThreadPool.Locked=0`, valid graphics, balanced
+input, no stale instance ownership, and no stale taskbar entries.
+
+Real suspend/resume remains deferred.  The next convergence target is removal
+of the remaining legacy application construction surfaces after compatibility
+callers have been inventoried and migrated; process isolation and scheduler,
+allocator, boot, GXM, and UI redesign remain out of scope.
+
+## 21. Phase 5 — legacy launch-surface inventory and containment
+
+**Status:** Complete for the C# UEFI application layer
+**Date:** 2026-09-15
+**Scope:** guideXOS C# UEFI callers and compatibility boundary only; no Server or
+Legacy source changes
+
+Phase 5 inventories the remaining string-based and direct-construction launch
+surfaces, migrates normal callers to typed requests and registered factories,
+and makes the retained compatibility boundary measurable.  The migration does
+not remove public legacy symbols or historical backends; it confines them to
+explicit compatibility and internal implementation roles.
+
+### 21.1 Inventory and disposition
+
+| Surface | Classification | Phase 5 disposition |
+|---|---|---|
+| `AppCollection.Load(string)` | Compatibility facade | Retained as a public shim; resolves aliases, translates registered names to `LaunchRequest`, and reports bounded failures. |
+| `AppLaunchCompatibilityAdapter` | Compatibility facade | Modern-first translation; legacy dispatch is reached only when a retained historical request cannot resolve to a registered factory. |
+| `LoadLegacyBackend` and `DispatchToLegacyBackend` | Legitimate legacy compatibility | Retained behind the facade as the single historical backend switch. Direct normal built-in callers were removed. |
+| Start menu, taskbar, taskbar menu, desktop, association, and shell launch routes | Modern production callers | Use `Desktop.LaunchApplication`, typed association requests, typed shell-object IDs, or typed shell actions. |
+| FConsole `notepad`/`launchscript`, ModuleManager Notepad, and GXMScript `OPENAPP` | Modern production callers | Use the canonical launch helpers; external GXM execution uses the typed external backend. |
+| `GXMLoader` in typed external backends and `GXMScriptWindow` | Internal implementation | Kept only below the typed GXM boundary or for the script window's own execution engine. No normal caller uses it as a launch API. |
+| Application factory constructors | Internal implementation | Centralized in `ApplicationFactories`; normal callers select descriptors, policies, and requests rather than constructors. |
+| `USBDrives`/`USBFiles` list objects | Internal shell implementation | Not registered applications; shell list rendering remains local, while launch/navigation routes use typed Computer Files requests. |
+| Unknown-name compatibility probe in `Program` | Test-only | Deliberately exercises the retained facade failure path and is excluded from production launch accounting. |
+
+The remaining direct constructor and loader matches are therefore classified as
+internal implementation or compatibility code, not unresolved normal launch
+callers.  No Server or Legacy source file was changed.
+
+### 21.2 Retained APIs and future deprecation candidates
+
+The public `App`, `AppCollection.Load`, `AppCollection.Add`, descriptor/name
+aliases, and `AppKind`/`AppDescriptor` compatibility shapes remain available.
+They are not removed in Phase 5 because historical consumers may still depend
+on them.  The internal `LoadLegacyBackend` and
+`DispatchToLegacyBackend` methods remain the only compatibility construction
+boundary.  Future deprecation candidates are the string-only `Load` facade,
+legacy descriptor aliases, and the adapter itself, after external consumers are
+audited; the typed `LaunchRequest`/`LaunchResult`/instance/factory contract is
+the intended replacement.
+
+### 21.3 Compatibility counters and self-test
+
+`AppModelCompatibilityDiagnostics` records facade calls, successful modern
+translations, genuine legacy-backend invocations, and compatibility failures.
+The AppModel self-test performs two successful historical loads and one invalid
+load, verifies instance handles and cleanup, and asserts that no legacy backend
+or compatibility fallback is used for the registered built-ins.  Its expected
+fresh-run values are:
+
+| Counter | Expected |
+|---|---:|
+| Compatibility facade calls | 3 |
+| Modern translations | 2 |
+| Legacy backend calls | 0 |
+| Compatibility failures | 1 |
+
+The one failure is intentional: it is the bounded rejection of the invalid
+self-test name.  The canonical AppRuntime workload reports zero compatibility
+fallbacks and zero legacy-backend markers for normal production launches.
+
+### 21.4 Exact remaining legacy-backend scope
+
+`DispatchToLegacyBackend` is reachable only from the compatibility adapter for
+an unresolved retained historical route, such as a legacy extension entry or a
+caller that cannot resolve a registered descriptor.  Registered built-in names
+are validated against their factory bindings before any compatibility fallback;
+the normal count is therefore zero.  The historical GXM Hello/Minimal demo
+compatibility path remains an internal legacy-only helper and is not a normal
+production application launch surface.
+
+### 21.5 Typed external, shell, and installer coverage
+
+`.gxm`/`.mue` association and script-generated GXM launches now enter the
+typed external GXM backend with an explicit document/source identity.  Computer
+Files, File Explorer, Root, and USB routes carry typed shell-object IDs.
+`Install to Hard Drive` remains a typed shell action with a shell-owned
+instance.  These routes are intentionally outside the twelve registered
+built-in factory descriptors while still using the same bounded launch/result
+and ownership semantics.
+
+### 21.6 Phase 5 validation evidence
+
+The current real UEFI/QEMU matrix is green:
+
+| Validation | Result |
+|---|---|
+| AppModel | 12 descriptors / 12 factories / 0 fallbacks; compatibility 3 calls / 2 translations / 0 legacy / 1 expected failure; self-test passed |
+| AppRuntime | 20 Start selections / 28 launches / 30 closes; 28 factory launches / 0 fallbacks / 4 expected missing-file failures; typed external 2; typed shell action 1; 0 runtime faults |
+| NativeInput | 0 dropped keyboard events, 0 dropped mouse events, balanced 104/104 key and 54/54 left-button transitions |
+| ContextMenu | 104/104 desktop opens/draws, 104/104 good bounds, 0 bad bounds; balanced 105/105 right-button transitions |
+| Production continuous boot | Advancing heartbeats/timer, valid graphics invariants, no allocator corruption marker |
+
+All runs ended without stale application-instance ownership.  The validation
+logs are retained as `serial_phase5_appmodel_recheck3.txt`,
+`serial_phase5_appruntime_recheck.txt`, `serial_phase5_nativeinput_recheck.txt`,
+`serial_phase5_contextmenu.txt`, and `serial_phase5_continuous.txt`.
+
+### 21.7 Phase 6 gate
+
+Phase 5 is complete and the compatibility surface is contained.  Phase 6 may
+proceed to lifecycle enrichment—especially richer instance state and explicit
+activation/close semantics—without first removing the retained facade.  Removal
+or deprecation of the facade should remain gated on an external-consumer audit.

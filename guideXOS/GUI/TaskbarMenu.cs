@@ -61,9 +61,7 @@ namespace guideXOS.GUI {
                 // Single item: Task Manager
                 int itemX = X + Pad; int itemY = Y + Pad; int itemW = Width - Pad * 2; int itemH = ItemH;
                 if (mx >= itemX && mx < itemX + itemW && my >= itemY && my < itemY + itemH) {
-                    var tm = new TaskManager(200, 160, 760, 520);
-                    WindowManager.MoveToEnd(tm);
-                    tm.Visible = true;
+                    Desktop.LaunchApplication("Task Manager");
                     Program.MarkUefiTaskbarContextMenuDismissed("COMMAND");
                     Visible = false; return;
                 }

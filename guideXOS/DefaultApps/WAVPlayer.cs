@@ -64,15 +64,74 @@ namespace guideXOS.DefaultApps {
         }
 
         public void Play(byte[] wav, string name = "unknown") {
-            _index = 0;
-            WAV.Decode(wav, out var pcm, out var hdr);
-            wav.Dispose();
-            _pcm = pcm;
-            _header = hdr;
-            _song_name?.Dispose();
-            _song_name = name;
+            TryPlay(wav, name);
+        }
 
-            playing = true;
+        /// <summary>
+        /// Decode and start a bounded WAV request.  The input buffer is always
+        /// consumed by this method; a failed decode leaves the previous song
+        /// untouched so a reused application instance remains safe and
+        /// inactive/activatable according to the App Model policy.
+        /// </summary>
+        public bool TryPlay(byte[] wav, string name = "unknown") {
+            if (wav == null) return false;
+            try {
+                if (wav.Length < sizeof(WAV.Header)) return false;
+
+                WAV.Header candidate;
+                fixed (byte* p = wav) candidate = *(WAV.Header*)p;
+                if (candidate.ChunkID != 0x46464952u ||
+                    candidate.Format != 0x45564157u ||
+                    candidate.Subchunk1ID != 0x20746d66u ||
+                    candidate.Subchunk2ID != 0x61746164u ||
+                    candidate.AudioFormat != 1 ||
+                    candidate.NumChannels == 0 ||
+                    candidate.BitsPerSample == 0 ||
+                    candidate.Subchunk2Size == 0 ||
+                    candidate.Subchunk2Size >
+                        (uint)(wav.Length - sizeof(WAV.Header))) {
+                    return false;
+                }
+
+                byte[] pcm;
+                WAV.Header header;
+                try {
+                    WAV.Decode(wav, out pcm, out header);
+                } catch {
+                    return false;
+                }
+                if (pcm == null || pcm.Length == 0) {
+                    if (pcm != null) pcm.Dispose();
+                    return false;
+                }
+
+                byte[] oldPcm = _pcm;
+                string oldName = _song_name;
+                _pcm = pcm;
+                _header = header;
+                _index = 0;
+                _song_name = string.IsNullOrEmpty(name) ? "unknown" : name;
+                playing = true;
+                if (oldPcm != null) oldPcm.Dispose();
+                if (oldName != null) oldName.Dispose();
+                return true;
+            } finally {
+                wav.Dispose();
+            }
+        }
+
+        public override void Dispose() {
+            playing = false;
+            if (_player == this) _player = null;
+            if (_pcm != null) {
+                _pcm.Dispose();
+                _pcm = null;
+            }
+            if (_song_name != null) {
+                _song_name.Dispose();
+                _song_name = null;
+            }
+            base.Dispose();
         }
 
         public static void DoPlay() {

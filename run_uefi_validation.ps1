@@ -187,6 +187,7 @@ if ($Tiny) {
     $diagnosticMode = 'WidgetSoak'
 }
 $isWidgetValidation = $diagnosticMode -in @('Widget', 'WidgetStress', 'WidgetSoak')
+$isAppModelValidation = $diagnosticMode -eq 'AppModel'
 $isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Widget', 'WidgetStress')
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu')
 $isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress')
@@ -505,7 +506,18 @@ function Open-QmpStartApplication {
             $allOpened = $true
         } catch {
             if ($attempt -eq 3) { throw }
+            # If the menu consumed the taskbar transition but missed the
+            # All Programs edge, reset the popup through its normal Escape
+            # path and reopen it before retrying.  This keeps the retry
+            # bounded while avoiding a stale _leftDownPrev state in the
+            # existing StartMenu input latch.
+            Send-QmpMonitorKey $Qmp 'esc'
             Start-Sleep -Milliseconds 800
+            $startBefore = Get-ContextMarkerCount '(?m)^START_MENU_OPENED$'
+            Set-QmpPointer $Qmp 30 780
+            Send-QmpMouseClick $Qmp 'left'
+            Wait-ForContextMarkerCount '(?m)^START_MENU_OPENED$' ($startBefore + 1) 5000
+            Start-Sleep -Milliseconds 500
         }
     }
     # The all-programs transition rebuilds the list and its blur-backed panel
@@ -550,9 +562,29 @@ function Open-QmpStartApplication {
             $selected = $true
         } catch {
             if ($attempt -eq 2) { throw }
-            # A busy first-show/menu redraw can consume the first host click
-            # after the all-programs transition. Re-position and retry once.
+            # A busy menu redraw can leave the first row click without an
+            # edge even though the popup is visible. Reset the popup through
+            # Escape and rebuild the all-programs view before retrying; this
+            # also clears the existing StartMenu button latch.
+            Send-QmpMonitorKey $Qmp 'esc'
             Start-Sleep -Milliseconds 700
+            $startBefore = Get-ContextMarkerCount '(?m)^START_MENU_OPENED$'
+            Set-QmpPointer $Qmp 30 780
+            Send-QmpMouseClick $Qmp 'left'
+            Wait-ForContextMarkerCount '(?m)^START_MENU_OPENED$' ($startBefore + 1) 5000
+            Start-Sleep -Milliseconds 500
+            $allBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_START_ALL_PROGRAMS=visible=1$'
+            Set-QmpPointer $Qmp 80 694
+            Send-QmpMouseClick $Qmp 'left'
+            Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_START_ALL_PROGRAMS=visible=1$' ($allBefore + 1) 5000
+            Start-Sleep -Milliseconds 700
+            if ($Index -ge 10) {
+                for ($page = 0; $page -lt 4; $page++) {
+                    Set-QmpPointer $Qmp 241 645
+                    Send-QmpMouseClick $Qmp 'left'
+                    if ($maxScroll -eq 0) { break }
+                }
+            }
         }
     }
     Wait-ForContextMarkerCount (
@@ -656,13 +688,11 @@ function Close-QmpTopWindow {
 
 function Close-QmpComputerFilesWindow {
     param($Qmp)
-    $closedBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED='
-    # Computer Files is opened by the UEFI shell route at (300,200) with the
-    # default 40px title bar; derive its close-button center from the fixed
-    # 540px shell window width.
-    Set-QmpPointer $Qmp 818 174
-    Send-QmpMouseClick $Qmp 'left'
-    Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+    # Use the last factory launch bounds and the same bounded title-bar/escape
+    # retry used for Start launches.  Root routing can leave a fresh shell
+    # child at a slightly different clamped origin, so a fixed coordinate is
+    # not deterministic under a busy render/input queue.
+    Close-QmpLastLaunchedWindow $Qmp
     Start-Sleep -Milliseconds 160
 }
 
@@ -697,9 +727,24 @@ function Close-QmpGxmWindow {
     # GXM script controls are populated on the render thread; let the first
     # settled frame compute the title-button hit rectangles.
     Start-Sleep -Milliseconds 450
-    Set-QmpPointer $Qmp ($x + $w - 22) ($y - 26)
-    Send-QmpMouseClick $Qmp 'left'
-    Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+        if ($attempt -eq 0) {
+            Set-QmpPointer $Qmp ($x + $w - 22) ($y - 26)
+            Send-QmpMouseClick $Qmp 'left'
+        } else {
+            # GXM has the normal Window title-bar implementation, but its
+            # script controls can briefly retain input capture after launch.
+            # Escape is the bounded global close fallback for that transition.
+            Send-QmpMonitorKey $Qmp 'esc'
+        }
+        try {
+            Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+            break
+        } catch {
+            if ($attempt -eq 1) { throw }
+            Start-Sleep -Milliseconds 300
+        }
+    }
     Start-Sleep -Milliseconds 160
 }
 
@@ -1781,6 +1826,56 @@ if ($isWidgetValidation) {
 }
 
 $runtimeValidation = $null
+$appModelValidation = $null
+if ($isAppModelValidation) {
+    $appModelDescriptors = [regex]::Matches($finalContent,
+        '(?m)^APP_MODEL_MODERN_DESCRIPTOR_COUNT=(\d+)$')
+    $appModelFactories = [regex]::Matches($finalContent,
+        '(?m)^APP_MODEL_FACTORY_REGISTRATIONS=(\d+)$')
+    $appModelFallbacks = [regex]::Matches($finalContent,
+        '(?m)^APP_MODEL_FACTORY_FALLBACKS=(\d+)$')
+    $appModelCompatCalls = [regex]::Matches($finalContent,
+        '(?m)^APP_MODEL_COMPAT_FACADE_CALLS=(\d+)$')
+    $appModelCompatTranslations = [regex]::Matches($finalContent,
+        '(?m)^APP_MODEL_COMPAT_MODERN_TRANSLATIONS=(\d+)$')
+    $appModelCompatLegacy = [regex]::Matches($finalContent,
+        '(?m)^APP_MODEL_COMPAT_LEGACY_BACKEND_CALLS=(\d+)$')
+    $appModelCompatFailures = [regex]::Matches($finalContent,
+        '(?m)^APP_MODEL_COMPAT_FAILURES=(\d+)$')
+    $appModelCompatSelfTest = [regex]::Matches($finalContent,
+        '(?m)^APP_MODEL_COMPAT_SELFTEST_OK=1$').Count
+    $appModelPass =
+        $status -in @('APP_MODEL_COMPLETE', 'DIAGNOSTIC_COMPLETE') -and
+        $appModelDescriptors.Count -gt 0 -and
+        [int]$appModelDescriptors[$appModelDescriptors.Count - 1].Groups[1].Value -eq 12 -and
+        $appModelFactories.Count -gt 0 -and
+        [int]$appModelFactories[$appModelFactories.Count - 1].Groups[1].Value -eq 12 -and
+        $appModelFallbacks.Count -gt 0 -and
+        [int]$appModelFallbacks[$appModelFallbacks.Count - 1].Groups[1].Value -eq 0 -and
+        $appModelCompatCalls.Count -gt 0 -and
+        $appModelCompatTranslations.Count -gt 0 -and
+        $appModelCompatFailures.Count -gt 0 -and
+        [int]$appModelCompatCalls[$appModelCompatCalls.Count - 1].Groups[1].Value -
+            [int]$appModelCompatFailures[$appModelCompatFailures.Count - 1].Groups[1].Value -eq
+            [int]$appModelCompatTranslations[$appModelCompatTranslations.Count - 1].Groups[1].Value -and
+        $appModelCompatLegacy.Count -gt 0 -and
+        [int]$appModelCompatLegacy[$appModelCompatLegacy.Count - 1].Groups[1].Value -eq 0 -and
+        [int]$appModelCompatFailures[$appModelCompatFailures.Count - 1].Groups[1].Value -eq 1 -and
+        $appModelCompatSelfTest -ge 1
+    $appModelValidation = [ordered]@{
+        pass = $appModelPass
+        descriptors = if ($appModelDescriptors.Count -gt 0) { [int]$appModelDescriptors[$appModelDescriptors.Count - 1].Groups[1].Value } else { 0 }
+        factoryRegistrations = if ($appModelFactories.Count -gt 0) { [int]$appModelFactories[$appModelFactories.Count - 1].Groups[1].Value } else { 0 }
+        factoryFallbacks = if ($appModelFallbacks.Count -gt 0) { [int]$appModelFallbacks[$appModelFallbacks.Count - 1].Groups[1].Value } else { 0 }
+        compatibilityFacadeCalls = if ($appModelCompatCalls.Count -gt 0) { [int]$appModelCompatCalls[$appModelCompatCalls.Count - 1].Groups[1].Value } else { 0 }
+        compatibilityTranslations = if ($appModelCompatTranslations.Count -gt 0) { [int]$appModelCompatTranslations[$appModelCompatTranslations.Count - 1].Groups[1].Value } else { 0 }
+        compatibilityLegacyBackendCalls = if ($appModelCompatLegacy.Count -gt 0) { [int]$appModelCompatLegacy[$appModelCompatLegacy.Count - 1].Groups[1].Value } else { 0 }
+        compatibilityFailures = if ($appModelCompatFailures.Count -gt 0) { [int]$appModelCompatFailures[$appModelCompatFailures.Count - 1].Groups[1].Value } else { 0 }
+    }
+    if ($status -in @('APP_MODEL_COMPLETE', 'DIAGNOSTIC_COMPLETE') -and -not $appModelPass) {
+        $status = 'APP_MODEL_VALIDATION_FAILED'
+    }
+}
 if ($isAppRuntimeValidation) {
     $runtimeApps = @(
         'Calculator', 'Computer Files', 'Console', 'Devices', 'Disk Manager',
@@ -1806,6 +1901,10 @@ if ($isAppRuntimeValidation) {
         '(?m)^APP_RUNTIME_FACTORY_LAUNCH=app=.*;reused=1;').Count
     $runtimeFactoryWindows = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_FACTORY_LAUNCH=app=.*;windows=[1-8]$').Count
+    $runtimeTypedExternal = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_LAUNCH_BACKEND=typed-external;backend=').Count
+    $runtimeTypedShellActions = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_LAUNCH_BACKEND=typed-shell-action;action=').Count
     $runtimeInstanceLaunches = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_LAUNCH_OK=.*;instance=instance-[^;]+;state=(Loading|Activated);owned=\d+$').Count
     $runtimeInstanceResults = [regex]::Matches($finalContent,
@@ -1886,18 +1985,20 @@ if ($isAppRuntimeValidation) {
         $inputStat.MOUSE_DROPPED -eq 0 -and
         $inputStat.KEY_DOWN -eq $inputStat.KEY_UP -and
         $inputStat.MOUSE_LEFT_DOWN -eq $inputStat.MOUSE_LEFT_UP
+    # Reusable built-ins intentionally remain active across the workload; the
+    # completed sequence therefore terminates fourteen fresh instances.
     $runtimePass =
         $status -eq 'APP_RUNTIME_COMPLETE' -and
         $runtimeSelects -ge 15 -and $runtimeLaunches -ge 15 -and
         $runtimeInstanceLaunches -ge 15 -and $runtimeInstanceResults -ge 15 -and
         $runtimeOwnedLaunches -ge 15 -and
         $runtimeConsoleLaunches -ge 3 -and $runtimeConsoleInstances -eq 1 -and
-        $runtimeFactoryLaunches -ge 12 -and
-        $runtimeFactoryFallbacks -ge 8 -and
+        $runtimeFactoryLaunches -ge 20 -and
+        $runtimeFactoryFallbacks -eq 0 -and
         $runtimeFactoryReuses -ge 1 -and
         $runtimeFactoryWindows -ge 12 -and
         $runtimeMaxReused -ge 1 -and $runtimeMaxAttach -ge 15 -and
-        $runtimeMaxDetach -ge 15 -and $runtimeMaxTerminated -ge 15 -and
+        $runtimeMaxDetach -ge 15 -and $runtimeMaxTerminated -ge 14 -and
         $runtimeStaleOwnership -eq 0 -and
         $runtimeCloses -ge 15 -and $runtimeAssoc -ge 8 -and
         $runtimeTxt -ge 1 -and $runtimePng -ge 1 -and $runtimeGxm -ge 1 -and
@@ -1928,6 +2029,8 @@ if ($isAppRuntimeValidation) {
         factoryFailures = $runtimeFactoryFailures
         reusedFactoryActivations = $runtimeFactoryReuses
         factoryWindowLaunches = $runtimeFactoryWindows
+        typedExternalLaunches = $runtimeTypedExternal
+        typedShellActionLaunches = $runtimeTypedShellActions
         instanceLaunches = $runtimeInstanceLaunches
         instanceResults = $runtimeInstanceResults
         ownedLaunches = $runtimeOwnedLaunches
@@ -1977,7 +2080,7 @@ Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '   Validation Summary' -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
-Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'APP_RUNTIME_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
+Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'APP_RUNTIME_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
 Write-Host "Dispatch selected: $dispatchSelected" -ForegroundColor Gray
 Write-Host "Continuous entered: $continuousEntered" -ForegroundColor Gray
 Write-Host "Heartbeats: $heartbeatCount (last frame $lastHeartbeatFrame)" -ForegroundColor Gray
@@ -2006,6 +2109,11 @@ if ($contextValidation) {
     Write-Host "Taskbar opens/draws/good-bounds/Escape: $($contextValidation.taskbarOpened)/$($contextValidation.taskbarDrawn)/$($contextValidation.taskbarGoodBounds)/$($contextValidation.taskbarEscape)" -ForegroundColor Gray
     Write-Host "Right-button down/up: $($contextValidation.rightDownUp)" -ForegroundColor Gray
 }
+if ($appModelValidation) {
+    Write-Host "App Model validation: $($appModelValidation.pass)" -ForegroundColor $(if ($appModelValidation.pass) { 'Green' } else { 'Red' })
+    Write-Host "Descriptors/factories/fallbacks: $($appModelValidation.descriptors)/$($appModelValidation.factoryRegistrations)/$($appModelValidation.factoryFallbacks)" -ForegroundColor Gray
+    Write-Host "Compatibility calls/translations/legacy/failures: $($appModelValidation.compatibilityFacadeCalls)/$($appModelValidation.compatibilityTranslations)/$($appModelValidation.compatibilityLegacyBackendCalls)/$($appModelValidation.compatibilityFailures)" -ForegroundColor Gray
+}
 if ($widgetValidation) {
     Write-Host "Widget validation: $($widgetValidation.pass)" -ForegroundColor $(if ($widgetValidation.pass) { 'Green' } else { 'Red' })
     Write-Host "Init good/bad, draws good/bad: $($widgetValidation.initGoodBad), $($widgetValidation.drawsGoodBad)" -ForegroundColor Gray
@@ -2019,6 +2127,7 @@ if ($runtimeValidation) {
     Write-Host "App runtime validation: $($runtimeValidation.pass)" -ForegroundColor $(if ($runtimeValidation.pass) { 'Green' } else { 'Red' })
     Write-Host "Start selections/launches/closes: $($runtimeValidation.startSelections)/$($runtimeValidation.successfulLaunches)/$($runtimeValidation.closedWindows)" -ForegroundColor Gray
     Write-Host "Factory launches/fallbacks/failures/reuse/window launches: $($runtimeValidation.factoryLaunches)/$($runtimeValidation.compatibilityFallbacks)/$($runtimeValidation.factoryFailures)/$($runtimeValidation.reusedFactoryActivations)/$($runtimeValidation.factoryWindowLaunches)" -ForegroundColor Gray
+    Write-Host "Typed external/shell-action launches: $($runtimeValidation.typedExternalLaunches)/$($runtimeValidation.typedShellActionLaunches)" -ForegroundColor Gray
     Write-Host "Associations txt/png/bmp/wav/gxm/mue, failures: $($runtimeValidation.associationResolutions), $($runtimeValidation.textOpens)/$($runtimeValidation.pngOpens)/$($runtimeValidation.bmpDispatches)/$($runtimeValidation.wavDispatches)/$($runtimeValidation.gxmResults)/$($runtimeValidation.mueDispatches), $($runtimeValidation.fileFailures)" -ForegroundColor Gray
     Write-Host "Shell Computer Files/Root/Installer/InstallerClosed/USB unavailable: $($runtimeValidation.computerFilesRoutes)/$($runtimeValidation.rootRoutes)/$($runtimeValidation.installerRoutes)/$($runtimeValidation.installerClosed)/$($runtimeValidation.usbUnavailableRoutes)" -ForegroundColor Gray
     Write-Host "Negative passes/launch failures/runtime faults: $($runtimeValidation.negativePasses)/$($runtimeValidation.launchFailures)/$($runtimeValidation.runtimeFaults)" -ForegroundColor Gray
@@ -2029,7 +2138,7 @@ if ($faultText) {
 }
 Write-Host "Serial log: $serialPath" -ForegroundColor Cyan
 
-if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'INPUT_VALIDATION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED', 'APP_RUNTIME_VALIDATION_FAILED', 'WIDGET_VALIDATION_FAILED')) {
+if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'INPUT_VALIDATION_FAILED', 'APP_MODEL_VALIDATION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED', 'APP_RUNTIME_VALIDATION_FAILED', 'WIDGET_VALIDATION_FAILED')) {
     exit 1
 }
 exit 0

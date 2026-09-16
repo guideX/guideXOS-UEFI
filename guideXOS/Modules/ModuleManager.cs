@@ -1,5 +1,4 @@
 using guideXOS.GUI;
-using guideXOS.DefaultApps;
 
 namespace guideXOS.Modules {
     /// <summary>
@@ -43,9 +42,7 @@ namespace guideXOS.Modules {
         public static void InitializeBuiltins() {
             // Register notepad module with a simple lambda
             Register("NotepadModule", () => {
-                var w = new Notepad(300, 220);
-                w.Visible = true;
-                WindowManager.MoveToEnd(w);
+                Desktop.LaunchApplication("Notepad");
             });
             
             // Add more modules here as needed

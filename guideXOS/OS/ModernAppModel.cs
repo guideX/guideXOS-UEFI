@@ -336,7 +336,18 @@ namespace guideXOS.OS {
                                                    ApplicationShellTargetKind targetKind,
                                                    string targetValue,
                                                    LaunchActivationIntent intent) {
-            return new LaunchRequest(targetAppId, targetNameOrAlias, null, null,
+            return ForShellObject(shellObjectId, targetAppId, targetNameOrAlias,
+                targetKind, targetValue, null, intent);
+        }
+
+        public static LaunchRequest ForShellObject(string shellObjectId,
+                                                   string targetAppId,
+                                                   string targetNameOrAlias,
+                                                   ApplicationShellTargetKind targetKind,
+                                                   string targetValue,
+                                                   string[] arguments,
+                                                   LaunchActivationIntent intent) {
+            return new LaunchRequest(targetAppId, targetNameOrAlias, arguments, null,
                 "open", shellObjectId, LaunchRequestTargetKind.ShellObject,
                 targetKind, targetValue, intent);
         }
@@ -671,23 +682,48 @@ namespace guideXOS.OS {
             ApplicationDescriptor console;
             ApplicationDescriptor imageViewer;
             ApplicationDescriptor wavPlayer;
+            ApplicationDescriptor files;
+            ApplicationDescriptor displayOptions;
+            ApplicationDescriptor firewall;
+            ApplicationDescriptor taskManager;
             bool policyProjection =
                 TryGetById("gxos.builtin.calculator", out calculator) &&
                 TryGetById("gxos.builtin.console", out console) &&
                 TryGetById("gxos.builtin.imageviewer", out imageViewer) &&
                 TryGetById("gxos.builtin.wavplayer", out wavPlayer) &&
+                TryGetById("gxos.builtin.files", out files) &&
+                TryGetById("gxos.builtin.displayoptions", out displayOptions) &&
+                TryGetById("gxos.builtin.firewall", out firewall) &&
+                TryGetById("gxos.builtin.taskmanager", out taskManager) &&
                 calculator.ShellPolicy.InstancePolicy ==
                     ApplicationInstancePolicy.MultiInstance &&
                 calculator.ShellPolicy.CloseWhenLastWindowClosed &&
                 !calculator.ShellPolicy.AllowZeroWindows &&
+                files.ShellPolicy.InstancePolicy ==
+                    ApplicationInstancePolicy.MultiInstance &&
+                files.ShellPolicy.CloseWhenLastWindowClosed &&
                 console.ShellPolicy.InstancePolicy ==
                     ApplicationInstancePolicy.ReuseExisting &&
                 !console.ShellPolicy.CloseWhenLastWindowClosed &&
                 console.ShellPolicy.AllowZeroWindows &&
                 imageViewer.ShellPolicy.InstancePolicy ==
                     ApplicationInstancePolicy.ReuseExisting &&
+                !imageViewer.ShellPolicy.CloseWhenLastWindowClosed &&
                 wavPlayer.ShellPolicy.InstancePolicy ==
-                    ApplicationInstancePolicy.ReuseExisting;
+                    ApplicationInstancePolicy.ReuseExisting &&
+                !wavPlayer.ShellPolicy.CloseWhenLastWindowClosed &&
+                displayOptions.ShellPolicy.InstancePolicy ==
+                    ApplicationInstancePolicy.ReuseExisting &&
+                displayOptions.ShellPolicy.CloseWhenLastWindowClosed &&
+                !displayOptions.ShellPolicy.AllowZeroWindows &&
+                firewall.ShellPolicy.InstancePolicy ==
+                    ApplicationInstancePolicy.ReuseExisting &&
+                !firewall.ShellPolicy.CloseWhenLastWindowClosed &&
+                firewall.ShellPolicy.AllowZeroWindows &&
+                taskManager.ShellPolicy.InstancePolicy ==
+                    ApplicationInstancePolicy.ReuseExisting &&
+                taskManager.ShellPolicy.CloseWhenLastWindowClosed &&
+                !taskManager.ShellPolicy.AllowZeroWindows;
             Check(policyProjection, "instance policy projection", ref passed,
                 ref failed, ref failure);
 
@@ -803,10 +839,23 @@ namespace guideXOS.OS {
             bool allowZeroWindows = false;
             if (legacy.AppId == "gxos.builtin.console" ||
                 legacy.AppId == "gxos.builtin.imageviewer" ||
-                legacy.AppId == "gxos.builtin.wavplayer") {
-                // These three descriptors intentionally reuse the existing
+                legacy.AppId == "gxos.builtin.wavplayer" ||
+                legacy.AppId == "gxos.builtin.displayoptions" ||
+                legacy.AppId == "gxos.builtin.taskmanager") {
+                // These descriptors intentionally reuse the existing
                 // managed helper/window.  The singleton is an instance
                 // policy, not a replacement for descriptor identity.
+                instancePolicy = ApplicationInstancePolicy.ReuseExisting;
+                closeWhenLastWindowClosed =
+                    legacy.AppId != "gxos.builtin.console" &&
+                    legacy.AppId != "gxos.builtin.wavplayer" &&
+                    legacy.AppId != "gxos.builtin.imageviewer";
+                allowZeroWindows = !closeWhenLastWindowClosed;
+            }
+            if (legacy.AppId == "gxos.builtin.firewall") {
+                // Firewall owns a persistent service window.  Closing the
+                // view deactivates the instance; the service can recreate the
+                // helper on its next activation without retaining ownership.
                 instancePolicy = ApplicationInstancePolicy.ReuseExisting;
                 closeWhenLastWindowClosed = false;
                 allowZeroWindows = true;
@@ -1083,12 +1132,115 @@ namespace guideXOS.OS {
     }
 
     /// <summary>
+    /// Bounded accounting for historical AppCollection callers.  These
+    /// counters make compatibility a measurable interface instead of an
+    /// invisible alternate application architecture.
+    /// </summary>
+    public static class AppModelCompatibilityDiagnostics {
+        private static int _facadeCalls;
+        private static int _modernTranslations;
+        private static int _legacyBackendCalls;
+        private static int _compatibilityFailures;
+
+        public static int FacadeCalls { get { return _facadeCalls; } }
+        public static int ModernTranslations { get { return _modernTranslations; } }
+        public static int LegacyBackendCalls { get { return _legacyBackendCalls; } }
+        public static int CompatibilityFailures {
+            get { return _compatibilityFailures; }
+        }
+
+        internal static void RecordFacadeInvocation() {
+            _facadeCalls++;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("COMPAT_FACADE_CALL");
+#endif
+        }
+
+        internal static void RecordModernTranslation() {
+            _modernTranslations++;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("COMPAT_MODERN_TRANSLATION");
+#endif
+        }
+
+        internal static void RecordLegacyBackendInvocation(string appId) {
+            _legacyBackendCalls++;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("COMPAT_LEGACY_BACKEND=app=" +
+                (appId ?? ""));
+#endif
+        }
+
+        internal static void RecordCompatibilityFailure() {
+            _compatibilityFailures++;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("COMPAT_FAILURE");
+#endif
+        }
+
+        /// <summary>
+        /// Exercise the retained public facade with two successful historical
+        /// inputs and one bounded invalid input.  Successful windows are
+        /// terminated through the instance registry before returning.
+        /// </summary>
+        internal static bool RunSelfTest(AppCollection collection) {
+            if (collection == null) return false;
+            int fallbackBefore = ApplicationFactoryRegistry.CompatibilityFallbackLaunches;
+            int factoryBefore = ApplicationFactoryRegistry.FactoryLaunches;
+            int facadeBefore = FacadeCalls;
+            int translationBefore = ModernTranslations;
+            int legacyBefore = LegacyBackendCalls;
+            int failureBefore = CompatibilityFailures;
+
+            bool calculatorLoaded = collection.Load("Calculator");
+            guideXOS.GUI.Window calculatorWindow =
+                collection.GetAppObjectForCompatibilityDiagnostic(
+                    "Calculator") as guideXOS.GUI.Window;
+            bool calculatorInstance = calculatorWindow != null &&
+                calculatorWindow.ApplicationInstanceHandle.IsValid;
+            if (calculatorInstance) {
+                ApplicationInstanceRegistry.TryTerminate(
+                    calculatorWindow.ApplicationInstanceHandle,
+                    "compatibility facade self-test");
+            }
+
+            bool aliasLoaded = collection.Load("File Explorer");
+            guideXOS.GUI.Window filesWindow =
+                collection.GetAppObjectForCompatibilityDiagnostic(
+                    "Computer Files") as guideXOS.GUI.Window;
+            bool aliasInstance = filesWindow != null &&
+                filesWindow.ApplicationInstanceHandle.IsValid;
+            if (aliasInstance) {
+                ApplicationInstanceRegistry.TryTerminate(
+                    filesWindow.ApplicationInstanceHandle,
+                    "compatibility alias self-test");
+            }
+
+            bool invalidRejected = !collection.Load("Definitely Not A Real App");
+            bool counters = FacadeCalls == facadeBefore + 3 &&
+                ModernTranslations == translationBefore + 2 &&
+                LegacyBackendCalls == legacyBefore &&
+                CompatibilityFailures == failureBefore + 1 &&
+                ApplicationFactoryRegistry.CompatibilityFallbackLaunches ==
+                    fallbackBefore &&
+                ApplicationFactoryRegistry.FactoryLaunches >= factoryBefore + 2;
+            bool passed = calculatorLoaded && calculatorInstance &&
+                aliasLoaded && aliasInstance && invalidRejected && counters;
+            AppLaunchResolver.EmitSelfTestSummary("AppModelPhase5Compatibility",
+                passed ? 1 : 0, passed ? 0 : 1,
+                passed ? null : "compatibility facade did not translate cleanly");
+            return passed;
+        }
+    }
+
+    /// <summary>
     /// Compatibility boundary for AppCollection.  Resolution is modern and
     /// typed; dispatch remains the existing managed switch in AppCollection.
     /// </summary>
     public static class AppLaunchCompatibilityAdapter {
         public static LaunchResult Launch(AppCollection collection,
                                           LaunchRequest request) {
+            AppModelCompatibilityDiagnostics.RecordFacadeInvocation();
             AppLaunchResolution ignoredResolution;
             return Launch(collection, request, out ignoredResolution);
         }
@@ -1100,8 +1252,26 @@ namespace guideXOS.OS {
             LaunchResult failure;
             if (!TryResolveForLegacyCollection(collection, request,
                     out legacyResolution, out descriptor, out failure))
+            {
+                AppModelCompatibilityDiagnostics.RecordCompatibilityFailure();
                 return failure;
-            return DispatchToLegacyBackend(collection, request, legacyResolution);
+            }
+
+            LaunchResult modernResult;
+            if (collection.TryLaunchFactoryRequest(request, out modernResult)) {
+                AppModelCompatibilityDiagnostics.RecordModernTranslation();
+                if (modernResult == null || !modernResult.Success) {
+                    AppModelCompatibilityDiagnostics.RecordCompatibilityFailure();
+                }
+                return modernResult;
+            }
+
+            LaunchResult legacyResult = DispatchToLegacyBackend(collection,
+                request, legacyResolution);
+            if (legacyResult == null || !legacyResult.Success) {
+                AppModelCompatibilityDiagnostics.RecordCompatibilityFailure();
+            }
+            return legacyResult;
         }
 
         internal static bool TryResolveForLegacyCollection(
@@ -1157,6 +1327,14 @@ namespace guideXOS.OS {
             if (collection == null)
                 return LaunchResult.Failed(LaunchErrorCode.BackendUnavailable,
                     "Application collection is unavailable", null);
+
+            // This is the single compatibility-dispatch accounting point so
+            // historical callers and explicit legacy routes are visible in
+            // diagnostics without double-counting App.Load's facade.
+            ApplicationFactoryRegistry.RecordCompatibilityFallback(
+                legacyResolution == null ? null : legacyResolution.AppId);
+            AppModelCompatibilityDiagnostics.RecordLegacyBackendInvocation(
+                legacyResolution == null ? null : legacyResolution.AppId);
 
             string appId = legacyResolution == null ? null :
                 legacyResolution.AppId;

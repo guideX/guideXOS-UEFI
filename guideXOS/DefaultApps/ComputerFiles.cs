@@ -65,12 +65,20 @@ namespace guideXOS.DefaultApps {
 #endif
 
         private FileSystem _fs;
+        private bool _ownsFileSystem;
         private List<DriveInfo> _drives;
 
-        public ComputerFiles(int x, int y, int w, int h, FileSystem fs, string driveName) : base(x, y, w, h)
+        public ComputerFiles(int x, int y, int w, int h, FileSystem fs, string driveName)
+            : this(x, y, w, h, fs, driveName, false)
+        {
+        }
+
+        internal ComputerFiles(int x, int y, int w, int h, FileSystem fs,
+                               string driveName, bool ownsFileSystem) : base(x, y, w, h)
         {
             Title = "Computer Files - " + driveName;
             _fs = fs;
+            _ownsFileSystem = ownsFileSystem;
             _showDrives = false;
             _currentPath = "";
 
@@ -512,9 +520,8 @@ namespace guideXOS.DefaultApps {
 #endif
                             if (drive.FileSystem != null)
                             {
-                                var cf = new ComputerFiles(X + 20, Y + 20, 540, 400, drive.FileSystem, drive.Name);
-                                WindowManager.MoveToEnd(cf);
-                                cf.Visible = true;
+                                Desktop.LaunchComputerFilesDrive(drive.Name,
+                                    X + 20, Y + 20);
                             }
                             return;
                         }
@@ -794,6 +801,10 @@ namespace guideXOS.DefaultApps {
                     _drives[i].Dispose();
                 }
                 _drives.Dispose();
+            }
+            if (_ownsFileSystem && _fs != null) {
+                _fs.Dispose();
+                _fs = null;
             }
             
             base.Dispose();

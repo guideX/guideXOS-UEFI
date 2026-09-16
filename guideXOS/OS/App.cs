@@ -290,6 +290,22 @@ namespace guideXOS.OS {
                     request.TargetKind != LaunchRequestTargetKind.FileOpen ||
                     string.IsNullOrEmpty(request.TargetAppId)) return false;
 
+            AppModelCompatibilityDiagnostics.RecordFacadeInvocation();
+
+            ApplicationDescriptor modernDescriptor;
+            if (ApplicationDescriptorRegistry.TryGetById(request.TargetAppId,
+                    out modernDescriptor) && modernDescriptor != null &&
+                    modernDescriptor.ApplicationClass == ApplicationClass.BuiltIn) {
+                bool handled = TryLaunchFactoryRequest(request, out result);
+                if (handled) {
+                    AppModelCompatibilityDiagnostics.RecordModernTranslation();
+                    if (result == null || !result.Success) {
+                        AppModelCompatibilityDiagnostics.RecordCompatibilityFailure();
+                    }
+                    return true;
+                }
+            }
+
             AppLaunchResolution resolution = AppLaunchResolver.Resolve(
                 request.TargetAppId);
             if (!resolution.Success) {
@@ -299,10 +315,14 @@ namespace guideXOS.OS {
                 return true;
             }
             if (resolution.DispatchName != "Notepad" &&
-                    resolution.DispatchName != "Image Viewer") return false;
+                    resolution.DispatchName != "Image Viewer" &&
+                    resolution.DispatchName != "WAV Player") return false;
 
             result = AppLaunchCompatibilityAdapter.DispatchToLegacyBackend(
                 this, request, resolution);
+            if (result == null || !result.Success) {
+                AppModelCompatibilityDiagnostics.RecordCompatibilityFailure();
+            }
             return true;
         }
 
@@ -337,7 +357,8 @@ namespace guideXOS.OS {
             // behavior at this backend boundary.
             if (app != null && request != null &&
                     !string.IsNullOrEmpty(request.Document) &&
-                    descriptor.AppId == "gxos.builtin.imageviewer") {
+                    (descriptor.AppId == "gxos.builtin.imageviewer" ||
+                     descriptor.AppId == "gxos.builtin.wavplayer")) {
                 RecentManager.AddDocument(request.Document, app.Icon);
             }
         }
@@ -356,6 +377,7 @@ namespace guideXOS.OS {
         /// projection, then invokes the unchanged managed backend above.
         /// </summary>
         public bool Load(string name) {
+            AppModelCompatibilityDiagnostics.RecordFacadeInvocation();
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
             Program.MarkUefiAppRuntime("LAUNCH_ENTER");
             Program.MarkUefiAppRuntime("LAUNCH_NOTIFY_BEGIN");
@@ -405,6 +427,7 @@ namespace guideXOS.OS {
                 } catch { }
             }
             if (!canDispatch) {
+                AppModelCompatibilityDiagnostics.RecordCompatibilityFailure();
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                 Program.MarkUefiAppRuntime("LAUNCH_RESULT=code=" +
                     (resolutionFailure == null ?
@@ -418,21 +441,47 @@ namespace guideXOS.OS {
                 return false;
             }
 
+            // A registered built-in is never allowed to silently fall through
+            // to historical constructor dispatch.  Legacy-only names and
+            // external compatibility callers remain outside this guard.
+            if (modernDescriptor != null &&
+                    modernDescriptor.ApplicationClass == ApplicationClass.BuiltIn) {
+                LaunchResult bindingFailure;
+                if (!ApplicationFactoryRegistry.ValidateBuiltInBindings(
+                        out bindingFailure)) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime("LAUNCH_RESULT=code=" +
+                        (bindingFailure == null ? "BackendUnavailable" :
+                            bindingFailure.ErrorCodeName) + ";success=0;app=" +
+                        modernDescriptor.AppId);
+                    Program.MarkUefiAppRuntime("LAUNCH_FAIL=input=" +
+                        (name ?? "") + ";reason=BUILTIN_FACTORY_BINDING");
+#endif
+                    return false;
+                }
+            }
+
             LaunchResult result = null;
             bool factoryHandled = modernDescriptor != null &&
-                ApplicationFactoryRegistry.TryLaunch(modernDescriptor, request,
-                    out result);
+                TryLaunchFactoryRequest(request, out result);
             if (factoryHandled) {
-                if (result != null && result.Success) {
-                    ApplyFactoryPresentation(modernDescriptor, request, result);
+                AppModelCompatibilityDiagnostics.RecordModernTranslation();
+                if (result == null || !result.Success) {
+                    AppModelCompatibilityDiagnostics.RecordCompatibilityFailure();
                 }
-            } else {
-                ApplicationFactoryRegistry.RecordCompatibilityFallback(
-                    modernDescriptor == null ?
-                        (resolution == null ? null : resolution.AppId) :
-                        modernDescriptor.AppId);
+            }
+            if (!factoryHandled) {
                 result = AppLaunchCompatibilityAdapter.DispatchToLegacyBackend(
                     this, request, resolution);
+                if (result == null || !result.Success) {
+                    AppModelCompatibilityDiagnostics.RecordCompatibilityFailure();
+                }
+            }
+            if (result == null) {
+                result = LaunchResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    "Launch backend returned no result",
+                    modernDescriptor == null ? null : modernDescriptor.AppId);
             }
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
             Program.MarkUefiAppRuntime("LAUNCH_RESULT=code=" +
@@ -458,6 +507,14 @@ namespace guideXOS.OS {
                 if (_apps[i].Name == name) return true;
             }
             return false;
+        }
+
+        internal object GetAppObjectForCompatibilityDiagnostic(string name) {
+            if (string.IsNullOrEmpty(name)) return null;
+            for (int i = 0; i < _apps.Count; i++) {
+                if (_apps[i].Name == name) return _apps[i].AppObject;
+            }
+            return null;
         }
 
         /// <summary>

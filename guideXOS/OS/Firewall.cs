@@ -48,7 +48,21 @@ namespace guideXOS.OS {
         /// <summary>
         /// Initializes the firewall system and creates the configuration window.
         /// </summary>
-        public static void Initialize() { if (Window == null) { Window = new FirewallWindow(220, 140); Window.Visible = false; } }
+        public static void Initialize() { EnsureWindow(); }
+
+        /// <summary>
+        /// Return the persistent helper window without making it the owner of
+        /// an application instance.  The registered Firewall factory attaches
+        /// the helper when the user launches the configuration application.
+        /// </summary>
+        internal static FirewallWindow EnsureWindow() {
+            if (Window == null || WindowManager.Windows == null ||
+                    WindowManager.Windows.IndexOf(Window) < 0) {
+                Window = new FirewallWindow(220, 140);
+                Window.Visible = false;
+            }
+            return Window;
+        }
         
         /// <summary>
         /// Gets an array of all programs that are allowed through the firewall.

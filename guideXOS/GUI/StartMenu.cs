@@ -336,10 +336,7 @@ namespace guideXOS.GUI {
                     int fw = Icons.FolderIcon(32).Width;
                     // Make entire row clickable, not just icon
                     if (mx >= rcX && mx <= rcX + rcW && my >= iy && my <= iy + fh) {
-                        // open Computer Files window
-                        var cf = new ComputerFiles(300, 200, 540, 380);
-                        WindowManager.MoveToEnd(cf);
-                        cf.Visible = true;
+                        Desktop.LaunchApplication("Computer Files");
                         Visible = false;
                         return;
                     }
@@ -348,9 +345,7 @@ namespace guideXOS.GUI {
                     int dwh = Icons.FolderIcon(32).Height; int dww = Icons.FolderIcon(32).Width;
                     // Make entire row clickable, not just icon
                     if (mx >= rcX && mx <= rcX + rcW && my >= iy && my <= iy + dwh) {
-                        var dm = new DiskManager(340, 260);
-                        WindowManager.MoveToEnd(dm);
-                        dm.Visible = true;
+                        Desktop.LaunchApplication("Disk Manager");
                         Visible = false;
                         return;
                     }
@@ -359,14 +354,7 @@ namespace guideXOS.GUI {
                     int cwh = Icons.DocumentIcon(32).Height; int cww = Icons.DocumentIcon(32).Width;
                     // Make entire row clickable, not just icon
                     if (mx >= rcX && mx <= rcX + rcW && my >= iy && my <= iy + cwh) {
-                        // Recreate console if it doesn't exist or was disposed
-                        if (Program.FConsole == null || !Program.FConsole.Visible) {
-                            if (Program.FConsole == null) {
-                                Program.FConsole = new FConsole(160, 120);
-                            }
-                            WindowManager.MoveToEnd(Program.FConsole);
-                            Program.FConsole.Visible = true;
-                        }
+                        Desktop.LaunchApplication("Console");
                         Visible = false;
                         return;
                     }
@@ -383,16 +371,9 @@ namespace guideXOS.GUI {
                         int ux = rcX; int uy = iy; int uw = Icons.FolderIcon(32).Width; int uh = Icons.FolderIcon(32).Height;
                         // Make entire row clickable, not just icon
                         if (mx >= rcX && mx <= rcX + rcW && my >= uy && my <= uy + uh) {
-                            var dev = Kernel.Drivers.USBStorage.GetFirst();
-                            if (dev != null) {
-                                var disk = Kernel.Drivers.USBMSC.TryOpenDisk(dev);
-                                if (disk != null && disk.IsReady) {
-                                    var win = new USBFiles(disk, 380, 220, 560, 400);
-                                    WindowManager.MoveToEnd(win);
-                                    win.Visible = true;
-                                    Visible = false;
-                                }
-                            }
+                            Desktop.LaunchComputerFilesDrive("USB Drive 1", 380,
+                                220);
+                            Visible = false;
                             return;
                         }
                         // Provide a second entry for a list view of all USB drives
@@ -452,7 +433,7 @@ namespace guideXOS.GUI {
                                     Program.MarkUefiAppRuntime("START_SELECT=name=" +
                                         appName + ";route=all-programs;index=" + i.ToString());
 #endif
-                                    Desktop.Apps.Load(appName);
+                                    Desktop.LaunchApplication(appName);
                                     appName.Dispose();
                                     Visible = false;
                                     return;
@@ -480,7 +461,7 @@ namespace guideXOS.GUI {
                             var icon = _recentCache[i].Icon;
                             ih = icon.Height;
                             if (my >= iy2 && my <= iy2 + ih) {
-                                Desktop.Apps.Load(_recentCache[i].Name);
+                                Desktop.LaunchApplication(_recentCache[i].Name);
                                 Visible = false;
                                 return;
                             }

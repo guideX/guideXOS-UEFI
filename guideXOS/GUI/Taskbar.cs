@@ -372,7 +372,7 @@ namespace guideXOS.GUI {
                         if (hoverPinned && leftMousePinned && !_pinnedClickLatch) {
                             _pinnedClickLatch = true;
                             string nm = PinnedManager.Name(i); byte kind = PinnedManager.Kind(i);
-                            if (kind == 0) { Desktop.Apps.Load(nm); } else if (kind == 2) { var cf = new ComputerFiles(300, 200, 540, 380); WindowManager.MoveToEnd(cf); cf.Visible = true; } else if (kind == 1) { string path = PinnedManager.Path(i); if (path != null) { byte[] buf = guideXOS.FS.File.ReadAllBytes(path); if (buf != null) { string err; guideXOS.Misc.GXMLoader.TryExecute(buf, out err); buf.Dispose(); } } }
+                            if (kind == 0) { Desktop.LaunchApplication(nm); } else if (kind == 2) { Desktop.LaunchApplication("Computer Files"); } else if (kind == 1) { string path = PinnedManager.Path(i); if (path != null) { Desktop.LaunchTypedExternalGxmFile(path, "gxos.shell.taskbar"); } }
                         }
                         qx += iw + 8; if (qx > Framebuffer.Width - 420) break; // leave space for task buttons
                     }

@@ -707,11 +707,13 @@ namespace guideXOS.DefaultApps {
                             if (ferr != null) WriteLine(ferr);
                             else path = fileToken;
                         }
-                        if (Program.FConsole == null) Program.FConsole = this;
-                        var np = new Notepad(200, 160);
-                        WindowManager.MoveToEnd(np);
-                        np.Visible = true;
-                        np.OpenFile(path);
+                        LaunchResult launchResult;
+                        if (!Desktop.LaunchApplication(LaunchRequest.ForFile(
+                                "gxos.builtin.notepad", path, null, "open",
+                                null, false,
+                                LaunchActivationIntent.Launch), out launchResult)) {
+                            WriteLine("Unable to open file in Notepad");
+                        }
                         return;
                     }
                 case "vi": {
@@ -800,16 +802,16 @@ namespace guideXOS.DefaultApps {
 
                         scriptData.Dispose();
 
-                        // Execute the GXM
-                        string error;
-                        if (Misc.GXMLoader.TryExecute(gxmData, out error)) {
+                        // Execute through the typed external backend.  The
+                        // backend owns and consumes the generated buffer.
+                        if (Desktop.LaunchTypedExternalGxm(gxmData, path, null,
+                                out LaunchResult gxmResult)) {
                             WriteLine("Script loaded: " + fileToken);
                         } else {
-                            WriteLine("Error executing script: " + (error ?? "unknown error"));
-                            if (error != null) error.Dispose();
+                            WriteLine("Error executing script: " +
+                                (gxmResult == null ? "unknown error" :
+                                (gxmResult.BoundedDiagnostic ?? "unknown error")));
                         }
-
-                        gxmData.Dispose();
                         return;
                     }
                 case "gxminfo": {
@@ -1239,7 +1241,7 @@ namespace guideXOS.DefaultApps {
 
                         if (found) {
                             WriteLine("Launching " + appName + "...");
-                            Desktop.Apps.Load(appName);
+                            Desktop.LaunchApplication(appName);
                         } else {
                             WriteLine("App not found: " + parts[1]);
                             WriteLine("Use 'apps' to see available applications");

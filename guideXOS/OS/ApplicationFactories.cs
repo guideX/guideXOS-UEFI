@@ -2,6 +2,7 @@ using guideXOS.DefaultApps;
 using guideXOS.FS;
 using guideXOS.GUI;
 using guideXOS.Kernel.Drivers;
+using guideXOS.Misc;
 using System;
 using System.Drawing;
 
@@ -138,6 +139,8 @@ namespace guideXOS.OS {
         private static int _factoryFailures;
         private static int _reusedFactoryActivations;
         private static int _factoryWindowsAttached;
+        private static int _typedExternalLaunches;
+        private static int _typedShellActionLaunches;
 
         public static void Initialize() {
             if (_initialized) return;
@@ -145,15 +148,31 @@ namespace guideXOS.OS {
             _initialized = true;
 
             // Registration order is part of the deterministic diagnostic
-            // surface and follows the Phase 3 representative cohort.
+            // surface and follows the canonical twelve-entry descriptor list.
             RegisterInitial("gxos.builtin.calculator",
                 new CalculatorApplicationFactory());
+            RegisterInitial("gxos.builtin.files",
+                new ComputerFilesApplicationFactory());
             RegisterInitial("gxos.builtin.notepad",
                 new NotepadApplicationFactory());
             RegisterInitial("gxos.builtin.console",
                 new ConsoleApplicationFactory());
+            RegisterInitial("gxos.builtin.devices",
+                new DevicesApplicationFactory());
+            RegisterInitial("gxos.builtin.diskmanager",
+                new DiskManagerApplicationFactory());
+            RegisterInitial("gxos.builtin.displayoptions",
+                new DisplayOptionsApplicationFactory());
+            RegisterInitial("gxos.builtin.firewall",
+                new FirewallApplicationFactory());
+            RegisterInitial("gxos.builtin.paint",
+                new PaintApplicationFactory());
+            RegisterInitial("gxos.builtin.taskmanager",
+                new TaskManagerApplicationFactory());
             RegisterInitial("gxos.builtin.imageviewer",
                 new ImageViewerApplicationFactory());
+            RegisterInitial("gxos.builtin.wavplayer",
+                new WavPlayerApplicationFactory());
         }
 
         public static int Count { get { Initialize(); return _count; } }
@@ -169,8 +188,61 @@ namespace guideXOS.OS {
         public static int FactoryWindowsAttached {
             get { return _factoryWindowsAttached; }
         }
+        public static int TypedExternalLaunches {
+            get { return _typedExternalLaunches; }
+        }
+        public static int TypedShellActionLaunches {
+            get { return _typedShellActionLaunches; }
+        }
         public static string InitializationFailure {
             get { Initialize(); return _initializationFailure; }
+        }
+
+        /// <summary>
+        /// Validate the normal built-in dispatch boundary.  GXM and shell
+        /// actions are intentionally outside this table and are reported by
+        /// their own typed backend counters.
+        /// </summary>
+        public static bool ValidateBuiltInBindings(out LaunchResult failure) {
+            Initialize();
+            return ValidateBuiltInBindingsCore(_bindings, _count, out failure);
+        }
+
+        private static bool ValidateBuiltInBindingsCore(Binding[] bindings,
+                                                         int count,
+                                                         out LaunchResult failure) {
+            failure = null;
+            if (!ApplicationDescriptorRegistry.IsValid) {
+                failure = LaunchResult.Failed(LaunchErrorCode.BackendUnavailable,
+                    ApplicationDescriptorRegistry.ValidationFailure ??
+                        "Application descriptor validation failed", null);
+                return false;
+            }
+            for (int i = 0; i < ApplicationDescriptorRegistry.Count; i++) {
+                ApplicationDescriptor descriptor =
+                    ApplicationDescriptorRegistry.GetAt(i);
+                if (descriptor == null ||
+                        descriptor.ApplicationClass != ApplicationClass.BuiltIn)
+                    continue;
+                ApplicationFactory factory;
+                if (!TryGetFrom(bindings, count, descriptor.AppId,
+                        out factory)) {
+                    failure = LaunchResult.Failed(
+                        LaunchErrorCode.BackendUnavailable,
+                        "Registered built-in descriptor has no factory binding",
+                        descriptor.AppId);
+                    return false;
+                }
+                if (factory.SupportedApplicationClass !=
+                        descriptor.ApplicationClass) {
+                    failure = LaunchResult.Failed(
+                        LaunchErrorCode.BackendUnavailable,
+                        "Built-in factory binding has an incompatible class",
+                        descriptor.AppId);
+                    return false;
+                }
+            }
+            return true;
         }
 
         public static bool IsRegistered(string appId) {
@@ -317,33 +389,105 @@ namespace guideXOS.OS {
 #endif
         }
 
+        internal static void RecordTypedExternalLaunch(string backend) {
+            Initialize();
+            _typedExternalLaunches++;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("LAUNCH_BACKEND=typed-external;backend=" +
+                (backend ?? ""));
+#endif
+        }
+
+        internal static void RecordTypedShellActionLaunch(string action) {
+            Initialize();
+            _typedShellActionLaunches++;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime(
+                "LAUNCH_BACKEND=typed-shell-action;action=" +
+                (action ?? ""));
+#endif
+        }
+
         public static bool RunSelfTest() {
             Initialize();
             int passed = 0;
             int failed = 0;
             string firstFailure = null;
 
-            Check(Count == 4, "factory registration count", ref passed,
+            string[] expectedBuiltInIds = new string[] {
+                "gxos.builtin.calculator", "gxos.builtin.files",
+                "gxos.builtin.console", "gxos.builtin.devices",
+                "gxos.builtin.diskmanager", "gxos.builtin.displayoptions",
+                "gxos.builtin.firewall", "gxos.builtin.notepad",
+                "gxos.builtin.paint", "gxos.builtin.taskmanager",
+                "gxos.builtin.imageviewer", "gxos.builtin.wavplayer"
+            };
+            Check(Count == expectedBuiltInIds.Length,
+                "factory registration count", ref passed,
                 ref failed, ref firstFailure);
-            Check(IsRegistered("gxos.builtin.calculator") &&
-                IsRegistered("gxos.builtin.notepad") &&
-                IsRegistered("gxos.builtin.console") &&
-                IsRegistered("gxos.builtin.imageviewer"),
-                "cohort bindings", ref passed, ref failed, ref firstFailure);
-            Check(!IsRegistered("gxos.builtin.files"),
-                "missing factory fallback", ref passed, ref failed,
-                ref firstFailure);
-            ApplicationDescriptor missingFactoryDescriptor = null;
-            LaunchResult missingFactoryResult = null;
-            bool missingFactoryDispatch =
-                ApplicationDescriptorRegistry.TryGetById(
-                    "gxos.builtin.files", out missingFactoryDescriptor) &&
-                !TryLaunch(missingFactoryDescriptor,
-                    LaunchRequest.ForAppId(missingFactoryDescriptor.AppId,
-                        null, null, LaunchActivationIntent.Launch),
-                    out missingFactoryResult) && missingFactoryResult == null;
-            Check(missingFactoryDispatch, "missing factory dispatch boundary",
+            bool allBindings = true;
+            for (int i = 0; i < expectedBuiltInIds.Length; i++) {
+                if (!IsRegistered(expectedBuiltInIds[i])) allBindings = false;
+            }
+            Check(allBindings, "all built-in factory bindings", ref passed,
+                ref failed, ref firstFailure);
+            LaunchResult bindingFailure;
+            Check(ValidateBuiltInBindings(out bindingFailure) &&
+                bindingFailure == null, "missing built-in binding detection",
                 ref passed, ref failed, ref firstFailure);
+            Binding[] missingBindings = CopyBindings();
+            int missingCount = _count;
+            if (missingCount > 0) {
+                missingBindings[0] = null;
+                missingCount--;
+                for (int i = 0; i < missingCount; i++) {
+                    if (missingBindings[i] == null) {
+                        missingBindings[i] = missingBindings[i + 1];
+                    }
+                }
+            }
+            LaunchResult missingProbeFailure;
+            Check(!ValidateBuiltInBindingsCore(missingBindings, missingCount,
+                out missingProbeFailure) && missingProbeFailure != null,
+                "missing built-in binding probe", ref passed, ref failed,
+                ref firstFailure);
+            Binding[] mismatchBindings = CopyBindings();
+            if (mismatchBindings.Length > 0) {
+                mismatchBindings[0] = new Binding {
+                    AppId = "gxos.builtin.calculator",
+                    Factory = new FactorySelfTestProbe(ApplicationClass.Gxm,
+                        true) };
+            }
+            LaunchResult mismatchProbeFailure;
+            Check(!ValidateBuiltInBindingsCore(mismatchBindings, _count,
+                out mismatchProbeFailure) && mismatchProbeFailure != null,
+                "descriptor factory mismatch probe", ref passed, ref failed,
+                ref firstFailure);
+            Check(!IsRegistered("gxos.external.gxm"),
+                "typed backend distinction", ref passed, ref failed,
+                ref firstFailure);
+
+            LaunchResult capacityFailure;
+            Binding[] capacityBindings = new Binding[Capacity];
+            int capacityCount = 0;
+            bool capacityFilled = true;
+            for (int i = 0; i < Capacity; i++) {
+                if (!TryAppendBinding(capacityBindings, ref capacityCount,
+                        "factory.capacity." + i.ToString(),
+                        new FactorySelfTestProbe(ApplicationClass.BuiltIn,
+                            true), out capacityFailure)) {
+                    capacityFilled = false;
+                    break;
+                }
+            }
+            bool capacityRejected = capacityFilled && capacityCount == Capacity &&
+                !TryAppendBinding(capacityBindings, ref capacityCount,
+                    "factory.capacity.overflow",
+                    new FactorySelfTestProbe(ApplicationClass.BuiltIn, true),
+                    out capacityFailure) && capacityFailure != null &&
+                capacityFailure.ErrorCode == LaunchErrorCode.ResourceUnavailable;
+            Check(capacityRejected, "factory capacity boundary", ref passed,
+                ref failed, ref firstFailure);
 
             LaunchResult duplicateFailure;
             bool duplicateRejected = !TryRegister(
@@ -466,7 +610,7 @@ namespace guideXOS.OS {
             bool noActiveInstances = ApplicationInstanceRegistry.ActiveCount == 0;
             Check(noActiveInstances, "factory self-test active cleanup", ref passed,
                 ref failed, ref firstFailure);
-            AppLaunchResolver.EmitSelfTestSummary("AppModelPhase3Factory",
+            AppLaunchResolver.EmitSelfTestSummary("AppModelPhase4Factory",
                 passed, failed, firstFailure);
             return failed == 0;
         }
@@ -494,22 +638,59 @@ namespace guideXOS.OS {
                     "Factory application class is incompatible", appId);
                 return false;
             }
-            for (int i = 0; i < _count; i++) {
-                if (TextEquals(_bindings[i].AppId, appId)) {
+            return TryAppendBinding(_bindings, ref _count, descriptor.AppId,
+                factory, out failure);
+        }
+
+        private static bool TryAppendBinding(Binding[] bindings, ref int count,
+                                             string appId,
+                                             ApplicationFactory factory,
+                                             out LaunchResult failure) {
+            failure = null;
+            if (bindings == null || string.IsNullOrEmpty(appId) ||
+                    factory == null) {
+                failure = LaunchResult.Failed(LaunchErrorCode.MalformedRequest,
+                    "Factory binding is incomplete", appId);
+                return false;
+            }
+            for (int i = 0; i < count; i++) {
+                if (bindings[i] != null && TextEquals(bindings[i].AppId,
+                        appId)) {
                     failure = LaunchResult.Failed(
                         LaunchErrorCode.BackendUnavailable,
                         "Duplicate application factory binding", appId);
                     return false;
                 }
             }
-            if (_count >= Capacity) {
+            if (count >= bindings.Length) {
                 failure = LaunchResult.Failed(LaunchErrorCode.ResourceUnavailable,
                     "Application factory capacity exhausted", appId);
                 return false;
             }
-            _bindings[_count++] = new Binding { AppId = descriptor.AppId,
-                Factory = factory };
+            bindings[count++] = new Binding { AppId = appId, Factory = factory };
             return true;
+        }
+
+        private static bool TryGetFrom(Binding[] bindings, int count,
+                                       string appId,
+                                       out ApplicationFactory factory) {
+            factory = null;
+            if (bindings == null || string.IsNullOrEmpty(appId)) return false;
+            if (count > bindings.Length) count = bindings.Length;
+            for (int i = 0; i < count; i++) {
+                if (bindings[i] != null && TextEquals(bindings[i].AppId,
+                        appId)) {
+                    factory = bindings[i].Factory;
+                    return factory != null;
+                }
+            }
+            return false;
+        }
+
+        private static Binding[] CopyBindings() {
+            Binding[] copy = new Binding[_count];
+            for (int i = 0; i < _count; i++) copy[i] = _bindings[i];
+            return copy;
         }
 
         private static void RegisterInitial(string appId,
@@ -789,6 +970,466 @@ namespace guideXOS.OS {
             WindowManager.MoveToEnd(viewer);
             viewer.Visible = true;
             return true;
+        }
+    }
+
+    internal sealed class ComputerFilesApplicationFactory : ApplicationFactory {
+        public override ApplicationClass SupportedApplicationClass {
+            get { return ApplicationClass.BuiltIn; }
+        }
+
+        public override bool TryCreateOrActivate(
+                ApplicationDescriptor descriptor,
+                ApplicationInstance instance,
+                LaunchRequest request,
+                out ApplicationFactoryResult result) {
+            result = ApplicationFactoryResult.Succeeded(instance);
+            ComputerFiles files = null;
+            FileSystem ownedFileSystem = null;
+            try {
+                bool driveRequest = request != null &&
+                    request.TargetKind == LaunchRequestTargetKind.ShellObject &&
+                    request.ShellTargetKind == ApplicationShellTargetKind.FileSystem &&
+                    !string.IsNullOrEmpty(request.ShellTargetValue);
+                if (driveRequest) {
+                    string failure;
+                    if (!TryCreateDriveFileSystem(request.ShellTargetValue,
+                            out ownedFileSystem, out failure)) {
+                        result = ApplicationFactoryResult.Failed(
+                            LaunchErrorCode.ResourceUnavailable, failure,
+                            descriptor.AppId);
+                        return false;
+                    }
+                    files = new ComputerFiles(
+                        FactoryRequestOptions.IntArgument(request, "--x=", 320),
+                        FactoryRequestOptions.IntArgument(request, "--y=", 220),
+                        540, 400,
+                        ownedFileSystem, request.ShellTargetValue, true);
+                    ownedFileSystem = null;
+                } else {
+                    files = new ComputerFiles(300, 200, 540, 380);
+                }
+                if (!result.AddWindow(files)) {
+                    files.CloseForApplicationTermination();
+                    result = ApplicationFactoryResult.Failed(
+                        LaunchErrorCode.InitializationFailed,
+                        "Computer Files window registration failed",
+                        descriptor.AppId);
+                    return false;
+                }
+                WindowManager.MoveToEnd(files);
+                files.Visible = true;
+                return true;
+            } catch {
+                if (files != null) files.Dispose();
+                if (ownedFileSystem != null) ownedFileSystem.Dispose();
+                result = ApplicationFactoryResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    "Computer Files initialization failed", descriptor.AppId);
+                return false;
+            }
+        }
+
+        private static bool TryCreateDriveFileSystem(string driveName,
+                                                     out FileSystem fileSystem,
+                                                     out string failure) {
+            fileSystem = null;
+            failure = "Drive is unavailable";
+            if (TextEquals(driveName, "Hard Disk")) {
+                try {
+                    fileSystem = new AutoFS();
+                    return true;
+                } catch {
+                    return false;
+                }
+            }
+            const string usbPrefix = "USB Drive ";
+            if (driveName == null || driveName.Length <= usbPrefix.Length ||
+                    !StartsWithIgnoreCase(driveName, usbPrefix)) return false;
+            int number;
+            if (!TryParsePositiveInteger(driveName, usbPrefix.Length,
+                    out number)) return false;
+            USBDevice[] devices;
+            try { devices = USBStorage.GetAll(); } catch { return false; }
+            int index = number - 1;
+            if (devices == null || index < 0 || index >= devices.Length) return false;
+            try {
+                var disk = USBMSC.TryOpenDisk(devices[index]);
+                if (disk == null || !disk.IsReady) return false;
+                fileSystem = new AutoFS(disk);
+                return true;
+            } catch {
+                if (fileSystem != null) {
+                    fileSystem.Dispose();
+                    fileSystem = null;
+                }
+                return false;
+            }
+        }
+
+        private static bool TryParsePositiveInteger(string value, int start,
+                                                    out int parsed) {
+            parsed = 0;
+            if (value == null || start < 0 || start >= value.Length) return false;
+            for (int i = start; i < value.Length; i++) {
+                char c = value[i];
+                if (c < '0' || c > '9') return false;
+                int digit = c - '0';
+                if (parsed > 214748364 ||
+                        (parsed == 214748364 && digit > 7)) return false;
+                parsed = parsed * 10 + digit;
+            }
+            return parsed > 0;
+        }
+
+        private static bool StartsWithIgnoreCase(string value, string prefix) {
+            if (value == null || prefix == null || value.Length < prefix.Length)
+                return false;
+            for (int i = 0; i < prefix.Length; i++) {
+                char a = value[i];
+                char b = prefix[i];
+                if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
+                if (b >= 'A' && b <= 'Z') b = (char)(b + 32);
+                if (a != b) return false;
+            }
+            return true;
+        }
+
+        private static bool TextEquals(string a, string b) {
+            if (a == null || b == null || a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++) {
+                char ca = a[i];
+                char cb = b[i];
+                if (ca >= 'A' && ca <= 'Z') ca = (char)(ca + 32);
+                if (cb >= 'A' && cb <= 'Z') cb = (char)(cb + 32);
+                if (ca != cb) return false;
+            }
+            return true;
+        }
+    }
+
+    internal sealed class DevicesApplicationFactory : ApplicationFactory {
+        public override ApplicationClass SupportedApplicationClass {
+            get { return ApplicationClass.BuiltIn; }
+        }
+
+        public override bool TryCreateOrActivate(
+                ApplicationDescriptor descriptor,
+                ApplicationInstance instance,
+                LaunchRequest request,
+                out ApplicationFactoryResult result) {
+            result = ApplicationFactoryResult.Succeeded(instance);
+            Devices devices = new Devices(400, 300);
+            if (!result.AddWindow(devices)) {
+                devices.CloseForApplicationTermination();
+                result = ApplicationFactoryResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    "Devices window registration failed", descriptor.AppId);
+                return false;
+            }
+            WindowManager.MoveToEnd(devices);
+            devices.Visible = true;
+            return true;
+        }
+    }
+
+    internal sealed class DiskManagerApplicationFactory : ApplicationFactory {
+        public override ApplicationClass SupportedApplicationClass {
+            get { return ApplicationClass.BuiltIn; }
+        }
+
+        public override bool TryCreateOrActivate(
+                ApplicationDescriptor descriptor,
+                ApplicationInstance instance,
+                LaunchRequest request,
+                out ApplicationFactoryResult result) {
+            result = ApplicationFactoryResult.Succeeded(instance);
+            DiskManager manager = new DiskManager(400, 300);
+            if (!result.AddWindow(manager)) {
+                manager.CloseForApplicationTermination();
+                result = ApplicationFactoryResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    "Disk Manager window registration failed", descriptor.AppId);
+                return false;
+            }
+            WindowManager.MoveToEnd(manager);
+            manager.Visible = true;
+            return true;
+        }
+    }
+
+    internal sealed class DisplayOptionsApplicationFactory : ApplicationFactory {
+        public override ApplicationClass SupportedApplicationClass {
+            get { return ApplicationClass.BuiltIn; }
+        }
+
+        public override bool TryCreateOrActivate(
+                ApplicationDescriptor descriptor,
+                ApplicationInstance instance,
+                LaunchRequest request,
+                out ApplicationFactoryResult result) {
+            result = ApplicationFactoryResult.Succeeded(instance);
+            DisplayOptions options = instance.GetOwnedWindowAt(0)
+                as DisplayOptions;
+            if (options == null) {
+                options = new DisplayOptions(
+                    FactoryRequestOptions.IntArgument(request, "--x=", 200),
+                    FactoryRequestOptions.IntArgument(request, "--y=", 150),
+                    FactoryRequestOptions.IntArgument(request, "--w=", 800),
+                    FactoryRequestOptions.IntArgument(request, "--h=", 600));
+            }
+            if (!result.AddWindow(options)) {
+                result = ApplicationFactoryResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    "Display Options window registration failed",
+                    descriptor.AppId);
+                return false;
+            }
+            WindowManager.MoveToEnd(options);
+            options.Visible = true;
+            return true;
+        }
+    }
+
+    internal sealed class FirewallApplicationFactory : ApplicationFactory {
+        public override ApplicationClass SupportedApplicationClass {
+            get { return ApplicationClass.BuiltIn; }
+        }
+
+        public override bool TryCreateOrActivate(
+                ApplicationDescriptor descriptor,
+                ApplicationInstance instance,
+                LaunchRequest request,
+                out ApplicationFactoryResult result) {
+            result = ApplicationFactoryResult.Succeeded(instance);
+            FirewallWindow window = instance.GetOwnedWindowAt(0)
+                as FirewallWindow;
+            if (window == null) window = Firewall.EnsureWindow();
+            if (!result.AddWindow(window)) {
+                result = ApplicationFactoryResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    "Firewall window registration failed", descriptor.AppId);
+                return false;
+            }
+            WindowManager.MoveToEnd(window);
+            window.Visible = true;
+            return true;
+        }
+    }
+
+    internal sealed class PaintApplicationFactory : ApplicationFactory {
+        public override ApplicationClass SupportedApplicationClass {
+            get { return ApplicationClass.BuiltIn; }
+        }
+
+        public override bool TryCreateOrActivate(
+                ApplicationDescriptor descriptor,
+                ApplicationInstance instance,
+                LaunchRequest request,
+                out ApplicationFactoryResult result) {
+            result = ApplicationFactoryResult.Succeeded(instance);
+            Paint paint = new Paint(500, 200);
+            if (!result.AddWindow(paint)) {
+                paint.CloseForApplicationTermination();
+                result = ApplicationFactoryResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    "Paint window registration failed", descriptor.AppId);
+                return false;
+            }
+            WindowManager.MoveToEnd(paint);
+            paint.Visible = true;
+            return true;
+        }
+    }
+
+    internal sealed class TaskManagerApplicationFactory : ApplicationFactory {
+        public override ApplicationClass SupportedApplicationClass {
+            get { return ApplicationClass.BuiltIn; }
+        }
+
+        public override bool TryCreateOrActivate(
+                ApplicationDescriptor descriptor,
+                ApplicationInstance instance,
+                LaunchRequest request,
+                out ApplicationFactoryResult result) {
+            result = ApplicationFactoryResult.Succeeded(instance);
+            TaskManager manager = instance.GetOwnedWindowAt(0)
+                as TaskManager;
+            if (manager == null) manager = new TaskManager(500, 500);
+            if (!result.AddWindow(manager)) {
+                result = ApplicationFactoryResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    "Task Manager window registration failed", descriptor.AppId);
+                return false;
+            }
+            WindowManager.MoveToEnd(manager);
+            manager.Visible = true;
+            return true;
+        }
+    }
+
+    internal sealed class WavPlayerApplicationFactory : ApplicationFactory {
+        public override ApplicationClass SupportedApplicationClass {
+            get { return ApplicationClass.BuiltIn; }
+        }
+
+        public override bool TryCreateOrActivate(
+                ApplicationDescriptor descriptor,
+                ApplicationInstance instance,
+                LaunchRequest request,
+                out ApplicationFactoryResult result) {
+            result = ApplicationFactoryResult.Succeeded(instance);
+            // A bare Start-menu launch preserves the existing player window
+            // behavior even on machines without an audio controller.  A
+            // document activation is the resource-dependent operation and
+            // fails boundedly before creating/claiming the reusable helper.
+            if (!Audio.HasAudioDevice && request != null &&
+                    !string.IsNullOrEmpty(request.Document)) {
+                result = ApplicationFactoryResult.Failed(
+                    LaunchErrorCode.ResourceUnavailable,
+                    "Audio device unavailable", descriptor.AppId);
+                return false;
+            }
+
+            WAVPlayer player = instance.GetOwnedWindowAt(0) as WAVPlayer;
+            if (player == null) player = Desktop.EnsureWavPlayer();
+            if (!result.AddWindow(player)) {
+                result = ApplicationFactoryResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    "WAV Player window registration failed", descriptor.AppId);
+                return false;
+            }
+
+            if (request != null && !string.IsNullOrEmpty(request.Document)) {
+                byte[] buffer = File.ReadAllBytes(request.Document);
+                if (buffer == null) {
+                    result = ApplicationFactoryResult.Failed(
+                        LaunchErrorCode.ResourceUnavailable,
+                        "WAV document could not be read", descriptor.AppId);
+                    return false;
+                }
+                if (!player.TryPlay(buffer, request.Document)) {
+                    result = ApplicationFactoryResult.Failed(
+                        LaunchErrorCode.InitializationFailed,
+                        "WAV document could not be decoded", descriptor.AppId);
+                    return false;
+                }
+            }
+            WindowManager.MoveToEnd(player);
+            player.Visible = true;
+            return true;
+        }
+    }
+
+    internal static class FactoryRequestOptions {
+        internal static int IntArgument(LaunchRequest request, string prefix,
+                                        int fallback) {
+            if (request == null || prefix == null) return fallback;
+            for (int i = 0; i < request.ArgumentCount; i++) {
+                string value = request.GetArgument(i);
+                if (value == null || value.Length <= prefix.Length ||
+                        !StartsWithIgnoreCase(value, prefix)) continue;
+                int parsed = 0;
+                bool valid = true;
+                for (int p = prefix.Length; p < value.Length; p++) {
+                    char c = value[p];
+                    if (c < '0' || c > '9') { valid = false; break; }
+                    parsed = parsed * 10 + c - '0';
+                }
+                if (valid) return parsed;
+            }
+            return fallback;
+        }
+
+        private static bool StartsWithIgnoreCase(string value, string prefix) {
+            if (value == null || prefix == null || value.Length < prefix.Length)
+                return false;
+            for (int i = 0; i < prefix.Length; i++) {
+                char a = value[i];
+                char b = prefix[i];
+                if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
+                if (b >= 'A' && b <= 'Z') b = (char)(b + 32);
+                if (a != b) return false;
+            }
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Typed backend for the installer shell action.  It is deliberately not
+    /// a built-in descriptor because the action is not a normal application.
+    /// </summary>
+    internal static class ApplicationShellActionBackend {
+        internal static bool TryLaunchInstaller(LaunchRequest request, int x,
+                                                 int y, out LaunchResult result) {
+            result = null;
+            if (request == null) {
+                request = LaunchRequest.ForShellObject(
+                    "gxos.shell.installtoharddrive", null,
+                    "Install to Hard Drive", ApplicationShellTargetKind.Action,
+                    "HDInstaller", LaunchActivationIntent.Launch);
+            }
+            ApplicationInstance instance;
+            bool reused;
+            LaunchResult failure;
+            if (!ApplicationInstanceRegistry.TryBeginLaunch(
+                    "gxos.shell.installer", ApplicationInstancePolicy.ShellOwned,
+                    request, out instance, out reused, out failure)) {
+                result = failure;
+                return false;
+            }
+            HDInstaller installer = null;
+            try {
+                installer = new HDInstaller(x + 60, y + 60);
+                if (!ApplicationInstanceRegistry.TryAttachWindow(instance,
+                        installer)) {
+                    if (!installer.ApplicationInstanceHandle.IsValid)
+                        installer.CloseForApplicationTermination();
+                    ApplicationInstanceRegistry.FailLaunch(instance, reused,
+                        "Installer window ownership failed");
+                    result = LaunchResult.Failed(
+                        LaunchErrorCode.InitializationFailed,
+                        "Installer window ownership failed",
+                        "gxos.shell.installer");
+                    return false;
+                }
+                WindowManager.MoveToEnd(installer);
+                installer.Visible = true;
+                if (!ApplicationInstanceRegistry.TryCompleteLaunch(instance, true,
+                        out failure)) {
+                    ApplicationInstanceRegistry.FailLaunch(instance, reused,
+                        "Installer activation failed");
+                    result = failure ?? LaunchResult.Failed(
+                        LaunchErrorCode.ActivationFailed,
+                        "Installer activation failed", "gxos.shell.installer");
+                    return false;
+                }
+                ApplicationFactoryRegistry.RecordTypedShellActionLaunch(
+                    "HDInstaller");
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("INSTALLER_INSTANCE_OK=instance=" +
+                    instance.Handle.ToString() + ";state=" +
+                    instance.LifecycleStateName + ";owned=" +
+                    instance.OwnedWindowCount.ToString());
+                Program.MarkUefiAppRuntime("INSTALLER_BOUNDS=x=" +
+                    installer.X.ToString() + ";y=" + installer.Y.ToString() +
+                    ";w=" + installer.Width.ToString());
+#endif
+                result = LaunchResult.Succeeded("gxos.shell.installer",
+                    instance.Handle, LaunchActivationState.Activated);
+                return true;
+            } catch {
+                if (installer != null &&
+                        !installer.ApplicationInstanceHandle.IsValid)
+                    installer.CloseForApplicationTermination();
+                ApplicationInstanceRegistry.FailLaunch(instance, reused,
+                    "Installer backend rejected the launch");
+                result = LaunchResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    "Installer backend rejected the launch",
+                    "gxos.shell.installer");
+                return false;
+            }
         }
     }
 }

@@ -204,6 +204,169 @@ namespace guideXOS.GUI {
             if (Apps == null) Apps = new AppCollection();
         }
 
+        internal static bool TryLaunchFactoryRequest(LaunchRequest request,
+                                                      out LaunchResult result) {
+            InitializeAppModel();
+            result = null;
+            bool handled = Apps != null && Apps.TryLaunchFactoryRequest(request,
+                out result);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            if (result != null) {
+                Program.MarkUefiAppRuntime("LAUNCH_RESULT=code=" +
+                    result.ErrorCodeName + ";success=" +
+                    (result.Success ? "1" : "0") + ";app=" +
+                    (result.AppId ?? "") + ";instance=" +
+                    (result.InstanceId ?? "") + ";state=" +
+                    result.ActivationStateName + ";active=" +
+                    ApplicationInstanceRegistry.ActiveCount.ToString() +
+                    ";created=" +
+                    ApplicationInstanceRegistry.InstancesCreated.ToString() +
+                    ";reused=" +
+                    ApplicationInstanceRegistry.InstancesReused.ToString() +
+                    ";terminated=" +
+                    ApplicationInstanceRegistry.InstancesTerminated.ToString() +
+                    ";attach=" +
+                    ApplicationInstanceRegistry.WindowAttachCount.ToString() +
+                    ";detach=" +
+                    ApplicationInstanceRegistry.WindowDetachCount.ToString() +
+                    ";stale=" +
+                    ApplicationInstanceRegistry.StaleOwnershipCount.ToString());
+            }
+#endif
+            return handled;
+        }
+
+        /// <summary>
+        /// Canonical application-launch entry for normal OS/runtime callers.
+        /// Names are resolved by the modern descriptor registry and are never
+        /// allowed to fall through to the historical AppCollection switch.
+        /// </summary>
+        internal static bool LaunchApplication(string name) {
+            LaunchResult result;
+            return LaunchApplication(LaunchRequest.ForName(name), out result);
+        }
+
+        internal static bool LaunchApplication(LaunchRequest request,
+                                                out LaunchResult result) {
+            return TryLaunchFactoryRequest(request, out result) &&
+                result != null && result.Success;
+        }
+
+        /// <summary>
+        /// Canonical typed external entry for callers that already have a
+        /// GXM document buffer, such as the console and pinned-file routes.
+        /// The buffer is consumed on every path.
+        /// </summary>
+        internal static bool LaunchTypedExternalGxm(byte[] buffer,
+                                                    string document,
+                                                    string sourceShellObjectId,
+                                                    out LaunchResult result) {
+            result = null;
+            if (buffer == null || string.IsNullOrEmpty(document)) {
+                if (buffer != null) buffer.Dispose();
+                result = LaunchResult.Failed(
+                    LaunchErrorCode.MalformedRequest,
+                    "GXM document target is incomplete", "gxos.external.gxm");
+                return false;
+            }
+
+            LaunchRequest request = LaunchRequest.ForFile(
+                null, document, null, "open", sourceShellObjectId, true,
+                LaunchActivationIntent.Launch);
+            if (!request.IsValid) {
+                buffer.Dispose();
+                result = LaunchResult.Failed(LaunchErrorCode.MalformedRequest,
+                    request.ValidationError, "gxos.external.gxm");
+                return false;
+            }
+
+            ApplicationInstance instance;
+            bool reused;
+            LaunchResult failure;
+            if (!ApplicationInstanceRegistry.TryBeginGxmLaunch(request,
+                    out instance, out reused, out failure)) {
+                buffer.Dispose();
+                result = failure;
+                return false;
+            }
+            ApplicationFactoryRegistry.RecordTypedExternalLaunch("gxm");
+
+            string error = null;
+            bool launched = false;
+            try {
+                launched = GXMLoader.TryExecute(buffer, out error, instance);
+            } catch {
+                launched = false;
+                error = "GXM backend rejected launch";
+            } finally {
+                buffer.Dispose();
+            }
+
+            if (!launched) {
+                ApplicationInstanceRegistry.FailLaunch(instance, reused,
+                    error ?? "GXM backend rejected launch");
+                result = LaunchResult.Failed(LaunchErrorCode.InitializationFailed,
+                    error ?? "GXM backend rejected launch", "gxos.external.gxm");
+                return false;
+            }
+            if (!ApplicationInstanceRegistry.TryCompleteLaunch(instance, true,
+                    out failure)) {
+                ApplicationInstanceRegistry.FailLaunch(instance, reused,
+                    "GXM activation failed");
+                result = failure ?? LaunchResult.Failed(
+                    LaunchErrorCode.ActivationFailed, "GXM activation failed",
+                    "gxos.external.gxm");
+                return false;
+            }
+            RecentManager.AddDocument(document, Icons.DocumentIcon(32));
+            result = LaunchResult.Succeeded("gxos.external.gxm",
+                instance.Handle, LaunchActivationState.Activated);
+            return true;
+        }
+
+        internal static bool LaunchTypedExternalGxmFile(
+                string path, string sourceShellObjectId) {
+            if (string.IsNullOrEmpty(path)) return false;
+            byte[] buffer = File.ReadAllBytes(path);
+            if (buffer == null) return false;
+            LaunchResult result;
+            return LaunchTypedExternalGxm(buffer, path, sourceShellObjectId,
+                out result);
+        }
+
+        internal static bool LaunchDisplayOptions(int x, int y, int width,
+                                                  int height) {
+            LaunchRequest request = LaunchRequest.ForAppId(
+                "gxos.builtin.displayoptions",
+                new string[] { "--x=" + x.ToString(), "--y=" + y.ToString(),
+                    "--w=" + width.ToString(), "--h=" + height.ToString() },
+                null, LaunchActivationIntent.Launch);
+            LaunchResult result;
+            return TryLaunchFactoryRequest(request, out result) &&
+                result != null && result.Success;
+        }
+
+        internal static bool LaunchComputerFilesDrive(string driveName, int x,
+                                                      int y) {
+            if (string.IsNullOrEmpty(driveName)) return false;
+            bool usbDrive = driveName.Length >= 9 &&
+                driveName[0] == 'U' && driveName[1] == 'S' &&
+                driveName[2] == 'B' && driveName[3] == ' ' &&
+                driveName[4] == 'D' && driveName[5] == 'r' &&
+                driveName[6] == 'i' && driveName[7] == 'v' &&
+                driveName[8] == 'e';
+            string shellId = usbDrive
+                ? "gxos.shell.usbdrive" : "gxos.shell.computerfiles";
+            LaunchRequest request = LaunchRequest.ForShellObject(
+                shellId, "gxos.builtin.files", "Computer Files",
+                ApplicationShellTargetKind.FileSystem, driveName,
+                new string[] { "--x=" + x.ToString(), "--y=" + y.ToString() },
+                LaunchActivationIntent.NewInstance);
+            LaunchResult result;
+            return TryLaunchFactoryRequest(request, out result) &&
+                result != null && result.Success;
+        }
+
         internal static ImageViewer EnsureImageViewer() {
             if (imageViewer == null ||
                 WindowManager.Windows.IndexOf(imageViewer) < 0) {
@@ -997,24 +1160,21 @@ namespace guideXOS.GUI {
 #endif
             if (!association.Success || modernAssociation == null) return false;
 
-            // Migrated document handlers use the same instance-aware factory
-            // path as Start.  If a binding is absent, ask the AppCollection
-            // for its explicit compatibility backend; this association route
-            // never constructs an application Window directly.
+            // Every built-in document handler uses the same instance-aware
+            // factory path as Start.  A missing binding is a bounded backend
+            // error here, not an invitation to use historical construction.
             if (request.TargetKind == LaunchRequestTargetKind.FileOpen &&
-                    (request.TargetAppId == "gxos.builtin.notepad" ||
-                     request.TargetAppId == "gxos.builtin.imageviewer")) {
+                    modernAssociation.HandlerClass == ApplicationClass.BuiltIn) {
                 if (Apps == null) InitializeAppModel();
                 LaunchResult launchResult = null;
                 bool handled = Apps != null && Apps.TryLaunchFactoryRequest(
                     request, out launchResult);
-                if (!handled && Apps != null) {
-                    handled = Apps.TryLaunchCompatibilityRequest(request,
-                        out launchResult);
-                    if (handled) {
-                        ApplicationFactoryRegistry.RecordCompatibilityFallback(
-                            request.TargetAppId);
-                    }
+                if (!handled) {
+                    handled = true;
+                    launchResult = LaunchResult.Failed(
+                        LaunchErrorCode.BackendUnavailable,
+                        "Registered built-in descriptor has no factory binding",
+                        request.TargetAppId);
                 }
                 if (handled) {
                     ApplicationDescriptor descriptor;
@@ -1036,7 +1196,9 @@ namespace guideXOS.GUI {
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                         Program.MarkUefiAppRuntime("FILE_OK=path=" + path +
                             ";app=" + appName + ";content=" +
-                            (appName == "Notepad" ? "loaded" : "decoded") +
+                            (appName == "Notepad" ? "loaded" :
+                            (appName == "WAV Player" ? "dispatched" :
+                                "decoded")) +
                             ";instance=" + instanceId + ";state=" + state +
                             ";owned=" + owned);
 #endif
@@ -1064,6 +1226,7 @@ namespace guideXOS.GUI {
                         "Unable to start GXM application.");
                     return true;
                 }
+                ApplicationFactoryRegistry.RecordTypedExternalLaunch("gxm");
                 byte[] buffer = File.ReadAllBytes(path);
                 if (buffer == null) {
                     ApplicationInstanceRegistry.FailLaunch(gxmInstance,
@@ -1119,119 +1282,30 @@ namespace guideXOS.GUI {
                 return true;
             }
 
-            if (association.Kind == AppKind.FileAssociation &&
-                request.TargetAppId == "gxos.builtin.wavplayer") {
-                ApplicationInstance wavInstance;
-                bool wavReused;
-                LaunchResult wavFailure;
-                if (!ApplicationInstanceRegistry.TryBeginDescriptorLaunch(
-                        request.TargetAppId, request, out wavInstance,
-                        out wavReused, out wavFailure)) {
-                    ShowOpenError(itemX + 75, itemY + 75,
-                        "Unable to start WAV Player.");
-                    return true;
-                }
-                if (!Audio.HasAudioDevice) {
-                    ApplicationInstanceRegistry.FailLaunch(wavInstance,
-                        wavReused, "Audio device unavailable");
-                    ShowOpenError(itemX + 75, itemY + 75,
-                        "Audio controller is unavailable!");
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=WAV Player;reason=NO_AUDIO_DEVICE");
-#endif
-                    return true;
-                }
-                byte[] buffer = File.ReadAllBytes(path);
-                if (buffer == null) {
-                    ApplicationInstanceRegistry.FailLaunch(wavInstance,
-                        wavReused, "WAV file read failed");
-                    ShowOpenError(itemX + 75, itemY + 75, "Unable to read audio file.");
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + path + ";app=WAV Player;reason=READ");
-#endif
-                    return true;
-                }
-                WAVPlayer player = EnsureWavPlayer();
-                if (!ApplicationInstanceRegistry.TryAttachWindow(wavInstance,
-                        player)) {
-                    buffer.Dispose();
-                    ApplicationInstanceRegistry.FailLaunch(wavInstance,
-                        wavReused, "WAV Player window ownership failed");
-                    ShowOpenError(itemX + 75, itemY + 75,
-                        "Unable to attach WAV Player window.");
-                    return true;
-                }
-                player.Visible = true;
-                unsafe {
-                    fixed (char* ptr = name) player.Play(buffer, new string(ptr));
-                }
-                if (!ApplicationInstanceRegistry.TryCompleteLaunch(wavInstance,
-                        true, out wavFailure)) {
-                    ApplicationInstanceRegistry.FailLaunch(wavInstance,
-                        wavReused, "WAV Player activation failed");
-                    ShowOpenError(itemX + 75, itemY + 75,
-                        "Unable to activate WAV Player.");
-                    return true;
-                }
-                RecentManager.AddDocument(path, Icons.AudioIcon(32));
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-                Program.MarkUefiAppRuntime("FILE_OK=path=" + path + ";app=WAV Player;content=dispatched" +
-                    ";instance=" + wavInstance.Handle.ToString() +
-                    ";state=" + wavInstance.LifecycleStateName +
-                    ";owned=" + wavInstance.OwnedWindowCount.ToString());
-#endif
-                return true;
-            }
-
             return false;
         }
 
         private static bool LaunchComputerFilesInstance(LaunchRequest request,
                                                         int x, int y) {
-            ApplicationInstance instance;
-            bool reused;
-            LaunchResult failure;
             if (request == null) {
                 request = LaunchRequest.ForAppId("gxos.builtin.files", null,
                     null, LaunchActivationIntent.Launch);
             }
-            if (!ApplicationInstanceRegistry.TryBeginDescriptorLaunch(
-                    "gxos.builtin.files", request, out instance,
-                    out reused, out failure)) return false;
-
-            ComputerFiles files = null;
-            try {
-                files = new ComputerFiles(x, y, 540, 380);
-                if (!ApplicationInstanceRegistry.TryAttachWindow(instance, files)) {
-                    files.CloseForApplicationTermination();
-                    ApplicationInstanceRegistry.FailLaunch(instance, reused,
-                        "Computer Files window ownership failed");
-                    return false;
-                }
-                compFiles = files;
-                WindowManager.MoveToEnd(files);
-                files.Visible = true;
-                if (!ApplicationInstanceRegistry.TryCompleteLaunch(instance, true,
-                        out failure)) {
-                    ApplicationInstanceRegistry.FailLaunch(instance, reused,
-                        "Computer Files activation failed");
-                    return false;
-                }
+            LaunchResult result;
+            bool handled = TryLaunchFactoryRequest(request, out result);
+            if (!handled || result == null || !result.Success) return false;
+            ApplicationInstance instance;
+            if (result.InstanceHandle.IsValid &&
+                    ApplicationInstanceRegistry.TryGet(result.InstanceHandle,
+                        out instance)) {
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                 Program.MarkUefiAppRuntime("SHELL_INSTANCE_OK=app=Computer Files" +
                     ";instance=" + instance.Handle.ToString() +
                     ";state=" + instance.LifecycleStateName +
                     ";owned=" + instance.OwnedWindowCount.ToString());
 #endif
-                return true;
-            } catch {
-                if (files != null && !files.ApplicationInstanceHandle.IsValid) {
-                    files.CloseForApplicationTermination();
-                }
-                ApplicationInstanceRegistry.FailLaunch(instance, reused,
-                    "Computer Files backend rejected the launch");
-                return false;
             }
+            return true;
         }
 
         /// <summary>
@@ -1294,49 +1368,11 @@ namespace guideXOS.GUI {
                         ApplicationShellTargetKind.Action, null,
                         LaunchActivationIntent.Launch);
                 }
-                ApplicationInstance installerInstance;
-                bool installerReused;
                 LaunchResult installerFailure;
-                if (!ApplicationInstanceRegistry.TryBeginLaunch(
-                        "gxos.shell.installer", ApplicationInstancePolicy.ShellOwned,
-                        shellRequest, out installerInstance, out installerReused,
-                        out installerFailure)) {
+                if (!ApplicationShellActionBackend.TryLaunchInstaller(
+                        shellRequest, itemX, itemY, out installerFailure)) {
                     ShowOpenError(itemX + 60, itemY + 60,
                         "Unable to activate installer.");
-                    return;
-                }
-                guideXOS.DefaultApps.HDInstaller installer = null;
-                try {
-                    installer = new guideXOS.DefaultApps.HDInstaller(itemX + 60, itemY + 60);
-                    if (!ApplicationInstanceRegistry.TryAttachWindow(installerInstance,
-                            installer)) {
-                        installer.CloseForApplicationTermination();
-                        ApplicationInstanceRegistry.FailLaunch(installerInstance,
-                            installerReused, "Installer window ownership failed");
-                        return;
-                    }
-                    WindowManager.MoveToEnd(installer);
-                    installer.Visible = true;
-                    if (!ApplicationInstanceRegistry.TryCompleteLaunch(installerInstance,
-                            true, out installerFailure)) {
-                        ApplicationInstanceRegistry.FailLaunch(installerInstance,
-                            installerReused, "Installer activation failed");
-                        return;
-                    }
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-                    Program.MarkUefiAppRuntime("INSTALLER_INSTANCE_OK=instance=" +
-                        installerInstance.Handle.ToString() +
-                        ";state=" + installerInstance.LifecycleStateName +
-                        ";owned=" + installerInstance.OwnedWindowCount.ToString());
-                    Program.MarkUefiAppRuntime("INSTALLER_BOUNDS=x=" + installer.X.ToString() +
-                        ";y=" + installer.Y.ToString() + ";w=" + installer.Width.ToString());
-#endif
-                } catch {
-                    if (installer != null && !installer.ApplicationInstanceHandle.IsValid) {
-                        installer.CloseForApplicationTermination();
-                    }
-                    ApplicationInstanceRegistry.FailLaunch(installerInstance,
-                        installerReused, "Installer backend rejected the launch");
                     return;
                 }
                 IndexClicked = -1;
@@ -1405,8 +1441,7 @@ namespace guideXOS.GUI {
                        sourceShellObjectId ??
                            (shellObject.Success ? shellObject.ShellId : null),
                        itemX, itemY)) {
-                if (Apps == null) InitializeAppModel();
-                if (!Apps.Load(name)) {
+                if (!LaunchApplication(name)) {
                     ShowOpenError(itemX + 75, itemY + 75,
                         "No application can open this file!");
                 }

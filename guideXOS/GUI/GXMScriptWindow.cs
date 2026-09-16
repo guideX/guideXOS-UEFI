@@ -730,9 +730,7 @@ namespace guideXOS.GUI {
             if (a == "MSG") {
                 Notify(arg);
             } else if (a == "OPENAPP") {
-                if (Desktop.Apps != null && arg != null) {
-                    Desktop.Apps.Load(arg);
-                }
+                if (arg != null) Desktop.LaunchApplication(arg);
             } else if (a == "CLOSE") {
                 this.Visible = false;
             } else if (a == "CLEAR") {

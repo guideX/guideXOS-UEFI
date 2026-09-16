@@ -242,7 +242,7 @@ namespace guideXOS.GUI {
             for (int i = 0; i < _pending.Count; i++) {
                 var pw = _pending[i];
                 if (pw.Type == 1)
-                    _ = new DisplayOptions(pw.X, pw.Y, pw.W, pw.H);
+                    Desktop.LaunchDisplayOptions(pw.X, pw.Y, pw.W, pw.H);
                 else if (pw.Type == 2)
                     _ = new guideXOS.DefaultApps.TTFFontDemo(pw.X, pw.Y, pw.W, pw.H);
             }
