@@ -1,10 +1,11 @@
 # guideXOS App Model Convergence
 
-**Status:** Phase 5 legacy launch-surface inventory and containment complete
-**Date:** 2026-09-15
+**Status:** Phase 6 cooperative lifecycle enrichment implemented
+**Date:** 2026-09-16
 **Scope:** guideXOS Server ↔ guideXOS C# UEFI application platform  
-**Outcome:** Outcome A — all registered built-ins factory-native; compatibility
-contained behind the typed launch boundary
+**Outcome:** Outcome A — all registered built-ins remain factory-native;
+activation, cooperative suspension, close semantics, and compatibility remain
+contained behind typed boundaries
 
 This document is the canonical design reference for converging the guideXOS
 Server and guideXOS C# application models. It defines the common application
@@ -64,8 +65,8 @@ semantics and bounded outcomes.
 | --- | --- |
 | Repository | `D:\dev\guideXOSUEFI` |
 | Branch | `main` |
-| HEAD | `c58b9a59b90debe256025eee69b68e2b37c9ace8` |
-| Subject | `Instance Aware App Factories` |
+| HEAD | `17bc27f479459d7525f792ed61deee68652f3f3a` |
+| Subject | `Phase 5` |
 | Upstream | `origin/main` |
 | Ahead/behind | `0 / 0` |
 | Remote | `git@github.com:guideX/guideXOS-Legacy-UEFI.git` |
@@ -1183,11 +1184,16 @@ The implemented states are `Registered`, `Loading`, `Initialized`, `Running`,
 `Activated`, `Inactive`, `Suspended`, `Closing`, `Terminated`, and `Failed`.
 Normal launches transition through `Registered -> Loading -> Initialized ->
 Running -> Activated`.  Reusable instances can return to `Inactive` after a
-window closes and re-enter loading/running/activated on reuse.  Close moves an
-instance through `Closing -> Terminated`; preparation failures enter
-`Failed` and remove newly created instances.  Invalid transitions are
-rejected.  `Suspended` is represented in the contract but is not entered by
-the current backend because C# has no real suspension mechanism.
+window closes and re-enter loading/running/activated on reuse.  Activation and
+deactivation are application-instance operations, independent of raw window
+focus.  An active instance is tracked separately from the focused window.
+Close requests invoke the instance adapter before `Closing -> Terminated`;
+forced termination always cleans owned windows and removes the handle.  A
+cooperative suspension follows `Inactive -> Suspended -> Inactive` and retains
+instance identity, window ownership, and application/document state.  It does
+not stop scheduler threads, disable kernel timers, block interrupts, or freeze
+the WindowManager.  Callback failures and invalid/stale handles produce
+bounded typed results and leave a deterministic valid state.
 
 ### 18.3 Window and taskbar ownership
 
@@ -1195,15 +1201,19 @@ the current backend because C# has no real suspension mechanism.
 window can carry an `ApplicationInstanceHandle`; the instance registry owns
 the bounded relationship and WindowManager continues to own ordering,
 focus, drawing, fade-close, and disposal.  Duplicate attachment is harmless
-and counted.  A window close detaches its instance; ordinary multi-instance
+and counted.  A window focus/z-order event routes through the semantic owner,
+so a multi-window application changes application state once rather than once
+per window.  A window close detaches its instance; ordinary multi-instance
 applications terminate when their final window closes, while reusable
 Console/Image Viewer/WAV Player instances may remain inactive with zero
 windows.  Instance termination closes/detaches all owned windows safely.
 
 The taskbar visual model remains unchanged.  Its existing window entries now
-reject stale semantic owners before presentation/activation, while legacy
-unattached shell windows remain compatible.  This preserves current taskbar
-behavior without introducing grouping UI.
+reject stale semantic owners before presentation/activation and route a live
+entry through its `ApplicationInstanceHandle`.  Inactive instances activate;
+suspended instances resume and then activate; terminated/failed handles are
+rejected.  Legacy unattached shell windows remain compatible.  This preserves
+current taskbar behavior without introducing grouping UI.
 
 ### 18.4 Compatibility backend and policies
 
@@ -1596,3 +1606,106 @@ Phase 5 is complete and the compatibility surface is contained.  Phase 6 may
 proceed to lifecycle enrichment—especially richer instance state and explicit
 activation/close semantics—without first removing the retained facade.  Removal
 or deprecation of the facade should remain gated on an external-consumer audit.
+
+## 22. Phase 6 — activation, suspension, and close semantics
+
+Phase 6 turns the modeled lifecycle into a bounded runtime contract while
+preserving the existing factory and WindowManager architecture.  The central
+rule is:
+
+> Current C# App Model suspension is cooperative application lifecycle
+> suspension, not scheduler/process freezing.
+
+### 22.1 Lifecycle contract types
+
+`ApplicationLifecycleAdapter` is the small application-facing base contract.
+It supplies safe defaults for `OnActivating`, `OnDeactivating`,
+`OnSuspending`, `OnResuming`, `OnCloseRequested`, `OnTerminating`, and
+`OnLifecycleFailure`.  Applications that do not need custom behavior inherit
+the default adapter; they do not implement a large Window-facing interface.
+
+`ApplicationLifecycleCapability` distinguishes `Unsupported`,
+`SupportedWithDefault`, and `SupportedWithCustom`.  The representative
+Calculator, Notepad, Console, and Image Viewer factories install bounded
+custom adapters.  Their existing windows and document/resource state remain
+the source of truth; lifecycle callbacks do not duplicate or dispose that
+state.  The remaining built-ins use the allocation-free safe default behavior.
+
+### 22.2 Request/result model
+
+`ApplicationLifecycleRequest` carries an operation, generation-safe instance
+handle, and bounded `ApplicationCloseReason`.  Registry operations return
+`ApplicationLifecycleResult`, whose code is one of `Success`, `Unsupported`,
+`InvalidState`, `Cancelled`, `NotFound`, or `CallbackFailed`.  Results also
+carry the instance handle, from/to state, close reason, and a bounded
+diagnostic.  This keeps lifecycle callers independent from graphical controls
+and leaves room for a future isolated-process implementation.
+
+### 22.3 Activation and deactivation
+
+`ApplicationInstanceRegistry.ActiveApplicationHandle` tracks the semantic
+foreground owner separately from the raw focused Window.  Activation is
+idempotent for an already active instance.  Activating another instance first
+deactivates the previous application, invokes the target adapter, transitions
+it through `Running -> Activated` where necessary, and routes one appropriate
+owned Window to the front.  Taskbar, shell, and factory routing report semantic
+foreground ownership explicitly, so a multi-window application is activated
+or deactivated as one instance.  Graphical z-order changes remain independent
+from lifecycle state, and focus changes never terminate an application.
+
+The Start shell calls `NotifyShellForeground`; it is a foreground owner but is
+not represented as a fake built-in descriptor.  Closing an active application
+clears the active handle and returns ownership to the shell/desktop.
+
+### 22.4 Cooperative suspend and resume
+
+Suspension may deactivate an active instance, invokes `OnSuspending`, and
+transitions it to `Suspended` without hiding or destroying owned windows.
+Resume is valid only from `Suspended`, invokes `OnResuming`, and returns the
+instance to `Inactive`; a later activation is explicit.  The default adapter
+does no global timer, interrupt, scheduler, or lock operation.  It retains
+application state and leaves the operating system responsive.  A backend that
+cannot provide a safe callback returns `Unsupported` and retains its valid
+state.
+
+GXM is currently classified as activation/deactivation/close/termination
+capable but suspend/resume unsupported: `GXMScriptWindow` has no safe
+execution pause/resume primitive in this managed backend.  The common result
+contract reports `Unsupported` rather than pretending that GXM execution was
+frozen.
+
+### 22.5 Close reasons and termination
+
+Close requests use only the bounded reasons `UserRequest`, `ShellRequest`,
+`ApplicationRequest`, `Shutdown`, `Failure`, and `ForcedTermination`.  A
+close callback may accept, cancel, or fail.  Accepted ordinary closes proceed
+through the existing WindowManager fade/disposal cleanup; forced termination
+always removes the instance and cleans all owned windows, even if its
+termination callback reports failure.  Cancellation leaves the current
+non-terminal state intact.
+
+### 22.6 Taskbar and representative applications
+
+Taskbar activation targets the semantic instance behind the clicked window.
+Inactive entries activate, suspended entries resume and activate, and stale
+or terminal handles are rejected.  No grouped multi-window presentation was
+added.
+
+The lifecycle self-test covers activation idempotence, deactivation,
+supported and unsupported suspend, resume invalid-state handling, close
+acceptance/cancellation, callback failure, stale handles, zero-window reuse,
+multi-window retention, termination after suspension, and final registry
+cleanup.  The bounded runtime diagnostic uses normal Calculator, Notepad,
+Console, and Image Viewer factory launches: it checks Calculator deactivation
+when Notepad becomes foreground, keeps the Notepad document through suspend /
+resume, exercises Console reuse, validates Image Viewer ownership, and closes
+everything before returning to the shell.  Task Manager remains an observer;
+its enumeration path does not mutate lifecycle state.
+
+### 22.7 Future process isolation compatibility
+
+No Ring 3 or process isolation was implemented.  The public contract can map
+`Suspend` and `Resume` to process/task suspension and `Terminate` to isolated
+process termination in a future backend without changing callers.  The
+current adapter boundary deliberately keeps those stronger mechanisms out of
+the C# implementation.

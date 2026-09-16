@@ -294,6 +294,13 @@ unsafe class Program {
 #endif
     }
 
+    internal static void MarkUefiAppModelDiagnostic(string breadcrumb) {
+#if UEFI_DIAGNOSTIC_APP_MODEL
+        if (!IsUefiMode || breadcrumb == null) return;
+        SerialBreadcrumb("APP_MODEL_" + breadcrumb);
+#endif
+    }
+
     internal static void MarkUefiDesktopFilesClickRouted() {
         if (!IsUefiMode || _uefiDesktopFilesClickRouted) return;
         _uefiDesktopFilesClickRouted = true;
@@ -1030,6 +1037,10 @@ unsafe class Program {
                 (malformedPath == null ? "PASS" : "FAIL"));
             SerialBreadcrumb("APP_RUNTIME_NEGATIVE_UNKNOWN_SHELL=" +
                 (!unknownShell.Success ? "PASS" : "FAIL"));
+            bool lifecycleRuntime =
+                ApplicationInstanceRegistry.RunLifecycleRuntimeDiagnostic();
+            SerialBreadcrumb("APP_RUNTIME_LIFECYCLE_DIAGNOSTIC=" +
+                (lifecycleRuntime ? "PASS" : "FAIL"));
         }
 #endif
 
@@ -1872,6 +1883,8 @@ unsafe class Program {
                 failure = "MODERN_DESCRIPTOR_REQUEST";
             } else if (!ApplicationInstanceRegistry.RunSelfTest()) {
                 failure = "APPLICATION_INSTANCE_LIFECYCLE";
+            } else if (!ApplicationInstanceRegistry.RunLifecycleSelfTest()) {
+                failure = "APPLICATION_LIFECYCLE_PHASE6";
             } else if (!ApplicationFactoryRegistry.RunSelfTest()) {
                 failure = "APPLICATION_FACTORY";
             } else if (!AppModelCompatibilityDiagnostics.RunSelfTest(
@@ -1907,6 +1920,29 @@ unsafe class Program {
                 SerialBreadcrumb("APP_MODEL_INSTANCE_STALE=" +
                     ApplicationInstanceRegistry.StaleOwnershipCount.ToString());
                 SerialBreadcrumb("APP_MODEL_INSTANCE_SELFTEST_OK=1");
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_ACTIVE=" +
+                    ApplicationInstanceRegistry.ActiveApplicationHandle.ToString());
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_SUSPENDED=" +
+                    ApplicationInstanceRegistry.SuspendedCount.ToString());
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_ACTIVATIONS=" +
+                    ApplicationInstanceRegistry.InstancesActivated.ToString());
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_DEACTIVATIONS=" +
+                    ApplicationInstanceRegistry.InstancesDeactivated.ToString());
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_SUSPENDS=" +
+                    ApplicationInstanceRegistry.InstancesSuspended.ToString());
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_RESUMES=" +
+                    ApplicationInstanceRegistry.InstancesResumed.ToString());
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_CLOSE_REQUESTS=" +
+                    ApplicationInstanceRegistry.CloseRequests.ToString());
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_CLOSE_CANCELLATIONS=" +
+                    ApplicationInstanceRegistry.CloseCancellations.ToString());
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_FAILURES=" +
+                    ApplicationInstanceRegistry.LifecycleFailures.ToString());
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_INVALID=" +
+                    ApplicationInstanceRegistry.InvalidLifecycleRequests.ToString());
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_STALE_HANDLES=" +
+                    ApplicationInstanceRegistry.StaleLifecycleHandles.ToString());
+                SerialBreadcrumb("APP_MODEL_LIFECYCLE_SELFTEST_OK=1");
                 SerialBreadcrumb("APP_MODEL_FACTORY_REGISTRATIONS=" +
                     ApplicationFactoryRegistry.FactoryRegistrations.ToString());
                 SerialBreadcrumb("APP_MODEL_FACTORY_LAUNCHES=" +

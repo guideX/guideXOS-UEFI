@@ -17,6 +17,16 @@ namespace guideXOS.OS {
     public abstract class ApplicationFactory {
         public abstract ApplicationClass SupportedApplicationClass { get; }
 
+        /// <summary>
+        /// Optional bounded lifecycle behavior for a new application
+        /// instance.  The base adapter is cooperative and safe by default.
+        /// </summary>
+        public virtual ApplicationLifecycleAdapter CreateLifecycleAdapter() {
+            // Null selects the allocation-free cooperative default.  Factories
+            // that need custom lifecycle behavior return an adapter explicitly.
+            return null;
+        }
+
         public abstract bool TryCreateOrActivate(
             ApplicationDescriptor descriptor,
             ApplicationInstance instance,
@@ -306,6 +316,18 @@ namespace guideXOS.OS {
                 result = failure;
                 EmitFactoryFailure(descriptor, failure);
                 return true;
+            }
+
+            if (!reused) {
+                try {
+                    ApplicationLifecycleAdapter lifecycleAdapter =
+                        factory.CreateLifecycleAdapter();
+                    if (lifecycleAdapter != null)
+                        instance.SetLifecycleAdapter(lifecycleAdapter);
+                } catch {
+                    // Keep the safe allocation-free default if the optional
+                    // hook is unavailable during factory setup.
+                }
             }
 
             int startingWindowCount = WindowManager.Windows == null ? 0 :
@@ -833,6 +855,10 @@ namespace guideXOS.OS {
             get { return ApplicationClass.BuiltIn; }
         }
 
+        public override ApplicationLifecycleAdapter CreateLifecycleAdapter() {
+            return new CalculatorApplicationLifecycleAdapter();
+        }
+
         public override bool TryCreateOrActivate(
                 ApplicationDescriptor descriptor,
                 ApplicationInstance instance,
@@ -856,6 +882,10 @@ namespace guideXOS.OS {
     internal sealed class NotepadApplicationFactory : ApplicationFactory {
         public override ApplicationClass SupportedApplicationClass {
             get { return ApplicationClass.BuiltIn; }
+        }
+
+        public override ApplicationLifecycleAdapter CreateLifecycleAdapter() {
+            return new NotepadApplicationLifecycleAdapter();
         }
 
         public override bool TryCreateOrActivate(
@@ -890,6 +920,10 @@ namespace guideXOS.OS {
             get { return ApplicationClass.BuiltIn; }
         }
 
+        public override ApplicationLifecycleAdapter CreateLifecycleAdapter() {
+            return new ConsoleApplicationLifecycleAdapter();
+        }
+
         public override bool TryCreateOrActivate(
                 ApplicationDescriptor descriptor,
                 ApplicationInstance instance,
@@ -917,6 +951,10 @@ namespace guideXOS.OS {
     internal sealed class ImageViewerApplicationFactory : ApplicationFactory {
         public override ApplicationClass SupportedApplicationClass {
             get { return ApplicationClass.BuiltIn; }
+        }
+
+        public override ApplicationLifecycleAdapter CreateLifecycleAdapter() {
+            return new ImageViewerApplicationLifecycleAdapter();
         }
 
         public override bool TryCreateOrActivate(

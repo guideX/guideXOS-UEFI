@@ -273,7 +273,10 @@ namespace guideXOS.GUI {
                 }
             }
             
-            // Add once at the end
+            // Add once at the end.  Graphical z-order is intentionally kept
+            // independent from semantic application lifecycle ownership;
+            // taskbar, factory, and shell paths notify the registry
+            // at their explicit ownership boundaries.
             Windows.Add(window);
         }
         /// <summary>

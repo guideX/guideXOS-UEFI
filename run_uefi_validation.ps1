@@ -545,6 +545,9 @@ function Open-QmpStartApplication {
             Send-QmpMouseClick $Qmp 'left'
             if ($maxScroll -eq 0) { break }
         }
+        # The arrow path rebuilds the list/cache on the render thread.  Drain
+        # that redraw before routing the final visible row click.
+        Start-Sleep -Milliseconds 900
         $rowY -= $maxScroll
     }
 
@@ -584,6 +587,7 @@ function Open-QmpStartApplication {
                     Send-QmpMouseClick $Qmp 'left'
                     if ($maxScroll -eq 0) { break }
                 }
+                Start-Sleep -Milliseconds 900
             }
         }
     }
@@ -1877,6 +1881,18 @@ if ($isAppModelValidation) {
     }
 }
 if ($isAppRuntimeValidation) {
+    # Phase 6 runs a bounded real-factory lifecycle proof before the host
+    # workload.  Scope workload counters after the model-ready boundary so
+    # that its intentionally successful launches do not look like duplicate
+    # user launches (notably Console reuse).
+    $runtimeContent = $finalContent
+    $runtimeReadyMarkers = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_MODEL_READY=.*$')
+    if ($runtimeReadyMarkers.Count -gt 0) {
+        $runtimeReady = $runtimeReadyMarkers[$runtimeReadyMarkers.Count - 1]
+        $runtimeContent = $finalContent.Substring(
+            $runtimeReady.Index + $runtimeReady.Length)
+    }
     $runtimeApps = @(
         'Calculator', 'Computer Files', 'Console', 'Devices', 'Disk Manager',
         'Display Options', 'Firewall', 'Image Viewer', 'Notepad', 'Paint',
@@ -1886,41 +1902,41 @@ if ($isAppRuntimeValidation) {
     $runtimeLaunches = 0
     foreach ($runtimeApp in $runtimeApps) {
         $escapedRuntimeApp = [regex]::Escape($runtimeApp)
-        $runtimeSelects += [regex]::Matches($finalContent,
+        $runtimeSelects += [regex]::Matches($runtimeContent,
             '(?m)^APP_RUNTIME_START_SELECT=name=' + $escapedRuntimeApp + ';').Count
-        $runtimeLaunches += [regex]::Matches($finalContent,
+        $runtimeLaunches += [regex]::Matches($runtimeContent,
             '(?m)^APP_RUNTIME_LAUNCH_OK=.*;name=' + $escapedRuntimeApp + ';').Count
     }
-    $runtimeFactoryLaunches = [regex]::Matches($finalContent,
+    $runtimeFactoryLaunches = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_FACTORY_LAUNCH=app=').Count
-    $runtimeFactoryFallbacks = [regex]::Matches($finalContent,
+    $runtimeFactoryFallbacks = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_LAUNCH_BACKEND=compatibility;app=').Count
-    $runtimeFactoryFailures = [regex]::Matches($finalContent,
+    $runtimeFactoryFailures = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_FACTORY_FAILURE=app=').Count
-    $runtimeFactoryReuses = [regex]::Matches($finalContent,
+    $runtimeFactoryReuses = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_FACTORY_LAUNCH=app=.*;reused=1;').Count
-    $runtimeFactoryWindows = [regex]::Matches($finalContent,
+    $runtimeFactoryWindows = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_FACTORY_LAUNCH=app=.*;windows=[1-8]$').Count
-    $runtimeTypedExternal = [regex]::Matches($finalContent,
+    $runtimeTypedExternal = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_LAUNCH_BACKEND=typed-external;backend=').Count
-    $runtimeTypedShellActions = [regex]::Matches($finalContent,
+    $runtimeTypedShellActions = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_LAUNCH_BACKEND=typed-shell-action;action=').Count
-    $runtimeInstanceLaunches = [regex]::Matches($finalContent,
+    $runtimeInstanceLaunches = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_LAUNCH_OK=.*;instance=instance-[^;]+;state=(Loading|Activated);owned=\d+$').Count
-    $runtimeInstanceResults = [regex]::Matches($finalContent,
+    $runtimeInstanceResults = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_LAUNCH_RESULT=code=Success;success=1;app=.*;instance=instance-[^;]+;state=Activated;active=\d+;').Count
-    $runtimeOwnedLaunches = [regex]::Matches($finalContent,
+    $runtimeOwnedLaunches = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_LAUNCH_OK=.*;instance=instance-[^;]+;state=(Loading|Activated);owned=[1-8]$').Count
-    $runtimeStaleOwnership = [regex]::Matches($finalContent,
+    $runtimeStaleOwnership = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_WINDOW_CLOSED=.*;stale=[1-9]\d*$').Count
-    $consoleInstanceMatches = [regex]::Matches($finalContent,
+    $consoleInstanceMatches = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_LAUNCH_OK=.*;name=Console;.*;instance=(instance-[^;]+);')
     $consoleInstanceIds = @($consoleInstanceMatches | ForEach-Object {
         $_.Groups[1].Value
     } | Select-Object -Unique)
     $runtimeConsoleInstances = $consoleInstanceIds.Count
     $runtimeConsoleLaunches = $consoleInstanceMatches.Count
-    $runtimeCounterMatches = [regex]::Matches($finalContent,
+    $runtimeCounterMatches = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_LAUNCH_RESULT=.*;created=(\d+);reused=(\d+);terminated=(\d+);attach=(\d+);detach=(\d+);stale=(\d+)$')
     $runtimeMaxReused = 0
     $runtimeMaxTerminated = 0
@@ -1938,42 +1954,44 @@ if ($isAppRuntimeValidation) {
                 [int]$counter.Groups[5].Value)
         }
     }
-    $runtimeCloses = [regex]::Matches($finalContent,
+    $runtimeCloses = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_WINDOW_CLOSED=').Count
-    $runtimeAssoc = [regex]::Matches($finalContent,
+    $runtimeAssoc = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_ASSOC_RESOLVE=.*;success=1').Count
-    $runtimeTxt = [regex]::Matches($finalContent,
+    $runtimeTxt = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_FILE_OK=path=Scripts/notepad\.gxm\.txt;app=Notepad;').Count
-    $runtimePng = [regex]::Matches($finalContent,
+    $runtimePng = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_FILE_OK=path=Images/audiopause\.png;app=Image Viewer;').Count
-    $runtimeGxm = [regex]::Matches($finalContent,
+    $runtimeGxm = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_FILE_RESULT=path=Programs/calculator\.gxm;app=GXM;').Count
-    $runtimeGxmInstances = [regex]::Matches($finalContent,
+    $runtimeGxmInstances = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_FILE_RESULT=path=Programs/calculator\.gxm;app=GXM;.*;instance=instance-[^;]+;state=Activated;owned=[1-8]$').Count
-    $runtimeGxmWindows = [regex]::Matches($finalContent,
+    $runtimeGxmWindows = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_GXM_INSTANCE_WINDOW_BOUNDS=.*;instance=instance-[^;]+$').Count
-    $runtimeBmp = [regex]::Matches($finalContent,
+    $runtimeBmp = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=missing\.bmp;ext=\.bmp;.*;success=1$').Count
-    $runtimeWav = [regex]::Matches($finalContent,
+    $runtimeWav = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=missing\.wav;ext=\.wav;.*;success=1$').Count
-    $runtimeMue = [regex]::Matches($finalContent,
+    $runtimeMue = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_ASSOC_RESOLVE=name=missing\.mue;ext=\.mue;.*;success=1$').Count
-    $runtimeFileAssocMarker = [regex]::Matches($finalContent,
+    $runtimeFileAssocMarker = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_NEGATIVE_FILE_ASSOCIATIONS=5$').Count
-    $runtimeFileFails = [regex]::Matches($finalContent,
+    $runtimeFileFails = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_FILE_FAIL=').Count
     $runtimeNegativePass = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_NEGATIVE_[A-Z_]+=PASS').Count
-    $runtimeShellComputer = [regex]::Matches($finalContent,
+    $runtimeShellComputer = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_SHELL_ROUTE=COMPUTER_FILES;result=WINDOW$').Count
-    $runtimeShellRoot = [regex]::Matches($finalContent,
+    $runtimeShellRoot = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_SHELL_ROUTE=ROOT;result=COMPUTER_FILES_ROOT$').Count
-    $runtimeInstaller = [regex]::Matches($finalContent,
+    $runtimeInstaller = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_SHELL_ROUTE=INSTALLER;result=HD_INSTALLER$').Count
-    $runtimeInstallerClosed = [regex]::Matches($finalContent,
+    $runtimeInstallerClosed = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_WINDOW_CLOSED=title=Install guideXOS to Hard Drive;').Count
-    $runtimeUsbUnavailable = [regex]::Matches($finalContent,
+    $runtimeUsbUnavailable = [regex]::Matches($runtimeContent,
         '(?m)^APP_RUNTIME_SHELL_ROUTE=USB;result=UNAVAILABLE$').Count
+    $runtimeLastClose = [regex]::Matches($runtimeContent,
+        '(?m)^APP_RUNTIME_WINDOW_CLOSED=.*;memory=(\d+);corrupt=(\d+)')
     $runtimeLaunchFail = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_LAUNCH_FAIL=').Count
     $runtimeFaults = [regex]::Matches($finalContent,
@@ -2012,8 +2030,6 @@ if ($isAppRuntimeValidation) {
         $runtimeUsbUnavailable -ge 1 -and $runtimeLaunchFail -ge 1 -and
         $runtimeFaults -eq 0 -and $runtimeThreadPoolUnlocked -and
         $runtimeBalancedInput -and $graphicsValid -eq $true
-    $runtimeLastClose = [regex]::Matches($finalContent,
-        '(?m)^APP_RUNTIME_WINDOW_CLOSED=.*;memory=(\d+);corrupt=(\d+)')
     $runtimeMemory = if ($runtimeLastClose.Count -gt 0) {
         [UInt64]$runtimeLastClose[$runtimeLastClose.Count - 1].Groups[1].Value
     } else { 0 }

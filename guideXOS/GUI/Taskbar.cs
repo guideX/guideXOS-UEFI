@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Windows.Forms;
 using System.Collections.Generic;
 using guideXOS.DefaultApps;
+using guideXOS.OS;
 namespace guideXOS.GUI {
     internal class Taskbar {
         public StartMenu StartMenu;
@@ -421,6 +422,15 @@ namespace guideXOS.GUI {
                         if (textWidth > 0) WindowManager.font.DrawString(textX, y + (hRect / 2) - (WindowManager.font.FontSize / 2), w.Title, textWidth, WindowManager.font.FontSize);
                         // click -> focus window
                         if (left && hover) {
+                            if (w.ApplicationInstanceHandle.IsValid) {
+                                ApplicationLifecycleResult lifecycle =
+                                    ApplicationInstanceRegistry.Activate(
+                                        w.ApplicationInstanceHandle);
+                                if (!lifecycle.Success) {
+                                    btnX += wRect + gap;
+                                    continue;
+                                }
+                            }
                             if (w.IsMinimized) w.Restore();
                             WindowManager.MoveToEnd(w);
                             w.Visible = true;

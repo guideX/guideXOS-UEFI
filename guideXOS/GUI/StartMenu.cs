@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Windows.Forms;
 using System.Drawing;
 using guideXOS.DefaultApps;
+using guideXOS.OS;
 namespace guideXOS.GUI {
     /// <summary>
     /// Start Menu
@@ -89,6 +90,10 @@ namespace guideXOS.GUI {
             if (!_constructed) return;
             base.OnSetVisible(value);
             if (value) {
+                // Start is a shell foreground owner, not a fake application
+                // descriptor.  Deactivate the semantic app owner while it is
+                // open and leave all application instances alive.
+                ApplicationInstanceRegistry.NotifyShellForeground();
                 // Always bring Start Menu to front when shown
                 WindowManager.MoveToEnd(this);
                 _leftDownPrev = false;

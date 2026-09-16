@@ -18,8 +18,8 @@ namespace guideXOS.OS {
     /// <summary>
     /// Application-instance lifecycle from APP_MODEL_CONVERGENCE.md.
     /// Registered is descriptor-known instance state; it is not descriptor
-    /// identity.  Suspended is part of the common contract but is not entered
-    /// by the current C# backend because it has no real suspension mechanism.
+    /// identity.  Suspended is cooperative application quiescence, not
+    /// scheduler or process freezing.
     /// </summary>
     public enum ApplicationInstanceLifecycleState {
         Registered,
@@ -131,6 +131,8 @@ namespace guideXOS.OS {
         private ApplicationInstanceLifecycleState _state;
         private string _failureReason;
         private string _terminationReason;
+        private ApplicationLifecycleAdapter _lifecycleAdapter;
+        private bool _lifecycleAdapterAssigned;
 
         internal ApplicationInstance(ApplicationInstanceHandle handle,
                                      string descriptorId,
@@ -146,6 +148,10 @@ namespace guideXOS.OS {
             _ownedWindows = new Window[MaxOwnedWindows];
             _launchRequest = request;
             _state = ApplicationInstanceLifecycleState.Registered;
+            // The common cooperative default is allocation-free.  Explicit
+            // adapters are installed only by representative/custom backends.
+            _lifecycleAdapter = null;
+            _lifecycleAdapterAssigned = false;
         }
 
         public ApplicationInstanceHandle Handle { get { return _handle; } }
@@ -171,7 +177,14 @@ namespace guideXOS.OS {
         public bool IsActivated {
             get { return _state == ApplicationInstanceLifecycleState.Activated; }
         }
-        public bool SuspensionSupported { get { return false; } }
+        public ApplicationLifecycleCapability LifecycleCapability {
+            get { return _lifecycleAdapter == null ?
+                ApplicationLifecycleCapability.SupportedWithDefault :
+                _lifecycleAdapter.Capability; }
+        }
+        public bool SuspensionSupported {
+            get { return LifecycleCapability != ApplicationLifecycleCapability.Unsupported; }
+        }
         public LaunchRequest LaunchRequestContext { get { return _launchRequest; } }
         public string Document {
             get { return _launchRequest == null ? null : _launchRequest.Document; }
@@ -213,6 +226,16 @@ namespace guideXOS.OS {
             _launchRequest = request;
             _failureReason = null;
             _terminationReason = null;
+        }
+
+        internal ApplicationLifecycleAdapter LifecycleAdapter {
+            get { return _lifecycleAdapter; }
+        }
+
+        internal void SetLifecycleAdapter(ApplicationLifecycleAdapter adapter) {
+            if (_lifecycleAdapterAssigned || adapter == null) return;
+            _lifecycleAdapter = adapter;
+            _lifecycleAdapterAssigned = true;
         }
 
         internal bool TryTransition(ApplicationInstanceLifecycleState next) {
@@ -303,6 +326,7 @@ namespace guideXOS.OS {
                 case ApplicationInstanceLifecycleState.Running:
                     return to == ApplicationInstanceLifecycleState.Activated ||
                            to == ApplicationInstanceLifecycleState.Inactive ||
+                           to == ApplicationInstanceLifecycleState.Suspended ||
                            to == ApplicationInstanceLifecycleState.Closing ||
                            to == ApplicationInstanceLifecycleState.Failed;
                 case ApplicationInstanceLifecycleState.Activated:
@@ -312,6 +336,7 @@ namespace guideXOS.OS {
                 case ApplicationInstanceLifecycleState.Inactive:
                     return to == ApplicationInstanceLifecycleState.Loading ||
                            to == ApplicationInstanceLifecycleState.Running ||
+                           to == ApplicationInstanceLifecycleState.Suspended ||
                            to == ApplicationInstanceLifecycleState.Activated ||
                            to == ApplicationInstanceLifecycleState.Closing ||
                            to == ApplicationInstanceLifecycleState.Failed;
@@ -351,12 +376,22 @@ namespace guideXOS.OS {
         private static int _createdCount;
         private static int _reusedCount;
         private static int _activatedCount;
+        private static int _deactivatedCount;
+        private static int _suspendedCount;
+        private static int _resumedCount;
+        private static int _closeRequestCount;
+        private static int _closeCancellationCount;
+        private static int _lifecycleFailureCount;
+        private static int _invalidLifecycleRequestCount;
+        private static int _staleLifecycleHandleCount;
         private static int _terminatedCount;
         private static int _failedCount;
         private static int _windowAttachCount;
         private static int _windowDetachCount;
         private static int _duplicateAttachCount;
         private static int _staleOwnershipCount;
+        private static ApplicationInstanceHandle _activeApplicationHandle;
+        private static bool _routingForeground;
 
         public static void Initialize() {
             if (_instances != null) return;
@@ -371,6 +406,14 @@ namespace guideXOS.OS {
         public static int InstancesCreated { get { return _createdCount; } }
         public static int InstancesReused { get { return _reusedCount; } }
         public static int InstancesActivated { get { return _activatedCount; } }
+        public static int InstancesDeactivated { get { return _deactivatedCount; } }
+        public static int InstancesSuspended { get { return _suspendedCount; } }
+        public static int InstancesResumed { get { return _resumedCount; } }
+        public static int CloseRequests { get { return _closeRequestCount; } }
+        public static int CloseCancellations { get { return _closeCancellationCount; } }
+        public static int LifecycleFailures { get { return _lifecycleFailureCount; } }
+        public static int InvalidLifecycleRequests { get { return _invalidLifecycleRequestCount; } }
+        public static int StaleLifecycleHandles { get { return _staleLifecycleHandleCount; } }
         public static int InstancesTerminated { get { return _terminatedCount; } }
         public static int FailedInstances { get { return _failedCount; } }
         public static int WindowAttachCount { get { return _windowAttachCount; } }
@@ -380,6 +423,21 @@ namespace guideXOS.OS {
         }
         public static int StaleOwnershipCount {
             get { return _staleOwnershipCount; }
+        }
+        public static ApplicationInstanceHandle ActiveApplicationHandle {
+            get { return _activeApplicationHandle; }
+        }
+        public static int SuspendedCount {
+            get {
+                Initialize();
+                int count = 0;
+                for (int i = 0; i < Capacity; i++) {
+                    if (_used[i] && _instances[i] != null &&
+                        _instances[i].LifecycleState ==
+                            ApplicationInstanceLifecycleState.Suspended) count++;
+                }
+                return count;
+            }
         }
 
         public static int RunningCount {
@@ -595,9 +653,13 @@ namespace guideXOS.OS {
                                                 out ApplicationInstance instance,
                                                 out bool reused,
                                                 out LaunchResult failure) {
-            return TryBeginLaunch("gxos.external.gxm",
+            bool started = TryBeginLaunch("gxos.external.gxm",
                 ApplicationInstancePolicy.MultiInstance, request,
                 out instance, out reused, out failure);
+            if (started && instance != null && !reused) {
+                instance.SetLifecycleAdapter(new GxmApplicationLifecycleAdapter());
+            }
+            return started;
         }
 
         internal static bool TryCompleteLaunch(ApplicationInstance instance,
@@ -612,6 +674,17 @@ namespace guideXOS.OS {
             }
 
             ApplicationInstanceLifecycleState state = instance.LifecycleState;
+            if (state == ApplicationInstanceLifecycleState.Suspended) {
+                ApplicationLifecycleResult resumed = Resume(instance.Handle);
+                if (!resumed.Success) {
+                    failure = LaunchResult.Failed(
+                        LaunchErrorCode.ActivationFailed,
+                        resumed.Diagnostic ?? "Application resume failed",
+                        instance.DescriptorId);
+                    return false;
+                }
+                state = instance.LifecycleState;
+            }
             if (state == ApplicationInstanceLifecycleState.Loading) {
                 if (!instance.TryTransition(ApplicationInstanceLifecycleState.Initialized) ||
                     !instance.TryTransition(ApplicationInstanceLifecycleState.Running)) {
@@ -626,62 +699,520 @@ namespace guideXOS.OS {
                 return false;
             }
 
-            if (activate && instance.LifecycleState ==
-                    ApplicationInstanceLifecycleState.Running) {
-                if (!instance.TryTransition(ApplicationInstanceLifecycleState.Activated)) {
+            if (activate) {
+                ApplicationLifecycleResult activated = Activate(instance.Handle);
+                if (!activated.Success) {
                     failure = LaunchResult.Failed(LaunchErrorCode.ActivationFailed,
-                        "Application instance activation failed", instance.DescriptorId);
+                        activated.Diagnostic ?? "Application instance activation failed",
+                        instance.DescriptorId);
                     return false;
                 }
-                _activatedCount++;
-            } else if (activate && instance.LifecycleState ==
-                       ApplicationInstanceLifecycleState.Activated) {
-                // Reused instances may already be in Activated state.  The
-                // activation event is still observable and must contribute to
-                // the bounded activation metric.
-                _activatedCount++;
             }
             return true;
         }
 
-        public static bool TryActivate(ApplicationInstanceHandle handle,
-                                        out LaunchResult failure) {
+        public static ApplicationLifecycleResult Activate(
+                ApplicationInstanceHandle handle) {
             ApplicationInstance instance;
             if (!TryGet(handle, out instance)) {
-                failure = LaunchResult.Failed(LaunchErrorCode.AlreadyTerminated,
-                    "Application instance is not active", null);
-                return false;
+                _staleLifecycleHandleCount++;
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.NotFound, handle,
+                    ApplicationInstanceLifecycleState.Terminated,
+                    ApplicationCloseReason.ApplicationRequest,
+                    "Application instance handle is stale or unavailable");
             }
-            return TryActivate(instance, out failure);
+            return Activate(instance);
+        }
+
+        private static ApplicationLifecycleResult Activate(
+                ApplicationInstance instance) {
+            if (!IsRegisteredInstance(instance)) {
+                _staleLifecycleHandleCount++;
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.NotFound,
+                    instance == null ? ApplicationInstanceHandle.None : instance.Handle,
+                    ApplicationInstanceLifecycleState.Terminated,
+                    ApplicationCloseReason.ApplicationRequest,
+                    "Application instance handle is stale or unavailable");
+            }
+
+            if (instance.LifecycleState == ApplicationInstanceLifecycleState.Suspended) {
+                ApplicationLifecycleResult resumed = Resume(instance.Handle);
+                if (!resumed.Success) return resumed;
+            }
+            ApplicationInstanceLifecycleState state = instance.LifecycleState;
+            if (state != ApplicationInstanceLifecycleState.Inactive &&
+                    state != ApplicationInstanceLifecycleState.Running &&
+                    state != ApplicationInstanceLifecycleState.Activated) {
+                return InvalidLifecycle(instance,
+                    "Application instance is not activatable");
+            }
+            if (state == ApplicationInstanceLifecycleState.Activated &&
+                    _activeApplicationHandle == instance.Handle) {
+                return ApplicationLifecycleResult.Succeeded(instance.Handle,
+                    state, state, ApplicationCloseReason.ApplicationRequest);
+            }
+
+            if (_activeApplicationHandle.IsValid &&
+                    _activeApplicationHandle != instance.Handle) {
+                ApplicationInstance previous;
+                if (TryGet(_activeApplicationHandle, out previous)) {
+                    ApplicationLifecycleResult deactivated = Deactivate(previous);
+                    if (!deactivated.Success) return deactivated;
+                } else {
+                    _staleLifecycleHandleCount++;
+                    _activeApplicationHandle = ApplicationInstanceHandle.None;
+                }
+            }
+
+            string diagnostic;
+            ApplicationLifecycleCallbackResult callback = InvokeCallback(
+                instance, ApplicationLifecycleOperation.Activate,
+                ApplicationCloseReason.ApplicationRequest, out diagnostic);
+            if (callback != ApplicationLifecycleCallbackResult.Success) {
+                return CallbackResult(instance, ApplicationLifecycleOperation.Activate,
+                    callback, diagnostic);
+            }
+
+            ApplicationInstanceLifecycleState from = instance.LifecycleState;
+            if (instance.LifecycleState == ApplicationInstanceLifecycleState.Inactive &&
+                    !instance.TryTransition(ApplicationInstanceLifecycleState.Running)) {
+                return InvalidLifecycle(instance,
+                    "Inactive application instance cannot run");
+            }
+            if (instance.LifecycleState == ApplicationInstanceLifecycleState.Running &&
+                    !instance.TryTransition(ApplicationInstanceLifecycleState.Activated)) {
+                return InvalidLifecycle(instance,
+                    "Application instance activation failed");
+            }
+            if (instance.LifecycleState != ApplicationInstanceLifecycleState.Activated) {
+                return InvalidLifecycle(instance,
+                    "Application instance did not enter Activated state");
+            }
+            _activeApplicationHandle = instance.Handle;
+            if (from != ApplicationInstanceLifecycleState.Activated) _activatedCount++;
+            RouteForegroundWindow(instance);
+            return ApplicationLifecycleResult.Succeeded(instance.Handle, from,
+                ApplicationInstanceLifecycleState.Activated,
+                ApplicationCloseReason.ApplicationRequest);
+        }
+
+        public static ApplicationLifecycleResult Deactivate(
+                ApplicationInstanceHandle handle) {
+            ApplicationInstance instance;
+            if (!TryGet(handle, out instance)) {
+                _staleLifecycleHandleCount++;
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.NotFound, handle,
+                    ApplicationInstanceLifecycleState.Terminated,
+                    ApplicationCloseReason.ApplicationRequest,
+                    "Application instance handle is stale or unavailable");
+            }
+            return Deactivate(instance);
+        }
+
+        private static ApplicationLifecycleResult Deactivate(
+                ApplicationInstance instance) {
+            if (!IsRegisteredInstance(instance)) {
+                _staleLifecycleHandleCount++;
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.NotFound,
+                    instance == null ? ApplicationInstanceHandle.None : instance.Handle,
+                    ApplicationInstanceLifecycleState.Terminated,
+                    ApplicationCloseReason.ApplicationRequest,
+                    "Application instance handle is stale or unavailable");
+            }
+            ApplicationInstanceLifecycleState state = instance.LifecycleState;
+            if (state == ApplicationInstanceLifecycleState.Inactive ||
+                    state == ApplicationInstanceLifecycleState.Suspended ||
+                    state == ApplicationInstanceLifecycleState.Running) {
+                if (_activeApplicationHandle == instance.Handle) {
+                    _activeApplicationHandle = ApplicationInstanceHandle.None;
+                }
+                return ApplicationLifecycleResult.Succeeded(instance.Handle,
+                    state, state, ApplicationCloseReason.ApplicationRequest);
+            }
+            if (state != ApplicationInstanceLifecycleState.Activated) {
+                return InvalidLifecycle(instance,
+                    "Application instance is not deactivatable");
+            }
+            string diagnostic;
+            ApplicationLifecycleCallbackResult callback = InvokeCallback(
+                instance, ApplicationLifecycleOperation.Deactivate,
+                ApplicationCloseReason.ApplicationRequest, out diagnostic);
+            if (callback != ApplicationLifecycleCallbackResult.Success) {
+                return CallbackResult(instance, ApplicationLifecycleOperation.Deactivate,
+                    callback, diagnostic);
+            }
+            if (!instance.TryTransition(ApplicationInstanceLifecycleState.Inactive)) {
+                return InvalidLifecycle(instance,
+                    "Application instance could not become inactive");
+            }
+            if (_activeApplicationHandle == instance.Handle) {
+                _activeApplicationHandle = ApplicationInstanceHandle.None;
+            }
+            _deactivatedCount++;
+            return ApplicationLifecycleResult.Succeeded(instance.Handle, state,
+                ApplicationInstanceLifecycleState.Inactive,
+                ApplicationCloseReason.ApplicationRequest);
+        }
+
+        public static ApplicationLifecycleResult Suspend(
+                ApplicationInstanceHandle handle) {
+            ApplicationInstance instance;
+            if (!TryGet(handle, out instance)) {
+                _staleLifecycleHandleCount++;
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.NotFound, handle,
+                    ApplicationInstanceLifecycleState.Terminated,
+                    ApplicationCloseReason.ApplicationRequest,
+                    "Application instance handle is stale or unavailable");
+            }
+            if (instance.LifecycleCapability ==
+                    ApplicationLifecycleCapability.Unsupported) {
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.Unsupported, handle,
+                    instance.LifecycleState, ApplicationCloseReason.ApplicationRequest,
+                    "Application backend does not support cooperative suspension");
+            }
+            if (instance.LifecycleState == ApplicationInstanceLifecycleState.Suspended) {
+                return ApplicationLifecycleResult.Succeeded(handle,
+                    ApplicationInstanceLifecycleState.Suspended,
+                    ApplicationInstanceLifecycleState.Suspended,
+                    ApplicationCloseReason.ApplicationRequest);
+            }
+            if (instance.LifecycleState == ApplicationInstanceLifecycleState.Activated) {
+                ApplicationLifecycleResult deactivated = Deactivate(instance);
+                if (!deactivated.Success) return deactivated;
+            }
+            ApplicationInstanceLifecycleState state = instance.LifecycleState;
+            if (state != ApplicationInstanceLifecycleState.Inactive &&
+                    state != ApplicationInstanceLifecycleState.Running) {
+                return InvalidLifecycle(instance,
+                    "Application instance is not suspendable in its current state");
+            }
+            string diagnostic;
+            ApplicationLifecycleCallbackResult callback = InvokeCallback(
+                instance, ApplicationLifecycleOperation.Suspend,
+                ApplicationCloseReason.ApplicationRequest, out diagnostic);
+            if (callback != ApplicationLifecycleCallbackResult.Success) {
+                return CallbackResult(instance, ApplicationLifecycleOperation.Suspend,
+                    callback, diagnostic);
+            }
+            if (!instance.TryTransition(ApplicationInstanceLifecycleState.Suspended)) {
+                return InvalidLifecycle(instance,
+                    "Application instance could not enter Suspended state");
+            }
+            if (_activeApplicationHandle == instance.Handle) {
+                _activeApplicationHandle = ApplicationInstanceHandle.None;
+            }
+            _suspendedCount++;
+            return ApplicationLifecycleResult.Succeeded(handle, state,
+                ApplicationInstanceLifecycleState.Suspended,
+                ApplicationCloseReason.ApplicationRequest);
+        }
+
+        public static ApplicationLifecycleResult Resume(
+                ApplicationInstanceHandle handle) {
+            ApplicationInstance instance;
+            if (!TryGet(handle, out instance)) {
+                _staleLifecycleHandleCount++;
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.NotFound, handle,
+                    ApplicationInstanceLifecycleState.Terminated,
+                    ApplicationCloseReason.ApplicationRequest,
+                    "Application instance handle is stale or unavailable");
+            }
+            return Resume(instance);
+        }
+
+        private static ApplicationLifecycleResult Resume(ApplicationInstance instance) {
+            if (!IsRegisteredInstance(instance)) {
+                _staleLifecycleHandleCount++;
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.NotFound,
+                    instance == null ? ApplicationInstanceHandle.None : instance.Handle,
+                    ApplicationInstanceLifecycleState.Terminated,
+                    ApplicationCloseReason.ApplicationRequest,
+                    "Application instance handle is stale or unavailable");
+            }
+            ApplicationInstanceLifecycleState state = instance.LifecycleState;
+            if (state != ApplicationInstanceLifecycleState.Suspended) {
+                return InvalidLifecycle(instance,
+                    "Application instance is not suspended");
+            }
+            if (instance.LifecycleCapability ==
+                    ApplicationLifecycleCapability.Unsupported) {
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.Unsupported, instance.Handle,
+                    state, ApplicationCloseReason.ApplicationRequest,
+                    "Application backend does not support cooperative resume");
+            }
+            string diagnostic;
+            ApplicationLifecycleCallbackResult callback = InvokeCallback(
+                instance, ApplicationLifecycleOperation.Resume,
+                ApplicationCloseReason.ApplicationRequest, out diagnostic);
+            if (callback != ApplicationLifecycleCallbackResult.Success) {
+                return CallbackResult(instance, ApplicationLifecycleOperation.Resume,
+                    callback, diagnostic);
+            }
+            if (!instance.TryTransition(ApplicationInstanceLifecycleState.Inactive)) {
+                return InvalidLifecycle(instance,
+                    "Suspended application instance could not resume");
+            }
+            _resumedCount++;
+            return ApplicationLifecycleResult.Succeeded(instance.Handle, state,
+                ApplicationInstanceLifecycleState.Inactive,
+                ApplicationCloseReason.ApplicationRequest);
+        }
+
+        public static ApplicationLifecycleResult RequestClose(
+                ApplicationInstanceHandle handle, ApplicationCloseReason reason) {
+            ApplicationInstance instance;
+            if (!TryGet(handle, out instance)) {
+                _staleLifecycleHandleCount++;
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.NotFound, handle,
+                    ApplicationInstanceLifecycleState.Terminated, reason,
+                    "Application instance handle is stale or unavailable");
+            }
+            if (instance.LifecycleState == ApplicationInstanceLifecycleState.Closing) {
+                return InvalidLifecycle(instance,
+                    "Application instance is already closing");
+            }
+            _closeRequestCount++;
+            string diagnostic;
+            ApplicationLifecycleCallbackResult callback = InvokeCallback(instance,
+                ApplicationLifecycleOperation.RequestClose, reason, out diagnostic);
+            if (callback == ApplicationLifecycleCallbackResult.Cancelled) {
+                _closeCancellationCount++;
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.Cancelled, handle,
+                    instance.LifecycleState, reason,
+                    diagnostic ?? "Application close was cancelled");
+            }
+            if (callback != ApplicationLifecycleCallbackResult.Success) {
+                return CallbackResult(instance,
+                    ApplicationLifecycleOperation.RequestClose, callback, diagnostic);
+            }
+            return Terminate(instance, reason, false);
+        }
+
+        public static ApplicationLifecycleResult Terminate(
+                ApplicationInstanceHandle handle, ApplicationCloseReason reason) {
+            ApplicationInstance instance;
+            if (!TryGet(handle, out instance)) {
+                _staleLifecycleHandleCount++;
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.NotFound, handle,
+                    ApplicationInstanceLifecycleState.Terminated, reason,
+                    "Application instance handle is stale or unavailable");
+            }
+            return Terminate(instance, reason, true);
+        }
+
+        private static ApplicationLifecycleResult Terminate(
+                ApplicationInstance instance, ApplicationCloseReason reason,
+                bool forced) {
+            if (!IsRegisteredInstance(instance)) {
+                _staleLifecycleHandleCount++;
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.NotFound,
+                    instance == null ? ApplicationInstanceHandle.None : instance.Handle,
+                    ApplicationInstanceLifecycleState.Terminated, reason,
+                    "Application instance handle is stale or unavailable");
+            }
+            ApplicationInstanceLifecycleState from = instance.LifecycleState;
+            if (from == ApplicationInstanceLifecycleState.Closing) {
+                from = ApplicationInstanceLifecycleState.Closing;
+            } else if (!instance.TryTransition(ApplicationInstanceLifecycleState.Closing)) {
+                return InvalidLifecycle(instance,
+                    "Application instance cannot enter Closing state");
+            }
+
+            string diagnostic;
+            ApplicationLifecycleCallbackResult callback = InvokeCallback(instance,
+                ApplicationLifecycleOperation.Terminate, reason, out diagnostic);
+            bool callbackFailed = callback == ApplicationLifecycleCallbackResult.Failed ||
+                callback == ApplicationLifecycleCallbackResult.Cancelled ||
+                callback == ApplicationLifecycleCallbackResult.Unsupported;
+            if (callbackFailed) {
+                RecordLifecycleFailure(instance,
+                    ApplicationLifecycleOperation.Terminate,
+                    diagnostic ?? "Application termination callback failed");
+                if (!forced) {
+                    // A close request failure remains observable, but cleanup
+                    // is still deterministic once Closing has been entered.
+                }
+            }
+            instance.RecordTermination(reason.ToString());
+            CloseAndDetachOwnedWindows(instance, reason.ToString());
+            bool terminated = instance.TryTransition(
+                ApplicationInstanceLifecycleState.Terminated);
+            if (!terminated) {
+                // The cleanup below still removes the handle, so it cannot be
+                // reused accidentally even if a callback corrupted state.
+                instance.RecordFailure("Application instance termination transition failed");
+            }
+            if (_activeApplicationHandle == instance.Handle) {
+                _activeApplicationHandle = ApplicationInstanceHandle.None;
+            }
+            _terminatedCount++;
+            Remove(instance);
+            if (callbackFailed) {
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.CallbackFailed, instance.Handle,
+                    from, reason, diagnostic ?? "Application termination callback failed");
+            }
+            return ApplicationLifecycleResult.Succeeded(instance.Handle, from,
+                ApplicationInstanceLifecycleState.Terminated, reason);
+        }
+
+        private static ApplicationLifecycleResult InvalidLifecycle(
+                ApplicationInstance instance, string diagnostic) {
+            _invalidLifecycleRequestCount++;
+            return ApplicationLifecycleResult.Failed(
+                ApplicationLifecycleResultCode.InvalidState,
+                instance == null ? ApplicationInstanceHandle.None : instance.Handle,
+                instance == null ? ApplicationInstanceLifecycleState.Failed :
+                    instance.LifecycleState,
+                ApplicationCloseReason.ApplicationRequest, diagnostic);
+        }
+
+        private static ApplicationLifecycleResult CallbackResult(
+                ApplicationInstance instance,
+                ApplicationLifecycleOperation operation,
+                ApplicationLifecycleCallbackResult callback,
+                string diagnostic) {
+            if (callback == ApplicationLifecycleCallbackResult.Unsupported) {
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.Unsupported, instance.Handle,
+                    instance.LifecycleState, ApplicationCloseReason.ApplicationRequest,
+                    diagnostic ?? "Lifecycle operation is unsupported");
+            }
+            if (callback == ApplicationLifecycleCallbackResult.Cancelled) {
+                return ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.Cancelled, instance.Handle,
+                    instance.LifecycleState, ApplicationCloseReason.ApplicationRequest,
+                    diagnostic ?? "Lifecycle operation was cancelled");
+            }
+            RecordLifecycleFailure(instance, operation,
+                diagnostic ?? "Lifecycle callback failed");
+            return ApplicationLifecycleResult.Failed(
+                ApplicationLifecycleResultCode.CallbackFailed, instance.Handle,
+                instance.LifecycleState, ApplicationCloseReason.ApplicationRequest,
+                diagnostic ?? "Lifecycle callback failed");
+        }
+
+        private static ApplicationLifecycleCallbackResult InvokeCallback(
+                ApplicationInstance instance,
+                ApplicationLifecycleOperation operation,
+                ApplicationCloseReason reason,
+                out string diagnostic) {
+            diagnostic = null;
+            if (instance == null) {
+                diagnostic = "Lifecycle instance is unavailable";
+                return ApplicationLifecycleCallbackResult.Failed;
+            }
+            if (instance.LifecycleAdapter == null)
+                return ApplicationLifecycleCallbackResult.Success;
+            try {
+                ApplicationLifecycleContext context =
+                    new ApplicationLifecycleContext(instance, operation, reason);
+                switch (operation) {
+                    case ApplicationLifecycleOperation.Activate:
+                        return instance.LifecycleAdapter.OnActivating(context);
+                    case ApplicationLifecycleOperation.Deactivate:
+                        return instance.LifecycleAdapter.OnDeactivating(context);
+                    case ApplicationLifecycleOperation.Suspend:
+                        return instance.LifecycleAdapter.OnSuspending(context);
+                    case ApplicationLifecycleOperation.Resume:
+                        return instance.LifecycleAdapter.OnResuming(context);
+                    case ApplicationLifecycleOperation.RequestClose:
+                        return instance.LifecycleAdapter.OnCloseRequested(context, reason);
+                    case ApplicationLifecycleOperation.Terminate:
+                        return instance.LifecycleAdapter.OnTerminating(context, reason);
+                    default:
+                        diagnostic = "Unknown lifecycle operation";
+                        return ApplicationLifecycleCallbackResult.Failed;
+                }
+            } catch {
+                diagnostic = "Lifecycle callback raised an exception";
+                return ApplicationLifecycleCallbackResult.Failed;
+            }
+        }
+
+        private static void RecordLifecycleFailure(ApplicationInstance instance,
+                                                   ApplicationLifecycleOperation operation,
+                                                   string diagnostic) {
+            _lifecycleFailureCount++;
+            if (instance == null) return;
+            instance.RecordFailure(diagnostic);
+            try {
+                instance.LifecycleAdapter.OnLifecycleFailure(
+                    new ApplicationLifecycleContext(instance, operation,
+                        ApplicationCloseReason.Failure), operation, diagnostic);
+            } catch { }
+        }
+
+        private static void RouteForegroundWindow(ApplicationInstance instance) {
+            if (instance == null || _routingForeground) return;
+            Window target = null;
+            for (int i = 0; i < instance.OwnedWindowCount; i++) {
+                Window candidate = instance.GetOwnedWindowAt(i);
+                if (candidate != null && candidate.Visible) target = candidate;
+            }
+            if (target == null && instance.OwnedWindowCount > 0) {
+                target = instance.GetOwnedWindowAt(instance.OwnedWindowCount - 1);
+            }
+            if (target == null) return;
+            _routingForeground = true;
+            try { WindowManager.MoveToEnd(target); } catch { }
+            _routingForeground = false;
+        }
+
+        internal static void NotifyWindowForeground(Window window) {
+            if (window == null || _routingForeground ||
+                    !window.ApplicationInstanceHandle.IsValid) return;
+            ApplicationLifecycleResult result = Activate(
+                window.ApplicationInstanceHandle);
+            if (result.Code == ApplicationLifecycleResultCode.NotFound) {
+                RecordStaleOwnership();
+            }
+        }
+
+        internal static void NotifyShellForeground() {
+            if (!_activeApplicationHandle.IsValid) return;
+            ApplicationInstance instance;
+            if (TryGet(_activeApplicationHandle, out instance)) {
+                Deactivate(instance);
+            } else {
+                _staleLifecycleHandleCount++;
+                _activeApplicationHandle = ApplicationInstanceHandle.None;
+            }
+        }
+
+        public static bool TryActivate(ApplicationInstanceHandle handle,
+                                        out LaunchResult failure) {
+            ApplicationLifecycleResult result = Activate(handle);
+            failure = result.Success ? null : LaunchResult.Failed(
+                result.Code == ApplicationLifecycleResultCode.NotFound
+                    ? LaunchErrorCode.AlreadyTerminated
+                    : LaunchErrorCode.ActivationFailed,
+                result.Diagnostic ?? "Application activation failed", null);
+            return result.Success;
         }
 
         internal static bool TryActivate(ApplicationInstance instance,
                                          out LaunchResult failure) {
-            failure = null;
-            if (!IsRegisteredInstance(instance)) {
-                failure = LaunchResult.Failed(LaunchErrorCode.AlreadyTerminated,
-                    "Application instance is not active", null);
-                return false;
-            }
-            if (instance.LifecycleState == ApplicationInstanceLifecycleState.Inactive) {
-                if (!instance.TryTransition(ApplicationInstanceLifecycleState.Running)) {
-                    failure = LaunchResult.Failed(LaunchErrorCode.ActivationFailed,
-                        "Inactive application instance cannot run", instance.DescriptorId);
-                    return false;
-                }
-            }
-            if (instance.LifecycleState == ApplicationInstanceLifecycleState.Running) {
-                if (!instance.TryTransition(ApplicationInstanceLifecycleState.Activated)) {
-                    failure = LaunchResult.Failed(LaunchErrorCode.ActivationFailed,
-                        "Application instance activation failed", instance.DescriptorId);
-                    return false;
-                }
-                _activatedCount++;
-            } else if (instance.LifecycleState ==
-                       ApplicationInstanceLifecycleState.Activated) {
-                _activatedCount++;
-            }
-            return instance.LifecycleState == ApplicationInstanceLifecycleState.Activated;
+            ApplicationLifecycleResult result = Activate(
+                instance == null ? ApplicationInstanceHandle.None : instance.Handle);
+            failure = result.Success ? null : LaunchResult.Failed(
+                LaunchErrorCode.ActivationFailed,
+                result.Diagnostic ?? "Application activation failed",
+                instance == null ? null : instance.DescriptorId);
+            return result.Success;
         }
 
         internal static bool TryAttachWindow(ApplicationInstance instance,
@@ -739,27 +1270,19 @@ namespace guideXOS.OS {
 
         public static bool TryTerminate(ApplicationInstanceHandle handle,
                                         string reason) {
-            ApplicationInstance instance;
-            if (!TryGet(handle, out instance)) return false;
-            return TryTerminate(instance, reason);
+            ApplicationLifecycleResult result = Terminate(handle,
+                ApplicationCloseReason.ForcedTermination);
+            return result.Success || result.Code ==
+                ApplicationLifecycleResultCode.CallbackFailed;
         }
 
         internal static bool TryTerminate(ApplicationInstance instance,
                                           string reason) {
-            if (!IsRegisteredInstance(instance)) return false;
-            if (instance.LifecycleState !=
-                    ApplicationInstanceLifecycleState.Closing &&
-                !instance.TryTransition(ApplicationInstanceLifecycleState.Closing)) {
-                return false;
-            }
-            instance.RecordTermination(reason);
-            CloseAndDetachOwnedWindows(instance, reason);
-            if (!instance.TryTransition(ApplicationInstanceLifecycleState.Terminated)) {
-                return false;
-            }
-            _terminatedCount++;
-            Remove(instance);
-            return true;
+            if (instance == null) return false;
+            ApplicationLifecycleResult result = Terminate(instance,
+                ApplicationCloseReason.ForcedTermination, true);
+            return result.Success || result.Code ==
+                ApplicationLifecycleResultCode.CallbackFailed;
         }
 
         internal static void OnWindowClosed(Window window) {
@@ -782,10 +1305,14 @@ namespace guideXOS.OS {
             if (instance.CloseWhenLastWindowClosed) {
                 TryTerminate(instance, "last owned window closed");
             } else if (instance.LifecycleState ==
-                           ApplicationInstanceLifecycleState.Running ||
-                       instance.LifecycleState ==
                            ApplicationInstanceLifecycleState.Activated) {
+                Deactivate(instance);
+            } else if (instance.LifecycleState ==
+                       ApplicationInstanceLifecycleState.Running) {
                 instance.TryTransition(ApplicationInstanceLifecycleState.Inactive);
+                if (_activeApplicationHandle == instance.Handle) {
+                    _activeApplicationHandle = ApplicationInstanceHandle.None;
+                }
             }
         }
 
@@ -866,6 +1393,9 @@ namespace guideXOS.OS {
             _instances[slot] = null;
             _used[slot] = false;
             if (_activeCount > 0) _activeCount--;
+            if (_activeApplicationHandle == instance.Handle) {
+                _activeApplicationHandle = ApplicationInstanceHandle.None;
+            }
         }
 
         /// <summary>
@@ -930,6 +1460,388 @@ namespace guideXOS.OS {
             AppLaunchResolver.EmitSelfTestSummary("AppModelPhase2", passed,
                 failed, firstFailure);
             return okResult;
+        }
+
+        /// <summary>
+        /// Deterministic Phase 6 lifecycle proof.  It exercises the public
+        /// request/result contract without requiring a scheduler or process
+        /// boundary and leaves no live or suspended test instances.
+        /// </summary>
+        public static bool RunLifecycleSelfTest() {
+            Initialize();
+            int passed = 0;
+            int failed = 0;
+            string firstFailure = null;
+            int startingActive = ActiveCount;
+
+            ApplicationInstance instance = null;
+            ApplicationInstanceHandle handle = ApplicationInstanceHandle.None;
+            bool reused;
+            LaunchResult launchFailure;
+            bool started = TryBeginLaunch("selftest.phase6.lifecycle",
+                ApplicationInstancePolicy.MultiInstance,
+                LaunchRequest.ForAppId("selftest.phase6.lifecycle", null, null,
+                    LaunchActivationIntent.NewInstance), out instance, out reused,
+                out launchFailure);
+            if (started) {
+                handle = instance.Handle;
+                bool lifecycleCompleted = TryCompleteLaunch(instance, false,
+                    out launchFailure);
+                ApplicationLifecycleResult activated = Activate(handle);
+                Check(lifecycleCompleted && activated.Success && instance.IsActivated,
+                    "activate running instance", ref passed, ref failed,
+                    ref firstFailure);
+                ApplicationLifecycleResult duplicate = Activate(handle);
+                Check(duplicate.Success && instance.IsActivated,
+                    "activate already activated instance", ref passed, ref failed,
+                    ref firstFailure);
+                ApplicationLifecycleResult deactivated = Deactivate(handle);
+                Check(deactivated.Success && instance.LifecycleState ==
+                    ApplicationInstanceLifecycleState.Inactive,
+                    "deactivate instance", ref passed, ref failed,
+                    ref firstFailure);
+                ApplicationLifecycleResult suspended = Suspend(handle);
+                Check(suspended.Success && instance.LifecycleState ==
+                    ApplicationInstanceLifecycleState.Suspended,
+                    "suspend instance", ref passed, ref failed,
+                    ref firstFailure);
+                ApplicationLifecycleResult resumed = Resume(handle);
+                Check(resumed.Success && instance.LifecycleState ==
+                    ApplicationInstanceLifecycleState.Inactive,
+                    "resume instance", ref passed, ref failed,
+                    ref firstFailure);
+                ApplicationLifecycleResult reactivated = Activate(handle);
+                Check(reactivated.Success && instance.IsActivated,
+                    "reactivate instance", ref passed, ref failed,
+                    ref firstFailure);
+                ApplicationLifecycleResult close = RequestClose(handle,
+                    ApplicationCloseReason.UserRequest);
+                Check(close.Success && !TryGet(handle,
+                    out ApplicationInstance ignoredClosed),
+                    "accepted close request", ref passed, ref failed,
+                    ref firstFailure);
+            } else {
+                Check(false, "lifecycle test setup", ref passed, ref failed,
+                    ref firstFailure);
+            }
+
+            ApplicationInstance unsupported = null;
+            ApplicationInstanceHandle unsupportedHandle =
+                ApplicationInstanceHandle.None;
+            bool unsupportedReused;
+            bool unsupportedStarted = TryBeginLaunch(
+                "selftest.phase6.unsupported", ApplicationInstancePolicy.MultiInstance,
+                LaunchRequest.ForAppId("selftest.phase6.unsupported", null, null,
+                    LaunchActivationIntent.NewInstance), out unsupported,
+                out unsupportedReused, out launchFailure);
+            if (unsupportedStarted) {
+                unsupportedHandle = unsupported.Handle;
+                unsupported.SetLifecycleAdapter(new GxmApplicationLifecycleAdapter());
+                bool completed = TryCompleteLaunch(unsupported, false,
+                    out launchFailure);
+                ApplicationLifecycleResult unsupportedResult = Suspend(
+                    unsupportedHandle);
+                Check(completed && unsupportedResult.Code ==
+                    ApplicationLifecycleResultCode.Unsupported &&
+                    unsupported.LifecycleState ==
+                        ApplicationInstanceLifecycleState.Running,
+                    "suspend unsupported", ref passed, ref failed,
+                    ref firstFailure);
+                TryTerminate(unsupported, "phase6 unsupported cleanup");
+            } else {
+                Check(false, "unsupported lifecycle setup", ref passed,
+                    ref failed, ref firstFailure);
+            }
+
+            ApplicationInstance callbackInstance = null;
+            ApplicationInstanceHandle callbackHandle =
+                ApplicationInstanceHandle.None;
+            LifecycleSelfTestAdapter callbackAdapter = null;
+            bool callbackReused;
+            bool callbackStarted = TryBeginLaunch(
+                "selftest.phase6.callback", ApplicationInstancePolicy.ReuseExisting,
+                LaunchRequest.ForAppId("selftest.phase6.callback", null, null,
+                    LaunchActivationIntent.NewInstance), out callbackInstance,
+                out callbackReused, out launchFailure);
+            if (callbackStarted) {
+                callbackHandle = callbackInstance.Handle;
+                callbackAdapter = new LifecycleSelfTestAdapter();
+                callbackInstance.SetLifecycleAdapter(callbackAdapter);
+                bool completed = TryCompleteLaunch(callbackInstance, false,
+                    out launchFailure);
+                callbackAdapter.FailSuspend = true;
+                ApplicationLifecycleResult suspendFailure = Suspend(callbackHandle);
+                callbackAdapter.FailSuspend = false;
+                callbackAdapter.CancelClose = true;
+                ApplicationLifecycleResult closeCancelled = RequestClose(
+                    callbackHandle, ApplicationCloseReason.UserRequest);
+                callbackAdapter.CancelClose = false;
+                Check(completed && suspendFailure.Code ==
+                    ApplicationLifecycleResultCode.CallbackFailed &&
+                    closeCancelled.Code == ApplicationLifecycleResultCode.Cancelled &&
+                    callbackInstance.LifecycleState ==
+                        ApplicationInstanceLifecycleState.Running,
+                    "lifecycle callback failure/cancellation", ref passed,
+                    ref failed, ref firstFailure);
+
+                ApplicationLifecycleResult suspended = Suspend(callbackHandle);
+                callbackAdapter.FailResume = true;
+                ApplicationLifecycleResult resumeFailure = Resume(callbackHandle);
+                callbackAdapter.FailResume = false;
+                ApplicationLifecycleResult resumed = Resume(callbackHandle);
+                Check(suspended.Success && resumeFailure.Code ==
+                    ApplicationLifecycleResultCode.CallbackFailed &&
+                    resumed.Success && callbackInstance.LifecycleState ==
+                        ApplicationInstanceLifecycleState.Inactive,
+                    "resume callback failure", ref passed, ref failed,
+                    ref firstFailure);
+                TryTerminate(callbackInstance, "phase6 callback cleanup");
+            } else {
+                Check(false, "callback lifecycle setup", ref passed, ref failed,
+                    ref firstFailure);
+            }
+
+            ApplicationInstance zero = null;
+            ApplicationInstanceHandle zeroHandle = ApplicationInstanceHandle.None;
+            bool zeroReused;
+            bool zeroStarted = TryBeginLaunch("selftest.phase6.zero",
+                ApplicationInstancePolicy.ReuseExisting,
+                LaunchRequest.ForAppId("selftest.phase6.zero", null, null,
+                    LaunchActivationIntent.NewInstance), out zero, out zeroReused,
+                out launchFailure);
+            if (zeroStarted) {
+                zeroHandle = zero.Handle;
+                bool completed = TryCompleteLaunch(zero, true, out launchFailure);
+                ApplicationLifecycleResult suspended = Suspend(zeroHandle);
+                ApplicationLifecycleResult resumed = Resume(zeroHandle);
+                bool stable = zero.OwnedWindowCount == 0 && completed &&
+                    suspended.Success && resumed.Success;
+                Check(stable, "zero-window reusable instance", ref passed,
+                    ref failed, ref firstFailure);
+                TryTerminate(zero, "phase6 zero-window cleanup");
+            } else {
+                Check(false, "zero-window lifecycle setup", ref passed,
+                    ref failed, ref firstFailure);
+            }
+
+            ApplicationInstance stale = null;
+            ApplicationInstanceHandle staleHandle = ApplicationInstanceHandle.None;
+            bool staleReused;
+            bool staleStarted = TryBeginLaunch("selftest.phase6.stale",
+                ApplicationInstancePolicy.MultiInstance,
+                LaunchRequest.ForAppId("selftest.phase6.stale", null, null,
+                    LaunchActivationIntent.NewInstance), out stale, out staleReused,
+                out launchFailure);
+            if (staleStarted) {
+                staleHandle = stale.Handle;
+                ApplicationLifecycleResult terminated = Terminate(staleHandle,
+                    ApplicationCloseReason.ForcedTermination);
+                ApplicationLifecycleResult staleActivation = Activate(staleHandle);
+                ApplicationLifecycleResult invalidResume = Resume(staleHandle);
+                Check((terminated.Success || terminated.Code ==
+                    ApplicationLifecycleResultCode.CallbackFailed) &&
+                    staleActivation.Code == ApplicationLifecycleResultCode.NotFound &&
+                    invalidResume.Code == ApplicationLifecycleResultCode.NotFound,
+                    "terminal and stale handle requests", ref passed,
+                    ref failed, ref firstFailure);
+            } else {
+                Check(false, "stale lifecycle setup", ref passed, ref failed,
+                    ref firstFailure);
+            }
+
+            bool cleanup = ActiveCount == startingActive && SuspendedCount == 0 &&
+                _activeApplicationHandle == ApplicationInstanceHandle.None;
+            Check(cleanup, "lifecycle state/capacity cleanup", ref passed,
+                ref failed, ref firstFailure);
+            Check(RunLifecycleMultiWindowSelfTest(),
+                "multi-window lifecycle semantics", ref passed, ref failed,
+                ref firstFailure);
+            cleanup = ActiveCount == startingActive && SuspendedCount == 0 &&
+                _activeApplicationHandle == ApplicationInstanceHandle.None;
+            Check(cleanup, "multi-window lifecycle cleanup", ref passed,
+                ref failed, ref firstFailure);
+            AppLaunchResolver.EmitSelfTestSummary("AppModelPhase6Lifecycle",
+                passed, failed, firstFailure);
+            Program.MarkUefiAppModelDiagnostic(
+                "LIFECYCLE_SELFTEST=passed=" + passed.ToString() +
+                ";failed=" + failed.ToString() + ";first=" +
+                (firstFailure ?? ""));
+            return failed == 0 && cleanup;
+        }
+
+        private static bool RunLifecycleMultiWindowSelfTest() {
+            if (WindowManager.Windows == null || Framebuffer.Graphics == null) {
+                return true;
+            }
+            ApplicationInstance instance;
+            bool reused;
+            LaunchResult failure;
+            if (!TryBeginLaunch("selftest.phase6.multiwindow",
+                    ApplicationInstancePolicy.ReuseExisting,
+                    LaunchRequest.ForAppId("selftest.phase6.multiwindow", null,
+                        null, LaunchActivationIntent.NewInstance), out instance,
+                    out reused, out failure)) return false;
+            OwnershipProbeWindow first = null;
+            OwnershipProbeWindow second = null;
+            bool result = false;
+            try {
+                first = new OwnershipProbeWindow();
+                second = new OwnershipProbeWindow();
+                bool attached = TryAttachWindow(instance, first) &&
+                    TryAttachWindow(instance, second);
+                bool launched = TryCompleteLaunch(instance, true, out failure);
+                ApplicationLifecycleResult deactivated = Deactivate(instance.Handle);
+                ApplicationLifecycleResult suspended = Suspend(instance.Handle);
+                int retained = instance.OwnedWindowCount;
+                ApplicationLifecycleResult resumed = Resume(instance.Handle);
+                ApplicationLifecycleResult activated = Activate(instance.Handle);
+                result = attached && launched && deactivated.Success &&
+                    suspended.Success && retained == 2 && resumed.Success &&
+                    activated.Success && instance.OwnedWindowCount == 2;
+            } catch {
+                result = false;
+            }
+            TryTerminate(instance, "phase6 multi-window cleanup");
+            if (first != null) first.CloseForApplicationTermination();
+            if (second != null) second.CloseForApplicationTermination();
+            WindowManager.CleanupClosedWindows();
+            return result && ActiveCount == 0 && SuspendedCount == 0;
+        }
+
+        /// <summary>
+        /// Bounded runtime proof using the normal factory/application path.
+        /// It intentionally performs cooperative lifecycle work only and
+        /// closes every instance before returning to the shell.
+        /// </summary>
+        public static bool RunLifecycleRuntimeDiagnostic() {
+            if (WindowManager.Windows == null || Desktop.Apps == null) return false;
+            ApplicationInstance calculator = null;
+            ApplicationInstance notepad = null;
+            ApplicationInstance console = null;
+            ApplicationInstance consoleAgain = null;
+            ApplicationInstance imageViewer = null;
+            try {
+                LaunchResult calculatorResult;
+                bool calculatorLaunch = Desktop.LaunchApplication(
+                    LaunchRequest.ForAppId("gxos.builtin.calculator", null, null,
+                        LaunchActivationIntent.Launch), out calculatorResult);
+                calculatorLaunch = calculatorLaunch && calculatorResult != null &&
+                    calculatorResult.Success &&
+                    TryGet(calculatorResult.InstanceHandle, out calculator);
+
+                LaunchResult notepadResult;
+                bool notepadLaunch = Desktop.LaunchApplication(
+                    LaunchRequest.ForFile("gxos.builtin.notepad", "README.md",
+                        null, "open", "phase6.runtime", false,
+                        LaunchActivationIntent.Launch), out notepadResult);
+                notepadLaunch = notepadLaunch && notepadResult != null &&
+                    notepadResult.Success &&
+                    TryGet(notepadResult.InstanceHandle, out notepad);
+                bool deactivated = calculator != null && notepad != null &&
+                    calculator.LifecycleState ==
+                        ApplicationInstanceLifecycleState.Inactive &&
+                    notepad.Document == "README.md";
+
+                ApplicationLifecycleResult suspended = calculator == null
+                    ? null : Suspend(calculator.Handle);
+                LaunchResult consoleResult;
+                bool consoleLaunch = Desktop.LaunchApplication(
+                    LaunchRequest.ForAppId("gxos.builtin.console", null, null,
+                        LaunchActivationIntent.Launch), out consoleResult);
+                consoleLaunch = consoleLaunch && consoleResult != null &&
+                    consoleResult.Success &&
+                    TryGet(consoleResult.InstanceHandle, out console);
+                bool operatedWhileSuspended = suspended != null && suspended.Success &&
+                    calculator.LifecycleState ==
+                        ApplicationInstanceLifecycleState.Suspended &&
+                    console != null && console.IsActivated;
+
+                ApplicationLifecycleResult notepadDeactivated = notepad == null
+                    ? null : Deactivate(notepad.Handle);
+                ApplicationLifecycleResult notepadSuspended = notepad == null
+                    ? null : Suspend(notepad.Handle);
+                ApplicationLifecycleResult notepadResumed = notepad == null
+                    ? null : Resume(notepad.Handle);
+                bool documentRetained = notepad != null && notepad.Document ==
+                    "README.md" && notepadSuspended != null &&
+                    notepadSuspended.Success && notepadResumed != null &&
+                    notepadResumed.Success;
+
+                ApplicationLifecycleResult resumed = calculator == null
+                    ? null : Resume(calculator.Handle);
+                ApplicationLifecycleResult reactivated = calculator == null
+                    ? null : Activate(calculator.Handle);
+                bool calculatorResumed = resumed != null && resumed.Success &&
+                    reactivated != null && reactivated.Success &&
+                    calculator.LifecycleState ==
+                        ApplicationInstanceLifecycleState.Activated;
+
+                LaunchResult consoleAgainResult;
+                bool consoleAgainLaunch = Desktop.LaunchApplication(
+                    LaunchRequest.ForAppId("gxos.builtin.console", null, null,
+                        LaunchActivationIntent.ActivateExisting),
+                    out consoleAgainResult);
+                consoleAgainLaunch = consoleAgainLaunch && consoleAgainResult != null &&
+                    consoleAgainResult.Success &&
+                    TryGet(consoleAgainResult.InstanceHandle, out consoleAgain);
+                bool consoleReused = console != null && consoleAgain != null &&
+                    console.Handle == consoleAgain.Handle &&
+                    console.OwnedWindowCount == consoleAgain.OwnedWindowCount;
+
+                LaunchResult imageResult;
+                bool imageLaunch = Desktop.LaunchApplication(
+                    LaunchRequest.ForFile("gxos.builtin.imageviewer",
+                        "Images/Banner.png", null, "open", "phase6.runtime",
+                        false, LaunchActivationIntent.Launch), out imageResult);
+                imageLaunch = imageLaunch && imageResult != null &&
+                    imageResult.Success &&
+                    TryGet(imageResult.InstanceHandle, out imageViewer);
+                bool imageRetained = imageViewer != null &&
+                    imageViewer.OwnedWindowCount > 0;
+
+                bool closed = CloseRuntimeInstance(calculator) &&
+                    CloseRuntimeInstance(notepad) &&
+                    CloseRuntimeInstance(console) &&
+                    (consoleAgain == null || consoleAgain == console ||
+                        CloseRuntimeInstance(consoleAgain)) &&
+                    CloseRuntimeInstance(imageViewer);
+                WindowManager.CleanupClosedWindows();
+                bool cleanup = ActiveCount == 0 && SuspendedCount == 0 &&
+                    _activeApplicationHandle == ApplicationInstanceHandle.None;
+                bool passed = calculatorLaunch && notepadLaunch && deactivated &&
+                    operatedWhileSuspended && documentRetained && calculatorResumed &&
+                    consoleAgainLaunch && consoleReused && imageLaunch &&
+                    imageRetained && closed && cleanup;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("LIFECYCLE_RUNTIME=calculator=" +
+                    (calculatorLaunch ? "1" : "0") + ";notepad=" +
+                    (notepadLaunch ? "1" : "0") + ";consoleReuse=" +
+                    (consoleReused ? "1" : "0") + ";image=" +
+                    (imageLaunch ? "1" : "0") + ";cleanup=" +
+                    (cleanup ? "1" : "0") + ";result=" +
+                    (passed ? "PASS" : "FAIL"));
+#endif
+                return passed;
+            } catch {
+                if (calculator != null) TryTerminate(calculator,
+                    "phase6 runtime exception cleanup");
+                if (notepad != null) TryTerminate(notepad,
+                    "phase6 runtime exception cleanup");
+                if (console != null) TryTerminate(console,
+                    "phase6 runtime exception cleanup");
+                if (imageViewer != null) TryTerminate(imageViewer,
+                    "phase6 runtime exception cleanup");
+                WindowManager.CleanupClosedWindows();
+                return false;
+            }
+        }
+
+        private static bool CloseRuntimeInstance(ApplicationInstance instance) {
+            if (instance == null) return true;
+            ApplicationLifecycleResult result = RequestClose(instance.Handle,
+                ApplicationCloseReason.ApplicationRequest);
+            return result.Success || result.Code ==
+                ApplicationLifecycleResultCode.CallbackFailed;
         }
 
         private static bool HandleAndTransitionTest(ref string firstFailure) {
