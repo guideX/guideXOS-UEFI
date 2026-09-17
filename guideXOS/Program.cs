@@ -1045,6 +1045,8 @@ unsafe class Program {
                 ApplicationInstanceRegistry.RunTaskbarGroupingRuntimeDiagnostic();
             bool taskManagerObservationRuntime =
                 ApplicationInstanceRegistry.RunTaskManagerObservationDiagnostic();
+            bool taskbarGroupingCleanup =
+                ApplicationInstanceRegistry.LastTaskbarGroupingRuntimeCleanup;
             SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_DIAGNOSTIC=" +
                 (taskbarGroupingRuntime ? "PASS" : "FAIL"));
             SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_ACTIVE=" +
@@ -1052,7 +1054,7 @@ unsafe class Program {
             SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_STALE=" +
                 ApplicationInstanceRegistry.StaleOwnershipCount.ToString());
             SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_CLEANUP=" +
-                (taskbarGroupingRuntime ? "PASS" : "FAIL"));
+                (taskbarGroupingCleanup ? "PASS" : "FAIL"));
             SerialBreadcrumb("APP_RUNTIME_TASKBAR_OBSERVATION_DIAGNOSTIC=" +
                 (taskManagerObservationRuntime ? "PASS" : "FAIL"));
         }

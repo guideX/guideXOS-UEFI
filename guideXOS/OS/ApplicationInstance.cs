@@ -432,6 +432,7 @@ namespace guideXOS.OS {
         private static int _staleOwnershipCount;
         private static ApplicationInstanceHandle _activeApplicationHandle;
         private static bool _routingForeground;
+        private static bool _lastTaskbarGroupingRuntimeCleanup;
 
         public static void Initialize() {
             if (_instances != null) return;
@@ -466,6 +467,9 @@ namespace guideXOS.OS {
         }
         public static ApplicationInstanceHandle ActiveApplicationHandle {
             get { return _activeApplicationHandle; }
+        }
+        public static bool LastTaskbarGroupingRuntimeCleanup {
+            get { return _lastTaskbarGroupingRuntimeCleanup; }
         }
         public static int ObservationCount {
             get {
@@ -1927,6 +1931,7 @@ namespace guideXOS.OS {
         /// observed/reconciled as the presentation projection.
         /// </summary>
         public static bool RunTaskbarGroupingRuntimeDiagnostic() {
+            _lastTaskbarGroupingRuntimeCleanup = false;
             bool oneInstanceTwoWindows = false;
             bool sameInstanceSwitch = false;
             bool closeFirstRetainsSecond = false;
@@ -1951,7 +1956,6 @@ namespace guideXOS.OS {
             ApplicationInstance imageViewerAgain = null;
             TaskbarRuntimeProbeWindow firstWindow = null;
             TaskbarRuntimeProbeWindow secondWindow = null;
-            int startingActive = ActiveCount;
             int startingWindowCount = WindowManager.Windows == null
                 ? -1 : WindowManager.Windows.Count;
             int startingEntryCount = TaskbarApplicationEntryRegistry.EntryCount;
@@ -2156,11 +2160,23 @@ namespace guideXOS.OS {
                 CloseTaskbarRuntimeFixture(secondWindow);
                 WindowManager.CleanupClosedWindows();
                 TaskbarApplicationEntryRegistry.Reconcile();
-                cleanup = ActiveCount == startingActive &&
-                    TaskbarApplicationEntryRegistry.EntryCount == startingEntryCount &&
-                    WindowManager.Windows != null &&
-                    WindowManager.Windows.Count == startingWindowCount;
-                staleTaskbarOwners = TaskbarApplicationEntryRegistry.StaleOwnerCount == 0;
+                staleTaskbarOwners = StaleOwnershipCount == 0 &&
+                    TaskbarApplicationEntryRegistry.StaleOwnerCount == 0;
+                bool fixtureBaselineRestored =
+                    WindowManager.Windows != null && startingWindowCount >= 0 &&
+                    WindowManager.Windows.Count == startingWindowCount &&
+                    (firstWindow == null ||
+                        !firstWindow.ApplicationInstanceHandle.IsValid) &&
+                    (secondWindow == null ||
+                        !secondWindow.ApplicationInstanceHandle.IsValid);
+                bool phase7ZeroState = ActiveCount == 0 &&
+                    SuspendedCount == 0 &&
+                    ActiveApplicationHandle == ApplicationInstanceHandle.None &&
+                    TaskbarApplicationEntryRegistry.EntryCount == 0 &&
+                    StaleOwnershipCount == 0 &&
+                    TaskbarApplicationEntryRegistry.StaleOwnerCount == 0;
+                cleanup = phase7ZeroState && fixtureBaselineRestored;
+                _lastTaskbarGroupingRuntimeCleanup = cleanup;
             }
 
             EmitTaskbarRuntimeMarker("ONE_INSTANCE_TWO_WINDOWS",
