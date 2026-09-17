@@ -292,8 +292,10 @@ namespace guideXOS.GUI {
             if (!handle.IsValid || !ApplicationInstanceRegistry.TryGet(handle,
                     out instance)) {
                 if (window != null && window.ApplicationInstanceHandle == handle) {
-                    // This also records the bounded stale-ownership diagnostic.
-                    WindowManager.IsTaskbarEntryValid(window);
+                    // A direct taskbar request has already reconciled the
+                    // projection.  Detach this stale test/request target
+                    // without consuming the renderer stale-owner diagnostic.
+                    window.ClearApplicationInstance();
                 }
                 result = ApplicationLifecycleResult.Failed(
                     ApplicationLifecycleResultCode.NotFound, handle,
@@ -796,7 +798,7 @@ namespace guideXOS.GUI {
                     staleFocusResult.Code == ApplicationLifecycleResultCode.NotFound &&
                     !secondWindow.ApplicationInstanceHandle.IsValid &&
                     ApplicationInstanceRegistry.StaleOwnershipCount ==
-                        staleOwnershipBeforeFocus + 1 &&
+                        staleOwnershipBeforeFocus &&
                     !TryGet(staleHandle,
                     out TaskbarApplicationEntry ignoredStale) &&
                     !TryGetForWindow(secondWindow,
