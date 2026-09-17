@@ -420,8 +420,9 @@ namespace guideXOS.GUI {
                         var w = WindowManager.Windows[i];
                         if (!w.Visible || !w.ShowInTaskbar) continue;
                         TaskbarApplicationEntry entry;
+                        bool attached = w.ApplicationInstanceHandle.IsValid;
                         bool semantic = TryResolveSemanticWindow(w, out entry);
-                        if (!semantic && w.ApplicationInstanceHandle.IsValid) continue;
+                        if (!semantic && attached) continue;
                         // button rect
                         int x = btnX; int y = btnY; int wRect = btnW; int hRect = btnH;
                         bool hover = (mx >= x && mx <= x + wRect && my >= y && my <= y + hRect);
