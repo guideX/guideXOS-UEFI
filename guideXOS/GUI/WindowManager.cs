@@ -481,9 +481,13 @@ namespace guideXOS.GUI {
         /// </summary>
         internal static bool IsTaskbarEntryValid(Window window) {
             if (window == null || !window.ApplicationInstanceHandle.IsValid) return true;
+            ApplicationInstance instance;
             if (ApplicationInstanceRegistry.TryGet(
-                    window.ApplicationInstanceHandle,
-                    out ApplicationInstance ignored)) return true;
+                    window.ApplicationInstanceHandle, out instance) &&
+                    instance != null &&
+                    instance.LifecycleState != ApplicationInstanceLifecycleState.Terminated &&
+                    instance.LifecycleState != ApplicationInstanceLifecycleState.Failed &&
+                    instance.OwnsWindow(window)) return true;
             ApplicationInstanceRegistry.RecordStaleOwnership();
             window.ClearApplicationInstance();
             return false;

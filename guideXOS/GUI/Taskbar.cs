@@ -409,7 +409,12 @@ namespace guideXOS.GUI {
                         var w = WindowManager.Windows[i];
                         if (!w.Visible || !w.ShowInTaskbar) continue;
                         TaskbarApplicationEntry entry;
-                        bool semantic = TaskbarApplicationEntryRegistry.TryGetForWindow(
+                        bool semantic = false;
+                        if (w.ApplicationInstanceHandle.IsValid &&
+                                !WindowManager.IsTaskbarEntryValid(w)) {
+                            continue;
+                        }
+                        semantic = TaskbarApplicationEntryRegistry.TryGetForWindow(
                             w, out entry);
                         if (!semantic && w.ApplicationInstanceHandle.IsValid) continue;
                         // button rect

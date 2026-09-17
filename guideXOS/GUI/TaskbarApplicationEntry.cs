@@ -421,6 +421,7 @@ namespace guideXOS.GUI {
             bool closeFinalAppliesPolicy;
             bool zeroWindowReusableSuppressed;
             bool twoSameDescriptorEntriesIndependent;
+            bool rendererProjectionContract;
             bool staleEntryRejected;
             bool cleanup;
             RunProjectionAssertions(out oneInstanceOneWindowEntry,
@@ -431,7 +432,8 @@ namespace guideXOS.GUI {
                 out unsupportedResumeIsBounded,
                 out closeOneRetainsGroup, out closeFinalAppliesPolicy,
                 out zeroWindowReusableSuppressed,
-                out twoSameDescriptorEntriesIndependent, out staleEntryRejected,
+                out twoSameDescriptorEntriesIndependent,
+                out rendererProjectionContract, out staleEntryRejected,
                 out cleanup);
 
             Check(oneInstanceOneWindowEntry, "one instance one Window", ref passed, ref failed, ref firstFailure);
@@ -447,6 +449,7 @@ namespace guideXOS.GUI {
             Check(closeFinalAppliesPolicy, "close final Window policy", ref passed, ref failed, ref firstFailure);
             Check(zeroWindowReusableSuppressed, "reusable zero-window suppression", ref passed, ref failed, ref firstFailure);
             Check(twoSameDescriptorEntriesIndependent, "same descriptor separate instances", ref passed, ref failed, ref firstFailure);
+            Check(rendererProjectionContract, "renderer projection contract after reconciliation", ref passed, ref failed, ref firstFailure);
             Check(staleEntryRejected, "stale taskbar entry", ref passed, ref failed, ref firstFailure);
             Check(cleanup, "taskbar grouping cleanup", ref passed, ref failed, ref firstFailure);
 
@@ -468,6 +471,7 @@ namespace guideXOS.GUI {
                 out bool closeFinalAppliesPolicy,
                 out bool zeroWindowReusableSuppressed,
                 out bool twoSameDescriptorEntriesIndependent,
+                out bool rendererProjectionContract,
                 out bool staleEntryRejected, out bool cleanup) {
             oneInstanceOneWindowEntry = false;
             multiWindowSingleEntry = false;
@@ -482,6 +486,7 @@ namespace guideXOS.GUI {
             closeFinalAppliesPolicy = false;
             zeroWindowReusableSuppressed = false;
             twoSameDescriptorEntriesIndependent = false;
+            rendererProjectionContract = false;
             staleEntryRejected = false;
             cleanup = false;
             if (WindowManager.Windows == null || Framebuffer.Graphics == null ||
@@ -523,6 +528,9 @@ namespace guideXOS.GUI {
                 TaskbarApplicationEntry primaryEntry;
                 bool primaryFound = TryGet(primary == null
                     ? ApplicationInstanceHandle.None : primary.Handle, out primaryEntry);
+                int primaryStaleOwners;
+                int authoritativePrimaryPresentableCount = primary == null ? -1 :
+                    CountPresentableWindows(primary, out primaryStaleOwners);
                 ApplicationInstanceObservation observation =
                     default(ApplicationInstanceObservation);
                 bool observationMatches = ApplicationInstanceRegistry.ObservationCount > 0 &&
@@ -531,6 +539,10 @@ namespace guideXOS.GUI {
                 oneInstanceOneWindowEntry = attached && primaryFound &&
                     EntryCount == 1 && primaryEntry.OwnedWindowCount == 1 &&
                     primaryEntry.PresentableWindowCount == 1 && observationMatches;
+                bool primaryRendererProjectionContract = attached && primaryFound &&
+                    primaryEntry.OwnedWindowCount == primary.OwnedWindowCount &&
+                    primaryEntry.PresentableWindowCount ==
+                        authoritativePrimaryPresentableCount && EntryCount == 1;
 
                 secondWindow = new TaskbarProjectionProbeWindow();
                 attached = ApplicationInstanceRegistry.TryAttachWindow(primary, secondWindow);
@@ -734,11 +746,26 @@ namespace guideXOS.GUI {
                     ApplicationInstanceRegistry.TryAttachWindow(secondDuplicate,
                         duplicateSecondWindow);
                 Reconcile();
-                twoSameDescriptorEntriesIndependent = duplicatesAttached &&
+                int firstDuplicateStaleOwners;
+                int secondDuplicateStaleOwners;
+                int authoritativeFirstDuplicatePresentableCount = firstDuplicate == null ? -1 :
+                    CountPresentableWindows(firstDuplicate, out firstDuplicateStaleOwners);
+                int authoritativeSecondDuplicatePresentableCount = secondDuplicate == null ? -1 :
+                    CountPresentableWindows(secondDuplicate, out secondDuplicateStaleOwners);
+                bool duplicateRendererProjectionContract = duplicatesAttached &&
                     firstDuplicate.Handle != secondDuplicate.Handle &&
                     TryGet(firstDuplicate.Handle, out TaskbarApplicationEntry firstDuplicateEntry) &&
                     TryGet(secondDuplicate.Handle, out TaskbarApplicationEntry secondDuplicateEntry) &&
-                    firstDuplicateEntry != secondDuplicateEntry && EntryCount == 2;
+                    firstDuplicateEntry != secondDuplicateEntry &&
+                    firstDuplicateEntry.OwnedWindowCount == firstDuplicate.OwnedWindowCount &&
+                    firstDuplicateEntry.PresentableWindowCount ==
+                        authoritativeFirstDuplicatePresentableCount &&
+                    secondDuplicateEntry.OwnedWindowCount == secondDuplicate.OwnedWindowCount &&
+                    secondDuplicateEntry.PresentableWindowCount ==
+                        authoritativeSecondDuplicatePresentableCount && EntryCount == 2;
+                twoSameDescriptorEntriesIndependent = duplicateRendererProjectionContract;
+                rendererProjectionContract = primaryRendererProjectionContract &&
+                    duplicateRendererProjectionContract;
 
                 staleEntryRejected = !staleFocusRejected && staleFocusResult != null &&
                     staleFocusResult.Code == ApplicationLifecycleResultCode.NotFound &&
@@ -763,6 +790,7 @@ namespace guideXOS.GUI {
                 closeFinalAppliesPolicy = false;
                 zeroWindowReusableSuppressed = false;
                 twoSameDescriptorEntriesIndependent = false;
+                rendererProjectionContract = false;
                 staleEntryRejected = false;
             } finally {
                 if (primary != null) ApplicationInstanceRegistry.TryTerminate(primary,
