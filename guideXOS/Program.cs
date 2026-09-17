@@ -1885,6 +1885,8 @@ unsafe class Program {
                 failure = "APPLICATION_INSTANCE_LIFECYCLE";
             } else if (!ApplicationInstanceRegistry.RunLifecycleSelfTest()) {
                 failure = "APPLICATION_LIFECYCLE_PHASE6";
+            } else if (!TaskbarApplicationEntryRegistry.RunSelfTest()) {
+                failure = "TASKBAR_APPLICATION_GROUPING";
             } else if (!ApplicationFactoryRegistry.RunSelfTest()) {
                 failure = "APPLICATION_FACTORY";
             } else if (!AppModelCompatibilityDiagnostics.RunSelfTest(
