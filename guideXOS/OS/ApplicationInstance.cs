@@ -73,6 +73,10 @@ namespace guideXOS.OS {
             return new ApplicationInstanceHandle(((ulong)(uint)slot << 32) | generation);
         }
 
+        internal static ApplicationInstanceHandle FromValue(ulong value) {
+            return new ApplicationInstanceHandle(value);
+        }
+
         public static ApplicationInstanceHandle None {
             get { return new ApplicationInstanceHandle(0); }
         }
@@ -108,6 +112,42 @@ namespace guideXOS.OS {
         public override string ToString() {
             if (!IsValid) return "none";
             return "instance-" + Slot.ToString() + "-" + Generation.ToString();
+        }
+    }
+
+    /// <summary>
+    /// Immutable, allocation-free application-instance snapshot for observers.
+    /// It deliberately exposes no lifecycle or ownership mutation surface.
+    /// </summary>
+    public readonly struct ApplicationInstanceObservation {
+        private readonly ulong _handleValue;
+        private readonly string _descriptorId;
+        private readonly ApplicationInstanceLifecycleState _lifecycleState;
+        private readonly bool _isActivated;
+        private readonly bool _isSuspended;
+        private readonly int _ownedWindowCount;
+
+        public ApplicationInstanceHandle Handle {
+            get { return ApplicationInstanceHandle.FromValue(_handleValue); }
+        }
+        public string DescriptorId { get { return _descriptorId; } }
+        public ApplicationInstanceLifecycleState LifecycleState {
+            get { return _lifecycleState; }
+        }
+        public bool IsActivated { get { return _isActivated; } }
+        public bool IsSuspended { get { return _isSuspended; } }
+        public int OwnedWindowCount { get { return _ownedWindowCount; } }
+
+        internal ApplicationInstanceObservation(ApplicationInstance instance) {
+            _handleValue = instance == null ? 0UL : instance.Handle.Value;
+            _descriptorId = instance == null ? null : instance.DescriptorId;
+            _lifecycleState = instance == null
+                ? ApplicationInstanceLifecycleState.Failed
+                : instance.LifecycleState;
+            _isActivated = instance != null && instance.IsActivated;
+            _isSuspended = instance != null && instance.LifecycleState ==
+                ApplicationInstanceLifecycleState.Suspended;
+            _ownedWindowCount = instance == null ? 0 : instance.OwnedWindowCount;
         }
     }
 
@@ -426,6 +466,30 @@ namespace guideXOS.OS {
         }
         public static ApplicationInstanceHandle ActiveApplicationHandle {
             get { return _activeApplicationHandle; }
+        }
+        public static int ObservationCount {
+            get {
+                Initialize();
+                int count = 0;
+                for (int i = 0; i < Capacity; i++) {
+                    if (_used[i] && _instances[i] != null) count++;
+                }
+                return count;
+            }
+        }
+
+        public static bool TryGetObservationAt(
+                int ordinal, out ApplicationInstanceObservation observation) {
+            Initialize();
+            observation = default(ApplicationInstanceObservation);
+            if (ordinal < 0) return false;
+            for (int i = 0; i < Capacity; i++) {
+                if (!_used[i] || _instances[i] == null) continue;
+                if (ordinal-- != 0) continue;
+                observation = new ApplicationInstanceObservation(_instances[i]);
+                return true;
+            }
+            return false;
         }
         public static int SuspendedCount {
             get {
@@ -1225,6 +1289,23 @@ namespace guideXOS.OS {
             if (window.ApplicationInstanceHandle.IsValid) return false;
             if (!instance.AttachWindow(window)) return false;
             _windowAttachCount++;
+            return true;
+        }
+
+        /// <summary>
+        /// Validates a generation-safe instance/window relationship without
+        /// changing lifecycle, ownership, z-order, or registry membership.
+        /// </summary>
+        internal static bool TryValidateOwnedWindow(
+                ApplicationInstanceHandle handle, Window window,
+                out ApplicationInstance instance) {
+            instance = null;
+            if (window == null || !TryGet(handle, out instance)) return false;
+            if (window.ApplicationInstanceHandle != handle ||
+                    !instance.OwnsWindow(window)) {
+                instance = null;
+                return false;
+            }
             return true;
         }
 
