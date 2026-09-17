@@ -300,6 +300,7 @@ namespace guideXOS.GUI {
                 handle;
             result = ApplicationInstanceRegistry.Activate(handle);
             if (!result.Success) return false;
+            if (window.IsMinimized) window.Restore();
             WindowManager.MoveToEnd(window);
             entry.RecordWindowSelection(window);
             if (sameInstance) _sameInstanceWindowSwitchCount++;
@@ -379,6 +380,7 @@ namespace guideXOS.GUI {
             bool oneInstanceOneWindowEntry;
             bool multiWindowSingleEntry;
             bool sameInstanceSwitchNoLifecycleChurn;
+            bool crossInstanceWindowSwitchActivatesTarget;
             bool closeOneRetainsGroup;
             bool closeFinalAppliesPolicy;
             bool zeroWindowReusableSuppressed;
@@ -387,6 +389,7 @@ namespace guideXOS.GUI {
             bool cleanup;
             RunProjectionAssertions(out oneInstanceOneWindowEntry,
                 out multiWindowSingleEntry, out sameInstanceSwitchNoLifecycleChurn,
+                out crossInstanceWindowSwitchActivatesTarget,
                 out closeOneRetainsGroup, out closeFinalAppliesPolicy,
                 out zeroWindowReusableSuppressed,
                 out twoSameDescriptorEntriesIndependent, out staleEntryRejected,
@@ -395,6 +398,7 @@ namespace guideXOS.GUI {
             Check(oneInstanceOneWindowEntry, "one instance one Window", ref passed, ref failed, ref firstFailure);
             Check(multiWindowSingleEntry, "one instance multiple Windows one group", ref passed, ref failed, ref firstFailure);
             Check(sameInstanceSwitchNoLifecycleChurn, "same instance Window switch", ref passed, ref failed, ref firstFailure);
+            Check(crossInstanceWindowSwitchActivatesTarget, "cross instance Window switch", ref passed, ref failed, ref firstFailure);
             Check(closeOneRetainsGroup, "close one Window retains group", ref passed, ref failed, ref firstFailure);
             Check(closeFinalAppliesPolicy, "close final Window policy", ref passed, ref failed, ref firstFailure);
             Check(zeroWindowReusableSuppressed, "reusable zero-window suppression", ref passed, ref failed, ref firstFailure);
@@ -410,6 +414,7 @@ namespace guideXOS.GUI {
                 out bool oneInstanceOneWindowEntry,
                 out bool multiWindowSingleEntry,
                 out bool sameInstanceSwitchNoLifecycleChurn,
+                out bool crossInstanceWindowSwitchActivatesTarget,
                 out bool closeOneRetainsGroup,
                 out bool closeFinalAppliesPolicy,
                 out bool zeroWindowReusableSuppressed,
@@ -418,22 +423,26 @@ namespace guideXOS.GUI {
             oneInstanceOneWindowEntry = false;
             multiWindowSingleEntry = false;
             sameInstanceSwitchNoLifecycleChurn = false;
+            crossInstanceWindowSwitchActivatesTarget = false;
             closeOneRetainsGroup = false;
             closeFinalAppliesPolicy = false;
             zeroWindowReusableSuppressed = false;
             twoSameDescriptorEntriesIndependent = false;
             staleEntryRejected = false;
             cleanup = false;
-            if (WindowManager.Windows == null || Framebuffer.Graphics == null) {
+            if (WindowManager.Windows == null || Framebuffer.Graphics == null ||
+                    WindowManager.font == null) {
                 return;
             }
 
             ApplicationInstance primary = null;
+            ApplicationInstance crossInstance = null;
             ApplicationInstance reusable = null;
             ApplicationInstance firstDuplicate = null;
             ApplicationInstance secondDuplicate = null;
             TaskbarProjectionProbeWindow firstWindow = null;
             TaskbarProjectionProbeWindow secondWindow = null;
+            TaskbarProjectionProbeWindow crossWindow = null;
             TaskbarProjectionProbeWindow duplicateFirstWindow = null;
             TaskbarProjectionProbeWindow duplicateSecondWindow = null;
             ApplicationInstanceHandle staleHandle = ApplicationInstanceHandle.None;
@@ -485,6 +494,37 @@ namespace guideXOS.GUI {
                     primaryEntry.MostRecentWindow == secondWindow &&
                     activations == ApplicationInstanceRegistry.InstancesActivated &&
                     deactivations == ApplicationInstanceRegistry.InstancesDeactivated;
+
+                bool crossStarted = ApplicationInstanceRegistry.TryBeginLaunch(
+                    "selftest.phase7.cross", ApplicationInstancePolicy.MultiInstance,
+                    LaunchRequest.ForAppId("selftest.phase7.cross", null, null,
+                        LaunchActivationIntent.NewInstance), out crossInstance,
+                    out reused, out failure);
+                crossWindow = new TaskbarProjectionProbeWindow();
+                bool crossAttached = crossStarted &&
+                    ApplicationInstanceRegistry.TryAttachWindow(crossInstance,
+                        crossWindow) && ApplicationInstanceRegistry.TryCompleteLaunch(
+                            crossInstance, false, out failure);
+                Reconcile();
+                bool crossMinimized = crossAttached &&
+                    crossWindow.PrepareForTaskbarFocus();
+                ApplicationLifecycleResult crossFocusResult = null;
+                bool crossSelected = crossMinimized && TryFocusWindow(
+                    crossInstance.Handle, crossWindow, out crossFocusResult);
+                crossInstanceWindowSwitchActivatesTarget = crossSelected &&
+                    crossFocusResult.Success && crossFocusResult.FromState ==
+                        ApplicationInstanceLifecycleState.Running &&
+                    crossFocusResult.ToState ==
+                        ApplicationInstanceLifecycleState.Activated &&
+                    ApplicationInstanceRegistry.ActiveApplicationHandle ==
+                        crossInstance.Handle && crossInstance.IsActivated &&
+                    primary.LifecycleState == ApplicationInstanceLifecycleState.Inactive &&
+                    !crossWindow.IsMinimized;
+                if (crossInstance != null) ApplicationInstanceRegistry.TryTerminate(
+                    crossInstance, "phase7 cross-instance assertion cleanup");
+                CloseFixture(crossWindow);
+                WindowManager.CleanupClosedWindows();
+                Reconcile();
 
                 ApplicationInstanceRegistry.OnWindowClosed(firstWindow);
                 Reconcile();
@@ -551,6 +591,7 @@ namespace guideXOS.GUI {
                 oneInstanceOneWindowEntry = false;
                 multiWindowSingleEntry = false;
                 sameInstanceSwitchNoLifecycleChurn = false;
+                crossInstanceWindowSwitchActivatesTarget = false;
                 closeOneRetainsGroup = false;
                 closeFinalAppliesPolicy = false;
                 zeroWindowReusableSuppressed = false;
@@ -559,6 +600,8 @@ namespace guideXOS.GUI {
             } finally {
                 if (primary != null) ApplicationInstanceRegistry.TryTerminate(primary,
                     "phase7 primary cleanup");
+                if (crossInstance != null) ApplicationInstanceRegistry.TryTerminate(
+                    crossInstance, "phase7 cross-instance cleanup");
                 if (reusable != null) ApplicationInstanceRegistry.TryTerminate(reusable,
                     "phase7 reusable cleanup");
                 if (firstDuplicate != null) ApplicationInstanceRegistry.TryTerminate(
@@ -567,6 +610,7 @@ namespace guideXOS.GUI {
                     secondDuplicate, "phase7 duplicate cleanup");
                 CloseFixture(firstWindow);
                 CloseFixture(secondWindow);
+                CloseFixture(crossWindow);
                 CloseFixture(duplicateFirstWindow);
                 CloseFixture(duplicateSecondWindow);
                 WindowManager.CleanupClosedWindows();
@@ -582,6 +626,11 @@ namespace guideXOS.GUI {
 
         private sealed class TaskbarProjectionProbeWindow : Window {
             internal TaskbarProjectionProbeWindow() : base(32, 96, 160, 120) { }
+            internal bool PrepareForTaskbarFocus() {
+                base.OnDraw();
+                Minimize();
+                return IsMinimized;
+            }
             public override void OnDraw() { }
             public override void OnInput() { }
         }
