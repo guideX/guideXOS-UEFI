@@ -1042,19 +1042,19 @@ unsafe class Program {
             SerialBreadcrumb("APP_RUNTIME_LIFECYCLE_DIAGNOSTIC=" +
                 (lifecycleRuntime ? "PASS" : "FAIL"));
             bool taskbarGroupingRuntime =
-                TaskbarApplicationEntryRegistry.RunSelfTest();
-            bool taskbarGroupingCleanup =
-                ApplicationInstanceRegistry.ActiveCount == 0 &&
-                ApplicationInstanceRegistry.SuspendedCount == 0 &&
-                ApplicationInstanceRegistry.StaleOwnershipCount == 0;
+                ApplicationInstanceRegistry.RunTaskbarGroupingRuntimeDiagnostic();
+            bool taskManagerObservationRuntime =
+                ApplicationInstanceRegistry.RunTaskManagerObservationDiagnostic();
             SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_DIAGNOSTIC=" +
-                (taskbarGroupingRuntime && taskbarGroupingCleanup ? "PASS" : "FAIL"));
+                (taskbarGroupingRuntime ? "PASS" : "FAIL"));
             SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_ACTIVE=" +
                 ApplicationInstanceRegistry.ActiveCount.ToString());
             SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_STALE=" +
                 ApplicationInstanceRegistry.StaleOwnershipCount.ToString());
             SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_CLEANUP=" +
-                (taskbarGroupingCleanup ? "PASS" : "FAIL"));
+                (taskbarGroupingRuntime ? "PASS" : "FAIL"));
+            SerialBreadcrumb("APP_RUNTIME_TASKBAR_OBSERVATION_DIAGNOSTIC=" +
+                (taskManagerObservationRuntime ? "PASS" : "FAIL"));
         }
 #endif
 
@@ -1961,6 +1961,16 @@ unsafe class Program {
                 SerialBreadcrumb("APP_MODEL_LIFECYCLE_SELFTEST_OK=1");
                 SerialBreadcrumb("APP_MODEL_INSTANCE_OBSERVATIONS=" +
                     ApplicationInstanceRegistry.ObservationCount.ToString());
+                bool taskManagerObservation =
+                    ApplicationInstanceRegistry.RunTaskManagerObservationDiagnostic();
+                SerialBreadcrumb("APP_MODEL_TASKBAR_OBSERVATION_COUNT=" +
+                    ApplicationInstanceRegistry.ObservationCount.ToString());
+                SerialBreadcrumb("APP_MODEL_TASKBAR_PROJECTION_ENTRIES=" +
+                    TaskbarApplicationEntryRegistry.EntryCount.ToString());
+                SerialBreadcrumb("APP_MODEL_TASKBAR_PROJECTION_STALE=" +
+                    TaskbarApplicationEntryRegistry.StaleOwnerCount.ToString());
+                SerialBreadcrumb("APP_MODEL_TASKBAR_OBSERVATION_DIAGNOSTIC=" +
+                    (taskManagerObservation ? "PASS" : "FAIL"));
                 SerialBreadcrumb("APP_MODEL_TASKBAR_GROUPING_SELFTEST_OK=1");
                 SerialBreadcrumb("APP_MODEL_FACTORY_REGISTRATIONS=" +
                     ApplicationFactoryRegistry.FactoryRegistrations.ToString());

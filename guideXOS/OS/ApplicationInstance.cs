@@ -1920,6 +1920,364 @@ namespace guideXOS.OS {
             }
         }
 
+        /// <summary>
+        /// Bounded runtime proof for the application-centric taskbar contract.
+        /// The fixture uses the authoritative instance registry and the normal
+        /// typed Desktop launch path; TaskbarApplicationEntryRegistry is only
+        /// observed/reconciled as the presentation projection.
+        /// </summary>
+        public static bool RunTaskbarGroupingRuntimeDiagnostic() {
+            bool oneInstanceTwoWindows = false;
+            bool sameInstanceSwitch = false;
+            bool closeFirstRetainsSecond = false;
+            bool finalWindowFollowsPolicy = false;
+            bool calculatorMultipleInstance = false;
+            bool calculatorCloseRetainsOther = false;
+            bool consoleReused = false;
+            bool imageViewerReused = false;
+            bool zeroWindowProjectionSuppressed = false;
+            bool cleanup = false;
+            bool staleTaskbarOwners = false;
+            int sameInstanceActivationDelta = -1;
+            int semanticGroupCount = 0;
+            int calculatorGroupCount = 0;
+            bool calculatorHandlesDistinct = false;
+            ApplicationInstance multiWindow = null;
+            ApplicationInstance calculatorA = null;
+            ApplicationInstance calculatorB = null;
+            ApplicationInstance console = null;
+            ApplicationInstance consoleAgain = null;
+            ApplicationInstance imageViewer = null;
+            ApplicationInstance imageViewerAgain = null;
+            TaskbarRuntimeProbeWindow firstWindow = null;
+            TaskbarRuntimeProbeWindow secondWindow = null;
+            int startingActive = ActiveCount;
+            int startingWindowCount = WindowManager.Windows == null
+                ? -1 : WindowManager.Windows.Count;
+            int startingEntryCount = TaskbarApplicationEntryRegistry.EntryCount;
+
+            try {
+                if (WindowManager.Windows != null && Desktop.Apps != null) {
+                    LaunchResult failure;
+                    bool reused;
+                    bool multiStarted = TryBeginLaunch(
+                        "runtime.taskbar.multiwindow",
+                        ApplicationInstancePolicy.MultiInstance,
+                        LaunchRequest.ForAppId("runtime.taskbar.multiwindow",
+                            null, null, LaunchActivationIntent.NewInstance),
+                        out multiWindow, out reused, out failure);
+                    firstWindow = new TaskbarRuntimeProbeWindow();
+                    secondWindow = new TaskbarRuntimeProbeWindow();
+                    bool attached = multiStarted && !reused &&
+                        TryAttachWindow(multiWindow, firstWindow) &&
+                        TryAttachWindow(multiWindow, secondWindow) &&
+                        TryCompleteLaunch(multiWindow, true, out failure);
+                    TaskbarApplicationEntryRegistry.Reconcile();
+                    TaskbarApplicationEntry multiEntry;
+                    TaskbarApplicationEntry firstEntry;
+                    TaskbarApplicationEntry secondEntry;
+                    semanticGroupCount = TaskbarApplicationEntryRegistry.EntryCount -
+                        startingEntryCount;
+                    oneInstanceTwoWindows = attached &&
+                        TaskbarApplicationEntryRegistry.TryGet(
+                            multiWindow.Handle, out multiEntry) &&
+                        semanticGroupCount == 1 &&
+                        multiEntry.OwnedWindowCount == 2 &&
+                        multiEntry.PresentableWindowCount == 2 &&
+                        TaskbarApplicationEntryRegistry.TryGetForWindow(
+                            firstWindow, out firstEntry) &&
+                        TaskbarApplicationEntryRegistry.TryGetForWindow(
+                            secondWindow, out secondEntry) &&
+                        firstEntry == secondEntry;
+
+                    int activationBeforeFirst = InstancesActivated;
+                    ApplicationLifecycleResult firstFocus = null;
+                    bool focusedFirst = attached &&
+                        TaskbarApplicationEntryRegistry.TryFocusWindow(
+                            multiWindow.Handle, firstWindow, out firstFocus);
+                    int activationBeforeSecond = InstancesActivated;
+                    ApplicationLifecycleResult secondFocus = null;
+                    bool focusedSecond = attached &&
+                        TaskbarApplicationEntryRegistry.TryFocusWindow(
+                            multiWindow.Handle, secondWindow, out secondFocus);
+                    sameInstanceActivationDelta = InstancesActivated -
+                        activationBeforeSecond;
+                    sameInstanceSwitch = focusedFirst && focusedSecond &&
+                        firstFocus != null && firstFocus.Success &&
+                        secondFocus != null && secondFocus.Success &&
+                        activationBeforeFirst <= activationBeforeSecond &&
+                        sameInstanceActivationDelta == 0;
+
+                    OnWindowClosed(firstWindow);
+                    firstWindow.CloseForApplicationTermination();
+                    WindowManager.CleanupClosedWindows();
+                    TaskbarApplicationEntryRegistry.Reconcile();
+                    TaskbarApplicationEntry retainedEntry;
+                    closeFirstRetainsSecond =
+                        TryGet(multiWindow.Handle, out multiWindow) &&
+                        multiWindow.OwnedWindowCount == 1 &&
+                        secondWindow.ApplicationInstanceHandle == multiWindow.Handle &&
+                        TaskbarApplicationEntryRegistry.TryGet(
+                            multiWindow.Handle, out retainedEntry) &&
+                        retainedEntry.OwnedWindowCount == 1 &&
+                        retainedEntry.PresentableWindowCount == 1;
+
+                    ApplicationInstanceHandle finalHandle = multiWindow == null
+                        ? ApplicationInstanceHandle.None : multiWindow.Handle;
+                    OnWindowClosed(secondWindow);
+                    secondWindow.CloseForApplicationTermination();
+                    WindowManager.CleanupClosedWindows();
+                    TaskbarApplicationEntryRegistry.Reconcile();
+                    finalWindowFollowsPolicy = finalHandle.IsValid &&
+                        !TryGet(finalHandle, out ApplicationInstance ignoredFinal) &&
+                        !TaskbarApplicationEntryRegistry.TryGet(finalHandle,
+                            out TaskbarApplicationEntry ignoredFinalEntry);
+
+                    LaunchResult calculatorAResult;
+                    LaunchResult calculatorBResult;
+                    bool calculatorALaunched = Desktop.LaunchApplication(
+                        LaunchRequest.ForAppId("gxos.builtin.calculator", null,
+                            null, LaunchActivationIntent.NewInstance),
+                        out calculatorAResult);
+                    bool calculatorBLaunched = Desktop.LaunchApplication(
+                        LaunchRequest.ForAppId("gxos.builtin.calculator", null,
+                            null, LaunchActivationIntent.NewInstance),
+                        out calculatorBResult);
+                    bool calculatorsFound = calculatorALaunched &&
+                        calculatorAResult != null && calculatorAResult.Success &&
+                        calculatorBLaunched && calculatorBResult != null &&
+                        calculatorBResult.Success &&
+                        TryGet(calculatorAResult.InstanceHandle, out calculatorA) &&
+                        TryGet(calculatorBResult.InstanceHandle, out calculatorB) &&
+                        calculatorA.Handle != calculatorB.Handle;
+                    TaskbarApplicationEntry calculatorAEntry;
+                    TaskbarApplicationEntry calculatorBEntry;
+                    TaskbarApplicationEntryRegistry.Reconcile();
+                    calculatorGroupCount =
+                        TaskbarApplicationEntryRegistry.EntryCount -
+                        startingEntryCount;
+                    calculatorHandlesDistinct = calculatorsFound &&
+                        calculatorA.Handle != calculatorB.Handle;
+                    calculatorMultipleInstance = calculatorHandlesDistinct &&
+                        TaskbarApplicationEntryRegistry.TryGet(
+                            calculatorA.Handle, out calculatorAEntry) &&
+                        TaskbarApplicationEntryRegistry.TryGet(
+                            calculatorB.Handle, out calculatorBEntry) &&
+                        calculatorAEntry != calculatorBEntry &&
+                        calculatorGroupCount == 2;
+                    bool calculatorAActive = calculatorsFound &&
+                        Activate(calculatorA.Handle).Success;
+                    bool calculatorBActive = calculatorsFound &&
+                        Activate(calculatorB.Handle).Success;
+                    bool calculatorAClosed = calculatorAActive && calculatorBActive &&
+                        CloseRuntimeInstance(calculatorA);
+                    WindowManager.CleanupClosedWindows();
+                    TaskbarApplicationEntryRegistry.Reconcile();
+                    calculatorCloseRetainsOther = calculatorAClosed &&
+                        !TryGet(calculatorA.Handle, out ApplicationInstance ignoredCalculatorA) &&
+                        TryGet(calculatorB.Handle, out ApplicationInstance retainedCalculatorB) &&
+                        TaskbarApplicationEntryRegistry.TryGet(calculatorB.Handle,
+                            out TaskbarApplicationEntry retainedCalculatorEntry);
+                    if (calculatorAClosed) calculatorA = null;
+
+                    LaunchResult consoleResult;
+                    bool consoleLaunched = Desktop.LaunchApplication(
+                        LaunchRequest.ForAppId("gxos.builtin.console", null, null,
+                            LaunchActivationIntent.Launch), out consoleResult);
+                    bool consoleFound = consoleLaunched && consoleResult != null &&
+                        consoleResult.Success &&
+                        TryGet(consoleResult.InstanceHandle, out console);
+                    bool consoleZeroWindow = consoleFound &&
+                        CloseReusablePresentation(console);
+                    LaunchResult consoleAgainResult;
+                    bool consoleRelaunched = Desktop.LaunchApplication(
+                        LaunchRequest.ForAppId("gxos.builtin.console", null, null,
+                            LaunchActivationIntent.ActivateExisting),
+                        out consoleAgainResult);
+                    consoleReused = consoleZeroWindow && consoleRelaunched &&
+                        consoleAgainResult != null && consoleAgainResult.Success &&
+                        TryGet(consoleAgainResult.InstanceHandle, out consoleAgain) &&
+                        consoleAgain.Handle == console.Handle &&
+                        consoleAgain.OwnedWindowCount > 0 &&
+                        TaskbarApplicationEntryRegistry.TryGet(console.Handle,
+                            out TaskbarApplicationEntry consoleEntry);
+
+                    LaunchResult imageResult;
+                    bool imageLaunched = Desktop.LaunchApplication(
+                        LaunchRequest.ForAppId("gxos.builtin.imageviewer", null,
+                            null, LaunchActivationIntent.Launch),
+                        out imageResult);
+                    bool imageFound = imageLaunched && imageResult != null &&
+                        imageResult.Success &&
+                        TryGet(imageResult.InstanceHandle, out imageViewer);
+                    bool imageZeroWindow = imageFound &&
+                        CloseReusablePresentation(imageViewer);
+                    LaunchResult imageAgainResult;
+                    bool imageRelaunched = Desktop.LaunchApplication(
+                        LaunchRequest.ForAppId("gxos.builtin.imageviewer", null,
+                            null, LaunchActivationIntent.ActivateExisting),
+                        out imageAgainResult);
+                    imageViewerReused = imageZeroWindow && imageRelaunched &&
+                        imageAgainResult != null && imageAgainResult.Success &&
+                        TryGet(imageAgainResult.InstanceHandle, out imageViewerAgain) &&
+                        imageViewerAgain.Handle == imageViewer.Handle &&
+                        imageViewerAgain.OwnedWindowCount > 0 &&
+                        TaskbarApplicationEntryRegistry.TryGet(imageViewer.Handle,
+                            out TaskbarApplicationEntry imageEntry);
+                    zeroWindowProjectionSuppressed = consoleZeroWindow &&
+                        imageZeroWindow;
+                }
+            } catch {
+                oneInstanceTwoWindows = false;
+                sameInstanceSwitch = false;
+                closeFirstRetainsSecond = false;
+                finalWindowFollowsPolicy = false;
+                calculatorMultipleInstance = false;
+                consoleReused = false;
+                imageViewerReused = false;
+                zeroWindowProjectionSuppressed = false;
+            } finally {
+                if (multiWindow != null) TryTerminate(multiWindow,
+                    "taskbar runtime multi-window cleanup");
+                if (calculatorA != null) TryTerminate(calculatorA,
+                    "taskbar runtime calculator A cleanup");
+                if (calculatorB != null) TryTerminate(calculatorB,
+                    "taskbar runtime calculator B cleanup");
+                if (console != null) TryTerminate(console,
+                    "taskbar runtime console cleanup");
+                if (consoleAgain != null && consoleAgain != console)
+                    TryTerminate(consoleAgain, "taskbar runtime console reuse cleanup");
+                if (imageViewer != null) TryTerminate(imageViewer,
+                    "taskbar runtime image viewer cleanup");
+                if (imageViewerAgain != null && imageViewerAgain != imageViewer)
+                    TryTerminate(imageViewerAgain,
+                        "taskbar runtime image viewer reuse cleanup");
+                CloseTaskbarRuntimeFixture(firstWindow);
+                CloseTaskbarRuntimeFixture(secondWindow);
+                WindowManager.CleanupClosedWindows();
+                TaskbarApplicationEntryRegistry.Reconcile();
+                cleanup = ActiveCount == startingActive &&
+                    TaskbarApplicationEntryRegistry.EntryCount == startingEntryCount &&
+                    WindowManager.Windows != null &&
+                    WindowManager.Windows.Count == startingWindowCount;
+                staleTaskbarOwners = TaskbarApplicationEntryRegistry.StaleOwnerCount == 0;
+            }
+
+            EmitTaskbarRuntimeMarker("ONE_INSTANCE_TWO_WINDOWS",
+                oneInstanceTwoWindows);
+            EmitTaskbarRuntimeMarker("SAME_INSTANCE_SWITCH",
+                sameInstanceSwitch);
+            EmitTaskbarRuntimeValue("SAME_INSTANCE_ACTIVATION_DELTA",
+                sameInstanceActivationDelta);
+            EmitTaskbarRuntimeValue("SEMANTIC_GROUP_COUNT", semanticGroupCount);
+            EmitTaskbarRuntimeMarker("CLOSE_FIRST_RETAINS_SECOND",
+                closeFirstRetainsSecond);
+            EmitTaskbarRuntimeMarker("FINAL_WINDOW_POLICY",
+                finalWindowFollowsPolicy);
+            EmitTaskbarRuntimeMarker("CALCULATOR_MULTI_INSTANCE",
+                calculatorMultipleInstance);
+            EmitTaskbarRuntimeMarker("CALCULATOR_CLOSE_RETAINS_OTHER",
+                calculatorCloseRetainsOther);
+            EmitTaskbarRuntimeMarker("CALCULATOR_HANDLES_DISTINCT",
+                calculatorHandlesDistinct);
+            EmitTaskbarRuntimeValue("CALCULATOR_GROUP_COUNT",
+                calculatorGroupCount);
+            EmitTaskbarRuntimeMarker("CONSOLE_REUSE", consoleReused);
+            EmitTaskbarRuntimeMarker("IMAGE_VIEWER_REUSE", imageViewerReused);
+            EmitTaskbarRuntimeMarker("ZERO_WINDOW_PROJECTION_SUPPRESSED",
+                zeroWindowProjectionSuppressed);
+            EmitTaskbarRuntimeMarker("CLEANUP", cleanup);
+            EmitTaskbarRuntimeMarker("STALE_TASKBAR_OWNERS", staleTaskbarOwners);
+            EmitTaskbarRuntimeValue("STALE_TASKBAR_OWNERS_COUNT",
+                TaskbarApplicationEntryRegistry.StaleOwnerCount);
+            EmitTaskbarRuntimeMarker("GROUPING_DIAGNOSTIC",
+                oneInstanceTwoWindows && sameInstanceSwitch &&
+                closeFirstRetainsSecond && finalWindowFollowsPolicy &&
+                calculatorMultipleInstance && calculatorCloseRetainsOther &&
+                consoleReused &&
+                imageViewerReused && zeroWindowProjectionSuppressed &&
+                cleanup && staleTaskbarOwners);
+            return oneInstanceTwoWindows && sameInstanceSwitch &&
+                closeFirstRetainsSecond && finalWindowFollowsPolicy &&
+                calculatorMultipleInstance && calculatorCloseRetainsOther &&
+                consoleReused &&
+                imageViewerReused && zeroWindowProjectionSuppressed &&
+                cleanup && staleTaskbarOwners;
+        }
+
+        /// <summary>
+        /// Bounded read-only observation proof used by Task Manager.  The
+        /// observation API must not change lifecycle, ownership, projection,
+        /// active focus, or the WindowManager collection.
+        /// </summary>
+        public static bool RunTaskManagerObservationDiagnostic() {
+            ApplicationInstanceHandle activeBefore = ActiveApplicationHandle;
+            int activeCountBefore = ActiveCount;
+            int createdBefore = InstancesCreated;
+            int reusedBefore = InstancesReused;
+            int activatedBefore = InstancesActivated;
+            int deactivatedBefore = InstancesDeactivated;
+            int suspendedBefore = InstancesSuspended;
+            int resumedBefore = InstancesResumed;
+            int closeRequestsBefore = CloseRequests;
+            int closeCancellationsBefore = CloseCancellations;
+            int lifecycleFailuresBefore = LifecycleFailures;
+            int invalidLifecycleBefore = InvalidLifecycleRequests;
+            int staleLifecycleBefore = StaleLifecycleHandles;
+            int terminatedBefore = InstancesTerminated;
+            int failedBefore = FailedInstances;
+            int attachBefore = WindowAttachCount;
+            int detachBefore = WindowDetachCount;
+            int duplicateAttachBefore = DuplicateWindowAttachCount;
+            int staleOwnershipBefore = StaleOwnershipCount;
+            int windowCountBefore = WindowManager.Windows == null
+                ? -1 : WindowManager.Windows.Count;
+            int entryCountBefore = TaskbarApplicationEntryRegistry.EntryCount;
+            int observations = ObservationCount;
+            int successfulObservations = 0;
+            for (int i = 0; i < observations; i++) {
+                ApplicationInstanceObservation observation;
+                if (TryGetObservationAt(i, out observation)) successfulObservations++;
+            }
+
+            bool unchanged = activeBefore == ActiveApplicationHandle &&
+                activeCountBefore == ActiveCount &&
+                createdBefore == InstancesCreated &&
+                reusedBefore == InstancesReused &&
+                activatedBefore == InstancesActivated &&
+                deactivatedBefore == InstancesDeactivated &&
+                suspendedBefore == InstancesSuspended &&
+                resumedBefore == InstancesResumed &&
+                closeRequestsBefore == CloseRequests &&
+                closeCancellationsBefore == CloseCancellations &&
+                lifecycleFailuresBefore == LifecycleFailures &&
+                invalidLifecycleBefore == InvalidLifecycleRequests &&
+                staleLifecycleBefore == StaleLifecycleHandles &&
+                terminatedBefore == InstancesTerminated &&
+                failedBefore == FailedInstances &&
+                attachBefore == WindowAttachCount &&
+                detachBefore == WindowDetachCount &&
+                duplicateAttachBefore == DuplicateWindowAttachCount &&
+                staleOwnershipBefore == StaleOwnershipCount &&
+                windowCountBefore == (WindowManager.Windows == null
+                    ? -1 : WindowManager.Windows.Count) &&
+                entryCountBefore == TaskbarApplicationEntryRegistry.EntryCount &&
+                successfulObservations == observations;
+#if UEFI_DIAGNOSTIC_APP_MODEL
+            Program.MarkUefiAppModelDiagnostic(
+                "TASKBAR_OBSERVATION_NO_MUTATION=" +
+                (unchanged ? "PASS" : "FAIL") + ";count=" +
+                observations.ToString());
+#endif
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime(
+                "TASKBAR_OBSERVATION_NO_MUTATION=" +
+                (unchanged ? "PASS" : "FAIL") + ";count=" +
+                observations.ToString());
+#endif
+            return unchanged;
+        }
+
         private static bool CloseRuntimeInstance(ApplicationInstance instance) {
             if (instance == null) return true;
             ApplicationLifecycleResult result = RequestClose(instance.Handle,
@@ -2071,6 +2429,45 @@ namespace guideXOS.OS {
             internal OwnershipProbeWindow() : base(24, 80, 160, 120) { }
             public override void OnDraw() { }
             public override void OnInput() { }
+        }
+
+        private sealed class TaskbarRuntimeProbeWindow : Window {
+            internal TaskbarRuntimeProbeWindow() : base(40, 112, 160, 120) { }
+            public override void OnDraw() { }
+            public override void OnInput() { }
+        }
+
+        private static bool CloseReusablePresentation(ApplicationInstance instance) {
+            if (instance == null || instance.OwnedWindowCount == 0) return false;
+            Window window = instance.GetOwnedWindowAt(0);
+            if (window == null) return false;
+            window.CloseForApplicationTermination();
+            WindowManager.CleanupClosedWindows();
+            TaskbarApplicationEntryRegistry.Reconcile();
+            ApplicationInstance retained;
+            return TryGet(instance.Handle, out retained) &&
+                retained.OwnedWindowCount == 0 &&
+                !TaskbarApplicationEntryRegistry.TryGet(instance.Handle,
+                    out TaskbarApplicationEntry ignoredEntry);
+        }
+
+        private static void CloseTaskbarRuntimeFixture(
+                TaskbarRuntimeProbeWindow window) {
+            if (window != null) window.CloseForApplicationTermination();
+        }
+
+        private static void EmitTaskbarRuntimeMarker(string name, bool passed) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("TASKBAR_" + name + "=" +
+                (passed ? "PASS" : "FAIL"));
+#endif
+        }
+
+        private static void EmitTaskbarRuntimeValue(string name, int value) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("TASKBAR_" + name + "=" +
+                value.ToString());
+#endif
         }
 
         private static void Check(bool condition, string label, ref int passed,
