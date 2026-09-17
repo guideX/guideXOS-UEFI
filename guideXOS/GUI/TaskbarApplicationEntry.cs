@@ -285,9 +285,16 @@ namespace guideXOS.GUI {
                                           Window window,
                                           out ApplicationLifecycleResult result) {
             Initialize();
+            // Reconcile before validating the requested handle so stale
+            // projection entries are removed even when activation is rejected.
+            Reconcile();
             ApplicationInstance instance;
             if (!handle.IsValid || !ApplicationInstanceRegistry.TryGet(handle,
                     out instance)) {
+                if (window != null && window.ApplicationInstanceHandle == handle) {
+                    // This also records the bounded stale-ownership diagnostic.
+                    WindowManager.IsTaskbarEntryValid(window);
+                }
                 result = ApplicationLifecycleResult.Failed(
                     ApplicationLifecycleResultCode.NotFound, handle,
                     ApplicationInstanceLifecycleState.Terminated,
@@ -295,7 +302,6 @@ namespace guideXOS.GUI {
                     "Taskbar Window owner is unavailable");
                 return false;
             }
-            Reconcile();
             TaskbarApplicationEntry entry;
             if (!TryGet(handle, out entry)) {
                 result = ApplicationLifecycleResult.Failed(
@@ -685,6 +691,16 @@ namespace guideXOS.GUI {
                 secondWindow.CloseForApplicationTermination();
                 WindowManager.CleanupClosedWindows();
 
+                // Recreate the externally observable stale-ownership case after
+                // the instance has been removed.  A direct focus request must
+                // reconcile the projection and clear the stale Window handle.
+                secondWindow.SetApplicationInstance(staleHandle);
+                int staleOwnershipBeforeFocus =
+                    ApplicationInstanceRegistry.StaleOwnershipCount;
+                ApplicationLifecycleResult staleFocusResult;
+                bool staleFocusRejected = TryFocusWindow(staleHandle,
+                    secondWindow, out staleFocusResult);
+
                 bool reusableStarted = ApplicationInstanceRegistry.TryBeginLaunch(
                     "selftest.phase7.reusable", ApplicationInstancePolicy.ReuseExisting,
                     LaunchRequest.ForAppId("selftest.phase7.reusable", null, null,
@@ -724,7 +740,12 @@ namespace guideXOS.GUI {
                     TryGet(secondDuplicate.Handle, out TaskbarApplicationEntry secondDuplicateEntry) &&
                     firstDuplicateEntry != secondDuplicateEntry && EntryCount == 2;
 
-                staleEntryRejected = !TryGet(staleHandle,
+                staleEntryRejected = !staleFocusRejected && staleFocusResult != null &&
+                    staleFocusResult.Code == ApplicationLifecycleResultCode.NotFound &&
+                    !secondWindow.ApplicationInstanceHandle.IsValid &&
+                    ApplicationInstanceRegistry.StaleOwnershipCount ==
+                        staleOwnershipBeforeFocus + 1 &&
+                    !TryGet(staleHandle,
                     out TaskbarApplicationEntry ignoredStale) &&
                     !TryGetForWindow(secondWindow,
                         out TaskbarApplicationEntry ignoredStaleWindow);

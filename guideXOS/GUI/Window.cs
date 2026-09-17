@@ -2,6 +2,7 @@ using guideXOS.Enum;
 using guideXOS.Graph;
 using guideXOS.GUI.Base;
 using guideXOS.Kernel.Drivers;
+using guideXOS.Kernel.Drivers.Input;
 using guideXOS.OS;
 using System;
 using System.Drawing;
@@ -103,7 +104,6 @@ namespace guideXOS.GUI {
         /// Resizing
         /// </summary>
         private bool _resizing;
-        private bool _focusClickLatch;
         private int _resizeStartMouseX, _resizeStartMouseY;
         private int _resizeStartW, _resizeStartH;
         private const int _resizeGripSize = 16;
@@ -481,13 +481,9 @@ namespace guideXOS.GUI {
             _hoverBtn = HitTestButtons(mx, my);
             bool left = (Control.MouseButtons & MouseButtons.Left) == MouseButtons.Left;
 
-            if (left) {
-                if (!_focusClickLatch && IsUnderMouse()) {
-                    WindowManager.FocusWindow(this);
-                    _focusClickLatch = true;
-                }
-            } else {
-                _focusClickLatch = false;
+            if (MouseEventDispatcher.WasPressedThisFrame(MouseButtons.Left) &&
+                    IsUnderMouse()) {
+                WindowManager.FocusWindow(this);
             }
 
             // Title buttons interaction

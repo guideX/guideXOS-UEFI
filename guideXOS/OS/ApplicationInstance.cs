@@ -771,6 +771,10 @@ namespace guideXOS.OS {
                         instance.DescriptorId);
                     return false;
                 }
+                // Launch presentation is explicit.  Instance activation itself
+                // remains lifecycle-only so a requested Window focus cannot be
+                // preceded by an arbitrary owned-Window z-order move.
+                FocusDefaultWindow(instance);
             }
             return true;
         }
@@ -856,7 +860,6 @@ namespace guideXOS.OS {
             }
             _activeApplicationHandle = instance.Handle;
             if (from != ApplicationInstanceLifecycleState.Activated) _activatedCount++;
-            RouteForegroundWindow(instance);
             return ApplicationLifecycleResult.Succeeded(instance.Handle, from,
                 ApplicationInstanceLifecycleState.Activated,
                 ApplicationCloseReason.ApplicationRequest);
@@ -1220,7 +1223,7 @@ namespace guideXOS.OS {
             } catch { }
         }
 
-        private static void RouteForegroundWindow(ApplicationInstance instance) {
+        internal static void FocusDefaultWindow(ApplicationInstance instance) {
             if (instance == null || _routingForeground) return;
             Window target = null;
             for (int i = 0; i < instance.OwnedWindowCount; i++) {
