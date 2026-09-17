@@ -124,6 +124,15 @@ namespace guideXOS.GUI {
             _mostRecentWindow = window;
         }
 
+        internal Window GetFocusTarget() {
+            if (IsPresentableAndContained(_activeWindow)) return _activeWindow;
+            if (IsPresentableAndContained(_mostRecentWindow)) return _mostRecentWindow;
+            for (int i = 0; i < _ownedWindowCount; i++) {
+                if (IsPresentable(_windows[i])) return _windows[i];
+            }
+            return null;
+        }
+
         private bool IsPresentableAndContained(Window window) {
             return ContainsWindow(window) && IsPresentable(window);
         }
@@ -277,8 +286,8 @@ namespace guideXOS.GUI {
                                           out ApplicationLifecycleResult result) {
             Initialize();
             ApplicationInstance instance;
-            if (!ApplicationInstanceRegistry.TryValidateOwnedWindow(handle,
-                    window, out instance)) {
+            if (!handle.IsValid || !ApplicationInstanceRegistry.TryGet(handle,
+                    out instance)) {
                 result = ApplicationLifecycleResult.Failed(
                     ApplicationLifecycleResultCode.NotFound, handle,
                     ApplicationInstanceLifecycleState.Terminated,
@@ -288,8 +297,24 @@ namespace guideXOS.GUI {
             }
             Reconcile();
             TaskbarApplicationEntry entry;
-            if (!TryGet(handle, out entry) || !entry.ContainsWindow(window) ||
-                    !window.Visible || !window.ShowInTaskbar) {
+            if (!TryGet(handle, out entry)) {
+                result = ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.InvalidState, handle,
+                    instance.LifecycleState, ApplicationCloseReason.ShellRequest,
+                    "Taskbar application has no presentable Window");
+                return false;
+            }
+            Window target = window ?? entry.GetFocusTarget();
+            ApplicationInstance owner;
+            if (!ApplicationInstanceRegistry.TryValidateOwnedWindow(handle,
+                    target, out owner)) {
+                result = ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.NotFound, handle,
+                    instance.LifecycleState, ApplicationCloseReason.ShellRequest,
+                    "Taskbar Window owner is unavailable");
+                return false;
+            }
+            if (!target.Visible || !target.ShowInTaskbar) {
                 result = ApplicationLifecycleResult.Failed(
                     ApplicationLifecycleResultCode.InvalidState, handle,
                     instance.LifecycleState, ApplicationCloseReason.ShellRequest,
@@ -300,9 +325,9 @@ namespace guideXOS.GUI {
                 handle;
             result = ApplicationInstanceRegistry.Activate(handle);
             if (!result.Success) return false;
-            if (window.IsMinimized) window.Restore();
-            WindowManager.MoveToEnd(window);
-            entry.RecordWindowSelection(window);
+            if (target.IsMinimized) target.Restore();
+            WindowManager.MoveToEnd(target);
+            entry.RecordWindowSelection(target);
             if (sameInstance) _sameInstanceWindowSwitchCount++;
             else _crossInstanceWindowSwitchCount++;
             return true;
@@ -381,6 +406,11 @@ namespace guideXOS.GUI {
             bool multiWindowSingleEntry;
             bool sameInstanceSwitchNoLifecycleChurn;
             bool crossInstanceWindowSwitchActivatesTarget;
+            bool suspendedActivationResumes;
+            bool crossInstanceSwitchesLifecycle;
+            bool applicationCloseTargetsInstance;
+            bool closeCancellationLeavesState;
+            bool unsupportedResumeIsBounded;
             bool closeOneRetainsGroup;
             bool closeFinalAppliesPolicy;
             bool zeroWindowReusableSuppressed;
@@ -390,6 +420,9 @@ namespace guideXOS.GUI {
             RunProjectionAssertions(out oneInstanceOneWindowEntry,
                 out multiWindowSingleEntry, out sameInstanceSwitchNoLifecycleChurn,
                 out crossInstanceWindowSwitchActivatesTarget,
+                out suspendedActivationResumes, out crossInstanceSwitchesLifecycle,
+                out applicationCloseTargetsInstance, out closeCancellationLeavesState,
+                out unsupportedResumeIsBounded,
                 out closeOneRetainsGroup, out closeFinalAppliesPolicy,
                 out zeroWindowReusableSuppressed,
                 out twoSameDescriptorEntriesIndependent, out staleEntryRejected,
@@ -399,6 +432,11 @@ namespace guideXOS.GUI {
             Check(multiWindowSingleEntry, "one instance multiple Windows one group", ref passed, ref failed, ref firstFailure);
             Check(sameInstanceSwitchNoLifecycleChurn, "same instance Window switch", ref passed, ref failed, ref firstFailure);
             Check(crossInstanceWindowSwitchActivatesTarget, "cross instance Window switch", ref passed, ref failed, ref firstFailure);
+            Check(suspendedActivationResumes, "suspended activation resumes", ref passed, ref failed, ref firstFailure);
+            Check(crossInstanceSwitchesLifecycle, "cross-instance switch", ref passed, ref failed, ref firstFailure);
+            Check(applicationCloseTargetsInstance, "application-level close", ref passed, ref failed, ref firstFailure);
+            Check(closeCancellationLeavesState, "application close cancellation", ref passed, ref failed, ref firstFailure);
+            Check(unsupportedResumeIsBounded, "unsupported resume", ref passed, ref failed, ref firstFailure);
             Check(closeOneRetainsGroup, "close one Window retains group", ref passed, ref failed, ref firstFailure);
             Check(closeFinalAppliesPolicy, "close final Window policy", ref passed, ref failed, ref firstFailure);
             Check(zeroWindowReusableSuppressed, "reusable zero-window suppression", ref passed, ref failed, ref firstFailure);
@@ -415,6 +453,11 @@ namespace guideXOS.GUI {
                 out bool multiWindowSingleEntry,
                 out bool sameInstanceSwitchNoLifecycleChurn,
                 out bool crossInstanceWindowSwitchActivatesTarget,
+                out bool suspendedActivationResumes,
+                out bool crossInstanceSwitchesLifecycle,
+                out bool applicationCloseTargetsInstance,
+                out bool closeCancellationLeavesState,
+                out bool unsupportedResumeIsBounded,
                 out bool closeOneRetainsGroup,
                 out bool closeFinalAppliesPolicy,
                 out bool zeroWindowReusableSuppressed,
@@ -424,6 +467,11 @@ namespace guideXOS.GUI {
             multiWindowSingleEntry = false;
             sameInstanceSwitchNoLifecycleChurn = false;
             crossInstanceWindowSwitchActivatesTarget = false;
+            suspendedActivationResumes = false;
+            crossInstanceSwitchesLifecycle = false;
+            applicationCloseTargetsInstance = false;
+            closeCancellationLeavesState = false;
+            unsupportedResumeIsBounded = false;
             closeOneRetainsGroup = false;
             closeFinalAppliesPolicy = false;
             zeroWindowReusableSuppressed = false;
@@ -437,12 +485,18 @@ namespace guideXOS.GUI {
 
             ApplicationInstance primary = null;
             ApplicationInstance crossInstance = null;
+            ApplicationInstance closeInstance = null;
+            ApplicationInstance cancellableInstance = null;
+            ApplicationInstance unsupportedInstance = null;
             ApplicationInstance reusable = null;
             ApplicationInstance firstDuplicate = null;
             ApplicationInstance secondDuplicate = null;
             TaskbarProjectionProbeWindow firstWindow = null;
             TaskbarProjectionProbeWindow secondWindow = null;
             TaskbarProjectionProbeWindow crossWindow = null;
+            TaskbarProjectionProbeWindow closeWindow = null;
+            TaskbarProjectionProbeWindow cancellableWindow = null;
+            TaskbarProjectionProbeWindow unsupportedWindow = null;
             TaskbarProjectionProbeWindow duplicateFirstWindow = null;
             TaskbarProjectionProbeWindow duplicateSecondWindow = null;
             ApplicationInstanceHandle staleHandle = ApplicationInstanceHandle.None;
@@ -508,21 +562,108 @@ namespace guideXOS.GUI {
                 Reconcile();
                 bool crossMinimized = crossAttached &&
                     crossWindow.PrepareForTaskbarFocus();
+                ApplicationLifecycleResult suspended = crossMinimized
+                    ? ApplicationInstanceRegistry.Suspend(crossInstance.Handle) : null;
+                int crossActivations = ApplicationInstanceRegistry.InstancesActivated;
+                int crossDeactivations = ApplicationInstanceRegistry.InstancesDeactivated;
                 ApplicationLifecycleResult crossFocusResult = null;
-                bool crossSelected = crossMinimized && TryFocusWindow(
-                    crossInstance.Handle, crossWindow, out crossFocusResult);
+                bool crossSelected = suspended != null && suspended.Success &&
+                    TryFocusWindow(crossInstance.Handle, null, out crossFocusResult);
                 crossInstanceWindowSwitchActivatesTarget = crossSelected &&
                     crossFocusResult.Success && crossFocusResult.FromState ==
-                        ApplicationInstanceLifecycleState.Running &&
+                        ApplicationInstanceLifecycleState.Inactive &&
                     crossFocusResult.ToState ==
                         ApplicationInstanceLifecycleState.Activated &&
                     ApplicationInstanceRegistry.ActiveApplicationHandle ==
-                        crossInstance.Handle && crossInstance.IsActivated &&
+                    crossInstance.Handle && crossInstance.IsActivated &&
                     primary.LifecycleState == ApplicationInstanceLifecycleState.Inactive &&
                     !crossWindow.IsMinimized;
+                suspendedActivationResumes = crossInstanceWindowSwitchActivatesTarget &&
+                    ApplicationInstanceRegistry.InstancesResumed > 0;
+                crossInstanceSwitchesLifecycle = crossInstanceWindowSwitchActivatesTarget &&
+                    ApplicationInstanceRegistry.InstancesActivated == crossActivations + 1 &&
+                    ApplicationInstanceRegistry.InstancesDeactivated == crossDeactivations + 1;
                 if (crossInstance != null) ApplicationInstanceRegistry.TryTerminate(
                     crossInstance, "phase7 cross-instance assertion cleanup");
                 CloseFixture(crossWindow);
+                WindowManager.CleanupClosedWindows();
+                Reconcile();
+
+                bool closeStarted = ApplicationInstanceRegistry.TryBeginLaunch(
+                    "selftest.phase7.close", ApplicationInstancePolicy.MultiInstance,
+                    LaunchRequest.ForAppId("selftest.phase7.close", null, null,
+                        LaunchActivationIntent.NewInstance), out closeInstance, out reused,
+                    out failure);
+                closeWindow = new TaskbarProjectionProbeWindow();
+                bool closeAttached = closeStarted && ApplicationInstanceRegistry.TryAttachWindow(
+                    closeInstance, closeWindow) && ApplicationInstanceRegistry.TryCompleteLaunch(
+                        closeInstance, false, out failure);
+                ApplicationInstanceHandle closeHandle = closeInstance == null
+                    ? ApplicationInstanceHandle.None : closeInstance.Handle;
+                ApplicationLifecycleResult closeResult = closeAttached
+                    ? RequestApplicationClose(closeHandle) : null;
+                applicationCloseTargetsInstance = closeResult != null && closeResult.Success &&
+                    !ApplicationInstanceRegistry.TryGet(closeHandle,
+                        out ApplicationInstance ignoredClosedInstance);
+                CloseFixture(closeWindow);
+                WindowManager.CleanupClosedWindows();
+
+                bool cancellableStarted = ApplicationInstanceRegistry.TryBeginLaunch(
+                    "selftest.phase7.close-cancel", ApplicationInstancePolicy.MultiInstance,
+                    LaunchRequest.ForAppId("selftest.phase7.close-cancel", null, null,
+                        LaunchActivationIntent.NewInstance), out cancellableInstance, out reused,
+                    out failure);
+                LifecycleSelfTestAdapter cancelAdapter = new LifecycleSelfTestAdapter();
+                if (cancellableInstance != null) {
+                    cancellableInstance.SetLifecycleAdapter(cancelAdapter);
+                }
+                cancellableWindow = new TaskbarProjectionProbeWindow();
+                bool cancellableAttached = cancellableStarted &&
+                    ApplicationInstanceRegistry.TryAttachWindow(cancellableInstance,
+                        cancellableWindow) && ApplicationInstanceRegistry.TryCompleteLaunch(
+                            cancellableInstance, false, out failure);
+                cancelAdapter.CancelClose = true;
+                ApplicationLifecycleResult cancelledClose = cancellableAttached
+                    ? RequestApplicationClose(cancellableInstance.Handle) : null;
+                cancelAdapter.CancelClose = false;
+                closeCancellationLeavesState = cancelledClose != null &&
+                    cancelledClose.Code == ApplicationLifecycleResultCode.Cancelled &&
+                    cancellableInstance.LifecycleState ==
+                        ApplicationInstanceLifecycleState.Running &&
+                    ApplicationInstanceRegistry.TryGet(cancellableInstance.Handle,
+                        out ApplicationInstance retainedCancellableInstance);
+
+                bool unsupportedStarted = ApplicationInstanceRegistry.TryBeginLaunch(
+                    "selftest.phase7.unsupported", ApplicationInstancePolicy.MultiInstance,
+                    LaunchRequest.ForAppId("selftest.phase7.unsupported", null, null,
+                        LaunchActivationIntent.NewInstance), out unsupportedInstance, out reused,
+                    out failure);
+                if (unsupportedInstance != null) {
+                    unsupportedInstance.SetLifecycleAdapter(
+                        new GxmApplicationLifecycleAdapter());
+                }
+                unsupportedWindow = new TaskbarProjectionProbeWindow();
+                bool unsupportedAttached = unsupportedStarted &&
+                    ApplicationInstanceRegistry.TryAttachWindow(unsupportedInstance,
+                        unsupportedWindow) && ApplicationInstanceRegistry.TryCompleteLaunch(
+                            unsupportedInstance, false, out failure) &&
+                    unsupportedInstance.TryTransition(
+                        ApplicationInstanceLifecycleState.Suspended);
+                Reconcile();
+                ApplicationLifecycleResult unsupportedFocus = null;
+                bool unsupportedFocused = unsupportedAttached && TryFocusWindow(
+                    unsupportedInstance.Handle, null, out unsupportedFocus);
+                unsupportedResumeIsBounded = !unsupportedFocused &&
+                    unsupportedFocus != null && unsupportedFocus.Code ==
+                        ApplicationLifecycleResultCode.Unsupported &&
+                    unsupportedInstance.LifecycleState ==
+                        ApplicationInstanceLifecycleState.Suspended;
+                if (cancellableInstance != null) ApplicationInstanceRegistry.TryTerminate(
+                    cancellableInstance, "phase7 close-cancel assertion cleanup");
+                if (unsupportedInstance != null) ApplicationInstanceRegistry.TryTerminate(
+                    unsupportedInstance, "phase7 unsupported assertion cleanup");
+                CloseFixture(cancellableWindow);
+                CloseFixture(unsupportedWindow);
                 WindowManager.CleanupClosedWindows();
                 Reconcile();
 
@@ -592,6 +733,11 @@ namespace guideXOS.GUI {
                 multiWindowSingleEntry = false;
                 sameInstanceSwitchNoLifecycleChurn = false;
                 crossInstanceWindowSwitchActivatesTarget = false;
+                suspendedActivationResumes = false;
+                crossInstanceSwitchesLifecycle = false;
+                applicationCloseTargetsInstance = false;
+                closeCancellationLeavesState = false;
+                unsupportedResumeIsBounded = false;
                 closeOneRetainsGroup = false;
                 closeFinalAppliesPolicy = false;
                 zeroWindowReusableSuppressed = false;
@@ -602,6 +748,12 @@ namespace guideXOS.GUI {
                     "phase7 primary cleanup");
                 if (crossInstance != null) ApplicationInstanceRegistry.TryTerminate(
                     crossInstance, "phase7 cross-instance cleanup");
+                if (closeInstance != null) ApplicationInstanceRegistry.TryTerminate(
+                    closeInstance, "phase7 application-close cleanup");
+                if (cancellableInstance != null) ApplicationInstanceRegistry.TryTerminate(
+                    cancellableInstance, "phase7 close-cancel cleanup");
+                if (unsupportedInstance != null) ApplicationInstanceRegistry.TryTerminate(
+                    unsupportedInstance, "phase7 unsupported cleanup");
                 if (reusable != null) ApplicationInstanceRegistry.TryTerminate(reusable,
                     "phase7 reusable cleanup");
                 if (firstDuplicate != null) ApplicationInstanceRegistry.TryTerminate(
@@ -611,6 +763,9 @@ namespace guideXOS.GUI {
                 CloseFixture(firstWindow);
                 CloseFixture(secondWindow);
                 CloseFixture(crossWindow);
+                CloseFixture(closeWindow);
+                CloseFixture(cancellableWindow);
+                CloseFixture(unsupportedWindow);
                 CloseFixture(duplicateFirstWindow);
                 CloseFixture(duplicateSecondWindow);
                 WindowManager.CleanupClosedWindows();

@@ -279,6 +279,22 @@ namespace guideXOS.GUI {
             // at their explicit ownership boundaries.
             Windows.Add(window);
         }
+
+        /// <summary>
+        /// Applies user focus to one Window.  Semantic application-owned
+        /// Windows activate through the bounded application projection;
+        /// unattached compatibility Windows retain direct z-order behavior.
+        /// </summary>
+        public static void FocusWindow(Window window) {
+            if (window == null) return;
+            if (!window.ApplicationInstanceHandle.IsValid) {
+                MoveToEnd(window);
+                return;
+            }
+            ApplicationLifecycleResult result;
+            TaskbarApplicationEntryRegistry.TryFocusWindow(
+                window.ApplicationInstanceHandle, window, out result);
+        }
         /// <summary>
         /// Draw All
         /// </summary>

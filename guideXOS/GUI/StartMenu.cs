@@ -453,7 +453,7 @@ namespace guideXOS.GUI {
                                     if (my >= iy2 && my <= iy2 + ih) {
                                         // Show/activate the window
                                         window.Visible = true;
-                                        WindowManager.MoveToEnd(window);
+                                        WindowManager.FocusWindow(window);
                                         Visible = false;
                                         return;
                                     }
