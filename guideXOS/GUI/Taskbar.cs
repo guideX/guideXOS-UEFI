@@ -115,6 +115,17 @@ namespace guideXOS.GUI {
             }
         }
 
+        internal static bool TryResolveSemanticWindow(Window window,
+                                                       out TaskbarApplicationEntry entry) {
+            entry = null;
+            if (window == null || !window.ApplicationInstanceHandle.IsValid) {
+                return false;
+            }
+            if (!WindowManager.IsTaskbarEntryValid(window)) return false;
+            return TaskbarApplicationEntryRegistry.TryGetForWindow(window,
+                                                                   out entry);
+        }
+
         /// <summary>
         /// Draw UEFI Taskbar
         /// </summary>
@@ -409,13 +420,7 @@ namespace guideXOS.GUI {
                         var w = WindowManager.Windows[i];
                         if (!w.Visible || !w.ShowInTaskbar) continue;
                         TaskbarApplicationEntry entry;
-                        bool semantic = false;
-                        if (w.ApplicationInstanceHandle.IsValid &&
-                                !WindowManager.IsTaskbarEntryValid(w)) {
-                            continue;
-                        }
-                        semantic = TaskbarApplicationEntryRegistry.TryGetForWindow(
-                            w, out entry);
+                        bool semantic = TryResolveSemanticWindow(w, out entry);
                         if (!semantic && w.ApplicationInstanceHandle.IsValid) continue;
                         // button rect
                         int x = btnX; int y = btnY; int wRect = btnW; int hRect = btnH;

@@ -362,6 +362,19 @@ namespace guideXOS.GUI {
             return presentable;
         }
 
+        private static int CountVisibleTaskbarWindowsFromOwnedSlots(
+                ApplicationInstance instance) {
+            if (instance == null) return 0;
+            int visibleTaskbarWindowCount = 0;
+            for (int i = 0; i < instance.OwnedWindowCount; i++) {
+                Window window = instance.GetOwnedWindowAt(i);
+                if (window != null && window.Visible && window.ShowInTaskbar) {
+                    visibleTaskbarWindowCount++;
+                }
+            }
+            return visibleTaskbarWindowCount;
+        }
+
         private static void RemoveInvalidEntries() {
             for (int i = 0; i < _entries.Length; i++) {
                 TaskbarApplicationEntry entry = _entries[i];
@@ -528,9 +541,11 @@ namespace guideXOS.GUI {
                 TaskbarApplicationEntry primaryEntry;
                 bool primaryFound = TryGet(primary == null
                     ? ApplicationInstanceHandle.None : primary.Handle, out primaryEntry);
-                int primaryStaleOwners;
-                int authoritativePrimaryPresentableCount = primary == null ? -1 :
-                    CountPresentableWindows(primary, out primaryStaleOwners);
+                TaskbarApplicationEntry rendererPrimaryEntry;
+                bool rendererResolvedPrimaryWindow = Taskbar.TryResolveSemanticWindow(
+                    firstWindow, out rendererPrimaryEntry);
+                int visibleTaskbarWindowCount =
+                    CountVisibleTaskbarWindowsFromOwnedSlots(primary);
                 ApplicationInstanceObservation observation =
                     default(ApplicationInstanceObservation);
                 bool observationMatches = ApplicationInstanceRegistry.ObservationCount > 0 &&
@@ -540,9 +555,11 @@ namespace guideXOS.GUI {
                     EntryCount == 1 && primaryEntry.OwnedWindowCount == 1 &&
                     primaryEntry.PresentableWindowCount == 1 && observationMatches;
                 bool primaryRendererProjectionContract = attached && primaryFound &&
+                    rendererResolvedPrimaryWindow &&
+                    rendererPrimaryEntry == primaryEntry &&
                     primaryEntry.OwnedWindowCount == primary.OwnedWindowCount &&
                     primaryEntry.PresentableWindowCount ==
-                        authoritativePrimaryPresentableCount && EntryCount == 1;
+                        visibleTaskbarWindowCount && EntryCount == 1;
 
                 secondWindow = new TaskbarProjectionProbeWindow();
                 attached = ApplicationInstanceRegistry.TryAttachWindow(primary, secondWindow);
@@ -746,23 +763,31 @@ namespace guideXOS.GUI {
                     ApplicationInstanceRegistry.TryAttachWindow(secondDuplicate,
                         duplicateSecondWindow);
                 Reconcile();
-                int firstDuplicateStaleOwners;
-                int secondDuplicateStaleOwners;
-                int authoritativeFirstDuplicatePresentableCount = firstDuplicate == null ? -1 :
-                    CountPresentableWindows(firstDuplicate, out firstDuplicateStaleOwners);
-                int authoritativeSecondDuplicatePresentableCount = secondDuplicate == null ? -1 :
-                    CountPresentableWindows(secondDuplicate, out secondDuplicateStaleOwners);
+                TaskbarApplicationEntry firstDuplicateRendererEntry;
+                TaskbarApplicationEntry secondDuplicateRendererEntry;
+                bool firstDuplicateRendererResolved = Taskbar.TryResolveSemanticWindow(
+                    duplicateFirstWindow, out firstDuplicateRendererEntry);
+                bool secondDuplicateRendererResolved = Taskbar.TryResolveSemanticWindow(
+                    duplicateSecondWindow, out secondDuplicateRendererEntry);
+                int firstDuplicateVisibleTaskbarWindowCount =
+                    CountVisibleTaskbarWindowsFromOwnedSlots(firstDuplicate);
+                int secondDuplicateVisibleTaskbarWindowCount =
+                    CountVisibleTaskbarWindowsFromOwnedSlots(secondDuplicate);
                 bool duplicateRendererProjectionContract = duplicatesAttached &&
                     firstDuplicate.Handle != secondDuplicate.Handle &&
                     TryGet(firstDuplicate.Handle, out TaskbarApplicationEntry firstDuplicateEntry) &&
                     TryGet(secondDuplicate.Handle, out TaskbarApplicationEntry secondDuplicateEntry) &&
+                    firstDuplicateRendererResolved &&
+                    secondDuplicateRendererResolved &&
+                    firstDuplicateRendererEntry == firstDuplicateEntry &&
+                    secondDuplicateRendererEntry == secondDuplicateEntry &&
                     firstDuplicateEntry != secondDuplicateEntry &&
                     firstDuplicateEntry.OwnedWindowCount == firstDuplicate.OwnedWindowCount &&
                     firstDuplicateEntry.PresentableWindowCount ==
-                        authoritativeFirstDuplicatePresentableCount &&
+                        firstDuplicateVisibleTaskbarWindowCount &&
                     secondDuplicateEntry.OwnedWindowCount == secondDuplicate.OwnedWindowCount &&
                     secondDuplicateEntry.PresentableWindowCount ==
-                        authoritativeSecondDuplicatePresentableCount && EntryCount == 2;
+                        secondDuplicateVisibleTaskbarWindowCount && EntryCount == 2;
                 twoSameDescriptorEntriesIndependent = duplicateRendererProjectionContract;
                 rendererProjectionContract = primaryRendererProjectionContract &&
                     duplicateRendererProjectionContract;
