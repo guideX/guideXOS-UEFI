@@ -1709,3 +1709,110 @@ No Ring 3 or process isolation was implemented.  The public contract can map
 process termination in a future backend without changing callers.  The
 current adapter boundary deliberately keeps those stronger mechanisms out of
 the C# implementation.
+
+## 23. Phase 7 — application-centric taskbar projection
+
+Phase 7 adds an application-entry projection without moving lifecycle or
+Window ownership out of `ApplicationInstanceRegistry`.  The registry remains
+authoritative for instance existence, generation-safe handles, lifecycle
+state, owned Windows, activation, suspension/resume, and close policy.
+`TaskbarApplicationEntryRegistry` is a bounded, read-only presentation cache:
+it reconciles from the registry and each instance's owned-Window slots, and it
+does not create instances, own Windows, or become a second source of truth.
+
+### 23.1 Semantic groups and visual buttons
+
+Each live application instance with at least one presentable owned Window
+projects to exactly one semantic taskbar entry.  An entry is keyed by the
+generation-safe `ApplicationInstanceHandle`, carries the descriptor/display
+metadata and lifecycle flags, and contains the bounded owned-Window view.
+Multiple same-descriptor launches therefore produce independent entries, not
+one descriptor-wide group.  A single instance may own multiple Windows: they
+remain separate visual taskbar Window buttons while sharing one semantic
+application group and active-group state.  The renderer reconciles before
+presentation and retains raw Window enumeration; Phase 7 does not collapse
+buttons or add a picker.
+
+The bounds are explicit: the registry has 32 instance slots and each instance
+and projection entry has 8 owned-Window slots.  Reconciliation uses fixed
+arrays and bounded scans, records attach/detach, reuse, suppression, stale
+owner, multi-Window-group, and maximum-group-size diagnostics, and never
+allocates a collection or application instance during projection.
+
+### 23.2 Activation, focus, and deterministic target selection
+
+Taskbar activation is an application-instance operation followed by an
+explicit Window-focus operation.  It is distinct from arbitrary z-order or
+raw focus changes: `MoveToEnd` remains lifecycle-neutral, while a real
+taskbar/Window selection calls the semantic route.  Selecting another Window
+within the active instance changes the selected Window without a redundant
+deactivate/activate lifecycle transition.  Selecting a Window owned by another
+instance activates that instance, deactivates the previous semantic owner,
+and then focuses the selected Window.
+
+When a taskbar route does not provide an explicit Window, target selection is
+deterministic: retain the current presentable selection, otherwise the
+most-recent presentable Window, otherwise the first presentable owned Window.
+Minimized targets are restored before focus.  Invalid, stale, terminal,
+unowned, hidden, or non-taskbar Windows are rejected with the bounded
+lifecycle result; stale projection state is reconciled before rejection and
+cannot retarget a reused handle.
+
+Suspended activation resumes the instance through the lifecycle registry and
+then focuses its target.  A backend that cannot safely resume returns
+`Unsupported`; it is not reported as a successful activation.  Application
+Close is routed with `ShellRequest` to the instance and is separate from a
+Window title-bar close.  Closing one Window leaves the instance/group and its
+other presentable Windows intact.  Closing the final Window follows the
+instance's `CloseWhenLastWindowClosed` policy.  Reusable zero-Window
+instances remain registered but are suppressed from the taskbar until a
+presentation Window is relaunched or reattached; multi-instance launches
+remain independently addressable.
+
+### 23.3 Observation and future process compatibility
+
+Task Manager is read-only.  Its summary/diagnostic path uses only
+`ObservationCount` and `TryGetObservationAt`; it does not activate, close,
+reorder, mutate lifecycle state, or alter Window ownership.  The observation
+diagnostic snapshots registry, lifecycle, ownership, Window, and projection
+counters before and after enumeration and requires no mutation.
+
+The instance and lifecycle contracts remain suitable for a future Ring 3 or
+process-backed implementation: the same generation-safe handle and semantic
+operations can map activation, suspension/resume, and termination to an
+isolated process backend.  Phase 7 itself adds no Ring 3 scheduler/process
+freezing and keeps the current cooperative managed behavior.
+
+Richer visual grouping, collapsed buttons, thumbnails, and a Window picker
+are explicitly deferred.  The current UI continues to show separate Window
+buttons; only the semantic application-entry projection and activation/close
+routes are added.
+
+### 23.4 Phase 7 proof markers and gates
+
+The AppModel diagnostic preserves all Phase 6 markers and adds the grouping
+self-test, projection, observation, and factory counters.  The grouping
+self-test must emit a positive pass count with zero failures, and its cleanup
+must leave no stale owners or projection entries.  The AppRuntime diagnostic
+preserves the lifecycle proof and adds the bounded multi-Window/same-instance/
+cross-instance proof, read-only observation proof, and strict cleanup gate.
+The required proof forms are:
+
+```text
+TASKBAR_GROUPING_SELFTEST=passed=<positive>;failed=0;result=PASS
+TASKBAR_GROUPING_RUNTIME=multiWindow=1;sameInstanceSwitch=1;crossInstanceSwitch=1;result=PASS
+APP_MODEL_FACTORY_FALLBACKS=0
+APP_MODEL_COMPAT_LEGACY_BACKEND_CALLS=0
+ALLOCATOR_CORRUPT=0
+ThreadPool.Locked=0
+GRAPHICS_VALID=1
+unexpected input drops=0
+stale instances=0
+stale ownership=0
+stale taskbar owners=0
+taskbar group leak=0
+```
+
+These are regression gates, not replacement diagnostics: a missing, stale,
+or failing marker blocks the Phase 7 claim, while existing Phase 6 lifecycle,
+factory, input, graphics, allocator, and context-menu checks remain required.
