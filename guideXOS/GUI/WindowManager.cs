@@ -539,6 +539,7 @@ namespace guideXOS.GUI {
                     }
                 }
             }
+            TaskbarApplicationEntryRegistry.Reconcile();
         }
     }
 }

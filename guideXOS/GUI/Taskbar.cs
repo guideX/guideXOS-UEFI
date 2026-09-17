@@ -119,6 +119,7 @@ namespace guideXOS.GUI {
         /// Draw UEFI Taskbar
         /// </summary>
         private unsafe void DrawUEFITaskBar() {
+            TaskbarApplicationEntryRegistry.Reconcile();
             guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
             if (graphics == null) return;
 
@@ -265,6 +266,7 @@ namespace guideXOS.GUI {
                     DrawUEFITaskBar();
                     break;
                 case BootMode.Legacy:
+                    TaskbarApplicationEntryRegistry.Reconcile();
                     // Handle delayed workspace switcher creation at the START of Draw()
                     // This ensures it's created OUTSIDE of any mouse button handling
                     if (_needsWorkspaceSwitcher) {
@@ -406,13 +408,18 @@ namespace guideXOS.GUI {
                     for (int i = 0; i < WindowManager.Windows.Count; i++) {
                         var w = WindowManager.Windows[i];
                         if (!w.Visible || !w.ShowInTaskbar) continue;
-                        if (!WindowManager.IsTaskbarEntryValid(w)) continue;
+                        TaskbarApplicationEntry entry;
+                        bool semantic = TaskbarApplicationEntryRegistry.TryGetForWindow(
+                            w, out entry);
+                        if (!semantic && w.ApplicationInstanceHandle.IsValid) continue;
                         // button rect
                         int x = btnX; int y = btnY; int wRect = btnW; int hRect = btnH;
                         bool hover = (mx >= x && mx <= x + wRect && my >= y && my <= y + hRect);
-                        uint bg = hover ? 0xFF3A3A3A : 0xFF303030;
+                        bool active = semantic && entry.IsActive;
+                        uint bg = hover || active ? 0xFF3A3A3A : 0xFF303030;
                         Framebuffer.Graphics.FillRectangle(x, y, wRect, hRect, bg);
-                        Framebuffer.Graphics.DrawRectangle(x, y, wRect, hRect, 0xFF454545, 1);
+                        Framebuffer.Graphics.DrawRectangle(x, y, wRect, hRect,
+                            active ? 0xFF555555 : 0xFF454545, 1);
                         // icon and title
                         var icon = w.TaskbarIcon ?? Icons.DocumentIcon(32);
                         int iconY = y + (hRect / 2) - (icon.Height / 2);
@@ -422,11 +429,11 @@ namespace guideXOS.GUI {
                         if (textWidth > 0) WindowManager.font.DrawString(textX, y + (hRect / 2) - (WindowManager.font.FontSize / 2), w.Title, textWidth, WindowManager.font.FontSize);
                         // click -> focus window
                         if (left && hover) {
-                            if (w.ApplicationInstanceHandle.IsValid) {
+                            if (semantic) {
                                 ApplicationLifecycleResult lifecycle =
-                                    ApplicationInstanceRegistry.Activate(
-                                        w.ApplicationInstanceHandle);
-                                if (!lifecycle.Success) {
+                                    null;
+                                if (!TaskbarApplicationEntryRegistry.TryFocusWindow(
+                                        entry.InstanceHandle, w, out lifecycle)) {
                                     btnX += wRect + gap;
                                     continue;
                                 }
