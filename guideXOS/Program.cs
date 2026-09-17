@@ -1041,6 +1041,20 @@ unsafe class Program {
                 ApplicationInstanceRegistry.RunLifecycleRuntimeDiagnostic();
             SerialBreadcrumb("APP_RUNTIME_LIFECYCLE_DIAGNOSTIC=" +
                 (lifecycleRuntime ? "PASS" : "FAIL"));
+            bool taskbarGroupingRuntime =
+                TaskbarApplicationEntryRegistry.RunSelfTest();
+            bool taskbarGroupingCleanup =
+                ApplicationInstanceRegistry.ActiveCount == 0 &&
+                ApplicationInstanceRegistry.SuspendedCount == 0 &&
+                ApplicationInstanceRegistry.StaleOwnershipCount == 0;
+            SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_DIAGNOSTIC=" +
+                (taskbarGroupingRuntime && taskbarGroupingCleanup ? "PASS" : "FAIL"));
+            SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_ACTIVE=" +
+                ApplicationInstanceRegistry.ActiveCount.ToString());
+            SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_STALE=" +
+                ApplicationInstanceRegistry.StaleOwnershipCount.ToString());
+            SerialBreadcrumb("APP_RUNTIME_TASKBAR_GROUPING_CLEANUP=" +
+                (taskbarGroupingCleanup ? "PASS" : "FAIL"));
         }
 #endif
 
@@ -1945,6 +1959,9 @@ unsafe class Program {
                 SerialBreadcrumb("APP_MODEL_LIFECYCLE_STALE_HANDLES=" +
                     ApplicationInstanceRegistry.StaleLifecycleHandles.ToString());
                 SerialBreadcrumb("APP_MODEL_LIFECYCLE_SELFTEST_OK=1");
+                SerialBreadcrumb("APP_MODEL_INSTANCE_OBSERVATIONS=" +
+                    ApplicationInstanceRegistry.ObservationCount.ToString());
+                SerialBreadcrumb("APP_MODEL_TASKBAR_GROUPING_SELFTEST_OK=1");
                 SerialBreadcrumb("APP_MODEL_FACTORY_REGISTRATIONS=" +
                     ApplicationFactoryRegistry.FactoryRegistrations.ToString());
                 SerialBreadcrumb("APP_MODEL_FACTORY_LAUNCHES=" +

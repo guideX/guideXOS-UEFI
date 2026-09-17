@@ -624,6 +624,26 @@ namespace guideXOS.DefaultApps {
                 btnY + (btnH / 2 - WindowManager.font.FontSize / 2),
                 "End Task"
             );
+
+            // Task Manager observes the bounded app-model projection only.
+            // This deliberately does not enumerate or reorder WindowManager.Windows
+            // and does not invoke lifecycle, ownership, or focus operations.
+            int observedInstances = guideXOS.OS.ApplicationInstanceRegistry.ObservationCount;
+            int activeInstances = 0;
+            int suspendedInstances = 0;
+            for (int i = 0; i < observedInstances; i++) {
+                guideXOS.OS.ApplicationInstanceObservation observation;
+                if (!guideXOS.OS.ApplicationInstanceRegistry.TryGetObservationAt(
+                        i, out observation)) continue;
+                if (observation.IsActivated) activeInstances++;
+                if (observation.IsSuspended) suspendedInstances++;
+            }
+            WindowManager.font.DrawString(
+                x,
+                btnY + (btnH / 2 - WindowManager.font.FontSize / 2),
+                "Instances: " + observedInstances.ToString() +
+                "  Active: " + activeInstances.ToString() +
+                "  Suspended: " + suspendedInstances.ToString());
         }
 
         private void DrawHeaderCell(int x, int y, int w, int h, string text) {
