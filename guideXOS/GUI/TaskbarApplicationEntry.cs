@@ -284,6 +284,13 @@ namespace guideXOS.GUI {
         public static bool TryFocusWindow(ApplicationInstanceHandle handle,
                                           Window window,
                                           out ApplicationLifecycleResult result) {
+            return TryFocusWindow(handle, window, out result, true);
+        }
+
+        private static bool TryFocusWindow(ApplicationInstanceHandle handle,
+                                           Window window,
+                                           out ApplicationLifecycleResult result,
+                                           bool recordStaleOwnership) {
             Initialize();
             // Reconcile before validating the requested handle so stale
             // projection entries are removed even when activation is rejected.
@@ -292,10 +299,13 @@ namespace guideXOS.GUI {
             if (!handle.IsValid || !ApplicationInstanceRegistry.TryGet(handle,
                     out instance)) {
                 if (window != null && window.ApplicationInstanceHandle == handle) {
-                    // A direct taskbar request has already reconciled the
-                    // projection.  Detach this stale test/request target
-                    // without consuming the renderer stale-owner diagnostic.
-                    window.ClearApplicationInstance();
+                    if (recordStaleOwnership) {
+                        WindowManager.IsTaskbarEntryValid(window);
+                    } else {
+                        // The self-test injects this stale handle directly;
+                        // clean it up without recording a renderer event.
+                        window.ClearApplicationInstance();
+                    }
                 }
                 result = ApplicationLifecycleResult.Failed(
                     ApplicationLifecycleResultCode.NotFound, handle,
@@ -730,7 +740,7 @@ namespace guideXOS.GUI {
                     ApplicationInstanceRegistry.StaleOwnershipCount;
                 ApplicationLifecycleResult staleFocusResult;
                 bool staleFocusRejected = TryFocusWindow(staleHandle,
-                    secondWindow, out staleFocusResult);
+                    secondWindow, out staleFocusResult, false);
 
                 bool reusableStarted = ApplicationInstanceRegistry.TryBeginLaunch(
                     "selftest.phase7.reusable", ApplicationInstancePolicy.ReuseExisting,
