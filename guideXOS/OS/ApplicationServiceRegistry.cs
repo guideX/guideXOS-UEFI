@@ -33,7 +33,8 @@ namespace guideXOS.OS {
             _lastSettingsSelfTestFailure = "not-run";
             _access = new ApplicationServiceAccess(
                 new CSharpApplicationNotificationService(),
-                new CSharpApplicationSettingsService(), null);
+                new CSharpApplicationSettingsService(),
+                new CSharpApplicationSystemInformationService());
             _initialized = true;
 
             RegisterInitial(ApplicationServiceId.Notifications);
@@ -248,6 +249,10 @@ namespace guideXOS.OS {
                     ref firstFailure);
                 Check(RunSettingsSelfTest(), "application settings service",
                     ref passed, ref failed, ref firstFailure);
+                Check(RunSystemInformationSelfTest(context,
+                    accessCreated ? access : null),
+                    "system information service", ref passed, ref failed,
+                    ref firstFailure);
 
                 bool suspended = instance.TryTransition(
                     ApplicationInstanceLifecycleState.Suspended);
@@ -568,6 +573,23 @@ namespace guideXOS.OS {
                 "settings service self-test cleanup");
             _lastSettingsSelfTestFailure = passed ? "pass" : failure;
             return passed;
+        }
+
+        private static bool RunSystemInformationSelfTest(
+                ApplicationServiceContext context,
+                ApplicationServiceAccess access) {
+            if (context == null || access == null ||
+                    access.SystemInformation == null) return false;
+            ApplicationServiceResult<SystemInformationSnapshot> snapshot =
+                access.SystemInformation.GetSnapshot(context);
+            if (!snapshot.Succeeded || !snapshot.Value.IsWithinBounds()) {
+                return false;
+            }
+            SystemInformationSnapshot copy = snapshot.Value;
+            return copy.MemorySizeBytes >= copy.MemoryInUseBytes &&
+                   copy.OsName.Length <= SystemInformationSnapshot.MaxOsNameLength &&
+                   copy.OsVersion.Length <= SystemInformationSnapshot.MaxOsVersionLength &&
+                   copy.Architecture.Length <= SystemInformationSnapshot.MaxArchitectureLength;
         }
 
         private static string Repeat(char value, int count) {

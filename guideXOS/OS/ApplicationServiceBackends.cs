@@ -1,4 +1,6 @@
 using guideXOS.GUI;
+using guideXOS.Kernel.Drivers;
+using guideXOS.Misc;
 
 namespace guideXOS.OS {
     /// <summary>
@@ -193,6 +195,44 @@ namespace guideXOS.OS {
                 if (a[i] != b[i]) return false;
             }
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Request-time copied scalar snapshot.  No allocator, timer, or
+    /// ThreadPool object crosses the application service boundary.
+    /// </summary>
+    internal sealed class CSharpApplicationSystemInformationService :
+            ApplicationSystemInformationService {
+        public override ApplicationServiceResult<SystemInformationSnapshot>
+                GetSnapshot(ApplicationServiceContext context) {
+            ApplicationInstance instance;
+            ApplicationServiceResult valid;
+            if (!ApplicationServiceRegistry.TryValidateContext(
+                    context, ApplicationServiceId.SystemInformation,
+                    out instance, out valid)) {
+                return ApplicationServiceResult<SystemInformationSnapshot>.Failure(
+                    valid.Code, valid.BoundedDiagnostic);
+            }
+
+            ulong memorySize = Allocator.MemorySize;
+            if (memorySize == 0) {
+                return ApplicationServiceResult<SystemInformationSnapshot>.Failure(
+                    ApplicationServiceResultCode.ResourceUnavailable,
+                    "System memory total is unavailable");
+            }
+            ulong memoryInUse = Allocator.MemoryInUse;
+            if (memoryInUse > memorySize) memoryInUse = memorySize;
+            uint rawCpu = ThreadPool.CPUUsage;
+            int cpu = rawCpu > 100 ? 100 : (int)rawCpu;
+            int threadCount = ThreadPool.ThreadCount;
+            if (threadCount < 0) threadCount = 0;
+
+            SystemInformationSnapshot snapshot = new SystemInformationSnapshot(
+                Timer.Ticks, memorySize, memoryInUse, threadCount, cpu,
+                "guideXOS", "Phase8", "x86_64");
+            return ApplicationServiceResult<SystemInformationSnapshot>.SuccessResult(
+                snapshot);
         }
     }
 }
