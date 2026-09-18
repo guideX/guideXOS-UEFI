@@ -2046,6 +2046,9 @@ namespace guideXOS.OS {
                     "SERVICES_CLEANUP=" +
                     (cleanup ? "PASS" : "FAIL"));
                 Program.MarkUefiAppRuntime(
+                    "SERVICES_STALE_CONTEXTS=" +
+                    (cleanup ? "0" : "1"));
+                Program.MarkUefiAppRuntime(
                     "SERVICES_RESULT=" +
                     (passed ? "PASS" : "FAIL"));
 #endif
