@@ -1956,3 +1956,104 @@ The audit does not authorize persistence, IPC, Ring 3, generic dependency
 injection, dialogs, app-local storage, resources, clipboard, or shell/open
 service implementation in Phase 8.  Those remain inventoried and documented
 until a smaller bounded contract and an independent authority decision exist.
+
+### 24.4 Implemented application-service access model
+
+The approved first cohort is implemented in
+`guideXOS/OS/ApplicationServices.cs`,
+`guideXOS/OS/ApplicationServiceRegistry.cs`, and
+`guideXOS/OS/ApplicationServiceBackends.cs`:
+
+* `ApplicationServiceRegistry` is a fixed eight-entry table with deterministic
+  IDs and exactly three registered services: `Notifications`, `Settings`, and
+  `SystemInformation`.  Duplicate and unknown registrations are rejected.
+* `ApplicationServiceContext` carries a generation-safe
+  `ApplicationInstanceHandle`, stable descriptor/application identity, and a
+  bounded capability-name copy.  It is a validated capability-shaped value,
+  not a second authority or ownership registry.
+* `ApplicationServiceAccess` exposes only typed service properties.  The
+  adapters use abstract base contracts rather than interfaces because the
+  custom bare-metal NativeAOT configuration does not support
+  `RhpInitialDynamicInterfaceDispatch`; this preserves typed substitution
+  without adding unsupported runtime dispatch.
+* `ApplicationServiceResult` and `ApplicationServiceResult<T>` expose bounded
+  result codes and 192-character diagnostics.  `PermissionDenied` remains
+  vocabulary only; Phase 8 does not invent same-address-space permission
+  enforcement from the capability field.
+
+Every backend call revalidates the context against
+`ApplicationInstanceRegistry`, including the live generation, descriptor ID,
+and lifecycle state.  Stale, mismatched, terminated, failed, closing, and
+suspended contexts are rejected.  The common validator allows the service
+backend to impose a narrower mask: system information accepts Loading,
+Initialized, Running, Activated, and Inactive; notifications and settings
+accept Initialized, Running, Activated, and Inactive.  Thus factory-created
+contexts may be carried while an instance is Loading, but notification and
+settings calls do not become eligible until initialization has completed.
+
+### 24.5 First-cohort contracts and migrations
+
+Notifications are bounded to a 64-character title and 256-character body.
+The C# adapter maps the request to the existing `NotificationManager`, adding
+an internal stable application source tag so `Clear` removes only that
+application's service-created notifications.  Renderer, animation, and
+`Notify` objects remain manager-owned.  Calculator and Display Options now
+receive typed service access from their factories and no longer call
+`NotificationManager.Add` directly.
+
+Session application settings are bounded to 32 application namespaces, 16
+keys per namespace, 64-character keys, and 256-character strings.  The store
+contains only Boolean, Int32, and bounded string values, is keyed by stable
+descriptor/application identity, and is shared by all valid instances of that
+identity.  It is cleared only by controlled diagnostic service reset and has
+no filesystem, `Configuration`, `SystemMode`, or persistence path.  Notepad
+loads and updates `wrap` through `ApplicationServiceAccess.Settings`; its
+document, dirty flag, undo/redo stacks, dialogs, windows, and other transient
+runtime state remain instance-local.
+
+System information is returned as a copied immutable
+`SystemInformationSnapshot` containing uptime ticks, memory total/usage,
+thread count, CPU percentage, and bounded `guideXOS`/`Phase8`/`x86_64`
+identity strings.  CPU is clamped to 0..100 and used memory is bounded by the
+reported total.  The service never returns allocator, timer, thread-pool,
+Desktop, WindowManager, framebuffer, or kernel-global references.  Task
+Manager's selected metric path now consumes the snapshot; chart state,
+rendering state, per-window owner observation, and allocator-detail counters
+remain application-local diagnostics.
+
+### 24.6 Runtime proof, regression gates, and deferrals
+
+The AppModel diagnostic emits and gates:
+
+```text
+APP_MODEL_SERVICES_SELFTEST_OK=1
+APP_MODEL_SERVICES_REGISTERED=3
+APP_MODEL_SERVICES_DUPLICATE_REJECTED=1
+APP_MODEL_SERVICES_STALE_REJECTED=<positive>
+APP_MODEL_SERVICES_CLEANUP=1
+```
+
+The AppRuntime service diagnostic uses normal descriptor/factory launches for
+Calculator, two Notepad instances, and Task Manager.  It emits:
+
+```text
+APP_RUNTIME_SERVICES_NOTIFICATION=PASS
+APP_RUNTIME_SERVICES_SHARED_SETTINGS=PASS
+APP_RUNTIME_SERVICES_SNAPSHOT=PASS
+APP_RUNTIME_SERVICES_STALE_REJECTED=PASS
+APP_RUNTIME_SERVICES_CLEANUP=PASS
+APP_RUNTIME_SERVICES_RESULT=PASS
+```
+
+The service diagnostic restores its pre-diagnostic authoritative instance,
+observation, window, and stale-ownership baselines.  The focused green
+evidence is `serial_phase8_appmodel_green.txt` and
+`serial_phase8_service_runtime_green2.txt`; the complete Phase 7 regression
+matrix remains required before final Phase 8 acceptance.
+
+The following remain inventoried and explicitly deferred: message/open/save
+dialogs; app-local filesystem storage; packaged resources; clipboard; and a
+shell/open service.  Persistence, IPC, Ring 3, and a generic dependency
+injection framework remain outside this phase.  Existing App Model launch,
+association, shell, dialog, file, and resource paths are not relabeled as
+application services merely because they are adjacent to the cohort.
