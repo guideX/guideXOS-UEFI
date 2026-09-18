@@ -20,6 +20,7 @@ namespace guideXOS.OS {
         private static int _staleContextRejections;
         private static int _invalidContextRejections;
         private static ApplicationServiceAccess _access;
+        private static string _lastSettingsSelfTestFailure;
 
         public static void Initialize() {
             if (_initialized) return;
@@ -29,8 +30,10 @@ namespace guideXOS.OS {
             _duplicateRegistrationRejected = false;
             _staleContextRejections = 0;
             _invalidContextRejections = 0;
+            _lastSettingsSelfTestFailure = "not-run";
             _access = new ApplicationServiceAccess(
-                new CSharpApplicationNotificationService(), null, null);
+                new CSharpApplicationNotificationService(),
+                new CSharpApplicationSettingsService(), null);
             _initialized = true;
 
             RegisterInitial(ApplicationServiceId.Notifications);
@@ -68,6 +71,10 @@ namespace guideXOS.OS {
 
         public static bool DiagnosticsClean {
             get { return true; }
+        }
+
+        public static string LastSettingsSelfTestFailure {
+            get { return _lastSettingsSelfTestFailure; }
         }
 
         public static bool TryCreateContext(
@@ -239,6 +246,8 @@ namespace guideXOS.OS {
                 Check(accessCreated && access.Notifications.Clear(context).Succeeded,
                     "application notification clear", ref passed, ref failed,
                     ref firstFailure);
+                Check(RunSettingsSelfTest(), "application settings service",
+                    ref passed, ref failed, ref firstFailure);
 
                 bool suspended = instance.TryTransition(
                     ApplicationInstanceLifecycleState.Suspended);
@@ -441,6 +450,7 @@ namespace guideXOS.OS {
                 "notification body bound", ref passed, ref failed,
                 ref failure);
             Check(ApplicationSettingValue.Boolean(true).IsValid &&
+                  ApplicationSettingValue.Boolean(true).BooleanValue &&
                   ApplicationSettingValue.Int32(4).IsValid &&
                   ApplicationSettingValue.String("session").IsValid,
                 "setting value kinds", ref passed, ref failed, ref failure);
@@ -456,6 +466,108 @@ namespace guideXOS.OS {
             Check(snapshot.IsWithinBounds(), "system snapshot shape",
                 ref passed, ref failed, ref failure);
             return failed == 0;
+        }
+
+        private static bool RunSettingsSelfTest() {
+            ApplicationInstance first = null;
+            ApplicationInstance second = null;
+            ApplicationInstance other = null;
+            ApplicationServiceContext firstContext = null;
+            ApplicationServiceContext secondContext = null;
+            ApplicationServiceContext otherContext = null;
+            ApplicationServiceAccess firstAccess = null;
+            ApplicationServiceResult result;
+            bool firstReused;
+            bool secondReused;
+            bool otherReused;
+            LaunchResult firstFailure;
+            LaunchResult secondFailure;
+            LaunchResult otherFailure;
+            bool passed = true;
+            string failure = "none";
+
+            bool firstStarted = ApplicationInstanceRegistry.TryBeginLaunch(
+                "selftest.settings.notepad", ApplicationInstancePolicy.MultiInstance,
+                LaunchRequest.ForAppId("selftest.settings.notepad", null, null,
+                    LaunchActivationIntent.NewInstance), out first, out firstReused,
+                out firstFailure);
+            bool secondStarted = ApplicationInstanceRegistry.TryBeginLaunch(
+                "selftest.settings.notepad", ApplicationInstancePolicy.MultiInstance,
+                LaunchRequest.ForAppId("selftest.settings.notepad", null, null,
+                    LaunchActivationIntent.NewInstance), out second, out secondReused,
+                out secondFailure);
+            bool otherStarted = ApplicationInstanceRegistry.TryBeginLaunch(
+                "selftest.settings.calculator", ApplicationInstancePolicy.MultiInstance,
+                LaunchRequest.ForAppId("selftest.settings.calculator", null, null,
+                    LaunchActivationIntent.NewInstance), out other, out otherReused,
+                out otherFailure);
+
+            bool completed = firstStarted && secondStarted && otherStarted &&
+                ApplicationInstanceRegistry.TryCompleteLaunch(first, false,
+                    out firstFailure) &&
+                ApplicationInstanceRegistry.TryCompleteLaunch(second, false,
+                    out secondFailure) &&
+                ApplicationInstanceRegistry.TryCompleteLaunch(other, false,
+                    out otherFailure);
+            bool contexts = completed &&
+                TryCreateContextAndAccess(first.Handle, out firstContext,
+                    out firstAccess, out result) &&
+                TryCreateContext(second.Handle, out secondContext, out result) &&
+                TryCreateContext(other.Handle, out otherContext, out result);
+
+            if (!firstStarted) failure = "first-launch";
+            else if (!secondStarted) failure = "second-launch";
+            else if (!otherStarted) failure = "other-launch";
+            else if (!completed) failure = "completion";
+            else if (!contexts) failure = "context";
+
+            if (firstAccess == null || firstAccess.Settings == null) {
+                passed = false;
+                if (failure == "none") failure = "settings-access";
+            } else if (contexts) {
+                ApplicationServiceResult set = firstAccess.Settings.Set(
+                    firstContext, "wrap", ApplicationSettingValue.Boolean(true));
+                ApplicationServiceResult<ApplicationSettingValue> shared =
+                    firstAccess.Settings.Get(secondContext, "wrap");
+                ApplicationServiceResult<ApplicationSettingValue> isolated =
+                    firstAccess.Settings.Get(otherContext, "wrap");
+                ApplicationServiceResult<ApplicationSettingValue> missing =
+                    firstAccess.Settings.Get(firstContext, "missing");
+                ApplicationServiceResult invalidKey = firstAccess.Settings.Set(
+                    firstContext,
+                    Repeat('k', ApplicationSettingsService.MaxKeyLength + 1),
+                    ApplicationSettingValue.Int32(1));
+                ApplicationServiceResult invalidValue = firstAccess.Settings.Set(
+                    firstContext, "invalid", ApplicationSettingValue.String(
+                        Repeat('v', ApplicationSettingValue.MaxStringLength + 1)));
+                passed = set.Succeeded && shared.Succeeded &&
+                    shared.Value.BooleanValue &&
+                    isolated.Code == ApplicationServiceResultCode.NotFound &&
+                    missing.Code == ApplicationServiceResultCode.NotFound &&
+                    invalidKey.Code == ApplicationServiceResultCode.InvalidRequest &&
+                    invalidValue.Code == ApplicationServiceResultCode.InvalidRequest;
+                if (!passed && failure == "none") {
+                    if (!set.Succeeded) failure = "set";
+                    else if (!shared.Succeeded) failure = "shared-code";
+                    else if (shared.Value.Kind != ApplicationSettingValueKind.Boolean) failure = "shared-kind";
+                    else if (!shared.Value.BooleanValue) failure = "shared-value";
+                    else if (isolated.Code != ApplicationServiceResultCode.NotFound) failure = "isolated-code";
+                    else if (missing.Code != ApplicationServiceResultCode.NotFound) failure = "missing-code";
+                    else if (invalidKey.Code != ApplicationServiceResultCode.InvalidRequest) failure = "key-bound";
+                    else failure = "value-bound";
+                }
+            } else {
+                passed = false;
+            }
+
+            if (first != null) ApplicationInstanceRegistry.TryTerminate(first,
+                "settings service self-test cleanup");
+            if (second != null) ApplicationInstanceRegistry.TryTerminate(second,
+                "settings service self-test cleanup");
+            if (other != null) ApplicationInstanceRegistry.TryTerminate(other,
+                "settings service self-test cleanup");
+            _lastSettingsSelfTestFailure = passed ? "pass" : failure;
+            return passed;
         }
 
         private static string Repeat(char value, int count) {

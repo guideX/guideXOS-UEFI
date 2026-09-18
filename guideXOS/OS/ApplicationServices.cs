@@ -248,12 +248,12 @@ namespace guideXOS.OS {
         public const int MaxStringLength = 256;
 
         private readonly ApplicationSettingValueKind _kind;
-        private readonly bool _booleanValue;
+        private readonly int _booleanValue;
         private readonly int _int32Value;
         private readonly string _stringValue;
 
         public readonly ApplicationSettingValueKind Kind { get { return _kind; } }
-        public readonly bool BooleanValue { get { return _booleanValue; } }
+        public readonly bool BooleanValue { get { return _booleanValue != 0; } }
         public readonly int Int32Value { get { return _int32Value; } }
         public readonly string StringValue { get { return _stringValue; } }
         public readonly bool IsValid {
@@ -270,7 +270,7 @@ namespace guideXOS.OS {
                                         bool booleanValue, int int32Value,
                                         string stringValue) {
             _kind = kind;
-            _booleanValue = booleanValue;
+            _booleanValue = booleanValue ? 1 : 0;
             _int32Value = int32Value;
             _stringValue = stringValue;
         }
@@ -350,6 +350,9 @@ namespace guideXOS.OS {
     }
 
     public abstract class ApplicationSettingsService {
+        public const int MaxApplicationNamespaces = 32;
+        public const int MaxKeysPerApplication = 16;
+        public const int MaxKeyLength = 64;
         public abstract ApplicationServiceResult<ApplicationSettingValue> Get(
             ApplicationServiceContext context, string key);
         public abstract ApplicationServiceResult Set(

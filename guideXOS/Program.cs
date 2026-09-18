@@ -1909,6 +1909,9 @@ unsafe class Program {
                     Desktop.Apps)) {
                 failure = "COMPATIBILITY_FACADE";
             } else if (!ApplicationServiceRegistry.RunSelfTest()) {
+                SerialBreadcrumb("APP_MODEL_SERVICES_SETTINGS_SELFTEST=" +
+                    (ApplicationServiceRegistry.LastSettingsSelfTestFailure ??
+                        "unknown"));
                 failure = "APPLICATION_SERVICES";
             } else {
                 SerialBreadcrumb("APP_MODEL_APP_COUNT=" + Desktop.Apps.Length.ToString());
