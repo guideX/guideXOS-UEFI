@@ -1908,6 +1908,8 @@ unsafe class Program {
             } else if (!AppModelCompatibilityDiagnostics.RunSelfTest(
                     Desktop.Apps)) {
                 failure = "COMPATIBILITY_FACADE";
+            } else if (!ApplicationServiceRegistry.RunSelfTest()) {
+                failure = "APPLICATION_SERVICES";
             } else {
                 SerialBreadcrumb("APP_MODEL_APP_COUNT=" + Desktop.Apps.Length.ToString());
                 SerialBreadcrumb("APP_MODEL_MODERN_DESCRIPTOR_COUNT=" +

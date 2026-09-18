@@ -29,7 +29,8 @@ namespace guideXOS.OS {
             _duplicateRegistrationRejected = false;
             _staleContextRejections = 0;
             _invalidContextRejections = 0;
-            _access = new ApplicationServiceAccess(null, null, null);
+            _access = new ApplicationServiceAccess(
+                new CSharpApplicationNotificationService(), null, null);
             _initialized = true;
 
             RegisterInitial(ApplicationServiceId.Notifications);
@@ -215,6 +216,30 @@ namespace guideXOS.OS {
                     "valid system information context", ref passed,
                     ref failed, ref firstFailure);
 
+                ApplicationServiceAccess access;
+                bool accessCreated = TryGetAccess(context, out access,
+                    out result);
+                ApplicationNotificationRequest request =
+                    ApplicationNotificationRequest.Create(
+                        "Phase 8", "Service self-test",
+                        ApplicationNotificationSeverity.Info);
+                bool notification = accessCreated && access.Notifications != null &&
+                    access.Notifications.Publish(context, request).Succeeded;
+                Check(notification, "notification publish", ref passed,
+                    ref failed, ref firstFailure);
+                ApplicationNotificationRequest invalidRequest =
+                    ApplicationNotificationRequest.Create(
+                        Repeat('t', ApplicationNotificationRequest.MaxTitleLength + 1),
+                        "body", ApplicationNotificationSeverity.Info);
+                Check(accessCreated && access.Notifications.Publish(
+                    context, invalidRequest).Code ==
+                    ApplicationServiceResultCode.InvalidRequest,
+                    "invalid notification request rejected", ref passed,
+                    ref failed, ref firstFailure);
+                Check(accessCreated && access.Notifications.Clear(context).Succeeded,
+                    "application notification clear", ref passed, ref failed,
+                    ref firstFailure);
+
                 bool suspended = instance.TryTransition(
                     ApplicationInstanceLifecycleState.Suspended);
                 bool suspendedRejected = suspended &&
@@ -248,6 +273,11 @@ namespace guideXOS.OS {
                     result.Code == ApplicationServiceResultCode.InvalidContext;
                 Check(staleRejected, "stale service context rejected",
                     ref passed, ref failed, ref firstFailure);
+                Check(accessCreated &&
+                    access.Notifications.Publish(context, request).Code ==
+                        ApplicationServiceResultCode.InvalidContext,
+                    "stale notification context", ref passed, ref failed,
+                    ref firstFailure);
             } else {
                 Check(false, "service test instance launch", ref passed,
                     ref failed, ref firstFailure);

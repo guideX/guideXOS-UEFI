@@ -9,7 +9,8 @@ namespace guideXOS.GUI {
 
     public class Notify {
         public int X, Y;
-        public readonly string Message;
+        public string Message;
+        internal string SourceApplicationId;
         public NotificationLevel NotificationLevel;
         public int SWidth;
         public int SHeight;
@@ -18,11 +19,23 @@ namespace guideXOS.GUI {
         public Animation ani;
 
         public Notify(string msg, NotificationLevel level = NotificationLevel.None) {
+            Initialize(msg, level, null);
+        }
+
+        internal Notify(string msg, NotificationLevel level,
+                        string sourceApplicationId) {
+            Initialize(msg, level, sourceApplicationId);
+        }
+
+        private void Initialize(string msg, NotificationLevel level,
+                                 string sourceApplicationId) {
             DisposeUntil = 0;
-            Message = msg;
+            Message = msg ?? string.Empty;
+            SourceApplicationId = sourceApplicationId;
             X = 0; Y = 0;
-            SWidth = WindowManager.font.MeasureString(msg);
-            SHeight = WindowManager.font.FontSize;
+            SWidth = WindowManager.font == null ? 0 :
+                WindowManager.font.MeasureString(Message);
+            SHeight = WindowManager.font == null ? 0 : WindowManager.font.FontSize;
             NotificationLevel = level;
 
             ani = new Animation()
@@ -57,6 +70,34 @@ namespace guideXOS.GUI {
         public static void Add(Notify nofity) {
             if (Notifications != null) {
                 Notifications.Add(nofity);
+            }
+        }
+
+        /// <summary>
+        /// Enqueue one service-created toast with an internal source tag.
+        /// Notify and animation fields remain outside the application service
+        /// contract.
+        /// </summary>
+        public static void AddForApplication(string applicationId,
+                                             string message,
+                                             NotificationLevel level) {
+            if (string.IsNullOrEmpty(applicationId)) return;
+            if (Notifications == null) Notifications = new();
+            Notifications.Add(new Notify(message, level, applicationId));
+        }
+
+        /// <summary>
+        /// Clear only service-created notifications from one application
+        /// identity.  Legacy source-less notifications are preserved.
+        /// </summary>
+        public static void ClearForApplication(string applicationId) {
+            if (Notifications == null || string.IsNullOrEmpty(applicationId)) return;
+            for (int i = Notifications.Count - 1; i >= 0; i--) {
+                Notify notification = Notifications[i];
+                if (notification == null ||
+                        notification.SourceApplicationId != applicationId) continue;
+                Notifications.RemoveAt(i);
+                notification.Dispose();
             }
         }
 
@@ -102,7 +143,9 @@ namespace guideXOS.GUI {
                 Framebuffer.Graphics.FillRectangle(Framebuffer.Width - v.X, v.Y + y, v.SWidth + Devide, v.SHeight + Devide, 0xFF111111);
                 Framebuffer.Graphics.DrawRectangle(Framebuffer.Width - v.X, v.Y + y, v.SWidth + Devide, v.SHeight + Devide, 0xFF222222);
                 Framebuffer.Graphics.FillRectangle(Framebuffer.Width - v.X, v.Y + y, 5, v.SHeight + Devide, v.NotificationLevel == NotificationLevel.None ? 0xFF80B000 : 0xFFE74C3C);
-                WindowManager.font.DrawString(Framebuffer.Width - v.X + (Devide / 2), v.Y + y + (Devide / 2), v.Message);
+                if (WindowManager.font != null) {
+                    WindowManager.font.DrawString(Framebuffer.Width - v.X + (Devide / 2), v.Y + y + (Devide / 2), v.Message);
+                }
 
                 y += v.SHeight + Devide;
                 y += Devide;

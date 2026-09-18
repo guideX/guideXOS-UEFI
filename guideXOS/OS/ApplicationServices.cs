@@ -341,25 +341,26 @@ namespace guideXOS.OS {
         }
     }
 
-    public interface IApplicationNotificationService {
-        ApplicationServiceResult Publish(
+    public abstract class ApplicationNotificationService {
+        public abstract ApplicationServiceResult Publish(
             ApplicationServiceContext context,
             ApplicationNotificationRequest request);
-        ApplicationServiceResult Clear(ApplicationServiceContext context);
+        public abstract ApplicationServiceResult Clear(
+            ApplicationServiceContext context);
     }
 
-    public interface IApplicationSettingsService {
-        ApplicationServiceResult<ApplicationSettingValue> Get(
+    public abstract class ApplicationSettingsService {
+        public abstract ApplicationServiceResult<ApplicationSettingValue> Get(
             ApplicationServiceContext context, string key);
-        ApplicationServiceResult Set(
+        public abstract ApplicationServiceResult Set(
             ApplicationServiceContext context, string key,
             ApplicationSettingValue value);
-        ApplicationServiceResult Remove(
+        public abstract ApplicationServiceResult Remove(
             ApplicationServiceContext context, string key);
     }
 
-    public interface IApplicationSystemInformationService {
-        ApplicationServiceResult<SystemInformationSnapshot> GetSnapshot(
+    public abstract class ApplicationSystemInformationService {
+        public abstract ApplicationServiceResult<SystemInformationSnapshot> GetSnapshot(
             ApplicationServiceContext context);
     }
 
@@ -368,14 +369,14 @@ namespace guideXOS.OS {
     /// only code allowed to construct this value.
     /// </summary>
     public sealed class ApplicationServiceAccess {
-        public IApplicationNotificationService Notifications { get; private set; }
-        public IApplicationSettingsService Settings { get; private set; }
-        public IApplicationSystemInformationService SystemInformation { get; private set; }
+        public ApplicationNotificationService Notifications { get; private set; }
+        public ApplicationSettingsService Settings { get; private set; }
+        public ApplicationSystemInformationService SystemInformation { get; private set; }
 
         internal ApplicationServiceAccess(
-                IApplicationNotificationService notifications,
-                IApplicationSettingsService settings,
-                IApplicationSystemInformationService systemInformation) {
+                ApplicationNotificationService notifications,
+                ApplicationSettingsService settings,
+                ApplicationSystemInformationService systemInformation) {
             Notifications = notifications;
             Settings = settings;
             SystemInformation = systemInformation;
