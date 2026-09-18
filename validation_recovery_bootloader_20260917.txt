@@ -1,0 +1,32 @@
+**********************
+PowerShell transcript start
+Start time: 20260917131444
+Username: LEON2_RDT\guideX
+RunAs User: LEON2_RDT\guideX
+Configuration Name: 
+Machine: LEON2_RDT (Microsoft Windows NT 10.0.26200.0)
+Host Application: C:\Users\guideX\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\powershell\pwsh.dll -NoProfile -Command try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}
+$transcriptPath = Join-Path (Get-Location) 'validation_recovery_bootloader_20260917.txt'
+Start-Transcript -LiteralPath $transcriptPath -Force | Out-Null
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 -BootloaderOnly
+$buildCode = $LASTEXITCODE
+Write-Host "BOOTLOADER_ONLY_EXIT_CODE=$buildCode"
+Stop-Transcript | Out-Null
+exit $buildCode
+Process ID: 26920
+PSVersion: 7.6.5
+PSEdition: Core
+GitCommitId: 7.6.5
+OS: Microsoft Windows 10.0.26200
+Platform: Win32NT
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.4
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+
+BOOTLOADER_ONLY_EXIT_CODE=0
+**********************
+PowerShell transcript end
+End time: 20260917131447
+**********************

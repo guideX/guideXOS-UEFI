@@ -1078,11 +1078,13 @@ function Set-QmpPointer {
 function Send-QmpMouseClick {
     param($Qmp, [string]$Button)
     Send-QmpEvents $Qmp @((New-QmpButtonEvent $Button $true))
-    # Hold long enough for at least several 16ms desktop frames. This keeps
-    # down/up from collapsing into one ProcessPendingInput drain.
-    Start-Sleep -Milliseconds 220
+    # Native PS/2 input can be substantially slower than the host while the
+    # UEFI guest is rendering blur-backed shell surfaces.  Keep the button
+    # asserted long enough for the guest to observe the down transition before
+    # sending the release; otherwise QEMU may coalesce the pair.
+    Start-Sleep -Milliseconds 1000
     Send-QmpEvents $Qmp @((New-QmpButtonEvent $Button $false))
-    Start-Sleep -Milliseconds 220
+    Start-Sleep -Milliseconds 450
 }
 
 function Open-QmpContextMenu {
@@ -1192,6 +1194,13 @@ function Send-QmpContextMenuWorkload {
 
     # Leave the guest with a normal desktop pointer and no pressed buttons.
     Set-QmpPointer $Qmp 80 120
+    # A final explicit release makes the workload self-normalizing if the
+    # guest observed a right-button down but QEMU delayed its matching up
+    # while a popup was being rendered. Duplicate releases are ignored by the
+    # PS/2 transition counters.
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent 'right' $false))
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $false))
+    Start-Sleep -Milliseconds 1000
 }
 
 function Send-QmpContextMenuSoak {

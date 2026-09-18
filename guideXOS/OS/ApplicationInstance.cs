@@ -2098,6 +2098,11 @@ namespace guideXOS.OS {
                         LaunchRequest.ForAppId("gxos.builtin.console", null, null,
                             LaunchActivationIntent.ActivateExisting),
                         out consoleAgainResult);
+                    // Launch completion updates the authoritative instance;
+                    // the taskbar entry is a render-time projection.  Mirror
+                    // the normal taskbar draw boundary before observing the
+                    // reattached presentation in this runtime diagnostic.
+                    TaskbarApplicationEntryRegistry.Reconcile();
                     consoleReused = consoleZeroWindow && consoleRelaunched &&
                         consoleAgainResult != null && consoleAgainResult.Success &&
                         TryGet(consoleAgainResult.InstanceHandle, out consoleAgain) &&
@@ -2121,6 +2126,7 @@ namespace guideXOS.OS {
                         LaunchRequest.ForAppId("gxos.builtin.imageviewer", null,
                             null, LaunchActivationIntent.ActivateExisting),
                         out imageAgainResult);
+                    TaskbarApplicationEntryRegistry.Reconcile();
                     imageViewerReused = imageZeroWindow && imageRelaunched &&
                         imageAgainResult != null && imageAgainResult.Success &&
                         TryGet(imageAgainResult.InstanceHandle, out imageViewerAgain) &&

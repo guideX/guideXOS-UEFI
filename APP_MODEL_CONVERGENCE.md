@@ -1,7 +1,7 @@
 # guideXOS App Model Convergence
 
-**Status:** Phase 6 cooperative lifecycle enrichment implemented
-**Date:** 2026-09-16
+**Status:** Phase 7 runtime acceptance complete
+**Date:** 2026-09-17
 **Scope:** guideXOS Server ↔ guideXOS C# UEFI application platform  
 **Outcome:** Outcome A — all registered built-ins remain factory-native;
 activation, cooperative suspension, close semantics, and compatibility remain
@@ -1816,3 +1816,51 @@ taskbar group leak=0
 These are regression gates, not replacement diagnostics: a missing, stale,
 or failing marker blocks the Phase 7 claim, while existing Phase 6 lifecycle,
 factory, input, graphics, allocator, and context-menu checks remain required.
+
+### 23.5 Phase 7 runtime acceptance (2026-09-17)
+
+Phase 7 is accepted against a fresh NativeAOT/QEMU UEFI runtime image built
+from the Phase 7 source.  The deterministic AppModel grouping self-test
+reported `passed=16;failed=0`, and the AppRuntime grouping workload reported
+positive proof for one-instance/two-Window grouping, separate Window buttons,
+same-instance Window switching with activation delta `0`, distinct Calculator
+instance handles and entries, cross-instance activation/deactivation, accepted
+application-level Close, first-Window retention, final-Window policy,
+zero-Window projection suppression, Console reuse, and Image Viewer reuse.
+The runtime observation diagnostic remained read-only and reported no mutation.
+
+The complete AppRuntime workload launched all 12 Start-visible applications,
+completed 20 Start selections, 28 launches, and 30 closes, and exercised the
+typed GXM and installer routes, six positive associations, five bounded
+negative association failures, Console reuse, Image Viewer reuse, and cleanup.
+It completed with factory fallbacks `0`, runtime faults `0`, stale taskbar
+owners `0`, stale application ownership `0`, allocator corruption `0`, and
+`ThreadPool.Locked=0`.  The final raw input counts were keyboard `11/11` and
+mouse-left `49/49`, with zero dropped input bytes and valid graphics.
+
+The independent regression matrix was also green:
+
+| Validation | Result | Evidence |
+| --- | --- | --- |
+| AppModel / Phase 6 lifecycle | Pass | 12 descriptors, 12 factories, lifecycle `15/0`, grouping `16/0`, active `0`, stale `0` |
+| AppRuntime | Pass | 20 selections / 28 launches / 30 closes; factories `28/0/4`; typed external `2`; typed shell `1` |
+| NativeInput | Pass | keys `104/104`, mouse-left `54/54`, drops `0`, frames `1→300`, graphics valid |
+| ContextMenu | Pass | desktop `104/104/104`, bad bounds `0`, taskbar `1/1/1`, right transitions `104/104`, raw `104/104` |
+| Production continuous boot | Pass | non-diagnostic image; frame/timer progress; graphics, allocator, and ThreadPool gates valid |
+
+The prior validation blocker was environmental/generated state, not a Phase 7
+source regression.  A current bootloader-only rebuild found the C++ linker
+targets available and linked successfully.  The old `-SkipBuild` ESP still
+contained an AppModel diagnostic payload, so a requested continuous run
+stopped at `SMAIN_DISPATCH_REASON=APP_MODEL`; this was the stale-ESP cause.
+Every acceptance selector was subsequently run with a fresh build, and the
+final image was rebuilt without a diagnostic selector.  No linker-target or
+ESP-copy source redesign was required.
+
+Two bounded validation fixes were required: the runtime grouping diagnostic
+now reconciles the presentation projection before observing a freshly
+reattached reusable Window, and the QMP workload holds mouse buttons long
+enough for the slow blur-backed guest to observe both transitions, with an
+explicit final release for ContextMenu.  These changes affect diagnostics and
+validation only; application lifecycle, ownership, taskbar architecture, and
+production defaults are unchanged.  No visual group-collapse work was added.
