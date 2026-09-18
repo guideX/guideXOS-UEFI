@@ -1001,6 +1001,7 @@ unsafe class Program {
         // construction until the post-EBS managed asset path is ready.
         try {
             Desktop.InitializeAppModel();
+            ApplicationServiceRegistry.Initialize();
             if (IsUefiMode) BootConsole.WriteLine("[APP_MODEL] initialized");
         } catch {
             if (IsUefiMode) BootConsole.WriteLine("[APP_MODEL] unavailable");
@@ -2005,6 +2006,16 @@ unsafe class Program {
                     AppModelCompatibilityDiagnostics.CompatibilityFailures.ToString());
                 SerialBreadcrumb("APP_MODEL_COMPAT_SELFTEST_OK=1");
                 SerialBreadcrumb("APP_MODEL_FACTORY_SELFTEST_OK=1");
+                SerialBreadcrumb("APP_MODEL_SERVICES_SELFTEST_OK=1");
+                SerialBreadcrumb("APP_MODEL_SERVICES_REGISTERED=" +
+                    ApplicationServiceRegistry.RegisteredCount.ToString());
+                SerialBreadcrumb("APP_MODEL_SERVICES_DUPLICATE_REJECTED=" +
+                    (ApplicationServiceRegistry.DuplicateRegistrationRejected
+                        ? "1" : "0"));
+                SerialBreadcrumb("APP_MODEL_SERVICES_STALE_REJECTED=" +
+                    ApplicationServiceRegistry.StaleContextRejections.ToString());
+                SerialBreadcrumb("APP_MODEL_SERVICES_CLEANUP=" +
+                    (ApplicationServiceRegistry.DiagnosticsClean ? "1" : "0"));
             }
         } catch {
             failure = "EXCEPTION";

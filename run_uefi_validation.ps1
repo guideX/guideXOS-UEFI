@@ -1857,6 +1857,8 @@ if ($isAppModelValidation) {
         '(?m)^APP_MODEL_COMPAT_FAILURES=(\d+)$')
     $appModelCompatSelfTest = [regex]::Matches($finalContent,
         '(?m)^APP_MODEL_COMPAT_SELFTEST_OK=1$').Count
+    $appModelServiceSelfTest = [regex]::Matches($finalContent,
+        '(?m)^APP_MODEL_SERVICES_SELFTEST_OK=1$').Count
     $appModelPass =
         $status -in @('APP_MODEL_COMPLETE', 'DIAGNOSTIC_COMPLETE') -and
         $appModelDescriptors.Count -gt 0 -and
@@ -1874,7 +1876,8 @@ if ($isAppModelValidation) {
         $appModelCompatLegacy.Count -gt 0 -and
         [int]$appModelCompatLegacy[$appModelCompatLegacy.Count - 1].Groups[1].Value -eq 0 -and
         [int]$appModelCompatFailures[$appModelCompatFailures.Count - 1].Groups[1].Value -eq 1 -and
-        $appModelCompatSelfTest -ge 1
+        $appModelCompatSelfTest -ge 1 -and
+        $appModelServiceSelfTest -ge 1
     $appModelValidation = [ordered]@{
         pass = $appModelPass
         descriptors = if ($appModelDescriptors.Count -gt 0) { [int]$appModelDescriptors[$appModelDescriptors.Count - 1].Groups[1].Value } else { 0 }
@@ -1884,6 +1887,7 @@ if ($isAppModelValidation) {
         compatibilityTranslations = if ($appModelCompatTranslations.Count -gt 0) { [int]$appModelCompatTranslations[$appModelCompatTranslations.Count - 1].Groups[1].Value } else { 0 }
         compatibilityLegacyBackendCalls = if ($appModelCompatLegacy.Count -gt 0) { [int]$appModelCompatLegacy[$appModelCompatLegacy.Count - 1].Groups[1].Value } else { 0 }
         compatibilityFailures = if ($appModelCompatFailures.Count -gt 0) { [int]$appModelCompatFailures[$appModelCompatFailures.Count - 1].Groups[1].Value } else { 0 }
+        serviceSelfTest = $appModelServiceSelfTest
     }
     if ($status -in @('APP_MODEL_COMPLETE', 'DIAGNOSTIC_COMPLETE') -and -not $appModelPass) {
         $status = 'APP_MODEL_VALIDATION_FAILED'

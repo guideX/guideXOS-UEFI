@@ -71,7 +71,13 @@ namespace guideXOS.OS {
         }
 
         public static bool DiagnosticsClean {
-            get { return true; }
+            get {
+                Initialize();
+                return _registeredCount == SelectedServiceCount &&
+                       _access != null && _access.Notifications != null &&
+                       _access.Settings != null &&
+                       _access.SystemInformation != null;
+            }
         }
 
         public static string LastSettingsSelfTestFailure {
