@@ -1859,6 +1859,17 @@ if ($isAppModelValidation) {
         '(?m)^APP_MODEL_COMPAT_SELFTEST_OK=1$').Count
     $appModelServiceSelfTest = [regex]::Matches($finalContent,
         '(?m)^APP_MODEL_SERVICES_SELFTEST_OK=1$').Count
+    $notificationMigrationSources = @(
+        (Join-Path $PSScriptRoot 'guideXOS\DefaultApps\Calculator.cs'),
+        (Join-Path $PSScriptRoot 'guideXOS\GUI\DisplayOptions.cs')
+    )
+    $notificationDirectDependencies = @(
+        foreach ($source in $notificationMigrationSources) {
+            if ((Get-Content $source -Raw) -match 'NotificationManager\.Add') {
+                $source
+            }
+        }
+    )
     $appModelPass =
         $status -in @('APP_MODEL_COMPLETE', 'DIAGNOSTIC_COMPLETE') -and
         $appModelDescriptors.Count -gt 0 -and
@@ -1877,7 +1888,8 @@ if ($isAppModelValidation) {
         [int]$appModelCompatLegacy[$appModelCompatLegacy.Count - 1].Groups[1].Value -eq 0 -and
         [int]$appModelCompatFailures[$appModelCompatFailures.Count - 1].Groups[1].Value -eq 1 -and
         $appModelCompatSelfTest -ge 1 -and
-        $appModelServiceSelfTest -ge 1
+        $appModelServiceSelfTest -ge 1 -and
+        $notificationDirectDependencies.Count -eq 0
     $appModelValidation = [ordered]@{
         pass = $appModelPass
         descriptors = if ($appModelDescriptors.Count -gt 0) { [int]$appModelDescriptors[$appModelDescriptors.Count - 1].Groups[1].Value } else { 0 }
@@ -1888,6 +1900,7 @@ if ($isAppModelValidation) {
         compatibilityLegacyBackendCalls = if ($appModelCompatLegacy.Count -gt 0) { [int]$appModelCompatLegacy[$appModelCompatLegacy.Count - 1].Groups[1].Value } else { 0 }
         compatibilityFailures = if ($appModelCompatFailures.Count -gt 0) { [int]$appModelCompatFailures[$appModelCompatFailures.Count - 1].Groups[1].Value } else { 0 }
         serviceSelfTest = $appModelServiceSelfTest
+        notificationDirectDependencies = $notificationDirectDependencies.Count
     }
     if ($status -in @('APP_MODEL_COMPLETE', 'DIAGNOSTIC_COMPLETE') -and -not $appModelPass) {
         $status = 'APP_MODEL_VALIDATION_FAILED'

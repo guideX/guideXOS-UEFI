@@ -17,6 +17,32 @@ namespace guideXOS.OS {
     public abstract class ApplicationFactory {
         public abstract ApplicationClass SupportedApplicationClass { get; }
 
+        protected bool TryCreateApplicationServices(
+                ApplicationDescriptor descriptor,
+                ApplicationInstance instance,
+                out ApplicationServiceContext context,
+                out ApplicationServiceAccess services,
+                out ApplicationFactoryResult failure) {
+            context = null;
+            services = null;
+            failure = null;
+            ApplicationServiceResult serviceResult = null;
+            if (instance == null ||
+                    !ApplicationServiceRegistry.TryCreateContextAndAccess(
+                        instance.Handle, out context, out services,
+                        out serviceResult) || services == null ||
+                    services.Notifications == null) {
+                failure = ApplicationFactoryResult.Failed(
+                    LaunchErrorCode.InitializationFailed,
+                    serviceResult == null ?
+                        "Application services are unavailable" :
+                        serviceResult.BoundedDiagnostic,
+                    descriptor == null ? null : descriptor.AppId);
+                return false;
+            }
+            return true;
+        }
+
         /// <summary>
         /// Optional bounded lifecycle behavior for a new application
         /// instance.  The base adapter is cooperative and safe by default.
@@ -864,8 +890,13 @@ namespace guideXOS.OS {
                 ApplicationInstance instance,
                 LaunchRequest request,
                 out ApplicationFactoryResult result) {
+            ApplicationServiceContext serviceContext;
+            ApplicationServiceAccess services;
+            if (!TryCreateApplicationServices(descriptor, instance,
+                    out serviceContext, out services, out result)) return false;
             result = ApplicationFactoryResult.Succeeded(instance);
-            Calculator calculator = new Calculator(300, 500);
+            Calculator calculator = new Calculator(300, 500,
+                serviceContext, services);
             if (!result.AddWindow(calculator)) {
                 calculator.CloseForApplicationTermination();
                 result = ApplicationFactoryResult.Failed(
@@ -1206,6 +1237,10 @@ namespace guideXOS.OS {
                 ApplicationInstance instance,
                 LaunchRequest request,
                 out ApplicationFactoryResult result) {
+            ApplicationServiceContext serviceContext;
+            ApplicationServiceAccess services;
+            if (!TryCreateApplicationServices(descriptor, instance,
+                    out serviceContext, out services, out result)) return false;
             result = ApplicationFactoryResult.Succeeded(instance);
             DisplayOptions options = instance.GetOwnedWindowAt(0)
                 as DisplayOptions;
@@ -1214,7 +1249,8 @@ namespace guideXOS.OS {
                     FactoryRequestOptions.IntArgument(request, "--x=", 200),
                     FactoryRequestOptions.IntArgument(request, "--y=", 150),
                     FactoryRequestOptions.IntArgument(request, "--w=", 800),
-                    FactoryRequestOptions.IntArgument(request, "--h=", 600));
+                    FactoryRequestOptions.IntArgument(request, "--h=", 600),
+                    serviceContext, services);
             }
             if (!result.AddWindow(options)) {
                 result = ApplicationFactoryResult.Failed(

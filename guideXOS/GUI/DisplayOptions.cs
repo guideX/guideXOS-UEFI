@@ -1,6 +1,7 @@
 using guideXOS.Kernel.Drivers;
 using guideXOS.FS;
 using guideXOS.Misc;
+using guideXOS.OS;
 using System;
 using System.Windows.Forms;
 using System.Drawing;
@@ -9,6 +10,8 @@ using System.Collections.Generic;
 
 namespace guideXOS.GUI {
     internal class DisplayOptions : Window {
+        private readonly ApplicationServiceContext _serviceContext;
+        private readonly ApplicationServiceAccess _services;
         private int _padding = 16;
         private int _selectedResIndex = -1;
         private bool _confirmVisible = false;
@@ -55,6 +58,20 @@ namespace guideXOS.GUI {
         private bool _fontsLoaded = false;
 
         public DisplayOptions(int X, int Y, int W = 800, int H = 600) : base(X, Y, W, H) {
+            _serviceContext = null;
+            _services = null;
+            InitializeDisplayOptions();
+        }
+
+        public DisplayOptions(int X, int Y, int W, int H,
+                ApplicationServiceContext serviceContext,
+                ApplicationServiceAccess services) : base(X, Y, W, H) {
+            _serviceContext = serviceContext;
+            _services = services;
+            InitializeDisplayOptions();
+        }
+
+        private void InitializeDisplayOptions() {
             IsResizable = false;
             ShowInTaskbar = false;
             ShowMaximize = false;
@@ -289,7 +306,7 @@ namespace guideXOS.GUI {
                                     this.Visible = false;
                                 }
                             } catch {
-                                NotificationManager.Add(new Notify("Failed to load background", NotificationLevel.Error));
+                                NotifyApplication("Failed to load background", true);
                             }
                             return;
                         }
@@ -321,7 +338,7 @@ namespace guideXOS.GUI {
                                 Program.Wallpaper = img.ResizeImage(Framebuffer.Width, Framebuffer.Height); 
                                 img.Dispose(); 
                             }
-                            catch { NotificationManager.Add(new Notify("Failed to load image", NotificationLevel.Error)); }
+                            catch { NotifyApplication("Failed to load image", true); }
                         });
                         WindowManager.MoveToEnd(_openDlg); 
                         _openDlg.Visible = true; 
@@ -413,7 +430,7 @@ namespace guideXOS.GUI {
                                         _countdown = 15;
                                         _lastCountdownTick = Timer.Ticks;
                                     } else {
-                                        NotificationManager.Add(new Notify("Failed to set resolution", NotificationLevel.Error));
+                                        NotifyApplication("Failed to set resolution", true);
                                     }
                                 }
                                 return;
@@ -571,7 +588,7 @@ namespace guideXOS.GUI {
         private void RevertResolution() { 
             _confirmVisible = false; 
             if (!DisplayManager.TrySetResolution(_previous.Width, _previous.Height)) { 
-                NotificationManager.Add(new Notify("Failed to revert resolution", NotificationLevel.Error)); 
+                NotifyApplication("Failed to revert resolution", true);
             } else { 
                 var list = DisplayManager.AvailableResolutions; 
                 if (list != null) { 
@@ -731,7 +748,7 @@ namespace guideXOS.GUI {
 
         private void ApplyFont() {
             if (_selectedFontIndex < 0 || _selectedFontIndex >= _fontPaths.Count) {
-                NotificationManager.Add(new Notify("Please select a font", NotificationLevel.Error));
+                NotifyApplication("Please select a font", true);
                 return;
             }
 
@@ -739,7 +756,7 @@ namespace guideXOS.GUI {
                 string fontPath = _fontPaths[_selectedFontIndex];
                 byte[] fontData = File.ReadAllBytes(fontPath);
                 if (fontData == null || fontData.Length == 0) {
-                    NotificationManager.Add(new Notify("Failed to load font file", NotificationLevel.Error));
+                    NotifyApplication("Failed to load font file", true);
                     return;
                 }
 
@@ -761,11 +778,21 @@ namespace guideXOS.GUI {
 
                 WindowManager.font = newFont;
                 
-                NotificationManager.Add(new Notify("Font applied successfully", NotificationLevel.None));
+                NotifyApplication("Font applied successfully", false);
                 this.Visible = false;
             } catch {
-                NotificationManager.Add(new Notify("Failed to apply font", NotificationLevel.Error));
+                NotifyApplication("Failed to apply font", true);
             }
+        }
+
+        private void NotifyApplication(string message, bool error) {
+            if (_serviceContext == null || _services == null ||
+                    _services.Notifications == null) return;
+            _services.Notifications.Publish(_serviceContext,
+                ApplicationNotificationRequest.Create(
+                    "Display Options", message,
+                    error ? ApplicationNotificationSeverity.Error :
+                        ApplicationNotificationSeverity.Info));
         }
 
         public override void OnDraw() {
