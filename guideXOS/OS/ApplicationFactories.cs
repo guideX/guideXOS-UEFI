@@ -1331,10 +1331,17 @@ namespace guideXOS.OS {
                 ApplicationInstance instance,
                 LaunchRequest request,
                 out ApplicationFactoryResult result) {
+            ApplicationServiceContext serviceContext;
+            ApplicationServiceAccess services;
+            if (!TryCreateApplicationServices(descriptor, instance,
+                    out serviceContext, out services, out result)) return false;
             result = ApplicationFactoryResult.Succeeded(instance);
             TaskManager manager = instance.GetOwnedWindowAt(0)
                 as TaskManager;
-            if (manager == null) manager = new TaskManager(500, 500);
+            if (manager == null) {
+                manager = new TaskManager(500, 500, 760, 520,
+                    serviceContext, services);
+            }
             if (!result.AddWindow(manager)) {
                 result = ApplicationFactoryResult.Failed(
                     LaunchErrorCode.InitializationFailed,

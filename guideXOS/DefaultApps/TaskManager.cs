@@ -6,12 +6,17 @@ using System.Drawing;
 using System;
 using guideXOS.GUI;
 using System.Collections.Generic;
+using guideXOS.OS;
 
 namespace guideXOS.DefaultApps {
     /// <summary>
     /// Task Manager window with Processes, Performance, Tombstoned, and Memory Details tabs
     /// </summary>
     internal class TaskManager : Window {
+        private ApplicationServiceContext _serviceContext;
+        private ApplicationServiceAccess _services;
+        private SystemInformationSnapshot _systemSnapshot;
+        private bool _systemSnapshotAvailable;
         // Tabs
         private int _tabH = 28;
         private int _tabGap = 6;
@@ -135,7 +140,15 @@ namespace guideXOS.DefaultApps {
         private const int MemLabelUpdateIntervalMs = 1000; // update labels once per second
 
         public TaskManager(int X, int Y, int Width = 760, int Height = 520)
-            : base(X, Y, Width, Height) {
+            : this(X, Y, Width, Height, null, null) { }
+
+        public TaskManager(int X, int Y, int Width, int Height,
+                ApplicationServiceContext serviceContext,
+                ApplicationServiceAccess services) : base(X, Y, Width, Height) {
+            _serviceContext = serviceContext;
+            _services = services;
+            _systemSnapshot = default(SystemInformationSnapshot);
+            _systemSnapshotAvailable = false;
             ShowMinimize = true;
             ShowInTaskbar = true;
             ShowMaximize = true;
@@ -159,7 +172,7 @@ namespace guideXOS.DefaultApps {
             _lastOwnerBytes = new ulong[MAX_TRACKED_OWNERS];
             _ownerKBps = new int[MAX_TRACKED_OWNERS];
             _trackedOwnerCount = 0;
-            _lastOwnerSampleTick = Timer.Ticks;
+            _lastOwnerSampleTick = 0;
 
             // Initialize memory leak tracking with parallel arrays
             _leakHistory = new List<ulong>(_leakHistoryMaxSamples);
@@ -167,6 +180,21 @@ namespace guideXOS.DefaultApps {
             _ownerHistoryStart = new ulong[MAX_TRACKED_OWNERS];
             _ownerGrowthCounter = new int[MAX_TRACKED_OWNERS];
             _blameOwnerCount = 0;
+        }
+
+        private void RefreshSystemSnapshot() {
+            if (_serviceContext == null || _services == null ||
+                    _services.SystemInformation == null) return;
+            ApplicationServiceResult<SystemInformationSnapshot> result =
+                _services.SystemInformation.GetSnapshot(_serviceContext);
+            if (!result.Succeeded || !result.Value.IsWithinBounds()) return;
+            _systemSnapshot = result.Value;
+            _systemSnapshotAvailable = true;
+        }
+
+        private ulong CurrentUptimeTicks {
+            get { return _systemSnapshotAvailable ?
+                _systemSnapshot.UptimeTicks : 0; }
         }
 
         public override void OnSetVisible(bool value) {
@@ -351,6 +379,7 @@ namespace guideXOS.DefaultApps {
         }
 
         public override void OnDraw() {
+            RefreshSystemSnapshot();
             base.OnDraw();
 
             // Perf tracking is now enabled OUTSIDE of draw loop (in Program.cs after all windows created)
@@ -494,10 +523,11 @@ namespace guideXOS.DefaultApps {
 
         private void DrawProcesses(int x, int y, int w, int h) {
             // Sample owner bytes less frequently to avoid freezing - changed from 500ms to 2000ms
-            if ((long)(Timer.Ticks - _lastOwnerSampleTick) >= 2000) {
+            ulong now = CurrentUptimeTicks;
+            if ((long)(now - _lastOwnerSampleTick) >= 2000) {
                 try {
                     SampleOwnerBytes();
-                    _lastOwnerSampleTick = Timer.Ticks;
+                    _lastOwnerSampleTick = now;
                 } catch {
                     // If sampling fails, skip it this frame to prevent freeze
                 }
@@ -575,7 +605,8 @@ namespace guideXOS.DefaultApps {
                     // Also get total memory in use for debugging - show global total for now
                     if (bytes == 0) {
                         // No owner-specific memory found - show global memory divided by window count for rough estimate
-                        ulong globalMem = Allocator.MemoryInUse;
+                        ulong globalMem = _systemSnapshotAvailable
+                            ? _systemSnapshot.MemoryInUseBytes : 0;
                         int winCount = WindowManager.Windows.Count;
                         if (winCount > 0)
                             bytes = globalMem / (ulong)winCount;
@@ -682,11 +713,12 @@ namespace guideXOS.DefaultApps {
 
         private void DrawPerformance(int x, int y, int w, int h) {
             // Update charts less often to reduce work
-            if (_lastPerfTick != Timer.Ticks && Timer.Ticks % 10 == 0) {
-                _lastPerfTick = Timer.Ticks;
+            ulong now = CurrentUptimeTicks;
+            if (_lastPerfTick != now && now % 10 == 0) {
+                _lastPerfTick = now;
 
                 // CPU
-                _cpuUtilPct = (int)ThreadPool.CPUUsage;
+                _cpuUtilPct = _systemSnapshot.CpuUsagePercent;
                 if (_cpuUtilPct < 0)
                     _cpuUtilPct = 0;
                 if (_cpuUtilPct > 100)
@@ -694,8 +726,9 @@ namespace guideXOS.DefaultApps {
                 UpdateChart(_cpuChart, _cpuUtilPct, 0xFF5DADE2);
 
                 // Memory - fix calculation
-                ulong totalMem = Allocator.MemorySize == 0 ? 1UL : Allocator.MemorySize;
-                ulong usedMem = Allocator.MemoryInUse;
+                ulong totalMem = _systemSnapshot.MemorySizeBytes == 0
+                    ? 1UL : _systemSnapshot.MemorySizeBytes;
+                ulong usedMem = _systemSnapshot.MemoryInUseBytes;
                 _memUtilPct = (int)(usedMem * 100UL / totalMem);
                 if (_memUtilPct < 0)
                     _memUtilPct = 0;
@@ -704,15 +737,15 @@ namespace guideXOS.DefaultApps {
                 UpdateChart(_memChart, _memUtilPct, 0xFF58D68D);
 
                 // Disk (synthetic animation so chart isn't flat). If real stats are added later, replace here.
-                _diskUtilPct = WavePct(Timer.Ticks, 240);
-                _diskActivePct = WavePct(Timer.Ticks + 60, 300);
+                _diskUtilPct = WavePct(now, 240);
+                _diskActivePct = WavePct(now + 60, 300);
                 _diskReadKBps = _diskUtilPct * 4; // up to ~400 KB/s
                 _diskWriteKBps = _diskActivePct * 3 / 2; // up to ~150 KB/s
                 _diskRespMs = 1 + _diskActivePct / 10;
                 UpdateChart(_diskChart, _diskUtilPct, 0xFFE67E22);
 
                 // Network (synthetic animation). If NET driver exposes counters, wire them here.
-                _netUtilPct = WavePct(Timer.Ticks + 120, 280);
+                _netUtilPct = WavePct(now + 120, 280);
                 _netSendKBps = _netUtilPct * 2; // up to ~200 KB/s
                 _netRecvKBps = (100 - _netUtilPct) * 2;
                 // accumulate bytes for labels (rough estimate per tick quantum)
@@ -722,12 +755,12 @@ namespace guideXOS.DefaultApps {
 
                 // Other labels
                 _procCount = WindowManager.Windows.Count;
-                _threadCount = ThreadPool.ThreadCount;
+                _threadCount = _systemSnapshot.ThreadCount;
 
                 // Sample owner bytes every ~1000ms to compute KB/s per owner
-                if ((long)(Timer.Ticks - _lastOwnerSampleTick) >= 1000) {
+                if ((long)(now - _lastOwnerSampleTick) >= 1000) {
                     SampleOwnerBytes();
-                    _lastOwnerSampleTick = Timer.Ticks;
+                    _lastOwnerSampleTick = now;
                 }
             }
 
@@ -908,7 +941,7 @@ namespace guideXOS.DefaultApps {
             detailY += WindowManager.font.FontSize + 6;
 
             WindowManager.font.DrawString(col1X, detailY, "Machine time:");
-            string uptimeStr = StringPool.FormatUptime(Timer.Ticks);
+            string uptimeStr = StringPool.FormatUptime(CurrentUptimeTicks);
             WindowManager.font.DrawString(col2X, detailY, uptimeStr);
         }
 
@@ -939,8 +972,8 @@ namespace guideXOS.DefaultApps {
             int col1X = x;
             int col2X = x + w / 2;
 
-            ulong total = Allocator.MemorySize;
-            ulong used = Allocator.MemoryInUse;
+            ulong total = _systemSnapshot.MemorySizeBytes;
+            ulong used = _systemSnapshot.MemoryInUseBytes;
             ulong avail = total > used ? total - used : 0UL;
 
             WindowManager.font.DrawString(col1X, detailY, "In use:");
@@ -1269,14 +1302,15 @@ namespace guideXOS.DefaultApps {
 
         private void DrawMemoryDetails(int x, int y, int w, int h) {
             // Update underlying statistics every second
-            if ((long)(Timer.Ticks - _lastMemDetailUpdate) >= 1000) {
+            ulong now = CurrentUptimeTicks;
+            if ((long)(now - _lastMemDetailUpdate) >= 1000) {
                 UpdateMemoryDetailStats();
-                _lastMemDetailUpdate = Timer.Ticks;
+                _lastMemDetailUpdate = now;
             }
 
             // Refresh cached label strings only if interval elapsed
-            if ((long)(Timer.Ticks - _lastMemLabelUpdateTicks) >= MemLabelUpdateIntervalMs) {
-                _lastMemLabelUpdateTicks = Timer.Ticks;
+            if ((long)(now - _lastMemLabelUpdateTicks) >= MemLabelUpdateIntervalMs) {
+                _lastMemLabelUpdateTicks = now;
 
                 // Dispose old cached values
                 _mdFreeCallsStr?.Dispose();
@@ -1310,11 +1344,16 @@ namespace guideXOS.DefaultApps {
                 } else {
                     _mdFreeAllocRatioStr = "N/A"; // literal
                 }
-                _mdHeapSizeStr = StringPool.GetMemorySize(Allocator.MemorySize);
-                _mdHeapUsedStr = StringPool.GetMemorySize(Allocator.MemoryInUse);
-                ulong heapFree = Allocator.MemorySize - Allocator.MemoryInUse;
+                _mdHeapSizeStr = StringPool.GetMemorySize(
+                    _systemSnapshot.MemorySizeBytes);
+                _mdHeapUsedStr = StringPool.GetMemorySize(
+                    _systemSnapshot.MemoryInUseBytes);
+                ulong heapFree = _systemSnapshot.MemorySizeBytes -
+                    _systemSnapshot.MemoryInUseBytes;
                 _mdHeapFreeStr = StringPool.GetMemorySize(heapFree);
-                int heapUtilPct = Allocator.MemorySize > 0 ? (int)(Allocator.MemoryInUse * 100UL / Allocator.MemorySize) : 0;
+                int heapUtilPct = _systemSnapshot.MemorySizeBytes > 0
+                    ? (int)(_systemSnapshot.MemoryInUseBytes * 100UL /
+                        _systemSnapshot.MemorySizeBytes) : 0;
                 _mdHeapUtilStr = StringPool.GetPercentage(heapUtilPct);
             }
 

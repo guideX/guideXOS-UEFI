@@ -1873,6 +1873,9 @@ if ($isAppModelValidation) {
     $notepadSource = Get-Content (Join-Path $PSScriptRoot 'guideXOS\DefaultApps\Notepad.cs') -Raw
     $notepadSettingsMigration = [regex]::Matches($notepadSource,
         '_services\.Settings\.(Get|Set)').Count
+    $taskManagerSource = Get-Content (Join-Path $PSScriptRoot 'guideXOS\DefaultApps\TaskManager.cs') -Raw
+    $taskManagerRawMetrics = [regex]::Matches($taskManagerSource,
+        'Allocator\.(MemorySize|MemoryInUse)|ThreadPool\.CPUUsage|Timer\.Ticks').Count
     $appModelPass =
         $status -in @('APP_MODEL_COMPLETE', 'DIAGNOSTIC_COMPLETE') -and
         $appModelDescriptors.Count -gt 0 -and
@@ -1893,7 +1896,8 @@ if ($isAppModelValidation) {
         $appModelCompatSelfTest -ge 1 -and
         $appModelServiceSelfTest -ge 1 -and
         $notificationDirectDependencies.Count -eq 0 -and
-        $notepadSettingsMigration -ge 2
+        $notepadSettingsMigration -ge 2 -and
+        $taskManagerRawMetrics -eq 0
     $appModelValidation = [ordered]@{
         pass = $appModelPass
         descriptors = if ($appModelDescriptors.Count -gt 0) { [int]$appModelDescriptors[$appModelDescriptors.Count - 1].Groups[1].Value } else { 0 }
@@ -1906,6 +1910,7 @@ if ($isAppModelValidation) {
         serviceSelfTest = $appModelServiceSelfTest
         notificationDirectDependencies = $notificationDirectDependencies.Count
         notepadSettingsMigration = $notepadSettingsMigration
+        taskManagerRawMetrics = $taskManagerRawMetrics
     }
     if ($status -in @('APP_MODEL_COMPLETE', 'DIAGNOSTIC_COMPLETE') -and -not $appModelPass) {
         $status = 'APP_MODEL_VALIDATION_FAILED'
