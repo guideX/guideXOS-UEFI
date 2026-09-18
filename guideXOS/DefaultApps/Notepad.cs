@@ -2,6 +2,7 @@
 using guideXOS.FS;
 using guideXOS.GUI;
 using guideXOS.Kernel.Drivers;
+using guideXOS.OS;
 using System;
 using System.Collections.Generic;
 using System.Windows.Forms;
@@ -10,6 +11,9 @@ namespace guideXOS.DefaultApps {
     /// Simple Notepad app: type text and save to a file to test filesystem writes.
     /// </summary>
     internal class Notepad : Window {
+        private ApplicationServiceContext _serviceContext;
+        private ApplicationServiceAccess _services;
+        private bool _settingsLoaded;
         private string _text;
         private bool _clickLock;
         private int _padding = 10;
@@ -40,7 +44,14 @@ namespace guideXOS.DefaultApps {
         private List<string> _redoStack;
         private const int _maxUndo = 64;
 
-        public Notepad(int x, int y) : base(x, y, 700, 460) {
+        public Notepad(int x, int y) : this(x, y, null, null) { }
+
+        public Notepad(int x, int y,
+                ApplicationServiceContext serviceContext,
+                ApplicationServiceAccess services) : base(x, y, 700, 460) {
+            _serviceContext = serviceContext;
+            _services = services;
+            _settingsLoaded = false;
             IsResizable = true;
             ShowInTaskbar = true;
             ShowMaximize = true;
@@ -54,6 +65,26 @@ namespace guideXOS.DefaultApps {
             _undoStack = new List<string>(); _redoStack = new List<string>();
             // subscribe keyboard handler
             Keyboard.OnKeyChanged += Keyboard_OnKeyChanged;
+        }
+
+        private void EnsureWrapSettingLoaded() {
+            if (_settingsLoaded) return;
+            if (_serviceContext == null || _services == null ||
+                    _services.Settings == null) {
+                _settingsLoaded = true;
+                return;
+            }
+            ApplicationServiceResult<ApplicationSettingValue> result =
+                _services.Settings.Get(_serviceContext, "wrap");
+            if (result.Code == ApplicationServiceResultCode.InvalidContext) return;
+            if (result.Succeeded && result.Value.Kind ==
+                    ApplicationSettingValueKind.Boolean) {
+                _wrap = result.Value.BooleanValue;
+            } else if (result.Code == ApplicationServiceResultCode.NotFound) {
+                _services.Settings.Set(_serviceContext, "wrap",
+                    ApplicationSettingValue.Boolean(_wrap));
+            }
+            _settingsLoaded = true;
         }
 
         public override void OnSetVisible(bool value) {
@@ -232,6 +263,7 @@ namespace guideXOS.DefaultApps {
         }
 
         public override void OnInput() {
+            EnsureWrapSettingLoaded();
             base.OnInput(); if ((_dlg != null && _dlg.Visible) || (_openDlg != null && _openDlg.Visible) || (_confirmDlg != null && _confirmDlg.Visible)) return;
             bool left = Control.MouseButtons.HasFlag(MouseButtons.Left);
             int mx = Control.MousePosition.X; int my = Control.MousePosition.Y;
@@ -249,7 +281,16 @@ namespace guideXOS.DefaultApps {
                     if (mx >= bxSaveAs && mx <= bxSaveAs + _btnWSaveAs && my >= by && my <= by + _btnH) { OpenSaveAs(); _clickLock = true; return; }
                     if (canSave && mx >= bxSave && mx <= bxSave + _btnWSave && my >= by && my <= by + _btnH) { SaveTo(_savedPath); _clickLock = true; return; }
                     if (mx >= bxOpen && mx <= bxOpen + _btnWOpen && my >= by && my <= by + _btnH) { OpenOpenDialog(); _clickLock = true; return; }
-                    if (mx >= bxWrap && mx <= bxWrap + _btnWWrap && my >= by && my <= by + _btnH) { _wrap = !_wrap; _clickLock = true; return; }
+                    if (mx >= bxWrap && mx <= bxWrap + _btnWWrap && my >= by && my <= by + _btnH) {
+                        _wrap = !_wrap;
+                        if (_services != null && _services.Settings != null &&
+                                _serviceContext != null) {
+                            _services.Settings.Set(_serviceContext, "wrap",
+                                ApplicationSettingValue.Boolean(_wrap));
+                        }
+                        _clickLock = true;
+                        return;
+                    }
                     if (canUndo && mx >= bxUndo && mx <= bxUndo + _btnWUndo && my >= by && my <= by + _btnH) { PerformUndo(); _clickLock = true; return; }
                     if (canRedo && mx >= bxRedo && mx <= bxRedo + _btnWRedo && my >= by && my <= by + _btnH) { PerformRedo(); _clickLock = true; return; }
                 }
@@ -257,6 +298,7 @@ namespace guideXOS.DefaultApps {
         }
 
         public override void OnDraw() {
+            EnsureWrapSettingLoaded();
             base.OnDraw(); int cx = X + _padding; int cy = Y + _padding; int cw = Width - _padding * 2; int ch = Height - _padding * 2;
             // Buttons
             int bxSaveAs = cx; int by = cy;

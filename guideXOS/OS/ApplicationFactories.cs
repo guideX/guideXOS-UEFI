@@ -924,8 +924,13 @@ namespace guideXOS.OS {
                 ApplicationInstance instance,
                 LaunchRequest request,
                 out ApplicationFactoryResult result) {
+            ApplicationServiceContext serviceContext;
+            ApplicationServiceAccess services;
+            if (!TryCreateApplicationServices(descriptor, instance,
+                    out serviceContext, out services, out result)) return false;
             result = ApplicationFactoryResult.Succeeded(instance);
-            Notepad notepad = new Notepad(360, 200);
+            Notepad notepad = new Notepad(360, 200,
+                serviceContext, services);
             if (!result.AddWindow(notepad)) {
                 notepad.CloseForApplicationTermination();
                 result = ApplicationFactoryResult.Failed(
