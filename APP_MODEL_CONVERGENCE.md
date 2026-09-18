@@ -1864,3 +1864,95 @@ enough for the slow blur-backed guest to observe both transitions, with an
 explicit final release for ContextMenu.  These changes affect diagnostics and
 validation only; application lifecycle, ownership, taskbar architecture, and
 production defaults are unchanged.  No visual group-collapse work was added.
+
+## 24. Phase 8 — application platform services audit
+
+The Phase 8 audit was performed against the Phase 7 accepted C# App Model and
+the reference Server tree on 2026-09-18.  The audit is source-located so the
+service boundary follows existing authority and ownership rather than creating
+a second application lifecycle system.
+
+### 24.1 Authoritative source inventory
+
+The Server tree provides the following relevant shapes:
+
+* `D:\dev\guideXOSServer\notification_manager.h` and
+  `notification_manager.cpp` define a synchronous, compositor-facing
+  notification queue with `Add`, `Update`, `Snapshot`, `Clear`, and `Count`.
+  Notifications contain presentation/animation state owned by the manager;
+  there is no application-service context in this API.
+* `D:\dev\guideXOSServer\app_manifest.h` and
+  `app_manifest_validator.cpp` define manifest permissions and validate a
+  fixed vocabulary including filesystem, window, input, log, and
+  `system.settings` names.  The audit found no unified service-capability
+  enforcement path that can be reused by this same-address-space C# phase.
+  `PermissionDenied` therefore remains contract vocabulary only; Phase 8 does
+  not invent enforcement semantics.
+* `D:\dev\guideXOSServer\message_box.h`, `open_dialog.h`, and
+  `save_dialog.h` expose process/dialog entry points.  Open and save dialogs
+  own VFS navigation and callbacks; they are not bounded application services.
+* `D:\dev\guideXOSServer\vfs.h` exposes the in-memory/reference VFS singleton,
+  while `kernel/core/file_clipboard.h` exposes a synchronous file-operation
+  clipboard with explicit operation/progress state.  Neither is an
+  application-local storage or text-clipboard contract.
+* `D:\dev\guideXOSServer\app_launch_target.h` and
+  `app_launch_resolver.h/.cpp` define typed launch targets and shell/association
+  resolution.  They are launch infrastructure, not a bounded shell/open
+  service available to this phase.
+
+The C# tree provides the following current consumers:
+
+* `guideXOS/GUI/NotificationManager.cs` owns the managed toast list and
+  renderer-facing `Notify` objects.  Calculator and DisplayOptions call
+  `NotificationManager.Add` directly.
+* `guideXOS/DefaultApps/Notepad.cs` owns `_wrap` directly and also owns its
+  text, dirty state, undo/redo state, dialogs, and file callbacks.  The
+  existing `guideXOS/OS/Configuration.cs` and `SystemMode.cs` are global
+  persistent/system settings infrastructure and are intentionally not reused
+  for session application settings.
+* `guideXOS/DefaultApps/TaskManager.cs` reads `Timer.Ticks`,
+  `Allocator.MemorySize`, `Allocator.MemoryInUse`, `ThreadPool.CPUUsage`, and
+  `ThreadPool.ThreadCount` directly in its metrics path.  The implementation
+  will replace only the selected metrics sample with copied system snapshots;
+  observer, chart, and presentation state remain local.
+* `guideXOS/GUI/OpenDialog.cs`, `SaveDialog.cs`, and `MessageBox.cs` are UI
+  objects with callbacks and window ownership.  Notepad and DisplayOptions
+  use open/save dialogs, and Notepad uses direct file I/O for document state.
+
+### 24.2 Server-to-C# convergence matrix
+
+| Service | Server source | C# source | Classification | Common semantics | Backend difference | Migration value | Risk | Decision |
+|---|---|---|---|---|---|---|---|---|
+| Notifications | `notification_manager.h/.cpp`, `NotificationManager::Add/Clear` | `guideXOS/GUI/NotificationManager.cs`, Calculator, DisplayOptions | Same idea / different API | bounded, transient user-visible notification | Server queue stores source-less compositor notifications; C# stores renderer objects and animation fields | High; proves a shell/UI-backed typed service | Low if source tagging stays in the existing manager | Cohort |
+| Session application settings | No authoritative Server application-settings service; manifest `system.settings` permission only | `guideXOS/OS/Configuration.cs`, `SystemMode.cs`, Notepad `_wrap` | Missing service / adjacent global settings | mutable session values addressed by application identity | Server evidence is permission metadata, while C# Configuration is global and persistence-aware | High; proves application-scoped mutable state without persistence | Medium; must not become global configuration or instance state | Cohort; fixed session-only store keyed by descriptor ID |
+| System information | No bounded Server application-facing snapshot contract found; allocator/process/thread sources are backend internals | TaskManager direct `Timer`, `Allocator`, and `ThreadPool` reads | Missing service / raw backend access | read-only scalar OS/runtime metrics | Server has kernel/runtime sources; C# currently exposes globals directly to an app | High; proves copied kernel-backed values and future serialization shape | Medium; bounds and metric consistency must be explicit | Cohort; immutable snapshot |
+| Dialogs | `message_box.h`, `open_dialog.h`, `save_dialog.h` | `GUI/MessageBox.cs`, `OpenDialog.cs`, `SaveDialog.cs` | Same broad feature / different ownership | user interaction with callback/result | Server dialogs are process entry points; C# dialogs own managed windows and callbacks | Low for this phase; no service contract is needed to prove the cohort | High; shell/VFS/UI lifetime and callback ownership are larger than the selected boundary | Deferred |
+| App-local storage | `vfs.h`, filesystem and process-facing VFS users | Notepad and other apps use `FS.File`/`System.IO.File` directly | Backend exists / no bounded app-service contract | application file reads/writes | Server VFS is a filesystem singleton; C# callers use local filesystem adapters and paths | Low for this phase; persistence is explicitly deferred | High; requires identity, quotas, permissions, and persistence policy | Deferred |
+| Resources | manifest entries and packaged `resources/` content, for example Server ResourceViewer sample | C# resource reads are direct file/image loads in app and GUI code | Related packaging / no service contract | read-only packaged assets | Server package metadata and VFS differ from C# embedded/managed asset access | Low for this phase | Medium; packaging and lifetime semantics are not settled | Deferred |
+| Clipboard | `kernel/core/file_clipboard.h` and `file_clipboard.cpp` | No selected bounded application text/file service; shell/file surfaces use their own paths | Different feature / backend-owned operation state | transfer or copy/paste state | Server clipboard is file-operation state tied to VFS; it is not a text service | Low for this phase | High; mutation, progress, conflict, and ownership semantics are broad | Deferred |
+| Shell/open services | `app_launch_target.h`, `app_launch_resolver.h/.cpp`, shell/object registry | `ApplicationFactories.cs`, launch resolver, associations, and direct dialog/file paths | Existing launch infrastructure / not a service cohort | resolve and dispatch a target | Server owns typed target resolution; C# already has App Model launch/factory routes | Low for this phase; Phase 7 launch authority is already accepted | High; expanding it would mix launch, association, shell, and service contracts | Deferred |
+
+### 24.3 Audit decisions and bounds
+
+The implementation will add a fixed C# `ApplicationServiceRegistry` with only
+Notifications, application-scoped session settings, and System Information.
+`ApplicationInstanceRegistry` remains authoritative for instance existence,
+generation, descriptor identity, lifecycle, windows, and cleanup.  A service
+context is only a validated capability-shaped value; every operation
+revalidates its handle and descriptor identity.
+
+The first implementation uses explicit bounds: descriptor/application IDs are
+96 characters, notification title/body are 64/256 characters, settings have
+32 application namespaces with 16 keys each, settings keys are 64 characters,
+string values are 256 characters, system text fields are 32/32/16 characters,
+and service diagnostics are 192 characters.  Settings are session-only and
+keyed by stable descriptor ID, so two Notepad instances share the `wrap`
+namespace while their documents, undo/redo state, dialogs, and transient
+runtime state remain instance-local.  System information is returned as a
+copied immutable scalar snapshot, never as an allocator, timer, thread-pool,
+Desktop, WindowManager, framebuffer, or other kernel-global object.
+
+The audit does not authorize persistence, IPC, Ring 3, generic dependency
+injection, dialogs, app-local storage, resources, clipboard, or shell/open
+service implementation in Phase 8.  Those remain inventoried and documented
+until a smaller bounded contract and an independent authority decision exist.
