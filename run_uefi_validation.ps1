@@ -2032,6 +2032,8 @@ if ($isAppRuntimeValidation) {
         '(?m)^APP_RUNTIME_LAUNCH_FAIL=').Count
     $runtimeFaults = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_FAULT=').Count
+    $runtimeServiceResult = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_SERVICES_RESULT=PASS$').Count
     $runtimeThreadPoolUnlocked = [regex]::Matches($finalContent,
         '(?m)^CONTINUOUS_HEARTBEAT_THREADPOOL_LOCKED=0$').Count -gt 0
     $runtimeBalancedInput =
@@ -2065,7 +2067,8 @@ if ($isAppRuntimeValidation) {
         $runtimeInstallerClosed -ge 1 -and
         $runtimeUsbUnavailable -ge 1 -and $runtimeLaunchFail -ge 1 -and
         $runtimeFaults -eq 0 -and $runtimeThreadPoolUnlocked -and
-        $runtimeBalancedInput -and $graphicsValid -eq $true
+        $runtimeBalancedInput -and $graphicsValid -eq $true -and
+        $runtimeServiceResult -ge 1
     $runtimeMemory = if ($runtimeLastClose.Count -gt 0) {
         [UInt64]$runtimeLastClose[$runtimeLastClose.Count - 1].Groups[1].Value
     } else { 0 }
@@ -2113,6 +2116,7 @@ if ($isAppRuntimeValidation) {
         usbUnavailableRoutes = $runtimeUsbUnavailable
         launchFailures = $runtimeLaunchFail
         runtimeFaults = $runtimeFaults
+        serviceRuntimeResult = $runtimeServiceResult
         lastCloseMemory = $runtimeMemory
         lastCloseCorrupt = $runtimeCorrupt
         balancedInput = $runtimeBalancedInput

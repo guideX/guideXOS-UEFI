@@ -1925,6 +1925,163 @@ namespace guideXOS.OS {
         }
 
         /// <summary>
+        /// Bounded runtime proof for the first application-service cohort.
+        /// Launches through descriptor and factory paths, validates sharing
+        /// and snapshots, rejects a terminated context, and restores the
+        /// authoritative instance/window baseline before returning.
+        /// </summary>
+        public static bool RunApplicationServiceRuntimeDiagnostic() {
+            int baselineActive = ActiveCount;
+            int baselineObservations = ObservationCount;
+            int baselineWindows = WindowManager.Windows == null ? 0 :
+                WindowManager.Windows.Count;
+            int baselineStaleOwnership = StaleOwnershipCount;
+            ApplicationInstance calculator = null;
+            ApplicationInstance notepad1 = null;
+            ApplicationInstance notepad2 = null;
+            ApplicationInstance taskManager = null;
+            bool notification = false;
+            bool sharedSettings = false;
+            bool snapshot = false;
+            bool staleRejected = false;
+            bool cleanup = false;
+            try {
+                bool calculatorLaunch = TryLaunchServiceRuntimeInstance(
+                    "gxos.builtin.calculator", out calculator);
+                bool notepad1Launch = TryLaunchServiceRuntimeInstance(
+                    "gxos.builtin.notepad", out notepad1);
+                bool notepad2Launch = TryLaunchServiceRuntimeInstance(
+                    "gxos.builtin.notepad", out notepad2);
+                bool taskManagerLaunch = TryLaunchServiceRuntimeInstance(
+                    "gxos.builtin.taskmanager", out taskManager);
+
+                ApplicationServiceContext calculatorContext = null;
+                ApplicationServiceContext notepad1Context = null;
+                ApplicationServiceContext notepad2Context = null;
+                ApplicationServiceContext taskManagerContext = null;
+                ApplicationServiceAccess calculatorServices = null;
+                ApplicationServiceAccess notepad1Services = null;
+                ApplicationServiceAccess notepad2Services = null;
+                ApplicationServiceAccess taskManagerServices = null;
+                ApplicationServiceResult serviceResult = null;
+                bool contexts = calculatorLaunch && notepad1Launch &&
+                    notepad2Launch && taskManagerLaunch &&
+                    ApplicationServiceRegistry.TryCreateContextAndAccess(calculator.Handle,
+                        out calculatorContext, out calculatorServices,
+                        out serviceResult) &&
+                    ApplicationServiceRegistry.TryCreateContextAndAccess(notepad1.Handle,
+                        out notepad1Context, out notepad1Services,
+                        out serviceResult) &&
+                    ApplicationServiceRegistry.TryCreateContextAndAccess(notepad2.Handle,
+                        out notepad2Context, out notepad2Services,
+                        out serviceResult) &&
+                    ApplicationServiceRegistry.TryCreateContextAndAccess(taskManager.Handle,
+                        out taskManagerContext, out taskManagerServices,
+                        out serviceResult);
+
+                if (contexts) {
+                    ApplicationNotificationRequest request =
+                        ApplicationNotificationRequest.Create(
+                            "Service runtime", "Notification path",
+                            ApplicationNotificationSeverity.Info);
+                    notification = calculatorServices.Notifications.Publish(
+                        calculatorContext, request).Succeeded &&
+                        calculatorServices.Notifications.Clear(
+                            calculatorContext).Succeeded;
+
+                    ApplicationServiceResult set = notepad1Services.Settings.Set(
+                        notepad1Context, "wrap",
+                        ApplicationSettingValue.Boolean(false));
+                    ApplicationServiceResult<ApplicationSettingValue> read =
+                        notepad2Services.Settings.Get(notepad2Context, "wrap");
+                    sharedSettings = set.Succeeded && read.Succeeded &&
+                        read.Value.Kind == ApplicationSettingValueKind.Boolean &&
+                        !read.Value.BooleanValue;
+
+                    ApplicationServiceResult<SystemInformationSnapshot> system =
+                        taskManagerServices.SystemInformation.GetSnapshot(
+                            taskManagerContext);
+                    snapshot = system.Succeeded &&
+                        system.Value.IsWithinBounds() &&
+                        system.Value.MemorySizeBytes >=
+                            system.Value.MemoryInUseBytes;
+
+                    ApplicationServiceContext stale = notepad1Context;
+                    bool terminated = TryTerminate(notepad1,
+                        "application service runtime stale-context proof");
+                    ApplicationServiceResult<ApplicationSettingValue> staleRead =
+                        notepad1Services.Settings.Get(stale, "wrap");
+                    staleRejected = terminated &&
+                        staleRead.Code == ApplicationServiceResultCode.InvalidContext;
+                }
+
+                if (notepad2 != null) TryTerminate(notepad2,
+                    "application service runtime cleanup");
+                if (calculator != null) TryTerminate(calculator,
+                    "application service runtime cleanup");
+                if (taskManager != null) TryTerminate(taskManager,
+                    "application service runtime cleanup");
+                WindowManager.CleanupClosedWindows();
+                cleanup = ActiveCount == baselineActive &&
+                    ObservationCount == baselineObservations &&
+                    (WindowManager.Windows == null ? 0 :
+                        WindowManager.Windows.Count) == baselineWindows &&
+                    StaleOwnershipCount == baselineStaleOwnership;
+                bool passed = notification && sharedSettings && snapshot &&
+                    staleRejected && cleanup;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime(
+                    "SERVICES_NOTIFICATION=" +
+                    (notification ? "PASS" : "FAIL"));
+                Program.MarkUefiAppRuntime(
+                    "SERVICES_SHARED_SETTINGS=" +
+                    (sharedSettings ? "PASS" : "FAIL"));
+                Program.MarkUefiAppRuntime(
+                    "SERVICES_SNAPSHOT=" +
+                    (snapshot ? "PASS" : "FAIL"));
+                Program.MarkUefiAppRuntime(
+                    "SERVICES_STALE_REJECTED=" +
+                    (staleRejected ? "PASS" : "FAIL"));
+                Program.MarkUefiAppRuntime(
+                    "SERVICES_CLEANUP=" +
+                    (cleanup ? "PASS" : "FAIL"));
+                Program.MarkUefiAppRuntime(
+                    "SERVICES_RESULT=" +
+                    (passed ? "PASS" : "FAIL"));
+#endif
+                return passed;
+            } catch {
+                if (notepad1 != null) TryTerminate(notepad1,
+                    "application service runtime exception cleanup");
+                if (notepad2 != null) TryTerminate(notepad2,
+                    "application service runtime exception cleanup");
+                if (calculator != null) TryTerminate(calculator,
+                    "application service runtime exception cleanup");
+                if (taskManager != null) TryTerminate(taskManager,
+                    "application service runtime exception cleanup");
+                WindowManager.CleanupClosedWindows();
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("SERVICES_RESULT=FAIL");
+#endif
+                return false;
+            }
+        }
+
+        private static bool TryLaunchServiceRuntimeInstance(
+                string appId, out ApplicationInstance instance) {
+            instance = null;
+            ApplicationDescriptor descriptor;
+            if (!ApplicationDescriptorRegistry.TryGetById(appId,
+                    out descriptor)) return false;
+            LaunchResult result;
+            if (!ApplicationFactoryRegistry.TryLaunch(descriptor,
+                    LaunchRequest.ForAppId(appId, null, null,
+                        LaunchActivationIntent.Launch), out result) ||
+                    result == null || !result.Success) return false;
+            return TryGet(result.InstanceHandle, out instance);
+        }
+
+        /// <summary>
         /// Bounded runtime proof for the application-centric taskbar contract.
         /// The fixture uses the authoritative instance registry and the normal
         /// typed Desktop launch path; TaskbarApplicationEntryRegistry is only

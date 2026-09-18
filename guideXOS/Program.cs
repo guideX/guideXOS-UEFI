@@ -1038,6 +1038,7 @@ unsafe class Program {
                 (malformedPath == null ? "PASS" : "FAIL"));
             SerialBreadcrumb("APP_RUNTIME_NEGATIVE_UNKNOWN_SHELL=" +
                 (!unknownShell.Success ? "PASS" : "FAIL"));
+            ApplicationInstanceRegistry.RunApplicationServiceRuntimeDiagnostic();
             bool lifecycleRuntime =
                 ApplicationInstanceRegistry.RunLifecycleRuntimeDiagnostic();
             SerialBreadcrumb("APP_RUNTIME_LIFECYCLE_DIAGNOSTIC=" +
