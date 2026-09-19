@@ -689,14 +689,17 @@ namespace guideXOS.OS {
         public ApplicationNotificationService Notifications { get; private set; }
         public ApplicationSettingsService Settings { get; private set; }
         public ApplicationSystemInformationService SystemInformation { get; private set; }
+        public ApplicationDialogService Dialogs { get; private set; }
 
         internal ApplicationServiceAccess(
                 ApplicationNotificationService notifications,
                 ApplicationSettingsService settings,
-                ApplicationSystemInformationService systemInformation) {
+                ApplicationSystemInformationService systemInformation,
+                ApplicationDialogService dialogs) {
             Notifications = notifications;
             Settings = settings;
             SystemInformation = systemInformation;
+            Dialogs = dialogs;
         }
     }
 }

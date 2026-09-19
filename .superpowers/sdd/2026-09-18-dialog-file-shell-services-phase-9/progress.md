@@ -15,3 +15,10 @@ Task 2: complete (commits 1ac98ff..d5e372d, tests: pwsh -NoProfile -ExecutionPol
 Task 3 RED: AppModel build failed at the intended compile phase because transient service-window classification, session metadata, and WindowManager registration APIs were absent.
 
 Task 3 GREEN: Fresh AppModel validation completed with lifecycle and taskbar/grouping self-tests passing, `APP_MODEL_SERVICES_SELFTEST_OK=1`, seven registered services, zero compatibility fallback, zero legacy backend calls, and no transient-session diagnostic breadcrumbs. The runtime investigation also verified service-window teardown through the existing WindowManager disposal boundary without changing ordinary owned-window/taskbar projections.
+Task 3: complete (commits d5e372d..32a649d, tests: pwsh -NoProfile -ExecutionPolicy Bypass -File ./run_uefi_validation.ps1 -AppModel -TimeoutSeconds 300 → Serial log: D:\dev\guideXOSUEFI\serial_uefi_validation_20260919_000140.txt)
+
+Task 4 RED: AppModel compilation initially exposed the missing dialog access, completion, and cleanup APIs required by the new dialog lifecycle self-test.
+
+Task 4 GREEN: AppModel validation completed with `APP_MODEL_SERVICES_SELFTEST_OK=1`, seven registered services, zero compatibility fallback, zero legacy backend calls, and the Phase 8 service markers intact. The dialog self-test covers bounded request shapes, duplicate `Conflict`, accepted/rejected/closed/cancelled/backend-failure outcomes, inactive observation versus new-request rejection, and stale requester cleanup. AppRuntime completed with graphics invariants valid, allocator corruption 0, ThreadPool.Locked 0, balanced input, and zero dropped keyboard/mouse input.
+
+Task 4: complete (commits 32a649d..pending, tests: pwsh -NoProfile -ExecutionPolicy Bypass -File ./run_uefi_validation.ps1 -AppModel -TimeoutSeconds 120 → serial_uefi_validation_20260919_001706.txt; pwsh -NoProfile -ExecutionPolicy Bypass -File ./run_uefi_validation.ps1 -AppRuntime -TimeoutSeconds 180 → serial_uefi_validation_20260919_001751.txt)

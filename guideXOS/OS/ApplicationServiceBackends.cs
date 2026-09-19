@@ -3,6 +3,93 @@ using guideXOS.Kernel.Drivers;
 using guideXOS.Misc;
 
 namespace guideXOS.OS {
+    internal sealed class CSharpApplicationDialogService :
+            ApplicationDialogService {
+        public override ApplicationServiceResult<ApplicationServiceRequestHandle>
+                Begin(ApplicationServiceContext context,
+                      ApplicationDialogRequest request) {
+            if (request == null || !request.IsValid) {
+                return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
+                    ApplicationServiceResultCode.InvalidRequest,
+                    "Dialog request is invalid or exceeds its bounds");
+            }
+            ApplicationServiceRequestHandle handle;
+            ApplicationServiceResult begun =
+                ApplicationServiceRegistry.BeginInteractiveRequest(context,
+                    ApplicationServiceId.Dialogs, request, out handle);
+            if (!begun.Succeeded) {
+                return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
+                    begun.Code, begun.BoundedDiagnostic);
+            }
+            if (!CreateWindow(context, request, handle)) {
+                ApplicationServiceRegistry.CompleteDialogRequest(handle,
+                    ApplicationDialogOutcome.BackendFailure);
+                ApplicationServiceSessionTable.ConsumeTerminal(handle);
+                return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
+                    ApplicationServiceResultCode.BackendFailure,
+                    "Dialog backend could not create a window");
+            }
+            return ApplicationServiceResult<ApplicationServiceRequestHandle>.SuccessResult(
+                handle);
+        }
+
+        public override ApplicationServiceResult<
+                ApplicationServiceRequestStatus<ApplicationDialogResult>> Observe(
+                    ApplicationServiceContext context,
+                    ApplicationServiceRequestHandle handle) {
+            return ApplicationServiceRegistry.ObserveDialogRequest(context, handle);
+        }
+
+        public override ApplicationServiceResult Cancel(
+                ApplicationServiceContext context,
+                ApplicationServiceRequestHandle handle) {
+            return ApplicationServiceRegistry.CancelDialogRequest(context, handle);
+        }
+
+        private static bool CreateWindow(ApplicationServiceContext context,
+                ApplicationDialogRequest request,
+                ApplicationServiceRequestHandle handle) {
+            try {
+                MessageBox message;
+                if (request.Kind == ApplicationDialogKind.Confirmation) {
+                    SaveChangesDialog confirmation = new SaveChangesDialog(null,
+                        () => ApplicationServiceRegistry.CompleteDialogRequest(
+                            handle, ApplicationDialogOutcome.Accepted),
+                        () => ApplicationServiceRegistry.CompleteDialogRequest(
+                            handle, ApplicationDialogOutcome.Rejected),
+                        () => ApplicationServiceRegistry.CompleteDialogRequest(
+                            handle, ApplicationDialogOutcome.Cancelled));
+                    confirmation.SetServiceCloseCallback(() =>
+                        ApplicationServiceRegistry.CompleteDialogRequest(handle,
+                            ApplicationDialogOutcome.Cancelled));
+                    return ShowTransientWindow(confirmation,
+                        context.InstanceHandle, handle);
+                }
+                message = new MessageBox(100, 100);
+                message.ConfigureService(request.Title, request.Body, () =>
+                    ApplicationServiceRegistry.CompleteDialogRequest(handle,
+                        ApplicationDialogOutcome.Accepted));
+                return ShowTransientWindow(message, context.InstanceHandle,
+                    handle);
+            } catch {
+                return false;
+            }
+        }
+
+        private static bool ShowTransientWindow(Window window,
+                ApplicationInstanceHandle owner,
+                ApplicationServiceRequestHandle handle) {
+            if (!WindowManager.RegisterTransientServiceWindow(window, owner,
+                    handle)) {
+                if (window != null) window.CloseForApplicationTermination();
+                return false;
+            }
+            window.Visible = true;
+            WindowManager.MoveToEnd(window);
+            return true;
+        }
+    }
+
     /// <summary>
     /// Same-address-space notification adapter.  It exposes only the bounded
     /// request/result contract; Notify, Animation, and renderer state stay in

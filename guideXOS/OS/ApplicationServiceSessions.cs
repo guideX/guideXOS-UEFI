@@ -195,6 +195,51 @@ namespace guideXOS.OS {
             return false;
         }
 
+        internal static bool CloseTransientForRequest(
+                ApplicationServiceRequestHandle requestHandle) {
+            for (int i = 0; i < _transientWindows.Length; i++) {
+                ApplicationServiceTransientWindowRecord record =
+                    _transientWindows[i];
+                if (!record.Active || record.RequestHandle != requestHandle) {
+                    continue;
+                }
+                Window window = record.Window;
+                if (window != null) window.CloseForApplicationTermination();
+                if (window != null) ReleaseTransientWindow(window);
+                else record.Clear();
+                return true;
+            }
+            return false;
+        }
+
+        internal static bool ConsumeTerminal(
+                ApplicationServiceRequestHandle requestHandle) {
+            ApplicationServiceSessionRecord session;
+            if (!TryGet(requestHandle, out session) ||
+                    session.State == ApplicationServiceRequestState.Pending) {
+                return false;
+            }
+            CloseTransientForRequest(requestHandle);
+            session.Clear();
+            return true;
+        }
+
+        internal static ApplicationServiceResult CancelPending(
+                ApplicationServiceRequestHandle requestHandle, object value) {
+            ApplicationServiceSessionRecord session;
+            if (!TryGet(requestHandle, out session)) {
+                return ApplicationServiceResult.InvalidContextResult();
+            }
+            if (session.State != ApplicationServiceRequestState.Pending) {
+                return ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.InvalidState,
+                    "Application service request is already terminal");
+            }
+            session.State = ApplicationServiceRequestState.Cancelled;
+            session.Result = value;
+            return ApplicationServiceResult.SuccessResult();
+        }
+
         internal static ApplicationServiceResult Begin(
                 ApplicationInstanceHandle owner,
                 ApplicationServiceId serviceId, object payload,

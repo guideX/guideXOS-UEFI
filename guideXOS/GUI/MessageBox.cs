@@ -8,6 +8,8 @@ namespace guideXOS.GUI {
         /// Message
         /// </summary>
         string _message;
+        private System.Action _serviceCloseCallback;
+        private bool _serviceCallbackRaised;
         /// <summary>
         /// Constructor
         /// </summary>
@@ -35,6 +37,25 @@ namespace guideXOS.GUI {
         public void SetText(string text) {
             if (this._message != null) this._message.Dispose();
             this._message = text;
+        }
+
+        internal void ConfigureService(string title, string text,
+                System.Action onClose) {
+            Title = title;
+            SetText(text);
+            _serviceCloseCallback = onClose;
+            _serviceCallbackRaised = false;
+        }
+
+        public override void OnSetVisible(bool value) {
+            base.OnSetVisible(value);
+            if (!value && _serviceCloseCallback != null &&
+                    !_serviceCallbackRaised) {
+                _serviceCallbackRaised = true;
+                System.Action callback = _serviceCloseCallback;
+                _serviceCloseCallback = null;
+                callback();
+            }
         }
     }
 }

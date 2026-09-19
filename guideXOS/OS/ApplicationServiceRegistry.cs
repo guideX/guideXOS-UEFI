@@ -37,7 +37,8 @@ namespace guideXOS.OS {
             _access = new ApplicationServiceAccess(
                 new CSharpApplicationNotificationService(),
                 new CSharpApplicationSettingsService(),
-                new CSharpApplicationSystemInformationService());
+                new CSharpApplicationSystemInformationService(),
+                new CSharpApplicationDialogService());
             _initialized = true;
 
             RegisterInitial(ApplicationServiceId.Notifications);
@@ -85,7 +86,8 @@ namespace guideXOS.OS {
                 return _registeredCount == SelectedServiceCount &&
                        _access != null && _access.Notifications != null &&
                        _access.Settings != null &&
-                       _access.SystemInformation != null;
+                       _access.SystemInformation != null &&
+                       _access.Dialogs != null;
             }
         }
 
@@ -216,6 +218,106 @@ namespace guideXOS.OS {
         internal static ApplicationServiceResult CompleteRequestForSelfTest(
                 ApplicationServiceRequestHandle handle, object value) {
             return ApplicationServiceSessionTable.Complete(handle, value);
+        }
+
+        internal static ApplicationServiceResult CompleteDialogRequest(
+                ApplicationServiceRequestHandle handle,
+                ApplicationDialogOutcome outcome) {
+            ApplicationServiceSessionRecord session;
+            if (!ApplicationServiceSessionTable.TryGet(handle, out session) ||
+                    session.ServiceId != ApplicationServiceId.Dialogs) {
+                return ApplicationServiceResult.InvalidContextResult();
+            }
+            ApplicationServiceResult result =
+                ApplicationServiceSessionTable.Complete(handle,
+                    ApplicationDialogResult.From(outcome));
+            if (result.Succeeded) {
+                ApplicationServiceSessionTable.CloseTransientForRequest(handle);
+            }
+            return result;
+        }
+
+        internal static ApplicationServiceResult CompleteDialogRequestForSelfTest(
+                ApplicationServiceRequestHandle handle,
+                ApplicationDialogOutcome outcome) {
+            return CompleteDialogRequest(handle, outcome);
+        }
+
+        internal static ApplicationServiceResult<
+                ApplicationServiceRequestStatus<ApplicationDialogResult>>
+                ObserveDialogRequest(ApplicationServiceContext context,
+                    ApplicationServiceRequestHandle handle) {
+            ApplicationServiceSessionRecord session;
+            ApplicationServiceResult valid =
+                TryValidateExistingRequestContext(context, handle, out session);
+            if (!valid.Succeeded || session.ServiceId !=
+                    ApplicationServiceId.Dialogs) {
+                return ApplicationServiceResult<
+                    ApplicationServiceRequestStatus<ApplicationDialogResult>>.Failure(
+                        valid.Succeeded ? ApplicationServiceResultCode.InvalidContext :
+                            valid.Code, valid.Succeeded ?
+                            "Application service request is not a dialog" :
+                            valid.BoundedDiagnostic);
+            }
+            if (session.Result != null &&
+                    !(session.Result is ApplicationDialogResult)) {
+                return ApplicationServiceResult<
+                    ApplicationServiceRequestStatus<ApplicationDialogResult>>.Failure(
+                        ApplicationServiceResultCode.BackendFailure,
+                        "Dialog backend returned an invalid result");
+            }
+            ApplicationServiceRequestStatus<ApplicationDialogResult> status;
+            switch (session.State) {
+                case ApplicationServiceRequestState.Pending:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationDialogResult>.PendingStatus();
+                    break;
+                case ApplicationServiceRequestState.Completed:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationDialogResult>.CompletedStatus(
+                            (ApplicationDialogResult)session.Result);
+                    break;
+                case ApplicationServiceRequestState.Cancelled:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationDialogResult>.CancelledStatus(
+                            (ApplicationDialogResult)session.Result);
+                    break;
+                default:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationDialogResult>.FailedStatus(
+                            (ApplicationDialogResult)session.Result);
+                    break;
+            }
+            if (session.State != ApplicationServiceRequestState.Pending) {
+                ApplicationServiceSessionTable.ConsumeTerminal(handle);
+            }
+            return ApplicationServiceResult<
+                ApplicationServiceRequestStatus<ApplicationDialogResult>>.SuccessResult(
+                    status);
+        }
+
+        internal static ApplicationServiceResult CancelDialogRequest(
+                ApplicationServiceContext context,
+                ApplicationServiceRequestHandle handle) {
+            ApplicationServiceSessionRecord session;
+            ApplicationServiceResult valid =
+                TryValidateExistingRequestContext(context, handle, out session);
+            if (!valid.Succeeded || session.ServiceId !=
+                    ApplicationServiceId.Dialogs) {
+                return valid.Succeeded
+                    ? ApplicationServiceResult.InvalidContextResult() : valid;
+            }
+            ApplicationServiceResult cancelled =
+                ApplicationServiceSessionTable.CancelPending(handle,
+                    ApplicationDialogResult.From(
+                        ApplicationDialogOutcome.Cancelled));
+            if (cancelled.Succeeded) {
+                ApplicationServiceSessionTable.CloseTransientForRequest(handle);
+                return ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.Cancelled,
+                    "Dialog request was cancelled");
+            }
+            return cancelled;
         }
 
         internal static void OnApplicationLifecycleChanged(
@@ -424,6 +526,9 @@ namespace guideXOS.OS {
                 Check(RunRequestSessionSelfTest(),
                     "request session lifecycle", ref passed, ref failed,
                     ref firstFailure);
+                Check(RunDialogServiceSelfTest(context, access),
+                    "dialog service lifecycle", ref passed, ref failed,
+                    ref firstFailure);
                 Check(RunTransientServiceWindowSelfTest(),
                     "transient service window ownership", ref passed,
                     ref failed, ref firstFailure);
@@ -571,6 +676,144 @@ namespace guideXOS.OS {
             return result;
         }
 
+        private static bool RunDialogServiceSelfTest(
+                ApplicationServiceContext context,
+                ApplicationServiceAccess access) {
+            if (context == null || access == null || access.Dialogs == null) {
+                return false;
+            }
+            ApplicationDialogRequest information =
+                ApplicationDialogRequest.Create(ApplicationDialogKind.Information,
+                    "Information", "Bounded message",
+                    ApplicationDialogButtonSet.Acknowledge);
+            ApplicationDialogRequest invalidButtons =
+                ApplicationDialogRequest.Create(ApplicationDialogKind.Error,
+                    "Error", "Invalid button combination",
+                    ApplicationDialogButtonSet.AcceptRejectCancel);
+            if (!information.IsValid || invalidButtons.IsValid) return false;
+
+            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                access.Dialogs.Begin(context, information);
+            if (!begun.Succeeded || !begun.Value.IsValid) return false;
+            ApplicationServiceResult<ApplicationServiceRequestHandle> duplicate =
+                access.Dialogs.Begin(context, information);
+            if (duplicate.Code != ApplicationServiceResultCode.Conflict) {
+                return false;
+            }
+            ApplicationServiceResult complete =
+                CompleteDialogRequestForSelfTest(begun.Value,
+                    ApplicationDialogOutcome.Accepted);
+            ApplicationServiceResult<ApplicationServiceRequestStatus<
+                ApplicationDialogResult>> observed =
+                access.Dialogs.Observe(context, begun.Value);
+            if (!complete.Succeeded || !observed.Succeeded ||
+                    observed.Value == null ||
+                    observed.Value.State != ApplicationServiceRequestState.Completed ||
+                    observed.Value.Value == null ||
+                    observed.Value.Value.Outcome !=
+                        ApplicationDialogOutcome.Accepted) return false;
+
+            ApplicationDialogRequest confirmation =
+                ApplicationDialogRequest.Create(ApplicationDialogKind.Confirmation,
+                    "Confirm", "Continue?",
+                    ApplicationDialogButtonSet.AcceptRejectCancel);
+            begun = access.Dialogs.Begin(context, confirmation);
+            if (!begun.Succeeded) return false;
+            ApplicationInstance owner;
+            ApplicationServiceResult valid;
+            bool contextValid = TryValidateContext(context,
+                ApplicationServiceId.Dialogs, out owner, out valid);
+            if (!contextValid || !valid.Succeeded || owner == null) return false;
+            bool inactive = owner.TryTransition(
+                ApplicationInstanceLifecycleState.Inactive);
+            observed = access.Dialogs.Observe(context, begun.Value);
+            ApplicationServiceResult<ApplicationServiceRequestHandle> inactiveBegin =
+                access.Dialogs.Begin(context, confirmation);
+            bool inactiveObserved = inactive && observed.Succeeded &&
+                observed.Value != null &&
+                observed.Value.State == ApplicationServiceRequestState.Pending;
+            bool inactiveRejected = inactiveBegin.Code ==
+                ApplicationServiceResultCode.InvalidState;
+            bool running = owner.TryTransition(
+                ApplicationInstanceLifecycleState.Running);
+            if (!inactiveObserved || !inactiveRejected || !running) return false;
+
+            complete = CompleteDialogRequestForSelfTest(begun.Value,
+                ApplicationDialogOutcome.Rejected);
+            observed = access.Dialogs.Observe(context, begun.Value);
+            if (!complete.Succeeded || !observed.Succeeded ||
+                    observed.Value == null || observed.Value.Value == null ||
+                    observed.Value.Value.Outcome !=
+                        ApplicationDialogOutcome.Rejected) return false;
+
+            begun = access.Dialogs.Begin(context, information);
+            if (!begun.Succeeded) return false;
+            complete = CompleteDialogRequestForSelfTest(begun.Value,
+                ApplicationDialogOutcome.Closed);
+            observed = access.Dialogs.Observe(context, begun.Value);
+            if (!complete.Succeeded || !observed.Succeeded ||
+                    observed.Value == null || observed.Value.Value == null ||
+                    observed.Value.Value.Outcome !=
+                        ApplicationDialogOutcome.Closed) return false;
+
+            begun = access.Dialogs.Begin(context, information);
+            if (!begun.Succeeded) return false;
+            ApplicationServiceResult cancelled = access.Dialogs.Cancel(
+                context, begun.Value);
+            observed = access.Dialogs.Observe(context, begun.Value);
+            if (cancelled.Code != ApplicationServiceResultCode.Cancelled ||
+                    !observed.Succeeded || observed.Value == null ||
+                    observed.Value.State != ApplicationServiceRequestState.Cancelled ||
+                    observed.Value.Value == null ||
+                    observed.Value.Value.Outcome !=
+                        ApplicationDialogOutcome.Cancelled) return false;
+
+            begun = access.Dialogs.Begin(context, information);
+            if (!begun.Succeeded) return false;
+            complete = CompleteDialogRequestForSelfTest(begun.Value,
+                ApplicationDialogOutcome.BackendFailure);
+            observed = access.Dialogs.Observe(context, begun.Value);
+            if (!complete.Succeeded || !observed.Succeeded ||
+                    observed.Value == null ||
+                    observed.Value.State != ApplicationServiceRequestState.Completed ||
+                    observed.Value.Value == null ||
+                    observed.Value.Value.Outcome !=
+                        ApplicationDialogOutcome.BackendFailure) return false;
+
+            ApplicationInstance cleanupOwner = null;
+            ApplicationServiceContext cleanupContext = null;
+            ApplicationServiceAccess cleanupAccess = null;
+            ApplicationServiceResult cleanupResult =
+                ApplicationServiceResult.InvalidContextResult();
+            bool cleanupReused;
+            LaunchResult cleanupFailure;
+            bool cleanupStarted = ApplicationInstanceRegistry.TryBeginLaunch(
+                "selftest.phase9.dialogs.cleanup",
+                ApplicationInstancePolicy.MultiInstance,
+                LaunchRequest.ForAppId("selftest.phase9.dialogs.cleanup", null,
+                    null, LaunchActivationIntent.NewInstance), out cleanupOwner,
+                out cleanupReused, out cleanupFailure);
+            bool cleanupReady = cleanupStarted &&
+                ApplicationInstanceRegistry.TryCompleteLaunch(cleanupOwner,
+                    false, out cleanupFailure) &&
+                TryCreateContextAndAccess(cleanupOwner.Handle, out cleanupContext,
+                    out cleanupAccess, out cleanupResult);
+            if (!cleanupReady || cleanupAccess == null ||
+                    cleanupAccess.Dialogs == null) return false;
+            ApplicationServiceResult<ApplicationServiceRequestHandle> cleanupBegun =
+                cleanupAccess.Dialogs.Begin(cleanupContext, information);
+            ApplicationInstanceHandle stale = cleanupOwner.Handle;
+            if (!cleanupBegun.Succeeded ||
+                    !ApplicationInstanceRegistry.TryTerminate(cleanupOwner,
+                        "dialog service self-test cleanup")) return false;
+            observed = cleanupAccess.Dialogs.Observe(cleanupContext,
+                cleanupBegun.Value);
+            return observed.Code == ApplicationServiceResultCode.InvalidContext &&
+                ApplicationServiceSessionTable.TransientWindowCount == 0 &&
+                ApplicationServiceSessionTable.OrphanTransientWindowCount == 0 &&
+                stale.IsValid;
+        }
+
         private sealed class ServiceWindowProbe : Window {
             internal ServiceWindowProbe() : base(40, 112, 160, 120) {
                 ShowInTaskbar = false;
@@ -592,7 +835,8 @@ namespace guideXOS.OS {
 
         internal static void SetTypedAccess(ApplicationServiceAccess access) {
             Initialize();
-            _access = access ?? new ApplicationServiceAccess(null, null, null);
+            _access = access ?? new ApplicationServiceAccess(null, null, null,
+                null);
         }
 
         private static void RegisterInitial(ApplicationServiceId id) {
@@ -703,6 +947,11 @@ namespace guideXOS.OS {
                     serviceId == ApplicationServiceId.Settings) {
                 return state == ApplicationInstanceLifecycleState.Initialized ||
                        state == ApplicationInstanceLifecycleState.Running ||
+                       state == ApplicationInstanceLifecycleState.Activated ||
+                       state == ApplicationInstanceLifecycleState.Inactive;
+            }
+            if (serviceId == ApplicationServiceId.Dialogs) {
+                return state == ApplicationInstanceLifecycleState.Running ||
                        state == ApplicationInstanceLifecycleState.Activated ||
                        state == ApplicationInstanceLifecycleState.Inactive;
             }
