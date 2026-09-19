@@ -76,7 +76,7 @@ namespace guideXOS.OS {
             }
         }
 
-        private static bool ShowTransientWindow(Window window,
+        internal static bool ShowTransientWindow(Window window,
                 ApplicationInstanceHandle owner,
                 ApplicationServiceRequestHandle handle) {
             if (!WindowManager.RegisterTransientServiceWindow(window, owner,
@@ -87,6 +87,135 @@ namespace guideXOS.OS {
             window.Visible = true;
             WindowManager.MoveToEnd(window);
             return true;
+        }
+    }
+
+    internal sealed class CSharpApplicationOpenFileService :
+            ApplicationOpenFileService {
+        public override ApplicationServiceResult<ApplicationServiceRequestHandle>
+                Begin(ApplicationServiceContext context, OpenFileRequest request) {
+            if (request == null || !request.IsValid) {
+                return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
+                    ApplicationServiceResultCode.InvalidRequest,
+                    "Open-file request is invalid or exceeds its bound");
+            }
+            ApplicationServiceRequestHandle handle;
+            ApplicationServiceResult begun =
+                ApplicationServiceRegistry.BeginInteractiveRequest(context,
+                    ApplicationServiceId.OpenFile, request, out handle);
+            if (!begun.Succeeded) {
+                return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
+                    begun.Code, begun.BoundedDiagnostic);
+            }
+            try {
+                OpenDialog dialog = new OpenDialog(100, 100, 520, 360,
+                    request.StartingLocation, path =>
+                        ApplicationServiceRegistry.CompleteFileDialogRequest(
+                            handle, ApplicationFileDialogOutcome.Selected, path));
+                dialog.SetServiceCloseCallback(() =>
+                    ApplicationServiceRegistry.CompleteFileDialogRequest(handle,
+                        ApplicationFileDialogOutcome.Cancelled, string.Empty));
+                if (!CSharpApplicationDialogService.ShowTransientWindow(dialog,
+                        context.InstanceHandle, handle)) {
+                    ApplicationServiceRegistry.CompleteFileDialogRequest(handle,
+                        ApplicationFileDialogOutcome.BackendFailure, string.Empty);
+                    ApplicationServiceSessionTable.ConsumeTerminal(handle);
+                    return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
+                        ApplicationServiceResultCode.BackendFailure,
+                        "Open-file backend could not register a dialog");
+                }
+            } catch {
+                ApplicationServiceRegistry.CompleteFileDialogRequest(handle,
+                    ApplicationFileDialogOutcome.BackendFailure, string.Empty);
+                ApplicationServiceSessionTable.ConsumeTerminal(handle);
+                return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
+                    ApplicationServiceResultCode.BackendFailure,
+                    "Open-file backend could not create a dialog");
+            }
+            return ApplicationServiceResult<ApplicationServiceRequestHandle>.SuccessResult(
+                handle);
+        }
+
+        public override ApplicationServiceResult<
+                ApplicationServiceRequestStatus<ApplicationFileDialogResult>>
+                Observe(ApplicationServiceContext context,
+                    ApplicationServiceRequestHandle handle) {
+            return ApplicationServiceRegistry.ObserveFileDialogRequest(context,
+                handle, ApplicationServiceId.OpenFile);
+        }
+
+        public override ApplicationServiceResult Cancel(
+                ApplicationServiceContext context,
+                ApplicationServiceRequestHandle handle) {
+            return ApplicationServiceRegistry.CancelFileDialogRequest(context,
+                handle, ApplicationServiceId.OpenFile);
+        }
+    }
+
+    internal sealed class CSharpApplicationSaveFileService :
+            ApplicationSaveFileService {
+        public override ApplicationServiceResult<ApplicationServiceRequestHandle>
+                Begin(ApplicationServiceContext context, SaveFileRequest request) {
+            if (request == null || !request.IsValid) {
+                return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
+                    ApplicationServiceResultCode.InvalidRequest,
+                    "Save-file request is invalid or exceeds its bound");
+            }
+            ApplicationServiceRequestHandle handle;
+            ApplicationServiceResult begun =
+                ApplicationServiceRegistry.BeginInteractiveRequest(context,
+                    ApplicationServiceId.SaveFile, request, out handle);
+            if (!begun.Succeeded) {
+                return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
+                    begun.Code, begun.BoundedDiagnostic);
+            }
+            try {
+                string suggested = request.SuggestedFileName;
+                if (!string.IsNullOrEmpty(suggested) &&
+                        suggested.IndexOf('.') < 0) {
+                    suggested = suggested + ".txt";
+                }
+                SaveDialog dialog = new SaveDialog(100, 100, 520, 360,
+                    request.StartingLocation, suggested, path =>
+                        ApplicationServiceRegistry.CompleteFileDialogRequest(
+                            handle, ApplicationFileDialogOutcome.Selected, path));
+                dialog.SetServiceCloseCallback(() =>
+                    ApplicationServiceRegistry.CompleteFileDialogRequest(handle,
+                        ApplicationFileDialogOutcome.Cancelled, string.Empty));
+                if (!CSharpApplicationDialogService.ShowTransientWindow(dialog,
+                        context.InstanceHandle, handle)) {
+                    ApplicationServiceRegistry.CompleteFileDialogRequest(handle,
+                        ApplicationFileDialogOutcome.BackendFailure, string.Empty);
+                    ApplicationServiceSessionTable.ConsumeTerminal(handle);
+                    return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
+                        ApplicationServiceResultCode.BackendFailure,
+                        "Save-file backend could not register a dialog");
+                }
+            } catch {
+                ApplicationServiceRegistry.CompleteFileDialogRequest(handle,
+                    ApplicationFileDialogOutcome.BackendFailure, string.Empty);
+                ApplicationServiceSessionTable.ConsumeTerminal(handle);
+                return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
+                    ApplicationServiceResultCode.BackendFailure,
+                    "Save-file backend could not create a dialog");
+            }
+            return ApplicationServiceResult<ApplicationServiceRequestHandle>.SuccessResult(
+                handle);
+        }
+
+        public override ApplicationServiceResult<
+                ApplicationServiceRequestStatus<ApplicationFileDialogResult>>
+                Observe(ApplicationServiceContext context,
+                    ApplicationServiceRequestHandle handle) {
+            return ApplicationServiceRegistry.ObserveFileDialogRequest(context,
+                handle, ApplicationServiceId.SaveFile);
+        }
+
+        public override ApplicationServiceResult Cancel(
+                ApplicationServiceContext context,
+                ApplicationServiceRequestHandle handle) {
+            return ApplicationServiceRegistry.CancelFileDialogRequest(context,
+                handle, ApplicationServiceId.SaveFile);
         }
     }
 

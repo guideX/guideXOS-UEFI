@@ -18,8 +18,10 @@ namespace guideXOS.GUI {
         private int _selectedIndex;
         private bool _clickLock;
         private readonly Action<string> _onSave;
+        private Action _serviceCloseCallback;
+        private bool _suppressServiceCloseCallback;
         private int _padding = 10;
-        private int _paddingRight = 20; // extra right padding so buttons aren’t flush
+        private int _paddingRight = 20; // extra right padding so buttons arenï¿½t flush
         private int _rowH = 36; // ensure enough height for icons
         private int _btnW = 120; // wider buttons
         private int _btnH = 28;
@@ -42,6 +44,7 @@ namespace guideXOS.GUI {
             _entries = new List<FileInfo>();
             _selectedIndex = -1;
             _onSave = onSave; _clickLock = false; _fnameFocus = true;
+            _suppressServiceCloseCallback = false;
             // Adjust row height based on icon size
             int minRow = Icons.DocumentIcon != null ? Icons.DocumentIcon(32).Height + 10 : 36;
             if (minRow > _rowH) _rowH = minRow;
@@ -148,9 +151,26 @@ namespace guideXOS.GUI {
             if (string.IsNullOrEmpty(_fileName)) return;
             string fname = FuzzyResolveIfUnique(_fileName);
             string path = _currentPath + fname;
+            _suppressServiceCloseCallback = true;
             _onSave?.Invoke(path);
             path.Dispose();
             this.Visible = false;
+        }
+
+        internal void SetServiceCloseCallback(Action callback) {
+            _serviceCloseCallback = callback;
+            _suppressServiceCloseCallback = false;
+        }
+
+        public override void OnSetVisible(bool value) {
+            base.OnSetVisible(value);
+            if (!value && !_suppressServiceCloseCallback &&
+                    _serviceCloseCallback != null) {
+                Action callback = _serviceCloseCallback;
+                _serviceCloseCallback = null;
+                callback();
+            }
+            if (value) _suppressServiceCloseCallback = false;
         }
 
         public override void OnInput() {

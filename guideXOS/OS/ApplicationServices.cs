@@ -690,16 +690,22 @@ namespace guideXOS.OS {
         public ApplicationSettingsService Settings { get; private set; }
         public ApplicationSystemInformationService SystemInformation { get; private set; }
         public ApplicationDialogService Dialogs { get; private set; }
+        public ApplicationOpenFileService OpenFile { get; private set; }
+        public ApplicationSaveFileService SaveFile { get; private set; }
 
         internal ApplicationServiceAccess(
                 ApplicationNotificationService notifications,
                 ApplicationSettingsService settings,
                 ApplicationSystemInformationService systemInformation,
-                ApplicationDialogService dialogs) {
+                ApplicationDialogService dialogs,
+                ApplicationOpenFileService openFile,
+                ApplicationSaveFileService saveFile) {
             Notifications = notifications;
             Settings = settings;
             SystemInformation = systemInformation;
             Dialogs = dialogs;
+            OpenFile = openFile;
+            SaveFile = saveFile;
         }
     }
 }

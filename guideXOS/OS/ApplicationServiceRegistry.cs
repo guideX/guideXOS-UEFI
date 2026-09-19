@@ -38,7 +38,9 @@ namespace guideXOS.OS {
                 new CSharpApplicationNotificationService(),
                 new CSharpApplicationSettingsService(),
                 new CSharpApplicationSystemInformationService(),
-                new CSharpApplicationDialogService());
+                new CSharpApplicationDialogService(),
+                new CSharpApplicationOpenFileService(),
+                new CSharpApplicationSaveFileService());
             _initialized = true;
 
             RegisterInitial(ApplicationServiceId.Notifications);
@@ -87,7 +89,9 @@ namespace guideXOS.OS {
                        _access != null && _access.Notifications != null &&
                        _access.Settings != null &&
                        _access.SystemInformation != null &&
-                       _access.Dialogs != null;
+                       _access.Dialogs != null &&
+                       _access.OpenFile != null &&
+                       _access.SaveFile != null;
             }
         }
 
@@ -320,6 +324,118 @@ namespace guideXOS.OS {
             return cancelled;
         }
 
+        internal static ApplicationServiceResult CompleteFileDialogRequest(
+                ApplicationServiceRequestHandle handle,
+                ApplicationFileDialogOutcome outcome, string selectedPath) {
+            ApplicationServiceSessionRecord session;
+            if (!ApplicationServiceSessionTable.TryGet(handle, out session) ||
+                    !IsFileDialogService(session.ServiceId)) {
+                return ApplicationServiceResult.InvalidContextResult();
+            }
+            ApplicationFileDialogResult value =
+                ApplicationFileDialogResult.From(outcome, selectedPath);
+            if (!value.IsValid) {
+                return ApplicationServiceResult.InvalidRequestResult();
+            }
+            ApplicationServiceResult result =
+                ApplicationServiceSessionTable.Complete(handle, value);
+            if (result.Succeeded) {
+                ApplicationServiceSessionTable.CloseTransientForRequest(handle);
+            }
+            return result;
+        }
+
+        internal static ApplicationServiceResult
+                CompleteFileDialogRequestForSelfTest(
+                    ApplicationServiceRequestHandle handle,
+                    ApplicationFileDialogOutcome outcome,
+                    string selectedPath) {
+            return CompleteFileDialogRequest(handle, outcome, selectedPath);
+        }
+
+        internal static ApplicationServiceResult<
+                ApplicationServiceRequestStatus<ApplicationFileDialogResult>>
+                ObserveFileDialogRequest(ApplicationServiceContext context,
+                    ApplicationServiceRequestHandle handle,
+                    ApplicationServiceId serviceId) {
+            ApplicationServiceSessionRecord session;
+            ApplicationServiceResult valid =
+                TryValidateExistingRequestContext(context, handle, out session);
+            if (!valid.Succeeded || session.ServiceId != serviceId) {
+                return ApplicationServiceResult<
+                    ApplicationServiceRequestStatus<ApplicationFileDialogResult>>.Failure(
+                        valid.Succeeded ? ApplicationServiceResultCode.InvalidContext :
+                            valid.Code, valid.Succeeded ?
+                            "Application service request is not this file dialog" :
+                            valid.BoundedDiagnostic);
+            }
+            if (session.Result != null &&
+                    !(session.Result is ApplicationFileDialogResult)) {
+                return ApplicationServiceResult<
+                    ApplicationServiceRequestStatus<ApplicationFileDialogResult>>.Failure(
+                        ApplicationServiceResultCode.BackendFailure,
+                        "File dialog backend returned an invalid result");
+            }
+            ApplicationServiceRequestStatus<ApplicationFileDialogResult> status;
+            switch (session.State) {
+                case ApplicationServiceRequestState.Pending:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationFileDialogResult>.PendingStatus();
+                    break;
+                case ApplicationServiceRequestState.Completed:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationFileDialogResult>.CompletedStatus(
+                            (ApplicationFileDialogResult)session.Result);
+                    break;
+                case ApplicationServiceRequestState.Cancelled:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationFileDialogResult>.CancelledStatus(
+                            (ApplicationFileDialogResult)session.Result);
+                    break;
+                default:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationFileDialogResult>.FailedStatus(
+                            (ApplicationFileDialogResult)session.Result);
+                    break;
+            }
+            if (session.State != ApplicationServiceRequestState.Pending) {
+                ApplicationServiceSessionTable.ConsumeTerminal(handle);
+            }
+            return ApplicationServiceResult<
+                ApplicationServiceRequestStatus<ApplicationFileDialogResult>>.SuccessResult(
+                    status);
+        }
+
+        internal static ApplicationServiceResult CancelFileDialogRequest(
+                ApplicationServiceContext context,
+                ApplicationServiceRequestHandle handle,
+                ApplicationServiceId serviceId) {
+            ApplicationServiceSessionRecord session;
+            ApplicationServiceResult valid =
+                TryValidateExistingRequestContext(context, handle, out session);
+            if (!valid.Succeeded || session.ServiceId != serviceId) {
+                return valid.Succeeded
+                    ? ApplicationServiceResult.InvalidContextResult() : valid;
+            }
+            ApplicationServiceResult cancelled =
+                ApplicationServiceSessionTable.CancelPending(handle,
+                    ApplicationFileDialogResult.From(
+                        ApplicationFileDialogOutcome.Cancelled,
+                        string.Empty));
+            if (cancelled.Succeeded) {
+                ApplicationServiceSessionTable.CloseTransientForRequest(handle);
+                return ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.Cancelled,
+                    "File dialog request was cancelled");
+            }
+            return cancelled;
+        }
+
+        private static bool IsFileDialogService(ApplicationServiceId serviceId) {
+            return serviceId == ApplicationServiceId.OpenFile ||
+                   serviceId == ApplicationServiceId.SaveFile;
+        }
+
         internal static void OnApplicationLifecycleChanged(
                 ApplicationInstance instance,
                 ApplicationInstanceLifecycleState previous,
@@ -529,6 +645,9 @@ namespace guideXOS.OS {
                 Check(RunDialogServiceSelfTest(context, access),
                     "dialog service lifecycle", ref passed, ref failed,
                     ref firstFailure);
+                Check(RunFileDialogServiceSelfTest(context, access),
+                    "file dialog service lifecycle", ref passed,
+                    ref failed, ref firstFailure);
                 Check(RunTransientServiceWindowSelfTest(),
                     "transient service window ownership", ref passed,
                     ref failed, ref firstFailure);
@@ -814,6 +933,111 @@ namespace guideXOS.OS {
                 stale.IsValid;
         }
 
+        private static bool RunFileDialogServiceSelfTest(
+                ApplicationServiceContext context,
+                ApplicationServiceAccess access) {
+            if (context == null || access == null ||
+                    access.OpenFile == null || access.SaveFile == null) {
+                return false;
+            }
+            OpenFileRequest openRequest = OpenFileRequest.Create("Programs/");
+            OpenFileRequest invalidOpen = OpenFileRequest.Create(
+                Repeat('p', OpenFileRequest.MaxStartingLocationLength + 1));
+            SaveFileRequest saveRequest = SaveFileRequest.Create(
+                "Programs/", "phase9.txt");
+            SaveFileRequest invalidSave = SaveFileRequest.Create(
+                "Programs/", Repeat('n',
+                    SaveFileRequest.MaxSuggestedFileNameLength + 1));
+            if (!openRequest.IsValid || invalidOpen.IsValid ||
+                    !saveRequest.IsValid || invalidSave.IsValid) {
+                return false;
+            }
+
+            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                access.OpenFile.Begin(context, openRequest);
+            if (!begun.Succeeded || !begun.Value.IsValid) {
+                return false;
+            }
+            ApplicationServiceResult complete =
+                CompleteFileDialogRequestForSelfTest(begun.Value,
+                    ApplicationFileDialogOutcome.Selected,
+                    "Programs/notepad.gxm");
+            ApplicationServiceResult<ApplicationServiceRequestStatus<
+                ApplicationFileDialogResult>> observed =
+                access.OpenFile.Observe(context, begun.Value);
+            if (!complete.Succeeded || !observed.Succeeded ||
+                    observed.Value == null ||
+                    observed.Value.State != ApplicationServiceRequestState.Completed ||
+                    observed.Value.Value == null ||
+                    observed.Value.Value.Outcome !=
+                        ApplicationFileDialogOutcome.Selected ||
+                    observed.Value.Value.SelectedPath !=
+                        "Programs/notepad.gxm") {
+                return false;
+            }
+
+            begun = access.OpenFile.Begin(context, openRequest);
+            if (!begun.Succeeded) return false;
+            ApplicationServiceResult cancelled = access.OpenFile.Cancel(
+                context, begun.Value);
+            observed = access.OpenFile.Observe(context, begun.Value);
+            if (cancelled.Code != ApplicationServiceResultCode.Cancelled ||
+                    !observed.Succeeded || observed.Value == null ||
+                    observed.Value.State != ApplicationServiceRequestState.Cancelled ||
+                    observed.Value.Value == null ||
+                    observed.Value.Value.Outcome !=
+                        ApplicationFileDialogOutcome.Cancelled ||
+                    observed.Value.Value.SelectedPath.Length != 0) {
+                return false;
+            }
+
+            begun = access.SaveFile.Begin(context, saveRequest);
+            if (!begun.Succeeded) {
+                return false;
+            }
+            complete = CompleteFileDialogRequestForSelfTest(begun.Value,
+                ApplicationFileDialogOutcome.Selected, "Programs/phase9.txt");
+            ApplicationServiceResult<ApplicationServiceRequestStatus<
+                ApplicationFileDialogResult>> saveObserved =
+                access.SaveFile.Observe(context, begun.Value);
+            if (!complete.Succeeded || !saveObserved.Succeeded ||
+                    saveObserved.Value == null || saveObserved.Value.Value == null ||
+                    saveObserved.Value.Value.Outcome !=
+                        ApplicationFileDialogOutcome.Selected ||
+                    saveObserved.Value.Value.SelectedPath !=
+                        "Programs/phase9.txt") {
+                return false;
+            }
+
+            begun = access.SaveFile.Begin(context, saveRequest);
+            if (!begun.Succeeded) return false;
+            cancelled = access.SaveFile.Cancel(context, begun.Value);
+            saveObserved = access.SaveFile.Observe(context, begun.Value);
+            if (cancelled.Code != ApplicationServiceResultCode.Cancelled ||
+                    !saveObserved.Succeeded || saveObserved.Value == null ||
+                    saveObserved.Value.State != ApplicationServiceRequestState.Cancelled ||
+                    saveObserved.Value.Value == null ||
+                    saveObserved.Value.Value.Outcome !=
+                        ApplicationFileDialogOutcome.Cancelled) {
+                return false;
+            }
+
+            begun = access.SaveFile.Begin(context, saveRequest);
+            if (!begun.Succeeded) return false;
+            complete = CompleteFileDialogRequestForSelfTest(begun.Value,
+                ApplicationFileDialogOutcome.BackendFailure, string.Empty);
+            saveObserved = access.SaveFile.Observe(context, begun.Value);
+            bool passed = complete.Succeeded && saveObserved.Succeeded &&
+                saveObserved.Value != null &&
+                saveObserved.Value.State == ApplicationServiceRequestState.Completed &&
+                saveObserved.Value.Value != null &&
+                saveObserved.Value.Value.Outcome ==
+                    ApplicationFileDialogOutcome.BackendFailure &&
+                ApplicationServiceSessionTable.TransientWindowCount == 0 &&
+                ApplicationServiceSessionTable.OrphanTransientWindowCount == 0;
+            return passed;
+        }
+
         private sealed class ServiceWindowProbe : Window {
             internal ServiceWindowProbe() : base(40, 112, 160, 120) {
                 ShowInTaskbar = false;
@@ -836,7 +1060,7 @@ namespace guideXOS.OS {
         internal static void SetTypedAccess(ApplicationServiceAccess access) {
             Initialize();
             _access = access ?? new ApplicationServiceAccess(null, null, null,
-                null);
+                null, null, null);
         }
 
         private static void RegisterInitial(ApplicationServiceId id) {
@@ -951,6 +1175,12 @@ namespace guideXOS.OS {
                        state == ApplicationInstanceLifecycleState.Inactive;
             }
             if (serviceId == ApplicationServiceId.Dialogs) {
+                return state == ApplicationInstanceLifecycleState.Running ||
+                       state == ApplicationInstanceLifecycleState.Activated ||
+                       state == ApplicationInstanceLifecycleState.Inactive;
+            }
+            if (serviceId == ApplicationServiceId.OpenFile ||
+                    serviceId == ApplicationServiceId.SaveFile) {
                 return state == ApplicationInstanceLifecycleState.Running ||
                        state == ApplicationInstanceLifecycleState.Activated ||
                        state == ApplicationInstanceLifecycleState.Inactive;

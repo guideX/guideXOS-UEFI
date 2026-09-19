@@ -28,6 +28,8 @@ namespace guideXOS.GUI {
         /// On Open
         /// </summary>
         private readonly Action<string> _onOpen;
+        private Action _serviceCloseCallback;
+        private bool _suppressServiceCloseCallback;
         /// <summary>
         /// Padding
         /// </summary>
@@ -91,6 +93,7 @@ namespace guideXOS.GUI {
             _selectedIndex = -1;
             _clickLock = false;
             _onOpen = onOpen;
+            _suppressServiceCloseCallback = false;
             _scroll = 0;
             _scrollDrag = false;
             Keyboard.OnKeyChanged += Keyboard_OnKeyChanged;
@@ -218,6 +221,7 @@ namespace guideXOS.GUI {
                 RefreshEntries();
             } else {
                 string path = _currentPath + e.Name;
+                _suppressServiceCloseCallback = true;
                 _onOpen?.Invoke(path);
                 path.Dispose();
                 this.Visible = false;
@@ -315,7 +319,23 @@ namespace guideXOS.GUI {
                 if (_scroll > maxScroll) _scroll = maxScroll;
             }
         }
-        
+
+        internal void SetServiceCloseCallback(Action callback) {
+            _serviceCloseCallback = callback;
+            _suppressServiceCloseCallback = false;
+        }
+
+        public override void OnSetVisible(bool value) {
+            base.OnSetVisible(value);
+            if (!value && !_suppressServiceCloseCallback &&
+                    _serviceCloseCallback != null) {
+                Action callback = _serviceCloseCallback;
+                _serviceCloseCallback = null;
+                callback();
+            }
+            if (value) _suppressServiceCloseCallback = false;
+        }
+
         /// <summary>
         /// On Draw
         /// </summary>
