@@ -4,6 +4,7 @@ using System.Windows.Forms;
 using System.Collections.Generic;
 using System;
 using guideXOS.GUI;
+using guideXOS.OS;
 namespace guideXOS.DefaultApps {
     /// <summary>
     /// Computer Files Window
@@ -67,15 +68,21 @@ namespace guideXOS.DefaultApps {
         private FileSystem _fs;
         private bool _ownsFileSystem;
         private List<DriveInfo> _drives;
+        private readonly ApplicationServiceContext _serviceContext;
+        private readonly ApplicationServiceAccess _services;
 
         public ComputerFiles(int x, int y, int w, int h, FileSystem fs, string driveName)
-            : this(x, y, w, h, fs, driveName, false)
+            : this(x, y, w, h, fs, driveName, false, null, null)
         {
         }
 
         internal ComputerFiles(int x, int y, int w, int h, FileSystem fs,
-                               string driveName, bool ownsFileSystem) : base(x, y, w, h)
+                               string driveName, bool ownsFileSystem,
+                               ApplicationServiceContext serviceContext,
+                               ApplicationServiceAccess services) : base(x, y, w, h)
         {
+            _serviceContext = serviceContext;
+            _services = services;
             Title = "Computer Files - " + driveName;
             _fs = fs;
             _ownsFileSystem = ownsFileSystem;
@@ -104,7 +111,16 @@ namespace guideXOS.DefaultApps {
 #endif
         }
 
-        public ComputerFiles(int X, int Y, int W = 640, int H = 480) : base(X, Y, W, H) {
+        public ComputerFiles(int X, int Y, int W = 640, int H = 480)
+            : this(X, Y, W, H, (ApplicationServiceContext)null,
+                  (ApplicationServiceAccess)null) {
+        }
+
+        internal ComputerFiles(int X, int Y, int W, int H,
+                ApplicationServiceContext serviceContext,
+                ApplicationServiceAccess services) : base(X, Y, W, H) {
+            _serviceContext = serviceContext;
+            _services = services;
             Title = "Computer Files";
             LoadIcons();
             _entriesDirty = true;
@@ -297,6 +313,29 @@ namespace guideXOS.DefaultApps {
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
             Program.MarkUefiAppRuntime("SHELL_ROUTE=ROOT;result=COMPUTER_FILES_ROOT");
 #endif
+        }
+
+        private bool TryOpenDocumentThroughService(string path) {
+            if (_serviceContext == null || _services == null ||
+                    _services.Shell == null || string.IsNullOrEmpty(path)) {
+                return false;
+            }
+            ApplicationShellOpenRequest request =
+                ApplicationShellOpenRequest.ForDocument(path);
+            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                _services.Shell.Begin(_serviceContext, request);
+            if (!begun.Succeeded) return false;
+            ApplicationServiceResult<
+                    ApplicationServiceRequestStatus<ApplicationShellResult>> observed =
+                _services.Shell.Observe(_serviceContext, begun.Value);
+            bool success = observed.Succeeded && observed.Value != null &&
+                observed.Value.IsTerminal && observed.Value.Value != null &&
+                observed.Value.Value.Succeeded;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("FILES_SHELL_DOCUMENT=" +
+                (success ? "PASS" : "FAIL"));
+#endif
+            return success;
         }
 
         private void GoTo(string path) {
@@ -556,9 +595,18 @@ namespace guideXOS.DefaultApps {
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                                 Program.MarkUefiAppRuntime("FILES_FILE_CLICK=path=" + _currentPath + name);
 #endif
-                                Desktop.Dir = _currentPath;
-                                Desktop.OnClick(name, false, gx, gy,
-                                    "gxos.shell.computerfiles");
+                                string documentPath = _currentPath + name;
+                                if (!TryOpenDocumentThroughService(documentPath) &&
+                                        _serviceContext == null) {
+                                    // The legacy shell-created window has no
+                                    // application service context. Preserve
+                                    // that compatibility-only route while all
+                                    // modern factory instances use Shell.
+                                    Desktop.Dir = _currentPath;
+                                    Desktop.OnClick(name, false, gx, gy,
+                                        "gxos.shell.computerfiles");
+                                }
+                                documentPath.Dispose();
                                 return;
                             }
                         }

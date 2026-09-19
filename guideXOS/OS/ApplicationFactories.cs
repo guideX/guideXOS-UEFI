@@ -1060,6 +1060,13 @@ namespace guideXOS.OS {
             result = ApplicationFactoryResult.Succeeded(instance);
             ComputerFiles files = null;
             FileSystem ownedFileSystem = null;
+            ApplicationServiceContext serviceContext;
+            ApplicationServiceAccess services;
+            if (!TryCreateApplicationServices(descriptor, instance,
+                    out serviceContext, out services, out result)) {
+                return false;
+            }
+            result = ApplicationFactoryResult.Succeeded(instance);
             try {
                 bool driveRequest = request != null &&
                     request.TargetKind == LaunchRequestTargetKind.ShellObject &&
@@ -1078,10 +1085,12 @@ namespace guideXOS.OS {
                         FactoryRequestOptions.IntArgument(request, "--x=", 320),
                         FactoryRequestOptions.IntArgument(request, "--y=", 220),
                         540, 400,
-                        ownedFileSystem, request.ShellTargetValue, true);
+                        ownedFileSystem, request.ShellTargetValue, true,
+                        serviceContext, services);
                     ownedFileSystem = null;
                 } else {
-                    files = new ComputerFiles(300, 200, 540, 380);
+                    files = new ComputerFiles(300, 200, 540, 380,
+                        serviceContext, services);
                 }
                 if (!result.AddWindow(files)) {
                     files.CloseForApplicationTermination();

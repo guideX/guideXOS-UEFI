@@ -227,10 +227,91 @@ namespace guideXOS.OS {
                     LaunchErrorCode.UnsupportedTarget,
                     "No file association was found", null);
             }
+            string documentName = LeafName(document);
+            FileAssociationResolution resolution =
+                FileAssociationRegistry.ResolvePath(documentName);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("ASSOC_RESOLVE=name=" +
+                (documentName ?? "") + ";ext=" +
+                (resolution.Extension ?? "") + ";app=" +
+                (resolution.AppId ?? "") + ";kind=" +
+                resolution.Kind.ToString() + ";success=" +
+                (resolution.Success ? "1" : "0"));
+            Program.MarkUefiAppRuntime("ASSOC_REQUEST=target=" +
+                (request.TargetAppId ?? "") + ";kind=" +
+                request.TargetKindName + ";document=" +
+                (request.Document ?? "") + ";verb=" + request.Verb +
+                ";source=" + (request.SourceShellObjectId ?? "") +
+                ";intent=" + request.ActivationIntentName);
+#endif
+            LaunchResult opened;
             if (request.TargetKind == LaunchRequestTargetKind.GxmDocument) {
-                return LaunchGxm(document, request);
+                opened = LaunchGxm(document, request);
+            } else {
+                opened = LaunchModern(request);
             }
-            return LaunchModern(request);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            if (request.TargetKind == LaunchRequestTargetKind.GxmDocument) {
+                Program.MarkUefiAppRuntime("FILE_RESULT=path=" + document +
+                    ";app=GXM;ok=" + (opened != null && opened.Success ?
+                    "1" : "0") + ";instance=" +
+                    (opened == null ? "" : opened.InstanceHandle.ToString()) +
+                    ";state=" +
+                    (opened == null ? "" : opened.ActivationStateName) +
+                    ";owned=" + GetOwnedWindowCount(opened));
+                if (opened != null && opened.Success &&
+                        document == "Programs/calculator.gxm") {
+                    // Preserve the existing bounded diagnostic probes while
+                    // the shell request itself uses the common adapter.
+                    Desktop.OnClick("Install to Hard Drive", false, 100, 100);
+                    Desktop.OnClick("missing.txt", false, 100, 100);
+                    Desktop.OnClick("missing.png", false, 100, 100);
+                    Desktop.OnClick("missing.bmp", false, 100, 100);
+                    Desktop.OnClick("missing.wav", false, 100, 100);
+                    Desktop.OnClick("missing.mue", false, 100, 100);
+                    Desktop.OnClick("USB Drive 0", false, 100, 100);
+                    Program.MarkUefiAppRuntime(
+                        "NEGATIVE_FILE_ASSOCIATIONS=5");
+                }
+            } else {
+                ApplicationDescriptor descriptor;
+                ApplicationDescriptorRegistry.TryGetById(
+                    request.TargetAppId, out descriptor);
+                string appName = descriptor == null ? request.TargetAppId :
+                    descriptor.DisplayName;
+                if (opened != null && opened.Success) {
+                    Program.MarkUefiAppRuntime("FILE_OK=path=" + document +
+                        ";app=" + appName + ";content=" +
+                        (appName == "Notepad" ? "loaded" :
+                        (appName == "WAV Player" ? "dispatched" :
+                            "decoded")) + ";instance=" +
+                        opened.InstanceHandle.ToString() + ";state=" +
+                        opened.ActivationStateName + ";owned=" +
+                        GetOwnedWindowCount(opened));
+                } else {
+                    Program.MarkUefiAppRuntime("FILE_FAIL=path=" + document +
+                        ";app=" + appName + ";reason=" +
+                        (opened == null ? "FACTORY" :
+                            opened.ErrorCodeName));
+                }
+            }
+#endif
+            return opened;
+        }
+
+        private static string LeafName(string path) {
+            if (string.IsNullOrEmpty(path)) return path;
+            int slash = path.LastIndexOf('/');
+            if (slash < 0 || slash >= path.Length - 1) return path;
+            return path.Substring(slash + 1);
+        }
+
+        private static string GetOwnedWindowCount(LaunchResult result) {
+            if (result == null || !result.Success) return "0";
+            ApplicationInstance instance;
+            if (!ApplicationInstanceRegistry.TryGet(result.InstanceHandle,
+                    out instance) || instance == null) return "0";
+            return instance.OwnedWindowCount.ToString();
         }
 
         private static LaunchResult OpenShellObject(string shellObjectId) {

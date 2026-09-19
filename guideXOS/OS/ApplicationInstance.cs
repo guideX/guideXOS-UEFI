@@ -1945,6 +1945,7 @@ namespace guideXOS.OS {
             ApplicationInstance notepad1 = null;
             ApplicationInstance notepad2 = null;
             ApplicationInstance taskManager = null;
+            ApplicationInstance displayOptions = null;
             bool notification = false;
             bool sharedSettings = false;
             bool snapshot = false;
@@ -1959,18 +1960,23 @@ namespace guideXOS.OS {
                     "gxos.builtin.notepad", out notepad2);
                 bool taskManagerLaunch = TryLaunchServiceRuntimeInstance(
                     "gxos.builtin.taskmanager", out taskManager);
+                bool displayOptionsLaunch = TryLaunchServiceRuntimeInstance(
+                    "gxos.builtin.displayoptions", out displayOptions);
 
                 ApplicationServiceContext calculatorContext = null;
                 ApplicationServiceContext notepad1Context = null;
                 ApplicationServiceContext notepad2Context = null;
                 ApplicationServiceContext taskManagerContext = null;
+                ApplicationServiceContext displayOptionsContext = null;
                 ApplicationServiceAccess calculatorServices = null;
                 ApplicationServiceAccess notepad1Services = null;
                 ApplicationServiceAccess notepad2Services = null;
                 ApplicationServiceAccess taskManagerServices = null;
+                ApplicationServiceAccess displayOptionsServices = null;
                 ApplicationServiceResult serviceResult = null;
                 bool contexts = calculatorLaunch && notepad1Launch &&
                     notepad2Launch && taskManagerLaunch &&
+                    displayOptionsLaunch &&
                     ApplicationServiceRegistry.TryCreateContextAndAccess(calculator.Handle,
                         out calculatorContext, out calculatorServices,
                         out serviceResult) &&
@@ -1982,17 +1988,26 @@ namespace guideXOS.OS {
                         out serviceResult) &&
                     ApplicationServiceRegistry.TryCreateContextAndAccess(taskManager.Handle,
                         out taskManagerContext, out taskManagerServices,
-                        out serviceResult);
+                        out serviceResult) &&
+                    ApplicationServiceRegistry.TryCreateContextAndAccess(
+                        displayOptions.Handle, out displayOptionsContext,
+                        out displayOptionsServices, out serviceResult);
 
                 Notepad notepadWindow1 = notepad1 == null ? null :
                     notepad1.GetOwnedWindowAt(0) as Notepad;
                 Notepad notepadWindow2 = notepad2 == null ? null :
                     notepad2.GetOwnedWindowAt(0) as Notepad;
+                DisplayOptions displayOptionsWindow = displayOptions == null ? null :
+                    displayOptions.GetOwnedWindowAt(0) as DisplayOptions;
                 bool notepadDialogFlows = contexts && notepadWindow1 != null &&
                     notepadWindow2 != null &&
                     Activate(notepad1.Handle).Success &&
                     notepadWindow1.RunPhase9ServiceDiagnostic(
                         notepad2Context, notepad2Services);
+                bool displayOptionsServiceFlow = contexts &&
+                    displayOptionsWindow != null &&
+                    Activate(displayOptions.Handle).Success &&
+                    displayOptionsWindow.RunPhase9BackgroundServiceDiagnostic();
 
                 if (contexts) {
                     ApplicationNotificationRequest request =
@@ -2036,13 +2051,16 @@ namespace guideXOS.OS {
                     "application service runtime cleanup");
                 if (taskManager != null) TryTerminate(taskManager,
                     "application service runtime cleanup");
+                if (displayOptions != null) TryTerminate(displayOptions,
+                    "application service runtime cleanup");
                 WindowManager.CleanupClosedWindows();
                 cleanup = ActiveCount == baselineActive &&
                     ObservationCount == baselineObservations &&
                     (WindowManager.Windows == null ? 0 :
                         WindowManager.Windows.Count) == baselineWindows &&
                     StaleOwnershipCount == baselineStaleOwnership;
-                bool passed = notepadDialogFlows && notification && sharedSettings && snapshot &&
+                bool passed = notepadDialogFlows && displayOptionsServiceFlow &&
+                    notification && sharedSettings && snapshot &&
                     staleRejected && cleanup;
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                 Program.MarkUefiAppRuntime(
@@ -2054,6 +2072,9 @@ namespace guideXOS.OS {
                 Program.MarkUefiAppRuntime(
                     "SERVICES_SNAPSHOT=" +
                     (snapshot ? "PASS" : "FAIL"));
+                Program.MarkUefiAppRuntime(
+                    "DISPLAY_OPTIONS_SERVICE_DIAGNOSTIC=" +
+                    (displayOptionsServiceFlow ? "PASS" : "FAIL"));
                 Program.MarkUefiAppRuntime(
                     "SERVICES_STALE_REJECTED=" +
                     (staleRejected ? "PASS" : "FAIL"));
@@ -2076,6 +2097,8 @@ namespace guideXOS.OS {
                 if (calculator != null) TryTerminate(calculator,
                     "application service runtime exception cleanup");
                 if (taskManager != null) TryTerminate(taskManager,
+                    "application service runtime exception cleanup");
+                if (displayOptions != null) TryTerminate(displayOptions,
                     "application service runtime exception cleanup");
                 WindowManager.CleanupClosedWindows();
 #if UEFI_DIAGNOSTIC_APP_RUNTIME

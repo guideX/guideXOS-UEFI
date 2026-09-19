@@ -39,7 +39,8 @@ namespace guideXOS.GUI {
         // Background UI buttons
         private int _btnW = 180;
         private int _btnH = 38;
-        private OpenDialog _openDlg;
+        private ApplicationServiceRequestHandle _openRequest;
+        private string _lastBackgroundPath;
         private ColorPicker _colorDlg;
         
         // Gradients scroll
@@ -78,6 +79,8 @@ namespace guideXOS.GUI {
             ShowMinimize = true;
             ShowTombstone = false;
             Title = "Display Options";
+            _openRequest = ApplicationServiceRequestHandle.Invalid;
+            _lastBackgroundPath = null;
             
             // Initialize resolution list
             var list = DisplayManager.AvailableResolutions;
@@ -230,9 +233,11 @@ namespace guideXOS.GUI {
         public override void OnInput() {
             base.OnInput(); 
             if (!Visible) return;
+
+            PollBackgroundOpen();
             
             // Modal dialogs take precedence - don't process any input if dialogs are visible
-            if (_openDlg != null && _openDlg.Visible) return;
+            if (_openRequest.IsValid) return;
             if (_colorDlg != null && _colorDlg.Visible) return;
             
             // Only process input if mouse is within the window bounds
@@ -329,19 +334,7 @@ namespace guideXOS.GUI {
                     int btnEffectsX = btnColorX + _btnW + 16;
 
                     if (mx >= btnSelectX && mx <= btnSelectX + _btnW && my >= btnY && my <= btnY + _btnH) {
-                        // Open file dialog
-                        _openDlg = new OpenDialog(X + 40, Y + 70, 540, 340, "Backgrounds", (path) => {
-                            try { 
-                                byte[] imgData = File.ReadAllBytes(path);
-                                var img = new PNG(imgData);
-                                if (Program.Wallpaper != null) Program.Wallpaper.Dispose(); 
-                                Program.Wallpaper = img.ResizeImage(Framebuffer.Width, Framebuffer.Height); 
-                                img.Dispose(); 
-                            }
-                            catch { NotifyApplication("Failed to load image", true); }
-                        });
-                        WindowManager.MoveToEnd(_openDlg); 
-                        _openDlg.Visible = true; 
+                        BeginBackgroundOpen();
                         return;
                     }
                     
@@ -795,7 +788,106 @@ namespace guideXOS.GUI {
                         ApplicationNotificationSeverity.Info));
         }
 
+        private void BeginBackgroundOpen() {
+            if (_openRequest.IsValid) return;
+            if (_serviceContext == null || _services == null ||
+                    _services.OpenFile == null) {
+                NotifyApplication("Open service unavailable", true);
+                return;
+            }
+            OpenFileRequest request = OpenFileRequest.Create("Backgrounds");
+            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                _services.OpenFile.Begin(_serviceContext, request);
+            if (begun.Succeeded) {
+                _openRequest = begun.Value;
+            } else {
+                NotifyApplication("Failed to open background picker", true);
+            }
+        }
+
+        private void PollBackgroundOpen() {
+            if (!_openRequest.IsValid || _serviceContext == null ||
+                    _services == null || _services.OpenFile == null) return;
+            ApplicationServiceResult<ApplicationServiceRequestStatus<
+                ApplicationFileDialogResult>> observed =
+                _services.OpenFile.Observe(_serviceContext, _openRequest);
+            if (!observed.Succeeded || observed.Value == null ||
+                    !observed.Value.IsTerminal) return;
+            ApplicationFileDialogResult result = observed.Value.Value;
+            ApplicationServiceRequestState state = observed.Value.State;
+            _openRequest = ApplicationServiceRequestHandle.Invalid;
+            if (state == ApplicationServiceRequestState.Completed &&
+                    result != null && result.Outcome ==
+                    ApplicationFileDialogOutcome.Selected) {
+                ApplySelectedBackground(result.SelectedPath);
+            }
+        }
+
+        private void ApplySelectedBackground(string path) {
+            if (string.IsNullOrEmpty(path)) {
+                NotifyApplication("Selected background is invalid", true);
+                return;
+            }
+            try {
+                byte[] imgData = File.ReadAllBytes(path);
+                var img = new PNG(imgData);
+                if (Program.Wallpaper != null) Program.Wallpaper.Dispose();
+                Program.Wallpaper = img.ResizeImage(Framebuffer.Width,
+                    Framebuffer.Height);
+                img.Dispose();
+                _lastBackgroundPath = path;
+            } catch {
+                NotifyApplication("Failed to load image", true);
+            }
+        }
+
+        internal bool RunPhase9BackgroundServiceDiagnostic() {
+            bool success = false;
+            bool cancelled = false;
+            try {
+                if (_serviceContext == null || _services == null ||
+                        _services.OpenFile == null) return false;
+                OpenFileRequest request = OpenFileRequest.Create("Backgrounds");
+                ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                    _services.OpenFile.Begin(_serviceContext, request);
+                if (!begun.Succeeded) return false;
+                _openRequest = begun.Value;
+                ApplicationServiceResult completed =
+                    ApplicationServiceRegistry.CompleteFileDialogRequestForSelfTest(
+                        _openRequest, ApplicationFileDialogOutcome.Selected,
+                        "Backgrounds/dinos.png");
+                PollBackgroundOpen();
+                success = completed.Succeeded &&
+                    _lastBackgroundPath == "Backgrounds/dinos.png" &&
+                    !_openRequest.IsValid;
+
+                begun = _services.OpenFile.Begin(_serviceContext, request);
+                if (!begun.Succeeded) return false;
+                _openRequest = begun.Value;
+                ApplicationServiceResult cancelledResult =
+                    _services.OpenFile.Cancel(_serviceContext, _openRequest);
+                PollBackgroundOpen();
+                cancelled = cancelledResult.Code ==
+                    ApplicationServiceResultCode.Cancelled &&
+                    !_openRequest.IsValid;
+            } catch {
+                return false;
+            }
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("DISPLAY_OPEN_SUCCESS=" +
+                (success ? "PASS" : "FAIL"));
+            Program.MarkUefiAppRuntime("DISPLAY_OPEN_CANCEL=" +
+                (cancelled ? "PASS" : "FAIL"));
+            Program.MarkUefiAppRuntime("DISPLAY_DIALOG_CLEANUP=" +
+                ((!_openRequest.IsValid &&
+                    ApplicationServiceSessionTable.TransientWindowCount == 0) ?
+                    "PASS" : "FAIL"));
+#endif
+            return success && cancelled && !_openRequest.IsValid;
+        }
+
         public override void OnDraw() {
+            PollBackgroundOpen();
             base.OnDraw(); 
             if (WindowManager.font == null) return;
             
@@ -1163,10 +1255,14 @@ namespace guideXOS.GUI {
                 }
             }
             
-            // Dispose child dialogs if they exist
-            if (_openDlg != null && _openDlg.Visible) {
-                _openDlg.Visible = false;
-                _openDlg.Dispose();
+            // The open picker is a service-owned transient window.  Cancel
+            // its request and let the session table perform window cleanup.
+            if (_openRequest.IsValid) {
+                if (_serviceContext != null && _services != null &&
+                        _services.OpenFile != null) {
+                    _services.OpenFile.Cancel(_serviceContext, _openRequest);
+                }
+                _openRequest = ApplicationServiceRequestHandle.Invalid;
             }
             if (_colorDlg != null && _colorDlg.Visible) {
                 _colorDlg.Visible = false;
