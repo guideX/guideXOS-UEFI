@@ -692,6 +692,7 @@ namespace guideXOS.OS {
         public ApplicationDialogService Dialogs { get; private set; }
         public ApplicationOpenFileService OpenFile { get; private set; }
         public ApplicationSaveFileService SaveFile { get; private set; }
+        public ApplicationShellService Shell { get; private set; }
 
         internal ApplicationServiceAccess(
                 ApplicationNotificationService notifications,
@@ -699,13 +700,15 @@ namespace guideXOS.OS {
                 ApplicationSystemInformationService systemInformation,
                 ApplicationDialogService dialogs,
                 ApplicationOpenFileService openFile,
-                ApplicationSaveFileService saveFile) {
+                ApplicationSaveFileService saveFile,
+                ApplicationShellService shell) {
             Notifications = notifications;
             Settings = settings;
             SystemInformation = systemInformation;
             Dialogs = dialogs;
             OpenFile = openFile;
             SaveFile = saveFile;
+            Shell = shell;
         }
     }
 }

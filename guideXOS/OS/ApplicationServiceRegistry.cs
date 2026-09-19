@@ -40,7 +40,8 @@ namespace guideXOS.OS {
                 new CSharpApplicationSystemInformationService(),
                 new CSharpApplicationDialogService(),
                 new CSharpApplicationOpenFileService(),
-                new CSharpApplicationSaveFileService());
+                new CSharpApplicationSaveFileService(),
+                new CSharpApplicationShellService());
             _initialized = true;
 
             RegisterInitial(ApplicationServiceId.Notifications);
@@ -91,7 +92,8 @@ namespace guideXOS.OS {
                        _access.SystemInformation != null &&
                        _access.Dialogs != null &&
                        _access.OpenFile != null &&
-                       _access.SaveFile != null;
+                       _access.SaveFile != null &&
+                       _access.Shell != null;
             }
         }
 
@@ -189,6 +191,94 @@ namespace guideXOS.OS {
             return ApplicationServiceSessionTable.Begin(
                 context.InstanceHandle, ApplicationServiceId.Shell,
                 payload, false, out handle);
+        }
+
+        internal static ApplicationServiceResult CompleteShellRequest(
+                ApplicationServiceRequestHandle handle,
+                ApplicationShellResult value) {
+            ApplicationServiceSessionRecord session;
+            if (!ApplicationServiceSessionTable.TryGet(handle, out session) ||
+                    session.ServiceId != ApplicationServiceId.Shell) {
+                return ApplicationServiceResult.InvalidContextResult();
+            }
+            if (value == null) {
+                return ApplicationServiceResult.InvalidRequestResult();
+            }
+            return ApplicationServiceSessionTable.Complete(handle, value);
+        }
+
+        internal static ApplicationServiceResult<
+                ApplicationServiceRequestStatus<ApplicationShellResult>>
+                ObserveShellRequest(ApplicationServiceContext context,
+                    ApplicationServiceRequestHandle handle) {
+            ApplicationServiceSessionRecord session;
+            ApplicationServiceResult valid =
+                TryValidateExistingRequestContext(context, handle, out session);
+            if (!valid.Succeeded || session.ServiceId !=
+                    ApplicationServiceId.Shell) {
+                return ApplicationServiceResult<
+                    ApplicationServiceRequestStatus<ApplicationShellResult>>.Failure(
+                        valid.Succeeded ? ApplicationServiceResultCode.InvalidContext :
+                            valid.Code, valid.Succeeded ?
+                            "Application service request is not a shell request" :
+                            valid.BoundedDiagnostic);
+            }
+            if (session.Result != null &&
+                    !(session.Result is ApplicationShellResult)) {
+                return ApplicationServiceResult<
+                    ApplicationServiceRequestStatus<ApplicationShellResult>>.Failure(
+                        ApplicationServiceResultCode.BackendFailure,
+                        "Shell backend returned an invalid result");
+            }
+            ApplicationServiceRequestStatus<ApplicationShellResult> status;
+            switch (session.State) {
+                case ApplicationServiceRequestState.Pending:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationShellResult>.PendingStatus();
+                    break;
+                case ApplicationServiceRequestState.Completed:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationShellResult>.CompletedStatus(
+                            (ApplicationShellResult)session.Result);
+                    break;
+                case ApplicationServiceRequestState.Cancelled:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationShellResult>.CancelledStatus(
+                            (ApplicationShellResult)session.Result);
+                    break;
+                default:
+                    status = ApplicationServiceRequestStatus<
+                        ApplicationShellResult>.FailedStatus(
+                            (ApplicationShellResult)session.Result);
+                    break;
+            }
+            if (session.State != ApplicationServiceRequestState.Pending) {
+                ApplicationServiceSessionTable.ConsumeTerminal(handle);
+            }
+            return ApplicationServiceResult<
+                ApplicationServiceRequestStatus<ApplicationShellResult>>.SuccessResult(
+                    status);
+        }
+
+        internal static ApplicationServiceResult CancelShellRequest(
+                ApplicationServiceContext context,
+                ApplicationServiceRequestHandle handle) {
+            ApplicationServiceResult valid =
+                TryValidateExistingRequestContext(context, handle,
+                    out ApplicationServiceSessionRecord session);
+            if (!valid.Succeeded) return valid;
+            if (session.ServiceId != ApplicationServiceId.Shell) {
+                return ApplicationServiceResult.InvalidContextResult();
+            }
+            if (session.State != ApplicationServiceRequestState.Pending) {
+                return ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.InvalidState,
+                    "Shell dispatch is already terminal and non-cancellable");
+            }
+            return ApplicationServiceSessionTable.CancelPending(handle,
+                ApplicationShellResult.Failed(
+                    ApplicationServiceResultCode.Cancelled, null,
+                    "Shell request was cancelled"));
         }
 
         internal static ApplicationServiceResult TryObserveRequest(
@@ -648,6 +738,9 @@ namespace guideXOS.OS {
                 Check(RunFileDialogServiceSelfTest(context, access),
                     "file dialog service lifecycle", ref passed,
                     ref failed, ref firstFailure);
+                Check(RunShellServiceSelfTest(context, access),
+                    "shell service lifecycle", ref passed,
+                    ref failed, ref firstFailure);
                 Check(RunTransientServiceWindowSelfTest(),
                     "transient service window ownership", ref passed,
                     ref failed, ref firstFailure);
@@ -1038,6 +1131,117 @@ namespace guideXOS.OS {
             return passed;
         }
 
+        private static bool RunShellServiceSelfTest(
+                ApplicationServiceContext context,
+                ApplicationServiceAccess access) {
+            if (context == null || access == null || access.Shell == null) {
+                return false;
+            }
+            ApplicationShellOpenRequest request =
+                ApplicationShellOpenRequest.ForApplicationId(
+                    "gxos.builtin.calculator");
+            ApplicationShellOpenRequest invalid =
+                ApplicationShellOpenRequest.ForApplicationId(
+                    Repeat('s', ApplicationShellOpenRequest.MaxTargetLength + 1));
+            if (!request.IsValid || invalid.IsValid) return false;
+
+            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                access.Shell.Begin(context, request);
+            if (!begun.Succeeded || !begun.Value.IsValid) return false;
+            ApplicationServiceResult<ApplicationServiceRequestStatus<
+                ApplicationShellResult>> observed =
+                access.Shell.Observe(context, begun.Value);
+            if (!observed.Succeeded || observed.Value == null ||
+                    !observed.Value.IsTerminal || observed.Value.Value == null ||
+                    observed.Value.Value.ResultCode !=
+                        ApplicationServiceResultCode.Success) return false;
+            if (observed.Value.Value.Succeeded &&
+                    observed.Value.Value.InstanceHandle.IsValid &&
+                    !ApplicationInstanceRegistry.TryTerminate(
+                        observed.Value.Value.InstanceHandle,
+                        "shell service self-test application cleanup")) {
+                return false;
+            }
+
+            ApplicationShellOpenRequest alias =
+                ApplicationShellOpenRequest.ForAlias("Calculator");
+            begun = access.Shell.Begin(context, alias);
+            if (!begun.Succeeded) return false;
+            ApplicationServiceResult shellCancel = access.Shell.Cancel(
+                context, begun.Value);
+            observed = access.Shell.Observe(context, begun.Value);
+            if (shellCancel.Code != ApplicationServiceResultCode.InvalidState ||
+                    !observed.Succeeded || observed.Value == null ||
+                    observed.Value.Value == null ||
+                    observed.Value.Value.ResultCode !=
+                        ApplicationServiceResultCode.Success) return false;
+            if (observed.Value.Value.InstanceHandle.IsValid &&
+                    !ApplicationInstanceRegistry.TryTerminate(
+                        observed.Value.Value.InstanceHandle,
+                        "shell service self-test alias cleanup")) {
+                return false;
+            }
+
+            ApplicationShellOpenRequest unsupported =
+                ApplicationShellOpenRequest.ForApplicationId(
+                    "gxos.builtin.not-real");
+            begun = access.Shell.Begin(context, unsupported);
+            if (!begun.Succeeded) return false;
+            observed = access.Shell.Observe(context, begun.Value);
+            if (!observed.Succeeded || observed.Value == null ||
+                    observed.Value.Value == null ||
+                    observed.Value.Value.ResultCode !=
+                        ApplicationServiceResultCode.NotFound) return false;
+
+            ApplicationShellOpenRequest document =
+                ApplicationShellOpenRequest.ForDocument("Programs/notepad.gxm");
+            begun = access.Shell.Begin(context, document);
+            if (!begun.Succeeded) return false;
+            observed = access.Shell.Observe(context, begun.Value);
+            if (!observed.Succeeded || observed.Value == null ||
+                    observed.Value.Value == null ||
+                    observed.Value.Value.ResultCode ==
+                        ApplicationServiceResultCode.InvalidRequest) return false;
+            if (observed.Value.Value.Succeeded &&
+                    observed.Value.Value.InstanceHandle.IsValid &&
+                    !ApplicationInstanceRegistry.TryTerminate(
+                        observed.Value.Value.InstanceHandle,
+                        "shell service self-test document cleanup")) {
+                return false;
+            }
+
+            ApplicationShellOpenRequest shellObject =
+                ApplicationShellOpenRequest.ForShellObject(
+                    "gxos.shell.computerfiles");
+            begun = access.Shell.Begin(context, shellObject);
+            if (!begun.Succeeded) return false;
+            observed = access.Shell.Observe(context, begun.Value);
+            if (!observed.Succeeded || observed.Value == null ||
+                    observed.Value.Value == null ||
+                    observed.Value.Value.ResultCode !=
+                        ApplicationServiceResultCode.Success) {
+                return false;
+            }
+            if (observed.Value.Value.InstanceHandle.IsValid &&
+                    !ApplicationInstanceRegistry.TryTerminate(
+                        observed.Value.Value.InstanceHandle,
+                        "shell service self-test object cleanup")) {
+                return false;
+            }
+
+            ApplicationShellOpenRequest unknownObject =
+                ApplicationShellOpenRequest.ForShellObject("shell.not-real");
+            begun = access.Shell.Begin(context, unknownObject);
+            if (!begun.Succeeded) return false;
+            observed = access.Shell.Observe(context, begun.Value);
+            if (!observed.Succeeded || observed.Value == null ||
+                    observed.Value.Value == null ||
+                    observed.Value.Value.ResultCode !=
+                        ApplicationServiceResultCode.NotFound) return false;
+
+            return true;
+        }
+
         private sealed class ServiceWindowProbe : Window {
             internal ServiceWindowProbe() : base(40, 112, 160, 120) {
                 ShowInTaskbar = false;
@@ -1060,7 +1264,7 @@ namespace guideXOS.OS {
         internal static void SetTypedAccess(ApplicationServiceAccess access) {
             Initialize();
             _access = access ?? new ApplicationServiceAccess(null, null, null,
-                null, null, null);
+                null, null, null, null);
         }
 
         private static void RegisterInitial(ApplicationServiceId id) {
@@ -1181,6 +1385,11 @@ namespace guideXOS.OS {
             }
             if (serviceId == ApplicationServiceId.OpenFile ||
                     serviceId == ApplicationServiceId.SaveFile) {
+                return state == ApplicationInstanceLifecycleState.Running ||
+                       state == ApplicationInstanceLifecycleState.Activated ||
+                       state == ApplicationInstanceLifecycleState.Inactive;
+            }
+            if (serviceId == ApplicationServiceId.Shell) {
                 return state == ApplicationInstanceLifecycleState.Running ||
                        state == ApplicationInstanceLifecycleState.Activated ||
                        state == ApplicationInstanceLifecycleState.Inactive;

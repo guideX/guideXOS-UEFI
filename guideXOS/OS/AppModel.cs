@@ -552,7 +552,12 @@ namespace guideXOS.OS {
         private static bool MatchesAlias(ShellObjectDescriptor descriptor,
                                          string input, out string matchedAlias) {
             matchedAlias = null;
-            if (descriptor == null || descriptor.LegacyAliases == null) return false;
+            if (descriptor == null) return false;
+            if (descriptor.ShellId == input) {
+                matchedAlias = descriptor.ShellId;
+                return true;
+            }
+            if (descriptor.LegacyAliases == null) return false;
             for (int i = 0; i < descriptor.LegacyAliases.Length; i++) {
                 string alias = descriptor.LegacyAliases[i];
                 if (alias == null) continue;
