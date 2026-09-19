@@ -24,6 +24,9 @@ namespace guideXOS.OS {
         private static int _invalidContextRejections;
         private static ApplicationServiceAccess _access;
         private static string _lastSettingsSelfTestFailure;
+        private static bool _lastDialogSelfTestPassed;
+        private static bool _lastFileDialogSelfTestPassed;
+        private static bool _lastShellSelfTestPassed;
 
         public static void Initialize() {
             if (_initialized) return;
@@ -34,6 +37,9 @@ namespace guideXOS.OS {
             _staleContextRejections = 0;
             _invalidContextRejections = 0;
             _lastSettingsSelfTestFailure = "not-run";
+            _lastDialogSelfTestPassed = false;
+            _lastFileDialogSelfTestPassed = false;
+            _lastShellSelfTestPassed = false;
             _access = new ApplicationServiceAccess(
                 new CSharpApplicationNotificationService(),
                 new CSharpApplicationSettingsService(),
@@ -97,8 +103,32 @@ namespace guideXOS.OS {
             }
         }
 
+        public static int ActiveRequestCount {
+            get { Initialize(); return ApplicationServiceSessionTable.ActiveSessionCount; }
+        }
+
+        public static int TransientWindowCount {
+            get { Initialize(); return ApplicationServiceSessionTable.TransientWindowCount; }
+        }
+
+        public static int OrphanTransientWindowCount {
+            get { Initialize(); return ApplicationServiceSessionTable.OrphanTransientWindowCount; }
+        }
+
         public static string LastSettingsSelfTestFailure {
             get { return _lastSettingsSelfTestFailure; }
+        }
+
+        public static bool LastDialogSelfTestPassed {
+            get { return _lastDialogSelfTestPassed; }
+        }
+
+        public static bool LastFileDialogSelfTestPassed {
+            get { return _lastFileDialogSelfTestPassed; }
+        }
+
+        public static bool LastShellSelfTestPassed {
+            get { return _lastShellSelfTestPassed; }
         }
 
         public static bool TryCreateContext(
@@ -657,6 +687,9 @@ namespace guideXOS.OS {
         /// </summary>
         public static bool RunSelfTest() {
             Initialize();
+            _lastDialogSelfTestPassed = false;
+            _lastFileDialogSelfTestPassed = false;
+            _lastShellSelfTestPassed = false;
             int passed = 0;
             int failed = 0;
             string firstFailure = null;
@@ -732,13 +765,19 @@ namespace guideXOS.OS {
                 Check(RunRequestSessionSelfTest(),
                     "request session lifecycle", ref passed, ref failed,
                     ref firstFailure);
-                Check(RunDialogServiceSelfTest(context, access),
+                _lastDialogSelfTestPassed = RunDialogServiceSelfTest(
+                    context, access);
+                Check(_lastDialogSelfTestPassed,
                     "dialog service lifecycle", ref passed, ref failed,
                     ref firstFailure);
-                Check(RunFileDialogServiceSelfTest(context, access),
+                _lastFileDialogSelfTestPassed = RunFileDialogServiceSelfTest(
+                    context, access);
+                Check(_lastFileDialogSelfTestPassed,
                     "file dialog service lifecycle", ref passed,
                     ref failed, ref firstFailure);
-                Check(RunShellServiceSelfTest(context, access),
+                _lastShellSelfTestPassed = RunShellServiceSelfTest(
+                    context, access);
+                Check(_lastShellSelfTestPassed,
                     "shell service lifecycle", ref passed,
                     ref failed, ref firstFailure);
                 Check(RunTransientServiceWindowSelfTest(),

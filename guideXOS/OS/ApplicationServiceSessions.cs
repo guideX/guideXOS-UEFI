@@ -101,6 +101,16 @@ namespace guideXOS.OS {
             }
         }
 
+        internal static int ActiveSessionCount {
+            get {
+                int count = 0;
+                for (int i = 0; i < _sessions.Length; i++) {
+                    if (_sessions[i].Active) count++;
+                }
+                return count;
+            }
+        }
+
         internal static int OrphanTransientWindowCount {
             get {
                 int count = 0;

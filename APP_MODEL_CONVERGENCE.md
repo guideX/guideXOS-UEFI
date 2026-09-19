@@ -1,11 +1,11 @@
 # guideXOS App Model Convergence
 
-**Status:** Phase 7 runtime acceptance complete
-**Date:** 2026-09-17
+**Status:** Phase 9 dialog, file-picker, and shell/open convergence complete
+**Date:** 2026-09-19
 **Scope:** guideXOS Server ↔ guideXOS C# UEFI application platform  
-**Outcome:** Outcome A — all registered built-ins remain factory-native;
-activation, cooperative suspension, close semantics, and compatibility remain
-contained behind typed boundaries
+**Outcome:** Outcome A — applications request user interaction and shell
+behavior through bounded platform services while built-ins remain
+factory-native and compatibility remains contained behind typed boundaries
 
 This document is the canonical design reference for converging the guideXOS
 Server and guideXOS C# application models. It defines the common application
@@ -1919,7 +1919,11 @@ The C# tree provides the following current consumers:
   objects with callbacks and window ownership.  Notepad and DisplayOptions
   use open/save dialogs, and Notepad uses direct file I/O for document state.
 
-### 24.2 Server-to-C# convergence matrix
+### 24.2 Server-to-C# convergence matrix (Phase 8 historical snapshot)
+
+This table records the Phase 8 boundary at the time dialogs and shell/open
+were intentionally deferred.  Phase 9 supersedes its dialog and shell/open
+rows with the final cohort and migration matrix in §25.2.
 
 | Service | Server source | C# source | Classification | Common semantics | Backend difference | Migration value | Risk | Decision |
 |---|---|---|---|---|---|---|---|---|
@@ -1964,9 +1968,10 @@ The approved first cohort is implemented in
 `guideXOS/OS/ApplicationServiceRegistry.cs`, and
 `guideXOS/OS/ApplicationServiceBackends.cs`:
 
-* `ApplicationServiceRegistry` is a fixed eight-entry table with deterministic
-  IDs and exactly three registered services: `Notifications`, `Settings`, and
-  `SystemInformation`.  Duplicate and unknown registrations are rejected.
+* Phase 8 established the fixed table and exactly three registered services:
+  `Notifications`, `Settings`, and `SystemInformation`.  Phase 9 extends the
+  same registry to seven services; the Phase 8 count is retained here only as
+  historical evidence.
 * `ApplicationServiceContext` carries a generation-safe
   `ApplicationInstanceHandle`, stable descriptor/application identity, and a
   bounded capability-name copy.  It is a validated capability-shaped value,
@@ -2058,3 +2063,275 @@ shell/open service.  Persistence, IPC, Ring 3, and a generic dependency
 injection framework remain outside this phase.  Existing App Model launch,
 association, shell, dialog, file, and resource paths are not relabeled as
 application services merely because they are adjacent to the cohort.
+
+## 25. Phase 9 — dialog, file-picker, and shell/open service convergence
+
+Phase 9 supersedes the Phase 8 deferral for dialogs, file pickers, and
+shell/open behavior.  The implementation was performed only in
+`D:\dev\guideXOSUEFI`; `D:\dev\guideXOSServer`,
+`D:\dev\guideXOSServerV1.1_DOTNET_SUPPORT`, and `D:\dev\guideXOS` were
+audited read-only.  The Phase 8 checkpoint was `c5d1594`.
+
+The defining boundary is:
+
+```text
+application → ApplicationServiceContext → typed service → existing backend
+```
+
+The C# backend may still construct `Window` subclasses internally.  That
+implementation fact is not part of the application contract, and no raw
+`Window`, `WindowManager`, `Desktop`, renderer, framebuffer, filesystem
+object, or allocator object crosses the service boundary.
+
+### 25.1 Authoritative audit
+
+The Server audit covered `message_box.h`, `open_dialog.h`, `save_dialog.h`,
+`app_launch_target.h`, `app_launch_resolver.h/.cpp`, desktop-service and
+shell-object/association paths, plus the manifest permission vocabulary.  The
+Server dialog objects are UI/process entry points with ownership and callback
+behavior; the open/save objects own VFS navigation and return selection via
+callbacks.  Typed launch targets resolve application IDs, documents,
+associations, shell objects, and actions, but are launch infrastructure rather
+than an application-facing request-session API.  Server has manifest
+permission names, but no unified capability enforcement path was found for
+this cohort; `PermissionDenied` is therefore retained as result vocabulary
+without inventing restrictions.
+
+The C# audit found direct UI construction in the implementation layer:
+`ApplicationServiceBackends.cs` constructs `MessageBox`, `SaveChangesDialog`,
+`OpenDialog`, and `SaveDialog` behind the service adapters.  `Notepad.cs`
+now requests dialogs and file selection through services.  `DisplayOptions`
+uses the open-file service for its background picker.  `ComputerFiles` uses
+the shell service for conceptual document opening while retaining its own
+enumeration, drive, root, and navigation implementation.  Remaining direct
+`Desktop` calls are shell-internal or filesystem/UI implementation paths, not
+application-facing replacements for the new contracts.  The host-only
+`AutoMountConfig` Windows Forms message boxes remain compatibility/host
+diagnostic behavior and were not blindly rewritten as UEFI platform calls.
+
+### 25.2 Convergence matrix
+
+| Service | Server source | C# source | Classification | Shared semantics | Backend differences | Migration value | Risk | Decision |
+|---|---|---|---|---|---|---|---|---|
+| Informational dialog | `message_box.h` and message-box implementation | `ApplicationDialogServices.cs`, `ApplicationServiceBackends.cs`, `MessageBox.cs` | Existing feature / new platform boundary | bounded title/body, acknowledge, terminal result | Server process/UI entry point; C# creates a transient managed window | High; removes app knowledge of dialog implementation | Medium; input/modal cleanup | Cohort |
+| Error dialog | `message_box.h` | same dialog adapter; Notepad error path | Existing feature / new platform boundary | bounded error message and terminal result | backend renderer and error styling differ | High; typed failure visibility | Medium | Cohort |
+| Confirmation dialog | message-box/close-confirmation behavior | `SaveChangesDialog.cs` behind dialog service; Notepad dirty-close path | Existing feature / semantic ownership adaptation | accepted/rejected/cancelled/closed | Server callback/process ownership differs from C# transient window | High; proves lifecycle-sensitive interaction | High | Cohort |
+| Open file | `open_dialog.h`, VFS/path navigation | `OpenFileRequest`, `CSharpApplicationOpenFileService`, `OpenDialog.cs` | Existing feature / adapter | bounded location request, selection or cancel | Server owns VFS dialog; C# owns a `Window` backend | High; Notepad and Display Options | High | Cohort |
+| Save file | `save_dialog.h`, VFS/path navigation | `SaveFileRequest`, `CSharpApplicationSaveFileService`, `SaveDialog.cs` | Existing feature / adapter | bounded location/name request, destination or cancel | overwrite policy remains only where backend already supports it | High; Notepad Save/Save As | High | Cohort |
+| Open document | `app_launch_target.h`, resolver, association/VFS path | `ApplicationShellOpenRequest.ForDocument`, `ApplicationShellServices.cs`, modern association adapter | Existing launch infrastructure / service projection | association resolution then typed App Model launch | C# GXM remains a typed external backend; Server may load a process/runtime target | High; shell/open proof and Computer Files | Medium | Cohort through existing App Model |
+| Launch application | typed launch target/resolver and application registry | `ApplicationShellOpenRequest`, `CSharpApplicationShellService`, `ApplicationFactoryRegistry` | Existing modern launch path / service projection | stable ID or bounded alias, typed result and instance identity | Server loader/process versus C# managed factory/instance | High; no second launch mechanism | Medium | Cohort through existing App Model |
+| Shell object/action | shell-object registry, typed launch target/action resolver | `ModernShellAdapter`, `ApplicationShellOpenRequest` | Existing shell routing / service projection | stable object/action target and typed result | Server shell object/action backend differs from C# Desktop/GXM/installer adapters | High; preserves typed shell actions | High; action-specific side effects | Cohort for existing typed targets |
+| Open-with | no single bounded common contract established | no application-facing open-with service | Related shell feature / unresolved policy | would require handler choice and association UI | handler selection and persistence are not common today | Low for Phase 9 | High | Deferred |
+
+### 25.3 Common service result and request-session model
+
+Phase 9 uses the existing `ApplicationServiceRegistry` and
+`ApplicationServiceContext`; it does not create a second registry.  The
+registry exposes seven fixed services: Notifications, Settings,
+SystemInformation, Dialogs, OpenFile, SaveFile, and Shell.
+
+`ApplicationServiceResultCode` is bounded and typed.  It includes
+`Success`, `Cancelled`, `NotFound`, `UnsupportedTarget`, `PermissionDenied`,
+`ResourceUnavailable`, `InvalidRequest`, `InvalidContext`, `InvalidState`,
+`BackendFailure`, and explicit `Conflict`.  `Conflict` is returned when an
+owner already has one outstanding interactive request.  The request handle is
+a fixed slot plus generation plus service ID; it is not a callback, window
+reference, or backend pointer.  Terminal results are consumed after
+observation, while pending and completed state is stored in a fixed session
+table.
+
+The application-facing dialog contract is:
+
+```text
+ApplicationDialogRequest
+  Kind: Information | Error | Confirmation
+  Title: max 64 characters
+  Body: max 256 characters
+  ButtonSet: Acknowledge | AcceptRejectCancel
+
+ApplicationDialogResult
+  Outcome: Accepted | Rejected | Cancelled | Closed | BackendFailure
+```
+
+Open and save requests return `ApplicationFileDialogResult`, not a dialog
+object:
+
+```text
+OpenFileRequest
+  StartingLocation: max 1024 characters
+
+SaveFileRequest
+  StartingLocation: max 1024 characters
+  SuggestedFileName: max 128 characters
+
+ApplicationFileDialogResult
+  Outcome: Selected | Cancelled | BackendFailure
+  SelectedPath: max 1024 characters
+```
+
+The outer service call still reports `InvalidRequest`, `InvalidContext`,
+`Conflict`, `ResourceUnavailable`, and `BackendFailure` where applicable.
+The current cohort intentionally does not invent overwrite-confirmation or
+directory-selection semantics that are not shared by the audited backends.
+
+The shell/open contract is:
+
+```text
+ApplicationShellOpenRequest
+  TargetKind: ApplicationId | Alias | Document | ShellObject | TypedShellAction
+  Target: max 1024 characters
+
+ApplicationShellResult
+  ResultCode: typed ApplicationServiceResultCode
+  AppId: bounded stable ID when available
+  InstanceHandle: generation-safe handle on success
+  BoundedDiagnostic: max 192 characters
+```
+
+`ApplicationShellService` maps the request to the existing `LaunchRequest`,
+`ApplicationDescriptorRegistry`, `ApplicationFactoryRegistry`, GXM typed
+backend, association adapter, or typed shell-action adapter.  It never
+creates an alternate application launch route.
+
+### 25.4 Ownership, modal behavior, and lifecycle
+
+The semantic owner of every service request is the generation-safe
+`ApplicationInstanceHandle` in the requesting `ApplicationServiceContext`.
+The C# WindowManager remains the graphical owner of the actual transient
+window.  Service-created dialog/file-picker windows carry explicit transient
+service-session metadata containing only the requester and request handle.
+They are excluded from ordinary application content ownership, ordinary owned
+window counts, taskbar application entries, final-window policy, and Task
+Manager application-window observations.  This prevents a service dialog from
+appearing as a second application window or changing application-centric
+taskbar grouping.
+
+Interactive creation requires the requester to be in Running or Activated.
+The existing one-outstanding-interactive-request rule returns `Conflict` for a
+second dialog/open/save request from the same owner.  Observing, cancelling,
+or retrieving an already-issued request is a separate eligibility path:
+Running, Activated, and Inactive are accepted.  Thus another application may
+be activated while a request is pending, and a completed result remains
+retrievable when the original requester becomes eligible again.  Suspended,
+Closing, Failed, Terminated, stale-generation, and descriptor-mismatched
+contexts are rejected deterministically.  A new request from an Inactive
+owner must first reactivate the owner; the runtime Phase 9 proof exercises
+this after shell launch changes foreground ownership.
+
+The C# implementation is stateful/asynchronous underneath.  A service call
+returns a fixed request handle; application code observes the handle during
+its normal draw/input lifecycle.  No spin loop or lock is held while a user
+interacts.  Cancel, close, backend failure, and requester termination complete
+or clear the session deterministically.  Termination closes associated
+transient windows, releases input capture, removes transient metadata, and
+prevents stale result observation.  Dialog input is modal to the service
+session, but the whole shell is not frozen; unrelated applications remain
+usable.
+
+### 25.5 C# and Server backends
+
+The C# backend in `ApplicationServiceBackends.cs` creates the existing
+`MessageBox`, `SaveChangesDialog`, `OpenDialog`, and `SaveDialog` only after a
+validated service session is allocated.  It registers each window as a
+transient/service-session window and maps callbacks and close events to typed
+results.  This is an implementation adapter, not an application-visible GUI
+contract.
+
+The shell adapter in `ApplicationShellServices.cs` uses the existing modern
+App Model for application IDs and aliases, the existing association resolver
+for documents, the typed GXM loader for `.gxm`, and the existing typed shell
+object/action adapter for shell targets.  C# remains same-address-space and
+managed; no process boundary is implied.
+
+The Server backend remains read-only in this phase.  Its message/open/save
+objects and typed launch-target/resolver remain the authoritative semantic
+references for future service adapters.  Server's VFS ownership, process
+callbacks, and capability vocabulary are not copied into C# as raw objects.
+
+### 25.6 Representative migrations
+
+* Notepad removes application-facing direct dialog construction and direct
+  message-box selection for Open, Save, Save As, error/information, and dirty
+  confirmation flows.  It still owns document bytes, dirty state, undo/redo,
+  filename/title state, and the existing filesystem write/read operations.
+  Its Phase 8 wrap setting remains application-scoped session state.
+* Computer Files uses Shell/Open for conceptual document opening and retains
+  direct internal enumeration, root/drive navigation, and filesystem display
+  behavior.  Compatibility construction without a service context preserves
+  the bounded legacy fallback path.
+* Display Options uses OpenFile for its background picker, including success
+  and cancellation.  Rendering, background decoding, and color/effects
+  state remain local implementation concerns.
+
+No production Start item was added for diagnostics.  The application factory
+path supplies service contexts to modern instances; compatibility fallback and
+legacy backend counts remain zero.
+
+### 25.7 TDD and runtime proof
+
+The deterministic AppModel diagnostic proves bounds, `Conflict`, typed result
+states, invalid/stale contexts, cancellation, file result propagation, shell
+launch/open mapping, lifecycle rejection, and transient-window cleanup.  The
+Phase 9 markers are:
+
+```text
+PHASE9_DIALOG_SELFTEST_OK=1
+PHASE9_FILE_SERVICE_SELFTEST_OK=1
+PHASE9_SHELL_SERVICE_SELFTEST_OK=1
+PHASE9_ORPHAN_DIALOG_COUNT=0
+PHASE9_STALE_SERVICE_CONTEXT_COUNT=0
+```
+
+The real-instance AppRuntime proof passes Notifications, shared session
+settings, system information, Notepad open success/cancel, Save success,
+confirmation cancellation, Display Options open success/cancel, a shell
+application launch, and an associated GXM document open.  The final green
+serial evidence is
+`serial_uefi_validation_20260919_102235.txt`:
+
+```text
+APP_RUNTIME_PHASE9_OPEN_SUCCESS=1
+APP_RUNTIME_PHASE9_OPEN_CANCEL=1
+APP_RUNTIME_PHASE9_SAVE_RESULT=success
+APP_RUNTIME_PHASE9_CONFIRMATION_RESULT=cancelled
+APP_RUNTIME_PHASE9_SHELL_LAUNCH=1
+APP_RUNTIME_PHASE9_DOCUMENT_OPEN=1
+APP_RUNTIME_PHASE9_ORPHAN_DIALOG_COUNT=0
+APP_RUNTIME_PHASE9_STALE_SERVICE_CONTEXT_COUNT=0
+APP_RUNTIME_PHASE9_RUNTIME_OK=1
+APP_RUNTIME_SERVICES_RESULT=PASS
+APP_RUNTIME_NOTEPAD_SERVICE_DIAGNOSTIC=PASS
+```
+
+The runtime cleanup comparison returned active instances, observations,
+WindowManager windows, and stale ownership to their pre-diagnostic baselines.
+The full AppRuntime gate also reported compatibility fallback `0`, legacy
+backend `0`, runtime faults `0`, allocator corruption `0`, valid graphics,
+zero unexpected keyboard/mouse drops, and balanced mouse transitions.
+
+### 25.8 Capability policy and future isolation
+
+The existing service context remains capability-shaped and future-compatible,
+but Phase 9 does not invent permission checks absent from the Server audit.
+`PermissionDenied` is preserved for a future real policy result.  The current
+same-address-space C# adapter validates identity, generation, descriptor, and
+lifecycle only.
+
+Every Phase 9 request and result is representable as bounded serializable
+data: enum values, bounded strings, fixed handles, and scalar result fields.
+A future isolated application process can issue equivalent requests over IPC
+without changing its application-facing service API.  IPC, Ring 3, process
+proxies, resource/package service, app-local storage, persistence, clipboard,
+and open-with selection remain deferred.
+
+### 25.9 Files, repository protection, and next phase
+
+Phase 9 changed only the C# UEFI repository and this canonical document.  The
+Server, Advanced Server, and Legacy repositories were not modified.  The
+implementation is committed in the Phase 9 service, migration, runtime-proof,
+and documentation commits; it is intentionally not pushed by this workflow.
+
+Recommended Phase 10 work is a separate design gate for one bounded next
+platform boundary, with persistence/app-local storage, resources/package
+identity, clipboard, IPC, and Ring 3 still excluded until their authorities,
+ownership, and lifecycle contracts are independently approved.

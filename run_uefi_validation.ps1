@@ -1874,6 +1874,16 @@ if ($isAppModelValidation) {
         '(?m)^APP_MODEL_COMPAT_SELFTEST_OK=1$').Count
     $appModelServiceSelfTest = [regex]::Matches($finalContent,
         '(?m)^APP_MODEL_SERVICES_SELFTEST_OK=1$').Count
+    $phase9DialogSelfTest = [regex]::Matches($finalContent,
+        '(?m)^PHASE9_DIALOG_SELFTEST_OK=1$').Count
+    $phase9FileSelfTest = [regex]::Matches($finalContent,
+        '(?m)^PHASE9_FILE_SERVICE_SELFTEST_OK=1$').Count
+    $phase9ShellSelfTest = [regex]::Matches($finalContent,
+        '(?m)^PHASE9_SHELL_SERVICE_SELFTEST_OK=1$').Count
+    $phase9OrphanDialogs = [regex]::Matches($finalContent,
+        '(?m)^PHASE9_ORPHAN_DIALOG_COUNT=0$').Count
+    $phase9StaleContexts = [regex]::Matches($finalContent,
+        '(?m)^PHASE9_STALE_SERVICE_CONTEXT_COUNT=0$').Count
     $notificationMigrationSources = @(
         (Join-Path $PSScriptRoot 'guideXOS\DefaultApps\Calculator.cs'),
         (Join-Path $PSScriptRoot 'guideXOS\GUI\DisplayOptions.cs')
@@ -1910,6 +1920,11 @@ if ($isAppModelValidation) {
         [int]$appModelCompatFailures[$appModelCompatFailures.Count - 1].Groups[1].Value -eq 1 -and
         $appModelCompatSelfTest -ge 1 -and
         $appModelServiceSelfTest -ge 1 -and
+        $phase9DialogSelfTest -ge 1 -and
+        $phase9FileSelfTest -ge 1 -and
+        $phase9ShellSelfTest -ge 1 -and
+        $phase9OrphanDialogs -ge 1 -and
+        $phase9StaleContexts -ge 1 -and
         $notificationDirectDependencies.Count -eq 0 -and
         $notepadSettingsMigration -ge 2 -and
         $taskManagerRawMetrics -eq 0
@@ -1918,6 +1933,11 @@ if ($isAppModelValidation) {
         descriptors = if ($appModelDescriptors.Count -gt 0) { [int]$appModelDescriptors[$appModelDescriptors.Count - 1].Groups[1].Value } else { 0 }
         factoryRegistrations = if ($appModelFactories.Count -gt 0) { [int]$appModelFactories[$appModelFactories.Count - 1].Groups[1].Value } else { 0 }
         factoryFallbacks = if ($appModelFallbacks.Count -gt 0) { [int]$appModelFallbacks[$appModelFallbacks.Count - 1].Groups[1].Value } else { 0 }
+        phase9DialogSelfTest = $phase9DialogSelfTest
+        phase9FileSelfTest = $phase9FileSelfTest
+        phase9ShellSelfTest = $phase9ShellSelfTest
+        phase9OrphanDialogs = $phase9OrphanDialogs
+        phase9StaleContexts = $phase9StaleContexts
         compatibilityFacadeCalls = if ($appModelCompatCalls.Count -gt 0) { [int]$appModelCompatCalls[$appModelCompatCalls.Count - 1].Groups[1].Value } else { 0 }
         compatibilityTranslations = if ($appModelCompatTranslations.Count -gt 0) { [int]$appModelCompatTranslations[$appModelCompatTranslations.Count - 1].Groups[1].Value } else { 0 }
         compatibilityLegacyBackendCalls = if ($appModelCompatLegacy.Count -gt 0) { [int]$appModelCompatLegacy[$appModelCompatLegacy.Count - 1].Groups[1].Value } else { 0 }
@@ -2051,6 +2071,24 @@ if ($isAppRuntimeValidation) {
         '(?m)^APP_RUNTIME_SERVICES_RESULT=PASS$').Count
     $runtimeServiceStaleContexts = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_SERVICES_STALE_CONTEXTS=0$').Count
+    $phase9Runtime = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_PHASE9_RUNTIME_OK=1$').Count
+    $phase9OpenSuccess = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_PHASE9_OPEN_SUCCESS=1$').Count
+    $phase9OpenCancel = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_PHASE9_OPEN_CANCEL=1$').Count
+    $phase9SaveResult = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_PHASE9_SAVE_RESULT=(success|cancel)$').Count
+    $phase9Confirmation = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_PHASE9_CONFIRMATION_RESULT=(accepted|rejected|cancelled)$').Count
+    $phase9ShellLaunch = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_PHASE9_SHELL_LAUNCH=1$').Count
+    $phase9DocumentOpen = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_PHASE9_DOCUMENT_OPEN=1$').Count
+    $phase9OrphanDialogs = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_PHASE9_ORPHAN_DIALOG_COUNT=0$').Count
+    $phase9RuntimeStaleContexts = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_PHASE9_STALE_SERVICE_CONTEXT_COUNT=0$').Count
     $runtimeThreadPoolUnlocked = [regex]::Matches($finalContent,
         '(?m)^CONTINUOUS_HEARTBEAT_THREADPOOL_LOCKED=0$').Count -gt 0
     $runtimeBalancedInput =
@@ -2086,7 +2124,12 @@ if ($isAppRuntimeValidation) {
         $runtimeFaults -eq 0 -and $runtimeThreadPoolUnlocked -and
         $runtimeBalancedInput -and $graphicsValid -eq $true -and
         $runtimeServiceResult -ge 1 -and
-        $runtimeServiceStaleContexts -ge 1
+        $runtimeServiceStaleContexts -ge 1 -and
+        $phase9Runtime -ge 1 -and $phase9OpenSuccess -ge 1 -and
+        $phase9OpenCancel -ge 1 -and $phase9SaveResult -ge 1 -and
+        $phase9Confirmation -ge 1 -and $phase9ShellLaunch -ge 1 -and
+        $phase9DocumentOpen -ge 1 -and $phase9OrphanDialogs -ge 1 -and
+        $phase9RuntimeStaleContexts -ge 1
     $runtimeMemory = if ($runtimeLastClose.Count -gt 0) {
         [UInt64]$runtimeLastClose[$runtimeLastClose.Count - 1].Groups[1].Value
     } else { 0 }
@@ -2136,6 +2179,15 @@ if ($isAppRuntimeValidation) {
         runtimeFaults = $runtimeFaults
         serviceRuntimeResult = $runtimeServiceResult
         serviceRuntimeStaleContexts = $runtimeServiceStaleContexts
+        phase9Runtime = $phase9Runtime
+        phase9OpenSuccess = $phase9OpenSuccess
+        phase9OpenCancel = $phase9OpenCancel
+        phase9SaveResult = $phase9SaveResult
+        phase9Confirmation = $phase9Confirmation
+        phase9ShellLaunch = $phase9ShellLaunch
+        phase9DocumentOpen = $phase9DocumentOpen
+        phase9OrphanDialogs = $phase9OrphanDialogs
+        phase9StaleContexts = $phase9RuntimeStaleContexts
         lastCloseMemory = $runtimeMemory
         lastCloseCorrupt = $runtimeCorrupt
         balancedInput = $runtimeBalancedInput

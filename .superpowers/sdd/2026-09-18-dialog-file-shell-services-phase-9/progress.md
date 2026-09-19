@@ -36,4 +36,26 @@ Task 8: started (base 40ac33c; Computer Files shell/document service routing and
 Task 8 RED: AppRuntime first exposed the intended migration regressions: the Computer Files factory result was not reinitialized after service acquisition, and the existing association diagnostics were absent from the new Shell/Open backend.
 
 Task 8 GREEN: Computer Files modern factory instances now receive ApplicationServiceContext/ApplicationServiceAccess and route document opens through Shell/Open; compatibility-only instances retain the old fallback. Display Options uses the OpenFile service with asynchronous polling and deterministic success/cancel cleanup proof. The Shell/Open adapter preserves association, file-result, GXM, and negative-probe diagnostics while dispatching through the existing modern App Model. AppRuntime completed with `APP_RUNTIME_COMPLETE`, application-service/dialog/file markers PASS, compatibility fallback 0, legacy backend 0, allocator corruption 0, ThreadPool.Locked 0, balanced input, and zero dropped input. Serial log: D:\dev\guideXOSUEFI\serial_uefi_validation_20260919_085736.txt
-Task 8: complete (commit pending; tests: `build.ps1 -Diagnostic AppRuntime -NoRun`; `run_uefi_validation.ps1 -AppRuntime -TimeoutSeconds 300`)
+Task 8: complete (commit 0981010; tests: `build.ps1 -Diagnostic AppRuntime -NoRun`; `run_uefi_validation.ps1 -AppRuntime -TimeoutSeconds 300` → `APP_RUNTIME_COMPLETE`; Serial log: `D:\dev\guideXOSUEFI\serial_uefi_validation_20260919_085736.txt`)
+
+Task 9 RED: the new Phase 9 runtime gate initially failed for two intentional
+diagnostic reasons: a shell launch changed the requester to `Inactive` before
+the next new request, and the positive document probe used the existing
+calculator GXM path whose diagnostic-only negative probes launch an installer.
+The service itself correctly returned lifecycle rejection and preserved typed
+request ownership.
+
+Task 9 GREEN: the runtime proof now reactivates the requester before creating
+the next new interactive request, uses the valid `Programs/imageviewer.gxm`
+association for positive document-open coverage, and performs bounded cleanup
+of any target instances created by the shell adapter.  AppModel and AppRuntime
+Phase 9 markers are green; Notepad and Display Options service diagnostics
+pass; cleanup returns active instances, observations, WindowManager windows,
+and stale ownership to baseline; orphan dialogs and stale service contexts are
+zero.  Final AppRuntime evidence: `APP_RUNTIME_COMPLETE`,
+`APP_RUNTIME_PHASE9_RUNTIME_OK=1`, compatibility fallback 0, legacy backend 0,
+allocator corruption 0, valid graphics, zero dropped keyboard/mouse input,
+and balanced mouse transitions. Serial log:
+`D:\dev\guideXOSUEFI\serial_uefi_validation_20260919_102235.txt`.
+
+Task 9: complete (final Phase 9 commit; tests: `run_uefi_validation.ps1 -AppModel -TimeoutSeconds 300` → `DIAGNOSTIC_COMPLETE` / validation true, serial `D:\dev\guideXOSUEFI\serial_uefi_validation_20260919_102203.txt`; `run_uefi_validation.ps1 -AppRuntime -SkipBuild -TimeoutSeconds 300` → `APP_RUNTIME_COMPLETE` / validation true, serial `D:\dev\guideXOSUEFI\serial_uefi_validation_20260919_102235.txt`; `run_uefi_validation.ps1 -NativeInput -TimeoutSeconds 300` → `TIMEOUT_SUCCESS`, serial `D:\dev\guideXOSUEFI\serial_uefi_validation_20260919_102854.txt`; `run_uefi_validation.ps1 -ContextMenu -TimeoutSeconds 300` → `CONTEXT_MENU_COMPLETE` / validation true, serial `D:\dev\guideXOSUEFI\serial_uefi_validation_20260919_103407.txt`; `run_uefi_validation.ps1 -Continuous -TimeoutSeconds 300` → `TIMEOUT_SUCCESS`, serial `D:\dev\guideXOSUEFI\serial_uefi_validation_20260919_104109.txt`)

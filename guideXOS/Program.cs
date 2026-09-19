@@ -2011,6 +2011,20 @@ unsafe class Program {
                 SerialBreadcrumb("APP_MODEL_COMPAT_SELFTEST_OK=1");
                 SerialBreadcrumb("APP_MODEL_FACTORY_SELFTEST_OK=1");
                 SerialBreadcrumb("APP_MODEL_SERVICES_SELFTEST_OK=1");
+                SerialBreadcrumb("PHASE9_DIALOG_SELFTEST_OK=" +
+                    (ApplicationServiceRegistry.LastDialogSelfTestPassed ?
+                        "1" : "0"));
+                SerialBreadcrumb("PHASE9_FILE_SERVICE_SELFTEST_OK=" +
+                    (ApplicationServiceRegistry.LastFileDialogSelfTestPassed ?
+                        "1" : "0"));
+                SerialBreadcrumb("PHASE9_SHELL_SERVICE_SELFTEST_OK=" +
+                    (ApplicationServiceRegistry.LastShellSelfTestPassed ?
+                        "1" : "0"));
+                SerialBreadcrumb("PHASE9_ORPHAN_DIALOG_COUNT=" +
+                    ApplicationServiceRegistry.OrphanTransientWindowCount.ToString());
+                SerialBreadcrumb("PHASE9_STALE_SERVICE_CONTEXT_COUNT=" +
+                    (ApplicationServiceRegistry.ActiveRequestCount == 0 &&
+                     ApplicationServiceRegistry.DiagnosticsClean ? "0" : "1"));
                 SerialBreadcrumb("APP_MODEL_SERVICES_REGISTERED=" +
                     ApplicationServiceRegistry.RegisteredCount.ToString());
                 SerialBreadcrumb("APP_MODEL_SERVICES_DUPLICATE_REJECTED=" +

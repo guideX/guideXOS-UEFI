@@ -1950,6 +1950,12 @@ namespace guideXOS.OS {
             bool sharedSettings = false;
             bool snapshot = false;
             bool staleRejected = false;
+            bool shellLaunch = false;
+            bool documentOpen = false;
+            ApplicationInstanceHandle shellTargetHandle =
+                ApplicationInstanceHandle.None;
+            ApplicationInstanceHandle documentTargetHandle =
+                ApplicationInstanceHandle.None;
             bool cleanup = false;
             try {
                 bool calculatorLaunch = TryLaunchServiceRuntimeInstance(
@@ -2009,6 +2015,71 @@ namespace guideXOS.OS {
                     Activate(displayOptions.Handle).Success &&
                     displayOptionsWindow.RunPhase9BackgroundServiceDiagnostic();
 
+                if (contexts && calculatorServices.Shell != null &&
+                        Activate(calculator.Handle).Success) {
+                    ApplicationServiceResult<
+                        ApplicationServiceRequestHandle> shellBegun =
+                        calculatorServices.Shell.Begin(calculatorContext,
+                            ApplicationShellOpenRequest.ForApplicationId(
+                                "gxos.builtin.calculator"));
+                    if (shellBegun.Succeeded) {
+                        ApplicationServiceResult<ApplicationServiceRequestStatus<
+                            ApplicationShellResult>> shellObserved =
+                            calculatorServices.Shell.Observe(calculatorContext,
+                                shellBegun.Value);
+                        shellLaunch = shellObserved.Succeeded &&
+                            shellObserved.Value != null &&
+                            shellObserved.Value.Value != null &&
+                            shellObserved.Value.Value.ResultCode ==
+                                ApplicationServiceResultCode.Success;
+                        if (shellLaunch &&
+                                shellObserved.Value.Value.InstanceHandle.IsValid) {
+                            shellTargetHandle =
+                                shellObserved.Value.Value.InstanceHandle;
+                        }
+                        if (shellLaunch && shellTargetHandle.IsValid &&
+                                shellTargetHandle != calculator.Handle)
+                            TryTerminate(shellTargetHandle,
+                                "phase 9 shell launch proof cleanup");
+                    }
+
+                    // Launching another application can legitimately make
+                    // the requester inactive.  A new interactive request
+                    // requires reactivation; this does not alter the rule
+                    // that an already-issued handle remains observable while
+                    // the requester is inactive.
+                    bool requesterReactivated = Activate(
+                        calculator.Handle).Success;
+                    ApplicationServiceResult<
+                        ApplicationServiceRequestHandle> documentBegun =
+                        requesterReactivated
+                            ? calculatorServices.Shell.Begin(calculatorContext,
+                                ApplicationShellOpenRequest.ForDocument(
+                                    "Programs/imageviewer.gxm"))
+                            : ApplicationServiceResult<
+                                ApplicationServiceRequestHandle>.Failure(
+                                    ApplicationServiceResultCode.InvalidState,
+                                    "Shell proof requester could not be reactivated");
+                    if (documentBegun.Succeeded) {
+                        ApplicationServiceResult<ApplicationServiceRequestStatus<
+                            ApplicationShellResult>> documentObserved =
+                            calculatorServices.Shell.Observe(calculatorContext,
+                                documentBegun.Value);
+                        documentOpen = documentObserved.Succeeded &&
+                            documentObserved.Value != null &&
+                            documentObserved.Value.Value != null &&
+                            documentObserved.Value.Value.ResultCode ==
+                                ApplicationServiceResultCode.Success;
+                        if (documentOpen &&
+                                documentObserved.Value.Value.InstanceHandle.IsValid) {
+                            documentTargetHandle =
+                                documentObserved.Value.Value.InstanceHandle;
+                            TryTerminate(documentTargetHandle,
+                                "phase 9 document open proof cleanup");
+                        }
+                    }
+                }
+
                 if (contexts) {
                     ApplicationNotificationRequest request =
                         ApplicationNotificationRequest.Create(
@@ -2053,6 +2124,19 @@ namespace guideXOS.OS {
                     "application service runtime cleanup");
                 if (displayOptions != null) TryTerminate(displayOptions,
                     "application service runtime cleanup");
+                ApplicationInstance residualTarget;
+                if (shellTargetHandle.IsValid &&
+                        shellTargetHandle != (calculator == null ?
+                            ApplicationInstanceHandle.None : calculator.Handle) &&
+                        TryGet(shellTargetHandle, out residualTarget)) {
+                    TryTerminate(residualTarget,
+                        "application service shell target final cleanup");
+                }
+                if (documentTargetHandle.IsValid &&
+                        TryGet(documentTargetHandle, out residualTarget)) {
+                    TryTerminate(residualTarget,
+                        "application service document target final cleanup");
+                }
                 WindowManager.CleanupClosedWindows();
                 cleanup = ActiveCount == baselineActive &&
                     ObservationCount == baselineObservations &&
@@ -2060,9 +2144,28 @@ namespace guideXOS.OS {
                         WindowManager.Windows.Count) == baselineWindows &&
                     StaleOwnershipCount == baselineStaleOwnership;
                 bool passed = notepadDialogFlows && displayOptionsServiceFlow &&
-                    notification && sharedSettings && snapshot &&
-                    staleRejected && cleanup;
+                    shellLaunch && documentOpen && notification &&
+                    sharedSettings && snapshot && staleRejected && cleanup;
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("PHASE9_OPEN_SUCCESS=" +
+                    (notepadDialogFlows ? "1" : "0"));
+                Program.MarkUefiAppRuntime("PHASE9_OPEN_CANCEL=" +
+                    (notepadDialogFlows ? "1" : "0"));
+                Program.MarkUefiAppRuntime("PHASE9_SAVE_RESULT=" +
+                    (notepadDialogFlows ? "success" : "fail"));
+                Program.MarkUefiAppRuntime("PHASE9_CONFIRMATION_RESULT=" +
+                    (notepadDialogFlows ? "cancelled" : "fail"));
+                Program.MarkUefiAppRuntime("PHASE9_SHELL_LAUNCH=" +
+                    (shellLaunch ? "1" : "0"));
+                Program.MarkUefiAppRuntime("PHASE9_DOCUMENT_OPEN=" +
+                    (documentOpen ? "1" : "0"));
+                Program.MarkUefiAppRuntime("PHASE9_ORPHAN_DIALOG_COUNT=" +
+                    ApplicationServiceRegistry.OrphanTransientWindowCount.ToString());
+                Program.MarkUefiAppRuntime("PHASE9_STALE_SERVICE_CONTEXT_COUNT=" +
+                    (cleanup && ApplicationServiceRegistry.ActiveRequestCount == 0 ?
+                        "0" : "1"));
+                Program.MarkUefiAppRuntime("PHASE9_RUNTIME_OK=" +
+                    (passed ? "1" : "0"));
                 Program.MarkUefiAppRuntime(
                     "SERVICES_NOTIFICATION=" +
                     (notification ? "PASS" : "FAIL"));
