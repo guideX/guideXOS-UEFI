@@ -195,6 +195,8 @@ namespace guideXOS.OS {
 
             Check(RunContractSelfTest(), "contract bounds", ref passed,
                 ref failed, ref firstFailure);
+            Check(RunPhase9ContractSelfTest(), "phase 9 contract bounds",
+                ref passed, ref failed, ref firstFailure);
             Check(!TryRegisterForSelfTest(ApplicationServiceId.Notifications),
                 "duplicate service registration rejected", ref passed,
                 ref failed, ref firstFailure);
@@ -476,6 +478,79 @@ namespace guideXOS.OS {
                 1, 100, 50, 2, 25, "guideXOS", "Phase8", "x86_64");
             Check(snapshot.IsWithinBounds(), "system snapshot shape",
                 ref passed, ref failed, ref failure);
+            return failed == 0;
+        }
+
+        private static bool RunPhase9ContractSelfTest() {
+            int passed = 0;
+            int failed = 0;
+            string failure = null;
+
+            Check(ApplicationServiceNames.IsKnown(ApplicationServiceId.Dialogs) &&
+                  ApplicationServiceNames.IsKnown(ApplicationServiceId.OpenFile) &&
+                  ApplicationServiceNames.IsKnown(ApplicationServiceId.SaveFile) &&
+                  ApplicationServiceNames.IsKnown(ApplicationServiceId.Shell),
+                "phase 9 service ids", ref passed, ref failed, ref failure);
+            Check(ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.Conflict, "duplicate").Code ==
+                  ApplicationServiceResultCode.Conflict &&
+                  ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.Cancelled, "cancel").Code ==
+                  ApplicationServiceResultCode.Cancelled,
+                "phase 9 result vocabulary", ref passed, ref failed,
+                ref failure);
+
+            ApplicationDialogRequest info = ApplicationDialogRequest.Create(
+                ApplicationDialogKind.Information, "Title", "Body",
+                ApplicationDialogButtonSet.Acknowledge);
+            Check(info.IsValid, "information dialog shape", ref passed,
+                ref failed, ref failure);
+            ApplicationDialogRequest confirmation =
+                ApplicationDialogRequest.Create(
+                    ApplicationDialogKind.Confirmation, "Confirm", "Body",
+                    ApplicationDialogButtonSet.AcceptRejectCancel);
+            Check(confirmation.IsValid, "confirmation dialog shape",
+                ref passed, ref failed, ref failure);
+            ApplicationDialogRequest invalidDialog =
+                ApplicationDialogRequest.Create(
+                    ApplicationDialogKind.Error,
+                    Repeat('t', ApplicationDialogRequest.MaxTitleLength + 1),
+                    "Body", ApplicationDialogButtonSet.Acknowledge);
+            Check(!invalidDialog.IsValid, "dialog title bound", ref passed,
+                ref failed, ref failure);
+
+            OpenFileRequest open = OpenFileRequest.Create(
+                Repeat('p', OpenFileRequest.MaxStartingLocationLength));
+            Check(open.IsValid, "open path maximum", ref passed, ref failed,
+                ref failure);
+            Check(!OpenFileRequest.Create(Repeat('p',
+                    OpenFileRequest.MaxStartingLocationLength + 1)).IsValid,
+                "open path bound", ref passed, ref failed, ref failure);
+
+            SaveFileRequest save = SaveFileRequest.Create(
+                Repeat('p', SaveFileRequest.MaxStartingLocationLength),
+                Repeat('n', SaveFileRequest.MaxSuggestedFileNameLength));
+            Check(save.IsValid, "save request maximum", ref passed, ref failed,
+                ref failure);
+            Check(!SaveFileRequest.Create("start",
+                    Repeat('n', SaveFileRequest.MaxSuggestedFileNameLength + 1)).IsValid,
+                "save filename bound", ref passed, ref failed, ref failure);
+
+            ApplicationShellOpenRequest app =
+                ApplicationShellOpenRequest.ForApplicationId("gxos.test.app");
+            ApplicationShellOpenRequest document =
+                ApplicationShellOpenRequest.ForDocument("disk:/readme.txt");
+            Check(app.IsValid && document.IsValid,
+                "shell target shapes", ref passed, ref failed, ref failure);
+            Check(!ApplicationShellOpenRequest.ForApplicationId(
+                    Repeat('a', ApplicationShellOpenRequest.MaxTargetLength + 1)).IsValid,
+                "shell target bound", ref passed, ref failed, ref failure);
+
+            Check(!ApplicationServiceRequestHandle.Invalid.IsValid &&
+                  ApplicationServiceRequestState.Pending !=
+                  ApplicationServiceRequestState.Completed,
+                "request handle/status shape", ref passed, ref failed,
+                ref failure);
             return failed == 0;
         }
 

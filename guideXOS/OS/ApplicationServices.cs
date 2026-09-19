@@ -9,7 +9,11 @@ namespace guideXOS.OS {
     public enum ApplicationServiceId {
         Notifications = 1,
         Settings = 2,
-        SystemInformation = 3
+        SystemInformation = 3,
+        Dialogs = 4,
+        OpenFile = 5,
+        SaveFile = 6,
+        Shell = 7
     }
 
     public static class ApplicationServiceNames {
@@ -18,6 +22,10 @@ namespace guideXOS.OS {
                 case ApplicationServiceId.Notifications: return "notifications";
                 case ApplicationServiceId.Settings: return "settings";
                 case ApplicationServiceId.SystemInformation: return "system-information";
+                case ApplicationServiceId.Dialogs: return "dialogs";
+                case ApplicationServiceId.OpenFile: return "open-file";
+                case ApplicationServiceId.SaveFile: return "save-file";
+                case ApplicationServiceId.Shell: return "shell";
                 default: return "unknown";
             }
         }
@@ -25,7 +33,11 @@ namespace guideXOS.OS {
         public static bool IsKnown(ApplicationServiceId id) {
             return id == ApplicationServiceId.Notifications ||
                    id == ApplicationServiceId.Settings ||
-                   id == ApplicationServiceId.SystemInformation;
+                   id == ApplicationServiceId.SystemInformation ||
+                   id == ApplicationServiceId.Dialogs ||
+                   id == ApplicationServiceId.OpenFile ||
+                   id == ApplicationServiceId.SaveFile ||
+                   id == ApplicationServiceId.Shell;
         }
     }
 
@@ -37,7 +49,309 @@ namespace guideXOS.OS {
         ResourceUnavailable,
         PermissionDenied,
         Unsupported,
-        Conflict
+        Conflict,
+        Cancelled,
+        InvalidState,
+        UnsupportedTarget,
+        BackendFailure
+    }
+
+    /// <summary>
+    /// Bounded, generation-safe identity for an application service request.
+    /// The value contains no callback, window, renderer, or backend object.
+    /// </summary>
+    public readonly struct ApplicationServiceRequestHandle {
+        private readonly ApplicationServiceId _serviceId;
+        private readonly uint _slot;
+        private readonly uint _generation;
+
+        private ApplicationServiceRequestHandle(ApplicationServiceId serviceId,
+                                                 uint slot, uint generation) {
+            _serviceId = serviceId;
+            _slot = slot;
+            _generation = generation;
+        }
+
+        internal static ApplicationServiceRequestHandle Create(
+                ApplicationServiceId serviceId, uint slot, uint generation) {
+            if (!ApplicationServiceNames.IsKnown(serviceId) ||
+                    slot == 0 || generation == 0) return Invalid;
+            return new ApplicationServiceRequestHandle(serviceId, slot,
+                generation);
+        }
+
+        public static ApplicationServiceRequestHandle Invalid {
+            get { return new ApplicationServiceRequestHandle(0, 0, 0); }
+        }
+
+        public ApplicationServiceId ServiceId { get { return _serviceId; } }
+        public uint Slot { get { return _slot; } }
+        public uint Generation { get { return _generation; } }
+        public bool IsValid {
+            get { return _slot != 0 && _generation != 0 &&
+                         ApplicationServiceNames.IsKnown(_serviceId); }
+        }
+
+        public bool Equals(ApplicationServiceRequestHandle other) {
+            return _serviceId == other._serviceId && _slot == other._slot &&
+                   _generation == other._generation;
+        }
+
+        public override bool Equals(object obj) {
+            return obj is ApplicationServiceRequestHandle &&
+                   Equals((ApplicationServiceRequestHandle)obj);
+        }
+
+        public override int GetHashCode() {
+            return ((int)_serviceId * 397) ^ (int)_slot ^ (int)_generation;
+        }
+
+        public static bool operator ==(ApplicationServiceRequestHandle left,
+                                       ApplicationServiceRequestHandle right) {
+            return left.Equals(right);
+        }
+
+        public static bool operator !=(ApplicationServiceRequestHandle left,
+                                       ApplicationServiceRequestHandle right) {
+            return !left.Equals(right);
+        }
+    }
+
+    public enum ApplicationServiceRequestState {
+        Pending = 0,
+        Completed,
+        Cancelled,
+        Failed
+    }
+
+    /// <summary>
+    /// Bounded status payload for observing a request session.  Concrete
+    /// services provide the payload type; no GUI implementation type crosses
+    /// this boundary.
+    /// </summary>
+    public sealed class ApplicationServiceRequestStatus<T> {
+        private ApplicationServiceRequestStatus(
+                ApplicationServiceRequestState state, T value) {
+            State = state;
+            Value = value;
+        }
+
+        public ApplicationServiceRequestState State { get; private set; }
+        public T Value { get; private set; }
+        public bool IsPending {
+            get { return State == ApplicationServiceRequestState.Pending; }
+        }
+        public bool IsTerminal { get { return !IsPending; } }
+
+        internal static ApplicationServiceRequestStatus<T> PendingStatus() {
+            return new ApplicationServiceRequestStatus<T>(
+                ApplicationServiceRequestState.Pending, default(T));
+        }
+
+        internal static ApplicationServiceRequestStatus<T> CompletedStatus(
+                T value) {
+            return new ApplicationServiceRequestStatus<T>(
+                ApplicationServiceRequestState.Completed, value);
+        }
+
+        internal static ApplicationServiceRequestStatus<T> CancelledStatus(
+                T value) {
+            return new ApplicationServiceRequestStatus<T>(
+                ApplicationServiceRequestState.Cancelled, value);
+        }
+
+        internal static ApplicationServiceRequestStatus<T> FailedStatus(
+                T value) {
+            return new ApplicationServiceRequestStatus<T>(
+                ApplicationServiceRequestState.Failed, value);
+        }
+    }
+
+    public enum ApplicationDialogKind {
+        Information = 0,
+        Error,
+        Confirmation
+    }
+
+    public enum ApplicationDialogButtonSet {
+        Acknowledge = 0,
+        AcceptRejectCancel
+    }
+
+    public enum ApplicationDialogOutcome {
+        Accepted = 0,
+        Rejected,
+        Cancelled,
+        Closed,
+        BackendFailure
+    }
+
+    public sealed class ApplicationDialogRequest {
+        public const int MaxTitleLength = 64;
+        public const int MaxBodyLength = 256;
+
+        private ApplicationDialogRequest(ApplicationDialogKind kind,
+                                         string title, string body,
+                                         ApplicationDialogButtonSet buttons) {
+            Kind = kind;
+            Title = title ?? string.Empty;
+            Body = body ?? string.Empty;
+            ButtonSet = buttons;
+            IsValid = IsValidKind(kind) && IsValidButtonSet(buttons) &&
+                ApplicationServiceContext.IsBoundedText(
+                    Title, MaxTitleLength, false) &&
+                ApplicationServiceContext.IsBoundedText(
+                    Body, MaxBodyLength, true) &&
+                IsValidButtonCombination(kind, buttons);
+        }
+
+        public ApplicationDialogKind Kind { get; private set; }
+        public string Title { get; private set; }
+        public string Body { get; private set; }
+        public ApplicationDialogButtonSet ButtonSet { get; private set; }
+        public bool IsValid { get; private set; }
+
+        public static ApplicationDialogRequest Create(
+                ApplicationDialogKind kind, string title, string body,
+                ApplicationDialogButtonSet buttons) {
+            return new ApplicationDialogRequest(kind, title, body, buttons);
+        }
+
+        private static bool IsValidKind(ApplicationDialogKind kind) {
+            return kind == ApplicationDialogKind.Information ||
+                   kind == ApplicationDialogKind.Error ||
+                   kind == ApplicationDialogKind.Confirmation;
+        }
+
+        private static bool IsValidButtonSet(ApplicationDialogButtonSet buttons) {
+            return buttons == ApplicationDialogButtonSet.Acknowledge ||
+                   buttons == ApplicationDialogButtonSet.AcceptRejectCancel;
+        }
+
+        private static bool IsValidButtonCombination(
+                ApplicationDialogKind kind, ApplicationDialogButtonSet buttons) {
+            return (kind == ApplicationDialogKind.Confirmation &&
+                    buttons == ApplicationDialogButtonSet.AcceptRejectCancel) ||
+                   (kind != ApplicationDialogKind.Confirmation &&
+                    buttons == ApplicationDialogButtonSet.Acknowledge);
+        }
+    }
+
+    public sealed class ApplicationDialogResult {
+        private ApplicationDialogResult(ApplicationDialogOutcome outcome) {
+            Outcome = outcome;
+        }
+
+        public ApplicationDialogOutcome Outcome { get; private set; }
+
+        internal static ApplicationDialogResult From(
+                ApplicationDialogOutcome outcome) {
+            return new ApplicationDialogResult(outcome);
+        }
+    }
+
+    public sealed class OpenFileRequest {
+        public const int MaxStartingLocationLength = 1024;
+
+        private OpenFileRequest(string startingLocation) {
+            StartingLocation = startingLocation ?? string.Empty;
+            IsValid = ApplicationServiceContext.IsBoundedText(
+                StartingLocation,
+                MaxStartingLocationLength, true);
+        }
+
+        public string StartingLocation { get; private set; }
+        public bool IsValid { get; private set; }
+
+        public static OpenFileRequest Create(string startingLocation) {
+            return new OpenFileRequest(startingLocation);
+        }
+    }
+
+    public sealed class SaveFileRequest {
+        public const int MaxStartingLocationLength = 1024;
+        public const int MaxSuggestedFileNameLength = 128;
+
+        private SaveFileRequest(string startingLocation, string fileName) {
+            StartingLocation = startingLocation ?? string.Empty;
+            SuggestedFileName = fileName ?? string.Empty;
+            IsValid = ApplicationServiceContext.IsBoundedText(
+                StartingLocation,
+                    MaxStartingLocationLength, true) &&
+                ApplicationServiceContext.IsBoundedText(
+                    SuggestedFileName,
+                    MaxSuggestedFileNameLength, true);
+        }
+
+        public string StartingLocation { get; private set; }
+        public string SuggestedFileName { get; private set; }
+        public bool IsValid { get; private set; }
+
+        public static SaveFileRequest Create(string startingLocation,
+                                             string fileName) {
+            return new SaveFileRequest(startingLocation, fileName);
+        }
+    }
+
+    public enum ApplicationShellOpenTargetKind {
+        ApplicationId = 0,
+        Alias,
+        Document,
+        ShellObject,
+        TypedShellAction
+    }
+
+    public sealed class ApplicationShellOpenRequest {
+        public const int MaxTargetLength = 1024;
+
+        private ApplicationShellOpenRequest(
+                ApplicationShellOpenTargetKind kind, string target) {
+            TargetKind = kind;
+            Target = target ?? string.Empty;
+            IsValid = IsValidKind(kind) &&
+                ApplicationServiceContext.IsBoundedText(
+                    Target, MaxTargetLength, false);
+        }
+
+        public ApplicationShellOpenTargetKind TargetKind { get; private set; }
+        public string Target { get; private set; }
+        public bool IsValid { get; private set; }
+
+        public static ApplicationShellOpenRequest ForApplicationId(
+                string appId) {
+            return new ApplicationShellOpenRequest(
+                ApplicationShellOpenTargetKind.ApplicationId, appId);
+        }
+
+        public static ApplicationShellOpenRequest ForAlias(string alias) {
+            return new ApplicationShellOpenRequest(
+                ApplicationShellOpenTargetKind.Alias, alias);
+        }
+
+        public static ApplicationShellOpenRequest ForDocument(string path) {
+            return new ApplicationShellOpenRequest(
+                ApplicationShellOpenTargetKind.Document, path);
+        }
+
+        public static ApplicationShellOpenRequest ForShellObject(
+                string shellObjectId) {
+            return new ApplicationShellOpenRequest(
+                ApplicationShellOpenTargetKind.ShellObject, shellObjectId);
+        }
+
+        public static ApplicationShellOpenRequest ForTypedShellAction(
+                string actionId) {
+            return new ApplicationShellOpenRequest(
+                ApplicationShellOpenTargetKind.TypedShellAction, actionId);
+        }
+
+        private static bool IsValidKind(ApplicationShellOpenTargetKind kind) {
+            return kind == ApplicationShellOpenTargetKind.ApplicationId ||
+                   kind == ApplicationShellOpenTargetKind.Alias ||
+                   kind == ApplicationShellOpenTargetKind.Document ||
+                   kind == ApplicationShellOpenTargetKind.ShellObject ||
+                   kind == ApplicationShellOpenTargetKind.TypedShellAction;
+        }
     }
 
     /// <summary>
