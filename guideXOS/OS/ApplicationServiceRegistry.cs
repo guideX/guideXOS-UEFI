@@ -6,7 +6,7 @@ namespace guideXOS.OS {
     /// </summary>
     public static class ApplicationServiceRegistry {
         public const int Capacity = 8;
-        public const int SelectedServiceCount = 3;
+        public const int SelectedServiceCount = 7;
 
         private sealed class ServiceEntry {
             internal ApplicationServiceId Id;
@@ -40,6 +40,11 @@ namespace guideXOS.OS {
             RegisterInitial(ApplicationServiceId.Notifications);
             RegisterInitial(ApplicationServiceId.Settings);
             RegisterInitial(ApplicationServiceId.SystemInformation);
+            RegisterInitial(ApplicationServiceId.Dialogs);
+            RegisterInitial(ApplicationServiceId.OpenFile);
+            RegisterInitial(ApplicationServiceId.SaveFile);
+            RegisterInitial(ApplicationServiceId.Shell);
+            ApplicationServiceSessionTable.Reset();
         }
 
         /// <summary>
@@ -47,6 +52,7 @@ namespace guideXOS.OS {
         /// This never clears or reassigns ApplicationInstanceRegistry slots.
         /// </summary>
         public static void ResetForDiagnostics() {
+            ApplicationServiceSessionTable.Reset();
             _entries = null;
             _access = null;
             _registeredCount = 0;
@@ -148,6 +154,87 @@ namespace guideXOS.OS {
             return TryGetAccess(context, out access, out result);
         }
 
+        internal static ApplicationServiceResult BeginInteractiveRequest(
+                ApplicationServiceContext context,
+                ApplicationServiceId serviceId, object payload,
+                out ApplicationServiceRequestHandle handle) {
+            ApplicationInstance instance;
+            ApplicationServiceResult valid;
+            handle = ApplicationServiceRequestHandle.Invalid;
+            if (!TryValidateInteractiveRequestContext(context, serviceId,
+                    out instance, out valid)) return valid;
+            return ApplicationServiceSessionTable.Begin(
+                context.InstanceHandle, serviceId, payload, true, out handle);
+        }
+
+        internal static ApplicationServiceResult BeginShellRequest(
+                ApplicationServiceContext context, object payload,
+                out ApplicationServiceRequestHandle handle) {
+            ApplicationInstance instance;
+            ApplicationServiceResult valid;
+            handle = ApplicationServiceRequestHandle.Invalid;
+            if (!TryValidateInteractiveRequestContext(context,
+                    ApplicationServiceId.Shell, out instance, out valid)) {
+                return valid;
+            }
+            return ApplicationServiceSessionTable.Begin(
+                context.InstanceHandle, ApplicationServiceId.Shell,
+                payload, false, out handle);
+        }
+
+        internal static ApplicationServiceResult TryObserveRequest(
+                ApplicationServiceContext context,
+                ApplicationServiceRequestHandle handle,
+                out ApplicationServiceRequestStatus<object> status) {
+            status = null;
+            ApplicationServiceSessionRecord session;
+            ApplicationServiceResult valid =
+                TryValidateExistingRequestContext(context, handle,
+                    out session);
+            if (!valid.Succeeded) return valid;
+            status = session.CreateStatus();
+            return ApplicationServiceResult.SuccessResult();
+        }
+
+        internal static ApplicationServiceResult TryCancelRequest(
+                ApplicationServiceContext context,
+                ApplicationServiceRequestHandle handle) {
+            ApplicationServiceSessionRecord session;
+            ApplicationServiceResult valid =
+                TryValidateExistingRequestContext(context, handle,
+                    out session);
+            if (!valid.Succeeded) return valid;
+            ApplicationServiceSessionTable.Cancel(session);
+            return ApplicationServiceResult.Failure(
+                ApplicationServiceResultCode.Cancelled,
+                "Application service request was cancelled");
+        }
+
+        internal static ApplicationServiceResult CompleteRequestForSelfTest(
+                ApplicationServiceRequestHandle handle, object value) {
+            return ApplicationServiceSessionTable.Complete(handle, value);
+        }
+
+        internal static void OnApplicationLifecycleChanged(
+                ApplicationInstance instance,
+                ApplicationInstanceLifecycleState previous,
+                ApplicationInstanceLifecycleState current) {
+            if (instance == null) return;
+            if (current == ApplicationInstanceLifecycleState.Closing ||
+                    current == ApplicationInstanceLifecycleState.Terminated ||
+                    current == ApplicationInstanceLifecycleState.Failed) {
+                ApplicationServiceSessionTable.CleanupForInstance(
+                    instance.Handle, ApplicationInstanceLifecycle.Name(current));
+            }
+        }
+
+        internal static void OnApplicationTerminating(
+                ApplicationInstance instance, string reason) {
+            if (instance == null) return;
+            ApplicationServiceSessionTable.CleanupForInstance(
+                instance.Handle, reason ?? "application termination");
+        }
+
         public static bool TryValidateContext(
                 ApplicationServiceContext context,
                 ApplicationServiceId serviceId,
@@ -181,6 +268,76 @@ namespace guideXOS.OS {
             }
             result = ApplicationServiceResult.SuccessResult();
             return true;
+        }
+
+        private static bool TryValidateInteractiveRequestContext(
+                ApplicationServiceContext context,
+                ApplicationServiceId serviceId,
+                out ApplicationInstance instance,
+                out ApplicationServiceResult result) {
+            instance = null;
+            result = ApplicationServiceResult.InvalidContextResult();
+            if (!ApplicationServiceNames.IsKnown(serviceId) ||
+                    !IsRegistered(serviceId)) {
+                result = ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.Unsupported,
+                    "Application service is not registered");
+                return false;
+            }
+            if (!TryValidateCommonContext(context, out instance, out result)) {
+                return false;
+            }
+            if (context == null || !context.HasCapability(serviceId)) {
+                _invalidContextRejections++;
+                result = ApplicationServiceResult.InvalidContextResult();
+                return false;
+            }
+            if (instance.LifecycleState !=
+                    ApplicationInstanceLifecycleState.Running &&
+                    instance.LifecycleState !=
+                    ApplicationInstanceLifecycleState.Activated) {
+                _invalidContextRejections++;
+                result = ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.InvalidState,
+                    "New interaction requires a running application");
+                return false;
+            }
+            result = ApplicationServiceResult.SuccessResult();
+            return true;
+        }
+
+        private static ApplicationServiceResult TryValidateExistingRequestContext(
+                ApplicationServiceContext context,
+                ApplicationServiceRequestHandle handle,
+                out ApplicationServiceSessionRecord session) {
+            session = null;
+            if (!handle.IsValid) {
+                return ApplicationServiceResult.InvalidRequestResult();
+            }
+            if (!ApplicationServiceSessionTable.TryGet(handle, out session)) {
+                _staleContextRejections++;
+                return ApplicationServiceResult.InvalidContextResult();
+            }
+            ApplicationInstance instance;
+            ApplicationServiceResult result;
+            if (!TryValidateCommonContext(context, out instance, out result)) {
+                return result;
+            }
+            if (context.InstanceHandle != session.Owner ||
+                    context.ApplicationId != instance.DescriptorId) {
+                _invalidContextRejections++;
+                return ApplicationServiceResult.InvalidContextResult();
+            }
+            if (instance.LifecycleState !=
+                    ApplicationInstanceLifecycleState.Running &&
+                    instance.LifecycleState !=
+                    ApplicationInstanceLifecycleState.Activated &&
+                    instance.LifecycleState !=
+                    ApplicationInstanceLifecycleState.Inactive) {
+                _invalidContextRejections++;
+                return ApplicationServiceResult.InvalidContextResult();
+            }
+            return ApplicationServiceResult.SuccessResult();
         }
 
         /// <summary>
@@ -260,6 +417,9 @@ namespace guideXOS.OS {
                 Check(RunSystemInformationSelfTest(context,
                     accessCreated ? access : null),
                     "system information service", ref passed, ref failed,
+                    ref firstFailure);
+                Check(RunRequestSessionSelfTest(),
+                    "request session lifecycle", ref passed, ref failed,
                     ref firstFailure);
 
                 bool suspended = instance.TryTransition(
@@ -654,6 +814,76 @@ namespace guideXOS.OS {
                 "settings service self-test cleanup");
             _lastSettingsSelfTestFailure = passed ? "pass" : failure;
             return passed;
+        }
+
+        private static bool RunRequestSessionSelfTest() {
+            ApplicationInstance instance = null;
+            ApplicationServiceContext context = null;
+            ApplicationServiceRequestHandle firstHandle =
+                ApplicationServiceRequestHandle.Invalid;
+            ApplicationServiceRequestHandle secondHandle =
+                ApplicationServiceRequestHandle.Invalid;
+            ApplicationServiceRequestStatus<object> status;
+            ApplicationServiceResult result;
+            bool reused;
+            LaunchResult failure;
+            string id = "selftest.phase9.sessions";
+            bool started = ApplicationInstanceRegistry.TryBeginLaunch(
+                id, ApplicationInstancePolicy.MultiInstance,
+                LaunchRequest.ForAppId(id, null, null,
+                    LaunchActivationIntent.NewInstance), out instance, out reused,
+                out failure);
+            bool completed = started && instance != null &&
+                ApplicationInstanceRegistry.TryCompleteLaunch(instance, false,
+                    out failure) &&
+                TryCreateContext(instance.Handle, out context, out result);
+            bool passed = completed;
+            if (passed) {
+                result = BeginInteractiveRequest(context,
+                    ApplicationServiceId.Dialogs, "first", out firstHandle);
+                passed = result.Succeeded && firstHandle.IsValid;
+                result = BeginInteractiveRequest(context,
+                    ApplicationServiceId.Dialogs, "duplicate", out secondHandle);
+                passed = passed &&
+                    result.Code == ApplicationServiceResultCode.Conflict;
+                result = TryObserveRequest(context, firstHandle, out status);
+                passed = passed && result.Succeeded && status != null &&
+                    status.State == ApplicationServiceRequestState.Pending;
+
+                bool inactive = instance.TryTransition(
+                    ApplicationInstanceLifecycleState.Inactive);
+                result = TryObserveRequest(context, firstHandle, out status);
+                ApplicationServiceRequestHandle inactiveHandle;
+                ApplicationServiceResult inactiveCreate =
+                    BeginInteractiveRequest(context, ApplicationServiceId.Dialogs,
+                        "inactive", out inactiveHandle);
+                passed = passed && inactive && result.Succeeded &&
+                    inactiveCreate.Code == ApplicationServiceResultCode.InvalidState;
+
+                bool running = instance.TryTransition(
+                    ApplicationInstanceLifecycleState.Running);
+                passed = passed && running;
+                result = CompleteRequestForSelfTest(firstHandle, "completed");
+                result = TryObserveRequest(context, firstHandle, out status);
+                passed = passed && result.Succeeded && status != null &&
+                    status.State == ApplicationServiceRequestState.Completed &&
+                    (string)status.Value == "completed";
+
+                result = TryCancelRequest(context, firstHandle);
+                passed = passed && result.Code ==
+                    ApplicationServiceResultCode.Cancelled;
+            }
+
+            ApplicationInstanceHandle staleHandle =
+                instance == null ? ApplicationInstanceHandle.None : instance.Handle;
+            if (instance != null) {
+                ApplicationInstanceRegistry.TryTerminate(instance,
+                    "request session self-test cleanup");
+            }
+            result = TryObserveRequest(context, firstHandle, out status);
+            passed = passed && result.Code ==
+                ApplicationServiceResultCode.InvalidContext;
+            return passed && staleHandle.IsValid;
         }
 
         private static bool RunSystemInformationSelfTest(

@@ -280,7 +280,10 @@ namespace guideXOS.OS {
 
         internal bool TryTransition(ApplicationInstanceLifecycleState next) {
             if (!IsValidTransition(_state, next)) return false;
+            ApplicationInstanceLifecycleState previous = _state;
             _state = next;
+            ApplicationServiceRegistry.OnApplicationLifecycleChanged(
+                this, previous, next);
             return true;
         }
 
