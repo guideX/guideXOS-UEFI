@@ -1,3 +1,6 @@
+using guideXOS.GUI;
+using guideXOS.Kernel.Drivers;
+
 namespace guideXOS.OS {
     /// <summary>
     /// Fixed application-platform service table.  ApplicationInstanceRegistry
@@ -421,6 +424,9 @@ namespace guideXOS.OS {
                 Check(RunRequestSessionSelfTest(),
                     "request session lifecycle", ref passed, ref failed,
                     ref firstFailure);
+                Check(RunTransientServiceWindowSelfTest(),
+                    "transient service window ownership", ref passed,
+                    ref failed, ref firstFailure);
 
                 bool suspended = instance.TryTransition(
                     ApplicationInstanceLifecycleState.Suspended);
@@ -469,6 +475,108 @@ namespace guideXOS.OS {
             Check(clean, "service registry instance cleanup", ref passed,
                 ref failed, ref firstFailure);
             return failed == 0 && clean;
+        }
+
+        private static bool RunTransientServiceWindowSelfTest() {
+            if (WindowManager.Windows == null || Framebuffer.Graphics == null ||
+                    WindowManager.font == null) return true;
+
+            int startingEntries = TaskbarApplicationEntryRegistry.EntryCount;
+            int startingStaleOwnership =
+                ApplicationInstanceRegistry.StaleOwnershipCount;
+            ApplicationInstance instance = null;
+            ApplicationServiceContext context = null;
+            ApplicationServiceRequestHandle requestHandle =
+                ApplicationServiceRequestHandle.Invalid;
+            ServiceWindowProbe window = null;
+            bool result = false;
+            try {
+                bool reused;
+                LaunchResult failure;
+                bool started = ApplicationInstanceRegistry.TryBeginLaunch(
+                    "selftest.phase9.transient-window",
+                    ApplicationInstancePolicy.MultiInstance,
+                    LaunchRequest.ForAppId("selftest.phase9.transient-window",
+                        null, null, LaunchActivationIntent.NewInstance),
+                    out instance, out reused, out failure);
+                bool completed = started &&
+                    ApplicationInstanceRegistry.TryCompleteLaunch(instance,
+                        false, out failure);
+                ApplicationServiceResult serviceResult;
+                bool contextCreated = completed &&
+                    TryCreateContext(instance.Handle, out context,
+                        out serviceResult);
+                ApplicationServiceResult begun = contextCreated
+                    ? BeginInteractiveRequest(context,
+                        ApplicationServiceId.Dialogs, "transient", out requestHandle)
+                    : ApplicationServiceResult.InvalidContextResult();
+                int ownedBefore = instance == null ? -1 :
+                    instance.OwnedWindowCount;
+                ApplicationInstanceObservation beforeObservation =
+                    new ApplicationInstanceObservation(instance);
+                window = new ServiceWindowProbe();
+                bool registered = begun.Succeeded &&
+                    WindowManager.RegisterTransientServiceWindow(window,
+                        instance.Handle, requestHandle);
+                ApplicationServiceTransientWindowMetadata metadata;
+                bool metadataVisible =
+                    ApplicationServiceSessionTable.TryGetTransientOwner(
+                        window, out metadata);
+                TaskbarApplicationEntryRegistry.Reconcile();
+                ApplicationInstanceObservation afterObservation =
+                    new ApplicationInstanceObservation(instance);
+                bool ordinaryProjectionUnchanged =
+                    instance.OwnedWindowCount == ownedBefore &&
+                    afterObservation.OwnedWindowCount ==
+                        beforeObservation.OwnedWindowCount &&
+                    TaskbarApplicationEntryRegistry.EntryCount == startingEntries &&
+                    !TaskbarApplicationEntryRegistry.TryGetForWindow(window,
+                        out TaskbarApplicationEntry ignoredEntry);
+                bool semanticOwnership = registered && metadataVisible &&
+                    metadata.Owner == instance.Handle &&
+                    metadata.RequestHandle == requestHandle &&
+                    window.IsServiceSessionWindow;
+                bool terminated = instance != null &&
+                    ApplicationInstanceRegistry.TryTerminate(instance,
+                        "transient service window self-test cleanup");
+                WindowManager.CleanupClosedWindows();
+                TaskbarApplicationEntryRegistry.Reconcile();
+                bool windowRemoved = window != null &&
+                    !window.IsServiceSessionWindow;
+                bool sessionsCleaned =
+                    ApplicationServiceSessionTable.TransientWindowCount == 0 &&
+                    ApplicationServiceSessionTable.OrphanTransientWindowCount == 0;
+                bool staleUnchanged = ApplicationInstanceRegistry.StaleOwnershipCount ==
+                    startingStaleOwnership;
+                bool entriesUnchanged = TaskbarApplicationEntryRegistry.EntryCount ==
+                    startingEntries;
+                bool cleaned = terminated && windowRemoved && sessionsCleaned &&
+                    staleUnchanged && entriesUnchanged;
+                result = ordinaryProjectionUnchanged && semanticOwnership &&
+                    cleaned;
+            } catch {
+                result = false;
+            }
+            if (window != null && window.IsServiceSessionWindow) {
+                window.CloseForApplicationTermination();
+                WindowManager.CleanupClosedWindows();
+            }
+            if (instance != null &&
+                    ApplicationInstanceRegistry.TryGet(instance.Handle,
+                        out ApplicationInstance retained)) {
+                ApplicationInstanceRegistry.TryTerminate(retained,
+                    "transient service window assertion cleanup");
+            }
+            ApplicationServiceSessionTable.Reset();
+            return result;
+        }
+
+        private sealed class ServiceWindowProbe : Window {
+            internal ServiceWindowProbe() : base(40, 112, 160, 120) {
+                ShowInTaskbar = false;
+            }
+            public override void OnDraw() { }
+            public override void OnInput() { }
         }
 
         internal static bool TryRegisterForSelfTest(ApplicationServiceId id) {

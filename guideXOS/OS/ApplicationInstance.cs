@@ -1326,7 +1326,8 @@ namespace guideXOS.OS {
             if (start > WindowManager.Windows.Count) start = WindowManager.Windows.Count;
             for (int i = start; i < WindowManager.Windows.Count; i++) {
                 Window window = WindowManager.Windows[i];
-                if (window == null || window.ApplicationInstanceHandle.IsValid) continue;
+                if (window == null || window.IsServiceSessionWindow ||
+                        window.ApplicationInstanceHandle.IsValid) continue;
                 TryAttachWindow(instance, window);
             }
         }

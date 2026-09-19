@@ -287,6 +287,10 @@ namespace guideXOS.GUI {
         /// </summary>
         public static void FocusWindow(Window window) {
             if (window == null) return;
+            if (window.IsServiceSessionWindow) {
+                MoveToEnd(window);
+                return;
+            }
             if (!window.ApplicationInstanceHandle.IsValid) {
                 MoveToEnd(window);
                 return;
@@ -467,11 +471,37 @@ namespace guideXOS.GUI {
             var result = new List<Window>();
             for (int i = 0; i < Windows.Count; i++) {
                 var w = Windows[i];
-                if (w.ShowInStartMenu) {
+                if (!w.IsServiceSessionWindow && w.ShowInStartMenu) {
                     result.Add(w);
                 }
             }
             return result;
+        }
+
+        internal static bool RegisterTransientServiceWindow(Window window,
+                ApplicationInstanceHandle owner,
+                ApplicationServiceRequestHandle requestHandle) {
+            if (window == null || Windows == null ||
+                    Windows.IndexOf(window) < 0) return false;
+            // A service dialog is foreground graphical UI.  Reuse the
+            // existing bounded z-order normalization so a stale/duplicate
+            // list reference cannot survive into the service-session table.
+            MoveToEnd(window);
+            return ApplicationServiceSessionTable.RegisterTransientWindow(
+                window, owner, requestHandle);
+        }
+
+        internal static bool ReleaseTransientServiceWindow(Window window) {
+            bool released = ApplicationServiceSessionTable.ReleaseTransientWindow(window);
+            if (window != null && Windows != null) {
+                // Dispose is the final graphical boundary.  Remove every
+                // bounded duplicate reference so a stale list entry cannot
+                // keep a service window alive after its semantic session ends.
+                for (int i = Windows.Count - 1; i >= 0; i--) {
+                    if (Windows[i] == window) Windows.RemoveAt(i);
+                }
+            }
+            return released;
         }
 
         /// <summary>
@@ -480,6 +510,7 @@ namespace guideXOS.GUI {
         /// Legacy/unattached shell windows remain valid compatibility entries.
         /// </summary>
         internal static bool IsTaskbarEntryValid(Window window) {
+            if (window != null && window.IsServiceSessionWindow) return false;
             if (window == null || !window.ApplicationInstanceHandle.IsValid) return true;
             ApplicationInstance instance;
             if (ApplicationInstanceRegistry.TryGet(
@@ -528,7 +559,9 @@ namespace guideXOS.GUI {
                         string closedTitle = w.Title ?? "";
                         string closedInstance = w.ApplicationInstanceHandle.IsValid
                             ? w.ApplicationInstanceHandle.ToString() : "";
-                        ApplicationInstanceRegistry.OnWindowClosed(w);
+                        if (!w.IsServiceSessionWindow) {
+                            ApplicationInstanceRegistry.OnWindowClosed(w);
+                        }
                         w.Dispose();
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                         Program.MarkUefiAppRuntime("WINDOW_CLOSED=title=" +

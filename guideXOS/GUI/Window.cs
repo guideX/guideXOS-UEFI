@@ -33,6 +33,15 @@ namespace guideXOS.GUI {
         /// handle links the window to its application instance.
         /// </summary>
         internal ApplicationInstanceHandle ApplicationInstanceHandle { get; private set; }
+        /// <summary>
+        /// Service-session windows are graphical shell objects with semantic
+        /// requester metadata, not ordinary application content windows.
+        /// </summary>
+        internal bool IsServiceSessionWindow { get; private set; }
+        internal ApplicationInstanceHandle ServiceSessionOwner { get; private set; }
+        internal ApplicationServiceRequestHandle ServiceSessionRequestHandle {
+            get; private set;
+        }
         #region "private variables"
         /// <summary>
         /// Owner ID
@@ -773,7 +782,11 @@ namespace guideXOS.GUI {
         public virtual new void Dispose() {
             if (_disposed) return;
             _disposed = true;
-            ApplicationInstanceRegistry.OnWindowClosed(this);
+            if (IsServiceSessionWindow) {
+                WindowManager.ReleaseTransientServiceWindow(this);
+            } else {
+                ApplicationInstanceRegistry.OnWindowClosed(this);
+            }
             _visible = false;
             IsMinimized = false;
             IsTombstoned = false;
@@ -827,6 +840,21 @@ namespace guideXOS.GUI {
 
         internal void ClearApplicationInstance() {
             ApplicationInstanceHandle = ApplicationInstanceHandle.None;
+        }
+
+        internal void SetServiceSession(ApplicationInstanceHandle owner,
+                ApplicationServiceRequestHandle requestHandle) {
+            IsServiceSessionWindow = true;
+            ServiceSessionOwner = owner;
+            ServiceSessionRequestHandle = requestHandle;
+            ShowInTaskbar = false;
+            ShowInStartMenu = false;
+        }
+
+        internal void ClearServiceSession() {
+            IsServiceSessionWindow = false;
+            ServiceSessionOwner = ApplicationInstanceHandle.None;
+            ServiceSessionRequestHandle = ApplicationServiceRequestHandle.Invalid;
         }
 
         /// <summary>
