@@ -198,7 +198,7 @@ namespace guideXOS.GUI {
         /// <summary>
         /// Begin Fade Out Close
         /// </summary>
-        void BeginFadeOutClose() {
+        protected virtual void BeginFadeOutClose() {
             // Check if special effects are enabled
             if (UISettings.EnableSpecialWindowEffects) {
                 WindowEffectType effect = UISettings.WindowCloseEffect;

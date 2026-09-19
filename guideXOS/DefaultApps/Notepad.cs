@@ -1,5 +1,4 @@
 ﻿using guideXOS.FS;
-using guideXOS.FS;
 using guideXOS.GUI;
 using guideXOS.Kernel.Drivers;
 using guideXOS.OS;
@@ -28,9 +27,11 @@ namespace guideXOS.DefaultApps {
         private string _savedPath;
         private bool _dirty;
         private bool _wrap = true;
-        private SaveDialog _dlg;
-        private OpenDialog _openDlg;
-        private SaveChangesDialog _confirmDlg;
+        private ApplicationServiceRequestHandle _saveRequest;
+        private ApplicationServiceRequestHandle _openRequest;
+        private ApplicationServiceRequestHandle _confirmRequest;
+        private ApplicationServiceRequestHandle _messageRequest;
+        private Action _afterSave;
         private byte _lastScan; private bool _keyDown;
         // Status bar
         private int _statusH = 26;
@@ -59,7 +60,12 @@ namespace guideXOS.DefaultApps {
             ShowTombstone = true;
             ShowInStartMenu = true;
             Title = "Notepad";
-            _text = string.Empty; _clickLock = false; _savedPath = null; _dirty = false; _dlg = null; _openDlg = null; _confirmDlg = null;
+            _text = string.Empty; _clickLock = false; _savedPath = null; _dirty = false;
+            _saveRequest = ApplicationServiceRequestHandle.Invalid;
+            _openRequest = ApplicationServiceRequestHandle.Invalid;
+            _confirmRequest = ApplicationServiceRequestHandle.Invalid;
+            _messageRequest = ApplicationServiceRequestHandle.Invalid;
+            _afterSave = null;
             _k1 = 0; _k2 = 0;
             _cursorTick = 0; _cursorVisible = true;
             _undoStack = new List<string>(); _redoStack = new List<string>();
@@ -90,29 +96,137 @@ namespace guideXOS.DefaultApps {
         public override void OnSetVisible(bool value) {
             // Intercept close when there are unsaved changes
             if (!value && _dirty) {
-                if (_confirmDlg == null || !_confirmDlg.Visible) {
-                    _confirmDlg = new SaveChangesDialog(this, () => {
-                        // Save
-                        if (!string.IsNullOrEmpty(_savedPath)) {
-                            SaveTo(_savedPath);
-                            this.Visible = false;
-                        } else {
-                            // open save as
-                            OpenSaveAs(() => { this.Visible = false; });
-                        }
-                    }, () => {
-                        // Don't Save
-                        _dirty = false; this.Visible = false;
-                    }, () => {
-                        // Cancel close
-                        this.Visible = true;
-                    });
-                    WindowManager.MoveToEnd(_confirmDlg);
-                    _confirmDlg.Visible = true;
-                }
+                if (!_confirmRequest.IsValid) BeginCloseConfirmation();
                 // keep notepad visible until decision
                 this.Visible = true;
             }
+        }
+
+        protected override void BeginFadeOutClose() {
+            if (_dirty) {
+                if (!_confirmRequest.IsValid) BeginCloseConfirmation();
+                Visible = true;
+                return;
+            }
+            base.BeginFadeOutClose();
+        }
+
+        private bool HasServiceRequest() {
+            return _saveRequest.IsValid || _openRequest.IsValid ||
+                   _confirmRequest.IsValid || _messageRequest.IsValid;
+        }
+
+        private void BeginCloseConfirmation() {
+            if (_services == null || _services.Dialogs == null ||
+                    _serviceContext == null) return;
+            ApplicationDialogRequest request = ApplicationDialogRequest.Create(
+                ApplicationDialogKind.Confirmation, "Save changes?",
+                "The document has unsaved changes.",
+                ApplicationDialogButtonSet.AcceptRejectCancel);
+            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                _services.Dialogs.Begin(_serviceContext, request);
+            if (begun.Succeeded) _confirmRequest = begun.Value;
+        }
+
+        private void PollServiceRequests() {
+            if (_services == null || _serviceContext == null) return;
+            if (_openRequest.IsValid && _services.OpenFile != null) {
+                ApplicationServiceResult<ApplicationServiceRequestStatus<
+                    ApplicationFileDialogResult>> observed =
+                    _services.OpenFile.Observe(_serviceContext, _openRequest);
+                if (observed.Succeeded && observed.Value != null &&
+                        observed.Value.IsTerminal) {
+                    ApplicationFileDialogResult result = observed.Value.Value;
+                    _openRequest = ApplicationServiceRequestHandle.Invalid;
+                    if (observed.Value.State ==
+                            ApplicationServiceRequestState.Completed &&
+                            result != null && result.Outcome ==
+                            ApplicationFileDialogOutcome.Selected) {
+                        if (!OpenFile(result.SelectedPath)) {
+                            ShowError("Open failed", "The selected document could not be opened.");
+                        }
+                    }
+                }
+            }
+            if (_saveRequest.IsValid && _services.SaveFile != null) {
+                ApplicationServiceResult<ApplicationServiceRequestStatus<
+                    ApplicationFileDialogResult>> observed =
+                    _services.SaveFile.Observe(_serviceContext, _saveRequest);
+                if (observed.Succeeded && observed.Value != null &&
+                        observed.Value.IsTerminal) {
+                    ApplicationFileDialogResult result = observed.Value.Value;
+                    _saveRequest = ApplicationServiceRequestHandle.Invalid;
+                    if (observed.Value.State ==
+                            ApplicationServiceRequestState.Completed &&
+                            result != null && result.Outcome ==
+                            ApplicationFileDialogOutcome.Selected) {
+                        SaveTo(result.SelectedPath);
+                        Action afterSave = _afterSave;
+                        _afterSave = null;
+                        if (afterSave != null) afterSave();
+                    }
+                }
+            }
+            if (_confirmRequest.IsValid && _services.Dialogs != null) {
+                ApplicationServiceResult<ApplicationServiceRequestStatus<
+                    ApplicationDialogResult>> observed =
+                    _services.Dialogs.Observe(_serviceContext, _confirmRequest);
+                if (observed.Succeeded && observed.Value != null &&
+                        observed.Value.IsTerminal) {
+                    ApplicationDialogResult result = observed.Value.Value;
+                    _confirmRequest = ApplicationServiceRequestHandle.Invalid;
+                    if (observed.Value.State ==
+                            ApplicationServiceRequestState.Completed &&
+                            result != null && result.Outcome ==
+                            ApplicationDialogOutcome.Accepted) {
+                        if (!string.IsNullOrEmpty(_savedPath)) {
+                            SaveTo(_savedPath);
+                            Visible = false;
+                        } else {
+                            OpenSaveAs(() => { Visible = false; });
+                        }
+                    } else if (observed.Value.State ==
+                            ApplicationServiceRequestState.Completed &&
+                            result != null && result.Outcome ==
+                            ApplicationDialogOutcome.Rejected) {
+                        _dirty = false;
+                        Visible = false;
+                    } else {
+                        Visible = true;
+                    }
+                }
+            }
+            if (_messageRequest.IsValid && _services.Dialogs != null) {
+                ApplicationServiceResult<ApplicationServiceRequestStatus<
+                    ApplicationDialogResult>> observed =
+                    _services.Dialogs.Observe(_serviceContext, _messageRequest);
+                if (observed.Succeeded && observed.Value != null &&
+                        observed.Value.IsTerminal) {
+                    _messageRequest = ApplicationServiceRequestHandle.Invalid;
+                }
+            }
+        }
+
+        private void ShowInformation(string title, string body) {
+            if (_services == null || _services.Dialogs == null ||
+                    _serviceContext == null || HasServiceRequest()) return;
+            ApplicationDialogRequest request = ApplicationDialogRequest.Create(
+                ApplicationDialogKind.Information, title, body,
+                ApplicationDialogButtonSet.Acknowledge);
+            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                _services.Dialogs.Begin(_serviceContext, request);
+            if (begun.Succeeded) _messageRequest = begun.Value;
+        }
+
+        private void ShowError(string title, string body) {
+            if (_services == null || _services.Dialogs == null ||
+                    _serviceContext == null || HasServiceRequest()) return;
+            ApplicationDialogRequest request = ApplicationDialogRequest.Create(
+                ApplicationDialogKind.Error, title, body,
+                ApplicationDialogButtonSet.Acknowledge);
+            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                _services.Dialogs.Begin(_serviceContext, request);
+            if (begun.Succeeded) _messageRequest = begun.Value;
         }
 
         private static char MapFromKey(ConsoleKeyInfo key) {
@@ -179,13 +293,7 @@ namespace guideXOS.DefaultApps {
             // Always update key status pair for statusbar
             UpdateStatusKeys(key);
 
-            // Debug: show key info including modifiers
-            if (false) { // Set to true to enable debug
-                //Desktop.msgbox.SetText($"Scan: 0x{Keyboard.KeyInfo.ScanCode:X2} Char: '{key.KeyChar}' Key: {key.Key} Mods: {key.Modifiers}");
-                //Desktop.msgbox.Visible = true;
-            }
-
-            if ((_dlg != null && _dlg.Visible) || (_openDlg != null && _openDlg.Visible) || (_confirmDlg != null && _confirmDlg.Visible)) return; // let dialog handle keys when visible
+            if (HasServiceRequest()) return; // let the service dialog handle keys
             if (key.KeyState != ConsoleKeyState.Pressed) { _keyDown = false; _lastScan = 0; return; }
             if (_keyDown && Keyboard.KeyInfo.ScanCode == _lastScan) return; // de-bounce to avoid repeats
             _keyDown = true; _lastScan = (byte)Keyboard.KeyInfo.ScanCode;
@@ -205,22 +313,35 @@ namespace guideXOS.DefaultApps {
             byte[] data = new byte[_text.Length]; for (int i = 0; i < _text.Length; i++) data[i] = (byte)_text[i];
             File.WriteAllBytes(path, data); data.Dispose();
             _savedPath = path; _fileName = path.Substring(path.LastIndexOf('/') + 1); _dirty = false;
+            Title = "Notepad - " + _fileName;
             Desktop.InvalidateDirCache();
-            // Feedback
-            Desktop.msgbox.X = X + 40; Desktop.msgbox.Y = Y + 80;
-            Desktop.msgbox.SetText($"Saved: {path}");
-            WindowManager.MoveToEnd(Desktop.msgbox); Desktop.msgbox.Visible = true;
+            ShowInformation("Saved", "Saved: " + path);
             RecentManager.AddDocument(path, Icons.DocumentIcon(32));
         }
 
         private void OpenSaveAs(Action afterSaveClose = null) {
-            _dlg = new SaveDialog(X + 40, Y + 40, 520, 360, Desktop.Dir, _fileName, (p) => { SaveTo(p); afterSaveClose?.Invoke(); });
-            WindowManager.MoveToEnd(_dlg); _dlg.Visible = true;
+            if (_services == null || _services.SaveFile == null ||
+                    _serviceContext == null || HasServiceRequest()) return;
+            SaveFileRequest request = SaveFileRequest.Create(
+                Desktop.Dir ?? string.Empty, _fileName);
+            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                _services.SaveFile.Begin(_serviceContext, request);
+            if (begun.Succeeded) _saveRequest = begun.Value;
+            else ShowError("Save failed", begun.BoundedDiagnostic ??
+                "The save dialog could not be opened.");
+            _afterSave = afterSaveClose;
         }
 
         private void OpenOpenDialog() {
-            _openDlg = new OpenDialog(X + 40, Y + 40, 520, 360, Desktop.Dir, (p) => { OpenFile(p); });
-            WindowManager.MoveToEnd(_openDlg); _openDlg.Visible = true;
+            if (_services == null || _services.OpenFile == null ||
+                    _serviceContext == null || HasServiceRequest()) return;
+            OpenFileRequest request = OpenFileRequest.Create(
+                Desktop.Dir ?? string.Empty);
+            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                _services.OpenFile.Begin(_serviceContext, request);
+            if (begun.Succeeded) _openRequest = begun.Value;
+            else ShowError("Open failed", begun.BoundedDiagnostic ??
+                "The open dialog could not be opened.");
         }
 
         private void PushUndo() {
@@ -264,7 +385,8 @@ namespace guideXOS.DefaultApps {
 
         public override void OnInput() {
             EnsureWrapSettingLoaded();
-            base.OnInput(); if ((_dlg != null && _dlg.Visible) || (_openDlg != null && _openDlg.Visible) || (_confirmDlg != null && _confirmDlg.Visible)) return;
+            PollServiceRequests();
+            base.OnInput(); if (HasServiceRequest()) return;
             bool left = Control.MouseButtons.HasFlag(MouseButtons.Left);
             int mx = Control.MousePosition.X; int my = Control.MousePosition.Y;
             int bxSaveAs = X + _padding; int by = Y + _padding;
@@ -299,6 +421,7 @@ namespace guideXOS.DefaultApps {
 
         public override void OnDraw() {
             EnsureWrapSettingLoaded();
+            PollServiceRequests();
             base.OnDraw(); int cx = X + _padding; int cy = Y + _padding; int cw = Width - _padding * 2; int ch = Height - _padding * 2;
             // Buttons
             int bxSaveAs = cx; int by = cy;
@@ -401,6 +524,123 @@ namespace guideXOS.DefaultApps {
             UIPrimitives.DrawRoundedRect(x, y, w, h, 0xFF3F7FBF, 1, 6);
             WindowManager.font.DrawString(x + padX, y + (h / 2 - WindowManager.font.FontSize / 2), text);
             return x; // return new left edge to continue placing leftwards
+        }
+
+        internal bool RunPhase9ServiceDiagnostic(
+                ApplicationServiceContext otherContext,
+                ApplicationServiceAccess otherServices) {
+            int baselineActive = ApplicationInstanceRegistry.ActiveCount;
+            bool crossOwnerRejected = false;
+            bool openSuccess = false;
+            bool openCancel = false;
+            bool saveSuccess = false;
+            bool saveCancel = false;
+            bool confirmation = false;
+            try {
+                if (_serviceContext == null || _services == null ||
+                        _services.OpenFile == null ||
+                        _services.SaveFile == null ||
+                        _services.Dialogs == null || otherContext == null ||
+                        otherServices == null) return false;
+
+                OpenOpenDialog();
+                ApplicationServiceRequestHandle openHandle = _openRequest;
+                crossOwnerRejected = openHandle.IsValid &&
+                    otherServices.OpenFile.Observe(otherContext, openHandle).Code ==
+                    ApplicationServiceResultCode.InvalidContext;
+                if (!openHandle.IsValid) return false;
+                ApplicationServiceResult completed =
+                    ApplicationServiceRegistry.CompleteFileDialogRequestForSelfTest(
+                        openHandle, ApplicationFileDialogOutcome.Selected,
+                        "Programs/notepad.gxm");
+                PollServiceRequests();
+                openSuccess = completed.Succeeded &&
+                    _savedPath == "Programs/notepad.gxm" &&
+                    _fileName == "notepad.gxm" &&
+                    !_dirty && Title == "Notepad - notepad.gxm";
+
+                string pathBeforeCancel = _savedPath;
+                OpenOpenDialog();
+                ApplicationServiceRequestHandle cancelOpenHandle = _openRequest;
+                ApplicationServiceResult cancelled = cancelOpenHandle.IsValid
+                    ? _services.OpenFile.Cancel(_serviceContext,
+                        cancelOpenHandle) : ApplicationServiceResult.InvalidRequestResult();
+                PollServiceRequests();
+                openCancel = cancelled.Code == ApplicationServiceResultCode.Cancelled &&
+                    _savedPath == pathBeforeCancel;
+
+                _text = "Phase 9 save";
+                _dirty = true;
+                OpenSaveAs();
+                ApplicationServiceRequestHandle saveHandle = _saveRequest;
+                completed = saveHandle.IsValid
+                    ? ApplicationServiceRegistry.CompleteFileDialogRequestForSelfTest(
+                        saveHandle, ApplicationFileDialogOutcome.Selected,
+                        "Programs/phase9.txt")
+                    : ApplicationServiceResult.InvalidRequestResult();
+                PollServiceRequests();
+                CompleteDiagnosticMessage();
+                saveSuccess = completed.Succeeded &&
+                    _savedPath == "Programs/phase9.txt" &&
+                    _fileName == "phase9.txt" && !_dirty &&
+                    Title == "Notepad - phase9.txt";
+
+                _text = "Phase 9 cancelled save";
+                _dirty = true;
+                OpenSaveAs();
+                ApplicationServiceRequestHandle cancelSaveHandle = _saveRequest;
+                cancelled = cancelSaveHandle.IsValid
+                    ? _services.SaveFile.Cancel(_serviceContext,
+                        cancelSaveHandle) : ApplicationServiceResult.InvalidRequestResult();
+                PollServiceRequests();
+                saveCancel = cancelled.Code == ApplicationServiceResultCode.Cancelled &&
+                    _dirty && _savedPath == "Programs/phase9.txt";
+
+                Visible = false;
+                ApplicationServiceRequestHandle confirmationHandle = _confirmRequest;
+                completed = confirmationHandle.IsValid
+                    ? ApplicationServiceRegistry.CompleteDialogRequestForSelfTest(
+                        confirmationHandle, ApplicationDialogOutcome.Cancelled)
+                    : ApplicationServiceResult.InvalidRequestResult();
+                PollServiceRequests();
+                confirmation = completed.Succeeded && _dirty && Visible;
+
+                bool cleanup = !_saveRequest.IsValid && !_openRequest.IsValid &&
+                    !_confirmRequest.IsValid && !_messageRequest.IsValid &&
+                    ApplicationServiceSessionTable.TransientWindowCount == 0 &&
+                    ApplicationServiceSessionTable.OrphanTransientWindowCount == 0 &&
+                    ApplicationInstanceRegistry.ActiveCount == baselineActive;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                global::Program.MarkUefiAppRuntime("NOTEPAD_OPEN_SUCCESS=" +
+                    (openSuccess ? "PASS" : "FAIL"));
+                global::Program.MarkUefiAppRuntime("NOTEPAD_OPEN_CANCEL=" +
+                    (openCancel ? "PASS" : "FAIL"));
+                global::Program.MarkUefiAppRuntime("NOTEPAD_SAVE_SUCCESS=" +
+                    (saveSuccess ? "PASS" : "FAIL"));
+                global::Program.MarkUefiAppRuntime("NOTEPAD_SAVE_CANCEL=" +
+                    (saveCancel ? "PASS" : "FAIL"));
+                global::Program.MarkUefiAppRuntime("NOTEPAD_CONFIRMATION=" +
+                    (confirmation ? "PASS" : "FAIL"));
+                global::Program.MarkUefiAppRuntime("NOTEPAD_CROSS_OWNER=" +
+                    (crossOwnerRejected ? "PASS" : "FAIL"));
+                global::Program.MarkUefiAppRuntime("NOTEPAD_DIALOG_CLEANUP=" +
+                    (cleanup ? "PASS" : "FAIL"));
+#endif
+                return openSuccess && openCancel && saveSuccess && saveCancel &&
+                    confirmation && crossOwnerRejected && cleanup;
+            } catch {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                global::Program.MarkUefiAppRuntime("NOTEPAD_SERVICE_DIAGNOSTIC=EXCEPTION");
+#endif
+                return false;
+            }
+        }
+
+        private void CompleteDiagnosticMessage() {
+            if (!_messageRequest.IsValid) return;
+            ApplicationServiceRegistry.CompleteDialogRequestForSelfTest(
+                _messageRequest, ApplicationDialogOutcome.Accepted);
+            PollServiceRequests();
         }
 
         public override void Dispose() {

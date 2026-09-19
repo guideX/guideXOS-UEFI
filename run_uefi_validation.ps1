@@ -603,13 +603,18 @@ function Open-QmpStartApplication {
     Send-QmpMonitorKey $Qmp 'a'
     Start-Sleep -Milliseconds 120
     $closedBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED='
-    Close-QmpLastLaunchedWindow $Qmp
+    Close-QmpLastLaunchedWindow $Qmp `
+        -AllowNotepadConfirmation:($Name -eq 'Notepad')
     Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
     Start-Sleep -Milliseconds 160
 }
 
 function Close-QmpLastLaunchedWindow {
-    param($Qmp)
+    param(
+        $Qmp,
+        [switch]$AllowNotepadConfirmation,
+        [int]$ConfirmationBefore = 0
+    )
     if (-not (Test-Path -LiteralPath $serialPath)) {
         throw 'No runtime serial log is available for launch bounds.'
     }
@@ -634,6 +639,16 @@ function Close-QmpLastLaunchedWindow {
             Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 1800
             return
         } catch {
+            if ($AllowNotepadConfirmation) {
+                # The bounded workload sends one key to every launched app,
+                # so its Notepad close is intentionally dirty. Choose Don't
+                # Save through the service confirmation session and preserve
+                # the existing close-count proof.
+                Set-QmpPointer $Qmp 253 236
+                Send-QmpMouseClick $Qmp 'left'
+                Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+                return
+            }
             # Preserve the normal title-bar proof first, but use the existing
             # global Escape close route when a heavy built-in has not yet
             # accepted title-bar input.  This avoids leaving a valid window

@@ -1,4 +1,5 @@
 using System;
+using guideXOS.DefaultApps;
 using guideXOS.GUI;
 using guideXOS.Kernel.Drivers;
 
@@ -1983,6 +1984,16 @@ namespace guideXOS.OS {
                         out taskManagerContext, out taskManagerServices,
                         out serviceResult);
 
+                Notepad notepadWindow1 = notepad1 == null ? null :
+                    notepad1.GetOwnedWindowAt(0) as Notepad;
+                Notepad notepadWindow2 = notepad2 == null ? null :
+                    notepad2.GetOwnedWindowAt(0) as Notepad;
+                bool notepadDialogFlows = contexts && notepadWindow1 != null &&
+                    notepadWindow2 != null &&
+                    Activate(notepad1.Handle).Success &&
+                    notepadWindow1.RunPhase9ServiceDiagnostic(
+                        notepad2Context, notepad2Services);
+
                 if (contexts) {
                     ApplicationNotificationRequest request =
                         ApplicationNotificationRequest.Create(
@@ -2031,7 +2042,7 @@ namespace guideXOS.OS {
                     (WindowManager.Windows == null ? 0 :
                         WindowManager.Windows.Count) == baselineWindows &&
                     StaleOwnershipCount == baselineStaleOwnership;
-                bool passed = notification && sharedSettings && snapshot &&
+                bool passed = notepadDialogFlows && notification && sharedSettings && snapshot &&
                     staleRejected && cleanup;
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                 Program.MarkUefiAppRuntime(
