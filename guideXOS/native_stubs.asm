@@ -360,6 +360,9 @@ Ring3ResumeStub:
 
 R3PayloadStart:
     mov r12, R3_CONTEXT_SENTINEL
+    mov rdi, R3_USER_DATA + 0x300
+    mov rax, 0xA15A15A15A15A15
+    mov [rdi], rax              ; process-private isolation sentinel
     mov ecx, 0x01000000         ; deterministic preemption workload
 .preempt_loop:
     dec ecx

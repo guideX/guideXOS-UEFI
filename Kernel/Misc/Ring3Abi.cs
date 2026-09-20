@@ -237,6 +237,7 @@ namespace guideXOS.Misc {
                 result.Value.Architecture);
             Native.Movsb((void*)request.ResponseBuffer, &response,
                 (ulong)sizeof(Ring3SystemInformationResponse));
+            process.RecordServiceRequestSuccess();
             Marker("RING3_SERVICE_RESPONSE_SERIALIZED=1");
             Marker("RING3_SERVICE_RESPONSE_COPIED_OUT=1");
             return Success;

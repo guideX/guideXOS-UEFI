@@ -1,9 +1,10 @@
 # guideXOS App Model Convergence
 
-**Status:** Phase 14 scheduler-managed Ring 3 and first copied
-System Information IPC complete; Phase 11 clipboard remains complete and
-Phase 10 remains accepted Outcome B
-**Date:** 2026-09-19
+**Status:** Phase 15 process-generation reuse and isolation complete as
+Outcome A; Phase 14 scheduler-managed Ring 3 and copied System Information
+IPC remain complete; Phase 11 clipboard remains complete and Phase 10
+remains accepted Outcome B
+**Date:** 2026-09-20
 **Scope:** guideXOS Server ↔ guideXOS C# UEFI application platform  
 **Outcome:** Outcome B remains the accepted Phase 10 storage result — applications
 request logical packaged resources and application-scoped storage through
@@ -2615,3 +2616,57 @@ without a kernel fault. It also validates known response version/size and
 memory invariants in user mode. `Ring3Direct` remains available as the Phase
 13 synchronous regression selector; no managed application has been migrated
 to Ring 3.
+
+## 29. Phase 15 process-generation reuse and isolation
+
+Phase 15 is **Outcome A**. It proves that a fixed process-table slot may be
+reused without reusing the identity, memory lifetime, thread state, kernel
+stack ownership, or App Model authority of the prior process lifetime. The
+defining invariant is:
+
+> `(slot, generation)` identifies exactly one process lifetime.
+
+Generation advances at reservation, never at invalidation, reserves `0` as
+invalid, and wraps deterministically from `0xFFFFFFFF` to `1`. A process
+handle is resolved only when its slot, generation, packed value, and live
+object all agree. Cleanup clears the slot, so an A handle cannot resolve to a
+later B process even when both use slot `0`.
+
+The bounded `Ring3Phase15` diagnostic runs eight lifetimes. It exercises
+normal exit, invalid input, invalid service buffers, and deliberate CPL3
+fault, with deterministic slot reuse. The normal A→B sequence reuses slot 0,
+changes generation 1→2, rejects A's process, ApplicationInstance, service
+context, and user-thread references, gives B a fresh CR3, private data page,
+user stack, kernel stack, and TSS `RSP0`, and completes copied System
+Information IPC. The faulted-A→B sequence proves fault metadata and terminal
+state do not cross the generation boundary.
+
+Teardown is lifetime-scoped and idempotent. It removes terminal user threads
+from scheduler structures before reclaiming their kernel stacks and private
+address spaces, releases tracked page-table branches and user backing pages,
+clears process and fault fields, detaches the diagnostic ApplicationInstance,
+and invalidates the generation-safe process handle. Reclamation is guarded
+against an active CR3/current process. The diagnostic cohort ended with:
+
+```text
+RING3_PHASE15_REPEATED_GENERATIONS=4
+RING3_PHASE15_ADDRESS_SPACES_CREATED=8
+RING3_PHASE15_ADDRESS_SPACES_RECLAIMED=8
+RING3_PHASE15_PAGE_TABLES_CREATED=48
+RING3_PHASE15_PAGE_TABLES_RECLAIMED=48
+RING3_PHASE15_KERNEL_STACKS_CREATED=8
+RING3_PHASE15_KERNEL_STACKS_RECLAIMED=8
+RING3_PHASE15_USER_PAGES_CREATED=144
+RING3_PHASE15_USER_PAGES_RECLAIMED=144
+RING3_PHASE15_USER_MAPPINGS_LIVE=0
+RING3_PHASE15_LIVE_PROCESS_HANDLES=0
+RING3_PHASE15_LIVE_USER_THREADS=0
+RING3_PHASE15_DIAGNOSTIC_INSTANCES=0
+RING3_PHASE15_COMPLETE=1
+```
+
+The diagnostic retained the Phase 13 direct selector and Phase 14 scheduled
+selector. App Model, lifecycle, taskbar/grouping, Phase 8–11 service,
+AppRuntime, NativeInput, ContextMenu, and production Continuous regressions
+remained green. This phase adds no managed Ring 3 application, GUI IPC,
+shared memory, or broader application feature surface.

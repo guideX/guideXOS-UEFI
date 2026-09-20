@@ -1480,7 +1480,7 @@ unsafe class Program {
                 _uefiMultiFrameStartTicks.ToString());
 
             int uefiFrame = 0;
-#if UEFI_DIAGNOSTIC_RING3
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15
             bool ring3SchedulingEnabled = false;
 #endif
             for (;;) {
@@ -1494,7 +1494,7 @@ unsafe class Program {
                         return;
                     }
                     _uefiMultiFrameLastCompletedFrame = uefiFrame;
-#if UEFI_DIAGNOSTIC_RING3
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15
                     Ring3Proof.ObserveDesktopHeartbeat();
 #endif
                     if (!EmitUefiContinuousHeartbeat(uefiFrame)) {
@@ -1502,7 +1502,7 @@ unsafe class Program {
                         HaltAfterUefiContinuous();
                         return;
                     }
-#if UEFI_DIAGNOSTIC_RING3
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15
                     if (!ring3SchedulingEnabled && uefiFrame == 1) {
                         // Establish one real desktop frame first so the
                         // scheduler's bootstrap context contains the normal

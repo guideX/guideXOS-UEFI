@@ -70,6 +70,9 @@
 .PARAMETER Ring3
     Run the bounded first native CPL3/process-boundary proof.
 
+.PARAMETER Ring3Phase15
+    Run the bounded process-generation reuse and isolation proof.
+
 .PARAMETER Ring3Direct
     Run the retained synchronous Phase 13 CPL3 regression selector.
 
@@ -102,6 +105,7 @@ param(
     [switch]$AppModel,
     [switch]$AppRuntime,
     [switch]$Ring3,
+    [switch]$Ring3Phase15,
     [switch]$Ring3Direct,
     [Alias('Input')]
     [switch]$NativeInput,
@@ -133,6 +137,7 @@ $selectorCount = @(
     $(if ($AppModel) { 1 } else { 0 }),
     $(if ($AppRuntime) { 1 } else { 0 }),
     $(if ($Ring3) { 1 } else { 0 }),
+    $(if ($Ring3Phase15) { 1 } else { 0 }),
     $(if ($Ring3Direct) { 1 } else { 0 }),
     $(if ($NativeInput) { 1 } else { 0 }),
     $(if ($NativeInputStress) { 1 } else { 0 }),
@@ -157,6 +162,7 @@ if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Font -and
     -not $Background -and -not $BackgroundRotation -and
     -not $AppModel -and -not $AppRuntime -and -not $Ring3 -and
+    -not $Ring3Phase15 -and
     -not $Ring3Direct -and
     -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
     -not $ContextMenuSoak -and -not $Widget -and -not $WidgetStress -and
@@ -184,6 +190,8 @@ if ($Tiny) {
     $diagnosticMode = 'AppRuntime'
 } elseif ($Ring3) {
     $diagnosticMode = 'Ring3'
+} elseif ($Ring3Phase15) {
+    $diagnosticMode = 'Ring3Phase15'
 } elseif ($Ring3Direct) {
     $diagnosticMode = 'Ring3Direct'
 } elseif ($Frames -gt 0) {
@@ -203,7 +211,7 @@ if ($Tiny) {
 }
 $isWidgetValidation = $diagnosticMode -in @('Widget', 'WidgetStress', 'WidgetSoak')
 $isAppModelValidation = $diagnosticMode -eq 'AppModel'
-$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Ring3', 'Ring3Direct', 'Widget', 'WidgetStress')
+$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Ring3', 'Ring3Phase15', 'Ring3Direct', 'Widget', 'WidgetStress')
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu')
 $isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress')
 $isAppRuntimeValidation = $diagnosticMode -eq 'AppRuntime'
@@ -220,6 +228,7 @@ $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'AppModel' { 'APP_MODEL_COMPLETE'; break }
     'AppRuntime' { 'APP_RUNTIME_COMPLETE'; break }
     'Ring3' { 'RING3_PROOF_COMPLETE=1'; break }
+    'Ring3Phase15' { 'RING3_PHASE15_COMPLETE=1'; break }
     'Ring3Direct' { 'RING3_PROOF_RETURNED_TO_ENTRYPOINT=1'; break }
     'Widget' { 'WIDGET_COMPLETE'; break }
     'WidgetStress' { 'WIDGET_STRESS_COMPLETE'; break }

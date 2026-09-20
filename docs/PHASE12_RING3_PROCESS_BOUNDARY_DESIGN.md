@@ -2,8 +2,8 @@
 
 ## Ring 3 process boundary and IPC architecture proposal
 
-**Status:** Phase 14 accepted — Outcome A. Sections 1–27 preserve the original
-design record; implementation results are recorded in Sections 28–29.
+**Status:** Phase 15 accepted — Outcome A. Sections 1–27 preserve the original
+design record; implementation results are recorded in Sections 28–30.
 
 **Audit date:** 2026-09-20
 
@@ -1057,3 +1057,44 @@ The final scheduler selector reached `RING3_PROOF_COMPLETE=1` with successful
 service dispatch and invalid-service-buffer coverage. The production selector
 still uses the in-kernel application model; no managed application moved to
 Ring 3.
+
+## 30. Phase 15 process reuse, generation safety, and isolation
+
+Phase 15 is **Outcome A**. It establishes the process-lifetime invariant that
+a physical process-table slot may be reused, but `(slot, generation)` names
+exactly one lifetime. Generation changes during reservation, generation zero
+is invalid, and rollover from the maximum `uint` generation returns to `1`.
+Invalidation clears the slot without a second generation increment. Resolution
+validates the complete handle before returning process state.
+
+The `Ring3Phase15` selector intentionally reuses the first available slot.
+Process A exits normally, is fully reclaimed, and is followed by Process B in
+the same slot with a new generation-safe handle and a new ApplicationInstance.
+The diagnostic rejects A's stale process handle, owner handle, service
+context, and terminated user-thread reference while B is live. B receives a
+fresh initialized user data page, private CR3, user stack, kernel stack, and
+TSS `RSP0`; it enters CPL3, is preempted/resumed, and completes copied System
+Information IPC. A's private sentinel never becomes B's logical state.
+
+The second acceptance sequence faults A in CPL3 and then starts B. The fault
+record, RIP, CR2, error state, terminal state, and terminal-thread ownership
+are cleared before B is dispatched. Four additional bounded lifetimes mix
+invalid input, invalid service buffers, deliberate fault, and normal exit.
+
+Process teardown now removes terminal user threads from scheduler queues before
+reclaiming kernel stacks, user code/data/stack pages, tracked private page-table
+branches, and the CR3 root. Cleanup refuses to reclaim an address space while
+its process is current or its CR3 is active. It then clears lifetime-specific
+process, thread, fault, service, and App Model owner state and invalidates the
+process slot. The diagnostic cohort reports balanced address-space/page-table
+and kernel-stack counters, zero live mappings, zero live process handles, zero
+live user threads, zero diagnostic ApplicationInstances, zero stale service
+contexts, 144 user pages created/reclaimed, zero allocator
+corruption/exhaustion, and an observed desktop heartbeat after cleanup.
+
+The bounded result is eight process lifetimes with
+`RING3_PHASE15_COMPLETE=1`. The existing `Ring3Direct` Phase 13 proof,
+`Ring3` Phase 14 scheduler/service proof, App Model and Phase 8–11 service
+regressions, AppRuntime, NativeInput, ContextMenu, and production Continuous
+selectors remained green. No Server, Advanced Server, or Historical Legacy
+source was modified. Managed Ring 3 and broader IPC remain future work.

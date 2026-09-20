@@ -268,6 +268,16 @@ namespace guideXOS.Misc {
             }
 #endif
 
+#if UEFI_DIAGNOSTIC_RING3_PHASE15
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                // Phase 15 keeps the Phase 14 selector intact and runs the
+                // bounded process-generation reuse/isolation fixture through
+                // the ordinary IRQ0 scheduler.
+                Ring3Proof.SchedulePhase15();
+                BootConsole.WriteLine("RING3_PHASE15_QUEUED_FOR_SCHEDULER=1");
+            }
+#endif
+
 #if UEFI_DIAGNOSTIC_RING3_DIRECT
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
                 // Retained Phase 13 regression fixture: synchronous direct

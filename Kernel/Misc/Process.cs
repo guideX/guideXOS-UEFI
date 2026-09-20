@@ -1,24 +1,79 @@
 using System;
 
 namespace guideXOS.Misc {
+    internal static class Ring3ProcessDiagnostics {
+        internal static int AddressSpacesCreated;
+        internal static int AddressSpacesReclaimed;
+        internal static int PageTablesCreated;
+        internal static int PageTablesReclaimed;
+        internal static int UserCodePagesCreated;
+        internal static int UserCodePagesReclaimed;
+        internal static int UserDataPagesCreated;
+        internal static int UserDataPagesReclaimed;
+        internal static int UserStackPagesCreated;
+        internal static int UserStackPagesReclaimed;
+        internal static int KernelStacksCreated;
+        internal static int KernelStacksReclaimed;
+        internal static int StaleHandleRejections;
+
+        internal static int LiveAddressSpaces {
+            get { return AddressSpacesCreated - AddressSpacesReclaimed; }
+        }
+
+        internal static int LiveKernelStacks {
+            get { return KernelStacksCreated - KernelStacksReclaimed; }
+        }
+
+        internal static int LiveUserMappings {
+            get {
+                return (UserCodePagesCreated - UserCodePagesReclaimed) +
+                       (UserDataPagesCreated - UserDataPagesReclaimed) +
+                       (UserStackPagesCreated - UserStackPagesReclaimed);
+            }
+        }
+
+        internal static void RecordPageTablesCreated(int count) {
+            if (count > 0) PageTablesCreated += count;
+        }
+
+        internal static bool IsBalanced {
+            get {
+                return LiveAddressSpaces == 0 &&
+                       PageTablesCreated == PageTablesReclaimed &&
+                       UserCodePagesCreated == UserCodePagesReclaimed &&
+                       UserDataPagesCreated == UserDataPagesReclaimed &&
+                       UserStackPagesCreated == UserStackPagesReclaimed &&
+                       LiveKernelStacks == 0;
+            }
+        }
+    }
+
     public unsafe class AddressSpace {
         public ulong* Pml4;
         public ulong RootPhysical => (ulong)Pml4 & PageTable.PageMask;
         private readonly ulong[] _ownedPageTables = new ulong[32];
         private int _ownedPageTableCount;
+        private bool _released;
 
         public AddressSpace() {
             Pml4 = (ulong*)Allocator.Allocate(0x1000);
             if (Pml4 == null) return;
             Native.Movsb(Pml4, PageTable.CurrentRoot, 0x1000);
+            Ring3ProcessDiagnostics.AddressSpacesCreated++;
         }
+
+        internal int OwnedPageTableCount => _ownedPageTableCount;
+        internal bool IsReleased => _released;
 
         public bool MapUser(ulong virtualAddress, ulong physicalAddress,
                             bool writable, bool executable) {
             if (Pml4 == null) return false;
+            int before = _ownedPageTableCount;
             PageTable.MapOnRootTracked(Pml4, virtualAddress, physicalAddress,
                 user: true, writable: writable, executable: executable,
                 _ownedPageTables, ref _ownedPageTableCount);
+            Ring3ProcessDiagnostics.RecordPageTablesCreated(
+                _ownedPageTableCount - before);
             ulong translated;
             return PageTable.TryTranslateUser(Pml4, virtualAddress,
                                                writable, out translated) &&
@@ -27,15 +82,20 @@ namespace guideXOS.Misc {
         }
 
         public void Release() {
+            if (_released) return;
+            _released = true;
             for (int i = _ownedPageTableCount - 1; i >= 0; i--) {
-                if (_ownedPageTables[i] != 0)
+                if (_ownedPageTables[i] != 0) {
                     Allocator.Free((IntPtr)_ownedPageTables[i]);
+                    Ring3ProcessDiagnostics.PageTablesReclaimed++;
+                }
                 _ownedPageTables[i] = 0;
             }
             _ownedPageTableCount = 0;
             if (Pml4 != null) {
                 Allocator.Free((IntPtr)Pml4);
                 Pml4 = null;
+                Ring3ProcessDiagnostics.AddressSpacesReclaimed++;
             }
         }
     }
@@ -72,11 +132,15 @@ namespace guideXOS.Misc {
         internal static readonly Ring3Process[] Slots = new Ring3Process[Capacity];
         internal static readonly uint[] Generations = new uint[Capacity];
 
+        internal static uint NextGeneration(uint current) {
+            return current == 0xFFFFFFFFU ? 1U : current + 1U;
+        }
+
         internal static bool Reserve(out int slot, out uint generation) {
             for (int i = 0; i < Capacity; i++) {
                 if (Slots[i] == null) {
-                    generation = ++Generations[i];
-                    if (generation == 0) generation = ++Generations[i];
+                    generation = NextGeneration(Generations[i]);
+                    Generations[i] = generation;
                     slot = i;
                     return true;
                 }
@@ -88,18 +152,42 @@ namespace guideXOS.Misc {
 
         internal static Ring3Process Resolve(Ring3ProcessHandle handle) {
             int slot = handle.Slot;
-            if (!handle.IsValid || slot < 0 || slot >= Capacity) return null;
+            if (!handle.IsValid || handle.Generation == 0 ||
+                slot < 0 || slot >= Capacity) {
+                Ring3ProcessDiagnostics.StaleHandleRejections++;
+                return null;
+            }
             Ring3Process process = Slots[slot];
-            return process != null && process.Handle.Value == handle.Value ? process : null;
+            if (process == null || process.Handle.Slot != handle.Slot ||
+                process.Handle.Generation != handle.Generation ||
+                process.Handle.Value != handle.Value) {
+                Ring3ProcessDiagnostics.StaleHandleRejections++;
+                return null;
+            }
+            return process;
         }
 
         internal static void Invalidate(Ring3Process process) {
             int slot = process.Handle.Slot;
             if (slot >= 0 && slot < Capacity && Slots[slot] == process) {
                 Slots[slot] = null;
-                Generations[slot]++;
-                if (Generations[slot] == 0) Generations[slot]++;
             }
+        }
+
+        internal static int LiveCount {
+            get {
+                int count = 0;
+                for (int i = 0; i < Capacity; i++)
+                    if (Slots[i] != null) count++;
+                return count;
+            }
+        }
+
+        internal static bool GenerationRolloverSelfTest() {
+            return NextGeneration(0) == 1U &&
+                   NextGeneration(1) == 2U &&
+                   NextGeneration(0xFFFFFFFEU) == 0xFFFFFFFFU &&
+                   NextGeneration(0xFFFFFFFFU) == 1U;
         }
     }
 
@@ -123,9 +211,15 @@ namespace guideXOS.Misc {
         public ulong OwningApplicationInstance { get; private set; }
         public int TimerPreemptions { get; private set; }
         public int SchedulerDispatches { get; private set; }
+        public int ServiceRequestsSucceeded { get; private set; }
         public bool SchedulerCr3Valid { get; private set; }
         public bool SchedulerRsp0Valid { get; private set; }
         public bool UserRspPreserved { get; private set; }
+        internal ulong UserCodePhysical => _userCodePhysical;
+        internal ulong UserDataPhysical => _userDataPhysical;
+        internal ulong UserStackPhysical => _userStackPhysical;
+        internal bool IsCleaned => _cleaned;
+        internal const ulong UserDataSentinelOffset = 0x300UL;
 
         private ulong _userCodePhysical;
         private ulong _userDataPhysical;
@@ -192,6 +286,13 @@ namespace guideXOS.Misc {
             candidate._userCodePhysical = (ulong)Allocator.Allocate(PageSize);
             candidate._userDataPhysical = (ulong)Allocator.Allocate(PageSize);
             candidate._userStackPhysical = (ulong)Allocator.Allocate(UserStackSize);
+            if (candidate._userCodePhysical != 0)
+                Ring3ProcessDiagnostics.UserCodePagesCreated++;
+            if (candidate._userDataPhysical != 0)
+                Ring3ProcessDiagnostics.UserDataPagesCreated++;
+            if (candidate._userStackPhysical != 0)
+                Ring3ProcessDiagnostics.UserStackPagesCreated +=
+                    (int)(UserStackSize / PageSize);
             if (candidate._userCodePhysical == 0 || candidate._userDataPhysical == 0 ||
                 candidate._userStackPhysical == 0) {
                 candidate.Cleanup();
@@ -264,6 +365,19 @@ namespace guideXOS.Misc {
             Marker("RING3_USER_ADDRESS_SPACE_CREATED=1");
             Marker("RING3_USER_CODE_MAPPED=1");
             Marker("RING3_USER_STACK_MAPPED=1");
+            HexMarker("RING3_PROCESS_SLOT=0x", (ulong)slot);
+            HexMarker("RING3_PROCESS_GENERATION=0x", generation);
+            HexMarker("RING3_PROCESS_CR3=0x", candidate.Space.RootPhysical);
+            HexMarker("RING3_USER_DATA_PHYSICAL=0x", candidate._userDataPhysical);
+            HexMarker("RING3_USER_STACK_PHYSICAL=0x", candidate._userStackPhysical);
+            if (candidate.UserThread != null) {
+                HexMarker("RING3_KERNEL_STACK_BASE=0x",
+                    candidate.UserThread.KernelStackBase);
+                HexMarker("RING3_KERNEL_STACK_TOP=0x",
+                    candidate.UserThread.KernelStackTop);
+            }
+            HexMarker("RING3_OWNER_HANDLE=0x",
+                candidate.OwningApplicationInstance);
             process = candidate;
             return true;
         }
@@ -363,11 +477,32 @@ namespace guideXOS.Misc {
             if (State == Ring3ProcessState.Ready) State = Ring3ProcessState.Running;
         }
 
+        internal void RecordServiceRequestSuccess() {
+            ServiceRequestsSucceeded++;
+        }
+
         public bool TryResolveHandle(Ring3ProcessHandle handle) =>
             Ring3ProcessTable.Resolve(handle) != null;
 
-        public void Cleanup() {
-            if (_cleaned) return;
+        internal ulong ReadUserDataSentinel() {
+            return _userDataPhysical == 0 ? 0UL :
+                *((ulong*)(_userDataPhysical + UserDataSentinelOffset));
+        }
+
+        internal void WriteUserDataSentinel(ulong value) {
+            if (_userDataPhysical != 0)
+                *((ulong*)(_userDataPhysical + UserDataSentinelOffset)) = value;
+        }
+
+        public bool Cleanup() {
+            if (_cleaned) return true;
+            if (UserThread != null && ThreadPool.IsProcessActive(this)) {
+                // A process's RSP0 stack and CR3 cannot be reclaimed while a
+                // CPU is still executing on them.  The scheduler must first
+                // transfer to a kernel-owned frame.
+                Marker("RING3_CLEANUP_ACTIVE_PROCESS_REJECTED=1");
+                return false;
+            }
             _cleaned = true;
             if (UserThread != null) UserThread.Terminated = true;
             State = State == Ring3ProcessState.Failed ?
@@ -376,27 +511,59 @@ namespace guideXOS.Misc {
                 Thread userThread = UserThread;
                 userThread.OwnerProcess = null;
                 userThread.IsUserThread = false;
-                bool removed = ThreadPool.RemoveThread(userThread);
+                ThreadPool.RemoveThread(userThread);
+                bool remains = ThreadPool.ContainsThread(userThread);
+                if (remains) {
+                    Marker("RING3_STALE_USER_THREADS=1");
+                    _cleaned = false;
+                    return false;
+                }
                 if (userThread.Stack != null)
                     Allocator.Free((IntPtr)userThread.Stack);
-                if (userThread.KernelStackBase != 0)
+                if (userThread.KernelStackBase != 0) {
                     Allocator.Free((IntPtr)userThread.KernelStackBase);
+                    Ring3ProcessDiagnostics.KernelStacksReclaimed++;
+                }
                 userThread.Stack = null;
                 userThread.KernelStackBase = 0;
+                userThread.KernelStackSize = 0;
+                userThread.KernelStackTop = 0;
                 UserThread = null;
-                Marker(removed ? "RING3_STALE_USER_THREADS=0" :
+                Marker(!remains ? "RING3_STALE_USER_THREADS=0" :
                     "RING3_STALE_USER_THREADS=1");
             }
-            if (Space != null) Space.Release();
-            FreePage(ref _userCodePhysical);
-            FreePage(ref _userDataPhysical);
-            FreePage(ref _userStackPhysical);
+            if (Space != null) {
+                Space.Release();
+                Space = null;
+            }
+            if (_userCodePhysical != 0) {
+                FreePage(ref _userCodePhysical);
+                Ring3ProcessDiagnostics.UserCodePagesReclaimed++;
+            }
+            if (_userDataPhysical != 0) {
+                FreePage(ref _userDataPhysical);
+                Ring3ProcessDiagnostics.UserDataPagesReclaimed++;
+            }
+            if (_userStackPhysical != 0) {
+                FreePage(ref _userStackPhysical);
+                Ring3ProcessDiagnostics.UserStackPagesReclaimed +=
+                    (int)(UserStackSize / PageSize);
+            }
             OwningApplicationInstance = 0;
+            ExitCode = 0;
+            Fault = default(Ring3FaultRecord);
+            TimerPreemptions = 0;
+            SchedulerDispatches = 0;
+            ServiceRequestsSucceeded = 0;
+            SchedulerCr3Valid = false;
+            SchedulerRsp0Valid = false;
+            UserRspPreserved = false;
             Ring3ProcessTable.Invalidate(this);
             Marker("RING3_ADDRESS_SPACE_RECLAIMED=1");
             Marker("RING3_STALE_USER_MAPPINGS=0");
             Marker("RING3_KERNEL_STACK_RECLAIMED=1");
             Marker("RING3_PROCESS_HANDLE_INVALIDATED=1");
+            return true;
         }
     }
 }

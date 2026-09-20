@@ -14,6 +14,7 @@ namespace guideXOS.Misc {
         public ulong KernelStackSize;
         public ulong KernelStackTop;
         public bool IsUserThread;
+        internal bool IsValid => Stack != null && KernelStackBase != 0;
 
         public Thread(delegate*<void> method, ulong stack_size = 16384) {
             NewThread(method, stack_size);
@@ -24,6 +25,18 @@ namespace guideXOS.Misc {
             KernelStackSize = stack_size;
             KernelStackBase = (ulong)Allocator.Allocate(stack_size);
             KernelStackTop = KernelStackBase + stack_size;
+
+            if (Stack == null || KernelStackBase == 0) {
+                if (Stack != null) Allocator.Free((IntPtr)Stack);
+                if (KernelStackBase != 0)
+                    Allocator.Free((IntPtr)KernelStackBase);
+                Stack = null;
+                KernelStackBase = 0;
+                KernelStackSize = 0;
+                KernelStackTop = 0;
+                Terminated = true;
+                return;
+            }
 
             Stack->irs.cs = 0x08;
             Stack->irs.ss = 0x10;
@@ -43,8 +56,10 @@ namespace guideXOS.Misc {
                                         ulong stack_size) {
             if (process == null) return null;
             Thread thread = new Thread(&ThreadPool.Terminate, stack_size);
+            if (!thread.IsValid) return null;
             thread.OwnerProcess = process;
             thread.IsUserThread = true;
+            Ring3ProcessDiagnostics.KernelStacksCreated++;
             thread.Stack->irs.cs = GDT.UserCodeSelector;
             thread.Stack->irs.ss = GDT.UserDataSelector;
             thread.Stack->irs.rip = rip;
@@ -59,6 +74,7 @@ namespace guideXOS.Misc {
 
         public Thread Start() {
             lock (this) {
+                if (!IsValid || Terminated) return this;
                 //Bootstrap CPU
                 this.RunOnWhichCPU = 0;
                 ThreadPool.Threads.Add(this);
@@ -68,6 +84,7 @@ namespace guideXOS.Misc {
 
         public Thread Start(int run_on_which_cpu) {
             lock (this) {
+                if (!IsValid || Terminated) return this;
                 // UEFI bring-up: ACPI MADT parsing may be unavailable or deferred.
                 // Guard against null/empty CPU list and fall back to BSP.
                 if (ACPI.LocalAPIC_CPUIDs == null || ACPI.LocalAPIC_CPUIDs.Count == 0) {
@@ -315,6 +332,47 @@ namespace guideXOS.Misc {
             return false;
         }
 
+        internal static bool ContainsThread(Thread thread) {
+            if (thread == null || Threads == null) return false;
+            for (int i = 0; i < Threads.Count; i++)
+                if (Threads[i] == thread) return true;
+            return false;
+        }
+
+        internal static bool IsProcessActive(Ring3Process process) {
+            if (process == null) return false;
+            Thread current = CurrentThread;
+            if (current != null && current.OwnerProcess == process) return true;
+            if (process.Space != null && process.Space.RootPhysical != 0 &&
+                (Native.ReadCR3() & PageTable.PageMask) ==
+                    process.Space.RootPhysical) return true;
+            return false;
+        }
+
+        internal static int RunnableUserThreadCount(Ring3Process process) {
+            if (process == null || Threads == null) return 0;
+            int count = 0;
+            for (int i = 0; i < Threads.Count; i++) {
+                Thread thread = Threads[i];
+                if (thread != null && thread.IsUserThread &&
+                    thread.OwnerProcess == process && !thread.Terminated)
+                    count++;
+            }
+            return count;
+        }
+
+        internal static int LiveUserThreadCount {
+            get {
+                if (Threads == null) return 0;
+                int count = 0;
+                for (int i = 0; i < Threads.Count; i++) {
+                    Thread thread = Threads[i];
+                    if (thread != null && thread.IsUserThread) count++;
+                }
+                return count;
+            }
+        }
+
         [DllImport("*")]
         public static extern void Schedule_Next();
 
@@ -394,6 +452,9 @@ namespace guideXOS.Misc {
                 int candidate = (Index + step) % Threads.Count;
                 Thread candidateThread = Threads[candidate];
                 if (candidateThread.Terminated ||
+                    (candidateThread.IsUserThread &&
+                     (candidateThread.OwnerProcess == null ||
+                      candidateThread.OwnerProcess.IsTerminal)) ||
                     candidateThread.RunOnWhichCPU != SMP.ThisCPU)
                     continue;
                 if (fallbackIndex < 0) fallbackIndex = candidate;
