@@ -2,7 +2,8 @@
 
 ## Ring 3 process boundary and IPC architecture proposal
 
-**Status:** Design proposal; implementation approval required before Phase 13.
+**Status:** Phase 14 accepted — Outcome A. Sections 1–27 preserve the original
+design record; implementation results are recorded in Sections 28–29.
 
 **Audit date:** 2026-09-20
 
@@ -10,9 +11,9 @@
 
 **Canonical architecture:** [`APP_MODEL_CONVERGENCE.md`](../APP_MODEL_CONVERGENCE.md)
 
-This proposal records the live C# UEFI architecture and the smallest safe
-follow-on proof. It does not implement Ring 3, a process manager, a syscall
-subsystem, or GUI IPC.
+This document records the live C# UEFI architecture and the bounded Ring 3
+proof sequence. It does not authorize managed Ring 3 applications, GUI IPC,
+or a general syscall/message-queue subsystem.
 
 ## 1. Outcome
 
@@ -115,9 +116,10 @@ ownership for the stack memory.
 ### 3.3 Thread/process conflation
 
 Current application code executes inside the single kernel NativeAOT image.
-`Thread` is therefore a schedulable kernel execution record, not a process
-thread. The current `Kernel/Misc/Process.cs` contains only an `AddressSpace`
-placeholder and no process object, thread table, lifecycle, or exit state.
+`Thread` is therefore a schedulable kernel execution record, not a replacement
+for application lifecycle. The Phase 13/14 substrate now adds a bounded fixed
+process table, generation-safe handles, process-owned address spaces, user
+thread ownership, and terminal exit/fault state in `Kernel/Misc/Process.cs`.
 
 The new model must preserve this distinction:
 
@@ -151,11 +153,12 @@ boot path explicitly applies that to vector `0x80`.
 `Native` exposes `ReadCR3`, `WriteCR3`, `ReadCR2`, `Invlpg`, GDT/IDT loading,
 and interrupt control (`Kernel/Misc/Native.cs:26-90`).
 
-### 4.2 Missing or unsafe pieces
+### 4.2 Historical missing or unsafe pieces
 
-The TSS is described and populated in memory, but `LTR` is deliberately not
-called: `GDT.cs:134-136` says the native implementation is missing. There is
-no per-CPU TSS or per-CPU `RSP0` update.
+The original Phase 12 audit found that `LTR` and trusted `RSP0` entry were
+missing. Phase 13 implemented and proved `LTR 0x28`, TSS `RSP0`, and real CPL3
+entry. Phase 14 updates `RSP0` on every scheduled user-thread dispatch. SMP
+balancing and per-CPU process scheduling remain out of scope.
 
 `SchedulerExtensions.EnterUserMode` calls `iret_to_user`
 (`Kernel/Misc/SchedulerExtensions.cs:5-15`), but the only managed export is a
@@ -863,10 +866,9 @@ The result is **Outcome A for the first synchronous Ring 3 boundary proof**:
 the native process enters real CPL3, completes a bounded ABI round trip,
 rejects invalid input, exits normally, contains a deliberate user fault,
 reclaims its resources, and returns to the ordinary UEFI desktop initialization
-path. The general preemptive scheduler handoff of an arbitrary user thread is
-still deliberately not claimed by this phase; the proof selector reports
-`RING3_SCHEDULER_CONTEXT_SWITCHING=0` and uses one synchronous diagnostic
-fixture on the existing bootstrap CPU.
+path. Phase 13 deliberately retained a synchronous selector; Phase 14 adds
+the separate scheduler-managed selector without removing that regression
+path.
 
 ### Implemented substrate
 
@@ -950,11 +952,108 @@ drops, and zero bad-bounds observations. The AppRuntime run reached
 zero runtime faults, and zero factory fallbacks. The final Ring 3 serial log is
 `phase13-ring3-serial.log` in the repository root.
 
-### Scope boundary carried to Phase 14
+### Scope boundary carried to Phase 15
 
 This phase does not expose the process as a normal Start application, does not
-add a service bridge, and does not enable general user-thread preemption. The
-next slice is to integrate the proven process/address-space/TSS substrate with
-the scheduler's ordinary context-switch path, then add a small copied service
-request only if that integration remains bounded. Managed Ring 3 applications,
+add GUI IPC, and does not enable general arbitrary user-thread creation. The
+next slice is to decide whether a second bounded process sequencing proof or
+additional service ABI coverage is justified. Managed Ring 3 applications,
 GUI ownership, IPC expansion, and runtime migration remain out of scope.
+
+## 29. Phase 14 implementation and acceptance result
+
+Phase 14 is **Outcome A**. The same native process substrate is now an
+ordinary participant in the existing IRQ0 scheduler. The scheduler dispatches
+the owning process, activates its CR3, installs its trusted TSS `RSP0`, enters
+CPL3, preempts the user payload on a real timer, and later resumes the saved
+user frame. This is a bounded single-CPU policy, not SMP load balancing.
+
+### Scheduler and context proof
+
+* `Thread` distinguishes kernel and user execution with an owning
+  `Ring3Process`, a privilege frame, a private kernel stack, and terminal
+  state. The process remains the address-space/identity owner; thread state is
+  not a duplicate application object.
+* The normal timer path in `ThreadPool.Schedule` saves the interrupted frame,
+  selects a runnable thread, switches CR3, updates TSS `RSP0`, and restores the
+  selected frame. Kernel frames use the scheduler's synthetic kernel-RSP slot;
+  user frames return through `iretq`.
+* The native ring-0 handoff keeps interrupts masked while loading the target
+  frame and enables them only at the final transfer, preventing a timer from
+  observing a half-switched context.
+* Process teardown removes the terminated user thread from the scheduler
+  list, releases its kernel stack and address space, invalidates its
+  generation-safe handle, and proves `RING3_STALE_USER_THREADS=0`.
+
+The decisive scheduler markers are:
+
+```text
+RING3_USER_THREAD_SCHEDULED=1
+RING3_PROCESS_CR3_ACTIVATED=1
+RING3_TSS_RSP0_UPDATED=1
+RING3_TIMER_PREEMPTED_CPL3=1
+RING3_USER_RSP_CAPTURED=1
+RING3_USER_THREAD_RESUMED=1
+RING3_RESUME_CR3_VALID=1
+RING3_RESUME_RSP0_VALID=1
+RING3_RESUME_USER_RSP_VALID=1
+    RING3_CONTEXT_SENTINEL_PRESERVED=1
+```
+
+The native payload performs a deterministic workload before its service call,
+so timer preemption is real rather than inferred from eventual exit. The
+payload resumes with its `R12` context sentinel and user stack intact. The
+proof yields after terminal cleanup and requires the normal desktop render loop
+to acknowledge a subsequent frame before it publishes completion.
+
+### First copied System Information service ABI
+
+Phase 14 adds `ServiceRequest` as ABI operation 5. The packed request is a
+32-byte fixed-width wire structure:
+
+```text
+u32 StructureVersion
+u32 ServiceId
+u32 OperationId
+u32 RequestLength
+u64 ResponseBuffer
+u32 ResponseCapacity
+u32 Reserved
+```
+
+The System Information response is a packed 128-byte wire structure with
+explicit version/size, uptime, memory totals/usage, thread count, CPU usage,
+and bounded ASCII byte fields for OS name, OS version, and architecture. It is
+not a copy of managed object layout.
+
+The kernel validates the request header, copies it into a kernel local,
+validates the writable response range, obtains process identity from the
+scheduler-owned process record, derives the owning `ApplicationInstance`,
+creates and validates the existing `ApplicationServiceContext`, calls the
+existing `ApplicationServiceRegistry` service, serializes the immutable
+snapshot, and copies the response out. No user pointer or service object is
+retained by the backend.
+
+The invalid-buffer payload covers null, kernel, cross-page, oversized, null
+response, too-small response, read-only response, and overflowed response
+ranges. All are typed ABI rejections; the kernel remains healthy.
+
+### Scheduler-aware exit and fault
+
+Scheduled `Exit(code)` marks the process/thread terminal, switches away before
+returning to user mode, removes the user thread only after it is no longer
+running, and reclaims all process-owned state. A deliberate CPL3 page fault
+records bounded failure, marks the user thread non-runnable, switches back to a
+kernel context, and follows the same safe cleanup path. Neither terminal path
+can redispatch the user thread.
+
+### Retained Phase 13 selector and evidence
+
+`Ring3Direct` remains available in `build.ps1` and
+`run_uefi_validation.ps1`. The final direct regression reached
+`RING3_PROOF_RETURNED_TO_ENTRYPOINT=1` with TSS/TR/RSP0, CPL3 Ping/Exit,
+invalid-pointer rejection, contained fault, cleanup, and stale-handle markers.
+The final scheduler selector reached `RING3_PROOF_COMPLETE=1` with successful
+service dispatch and invalid-service-buffer coverage. The production selector
+still uses the in-kernel application model; no managed application moved to
+Ring 3.

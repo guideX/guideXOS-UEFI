@@ -69,6 +69,9 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3Direct'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_DIRECT</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Widget'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET</DefineConstants>
 	</PropertyGroup>

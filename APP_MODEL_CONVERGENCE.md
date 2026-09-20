@@ -1,6 +1,8 @@
 # guideXOS App Model Convergence
 
-**Status:** Phase 11 session-global text clipboard complete; Phase 10 remains accepted Outcome B
+**Status:** Phase 14 scheduler-managed Ring 3 and first copied
+System Information IPC complete; Phase 11 clipboard remains complete and
+Phase 10 remains accepted Outcome B
 **Date:** 2026-09-19
 **Scope:** guideXOS Server ↔ guideXOS C# UEFI application platform  
 **Outcome:** Outcome B remains the accepted Phase 10 storage result — applications
@@ -2566,3 +2568,50 @@ repository. Server, Advanced Server, and Historical Legacy remain unchanged.
 Phase 10 remains complete as accepted Outcome B; any future writable
 filesystem work requires a separate approved phase and is not part of
 clipboard completion.
+
+## 28. Phase 14 scheduler-managed Ring 3 boundary
+
+Phase 14 is accepted as Outcome A for the first scheduler-managed isolated
+process proof. It changes how the diagnostic process executes, not the
+`ApplicationInstance` contract, App Model lifecycle, window ownership,
+taskbar semantics, or production managed-application backend.
+
+The existing scheduler now distinguishes kernel and user threads. A scheduled
+user thread carries its owning fixed-table process, private kernel stack, user
+return frame, and process-owned CR3. Normal IRQ0 dispatch activates that CR3,
+updates TSS `RSP0`, and restores the user frame. The native ring-0 handoff
+keeps interrupts masked until the target frame is complete. A bounded runnable
+selection prefers active non-idle diagnostic threads while they exist; the
+existing desktop context remains the fallback and continues after cleanup.
+
+The proof demonstrated real CPL3 entry, timer preemption, resume of the same
+user thread, preservation of a register sentinel and user RSP, CR3 identity
+after resume, successful scheduled exit, and contained scheduled page fault.
+Exited or faulted user threads are removed before their private stacks and
+address spaces are reclaimed; generation-safe process handles then resolve to
+zero/stale.
+
+### First platform-service IPC
+
+ABI operation 5, `ServiceRequest`, is a fixed-width copied request for the
+existing read-only `System Information` service. The 32-byte request contains
+only structure/service/operation/version fields and response buffer metadata;
+it contains no authoritative AppId, ApplicationInstance handle, or service
+context. The response is a packed 128-byte wire representation of the bounded
+immutable snapshot, with explicitly sized scalar fields and bounded ASCII
+fields for identity strings.
+
+The kernel validates the request header and both user ranges, copies the
+request into kernel-owned storage, derives process identity from the scheduled
+thread, derives the owning `ApplicationInstance` and validated
+`ApplicationServiceContext`, dispatches through `ApplicationServiceRegistry`,
+serializes the result, and copies it into the validated writable response
+buffer. Service backends never receive raw user pointers and retain no user
+buffer after completion.
+
+The diagnostic payload proves null, kernel, cross-page, oversized, null
+response, undersized, read-only, and overflowed service buffers are rejected
+without a kernel fault. It also validates known response version/size and
+memory invariants in user mode. `Ring3Direct` remains available as the Phase
+13 synchronous regression selector; no managed application has been migrated
+to Ring 3.

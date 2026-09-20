@@ -99,10 +99,22 @@ static unsafe class Native {
     public static extern ulong GetR3PayloadSize();
 
     [DllImport("*")]
+    public static extern byte* GetR3DirectPayloadStart();
+
+    [DllImport("*")]
+    public static extern ulong GetR3DirectPayloadSize();
+
+    [DllImport("*")]
     public static extern byte* GetR3InvalidPayloadStart();
 
     [DllImport("*")]
     public static extern ulong GetR3InvalidPayloadSize();
+
+    [DllImport("*")]
+    public static extern byte* GetR3InvalidServicePayloadStart();
+
+    [DllImport("*")]
+    public static extern ulong GetR3InvalidServicePayloadSize();
 
     [DllImport("*")]
     public static extern byte* GetR3FaultPayloadStart();

@@ -265,6 +265,14 @@ global GetR3PayloadSize
 GetR3PayloadSize:
     mov eax, R3PayloadEnd - R3PayloadStart
     ret
+global GetR3DirectPayloadStart
+GetR3DirectPayloadStart:
+    lea rax, [rel R3DirectPayloadStart]
+    ret
+global GetR3DirectPayloadSize
+GetR3DirectPayloadSize:
+    mov eax, R3DirectPayloadEnd - R3DirectPayloadStart
+    ret
 global GetR3InvalidPayloadStart
 GetR3InvalidPayloadStart:
     lea rax, [rel R3InvalidPayloadStart]
@@ -272,6 +280,14 @@ GetR3InvalidPayloadStart:
 global GetR3InvalidPayloadSize
 GetR3InvalidPayloadSize:
     mov eax, R3InvalidPayloadEnd - R3InvalidPayloadStart
+    ret
+global GetR3InvalidServicePayloadStart
+GetR3InvalidServicePayloadStart:
+    lea rax, [rel R3InvalidServicePayloadStart]
+    ret
+global GetR3InvalidServicePayloadSize
+GetR3InvalidServicePayloadSize:
+    mov eax, R3InvalidServicePayloadEnd - R3InvalidServicePayloadStart
     ret
 global GetR3FaultPayloadStart
 GetR3FaultPayloadStart:
@@ -337,11 +353,49 @@ Ring3ResumeStub:
     ret
 
 %define R3_USER_CODE 0x0000400000000000
+%define R3_USER_DATA (R3_USER_CODE + 0x2000)
+%define R3_SERVICE_REQUEST_SIZE 32
+%define R3_SYSTEM_INFO_SIZE 128
+%define R3_CONTEXT_SENTINEL 0x142E5A91C0DE4711
 
 R3PayloadStart:
-    mov eax, 1                  ; Ping
+    mov r12, R3_CONTEXT_SENTINEL
+    mov ecx, 0x01000000         ; deterministic preemption workload
+.preempt_loop:
+    dec ecx
+    jnz .preempt_loop
+    mov rax, qword R3_CONTEXT_SENTINEL
+    cmp r12, rax
+    jnz .success_fail
+    mov eax, 1                  ; Ping, also checks the sentinel in r12
     int 0x80
     cmp eax, 1                  ; ABI version 1
+    jnz .success_fail
+    mov rdi, R3_USER_DATA
+    mov dword [rdi + 0], 1      ; wire structure version
+    mov dword [rdi + 4], 3      ; System Information service
+    mov dword [rdi + 8], 1      ; GetSnapshot operation
+    mov dword [rdi + 12], R3_SERVICE_REQUEST_SIZE
+    mov rax, qword (R3_USER_DATA + 0x100)
+    mov [rdi + 16], rax
+    mov dword [rdi + 24], R3_SYSTEM_INFO_SIZE
+    mov dword [rdi + 28], 0
+    mov eax, 5                  ; ServiceRequest
+    mov rsi, R3_SERVICE_REQUEST_SIZE
+    int 0x80
+    test eax, eax
+    jnz .success_fail
+    mov rdi, qword (R3_USER_DATA + 0x100)
+    cmp dword [rdi + 0], 1      ; ABI response version
+    jnz .success_fail
+    cmp dword [rdi + 4], R3_SYSTEM_INFO_SIZE
+    jnz .success_fail
+    mov rax, [rdi + 16]         ; memory size
+    mov rdx, [rdi + 24]         ; memory in use
+    cmp rdx, rax
+    ja .success_fail
+    mov rax, qword R3_CONTEXT_SENTINEL
+    cmp r12, rax
     jnz .success_fail
     mov eax, 2                  ; Exit(0)
     xor edi, edi
@@ -354,13 +408,30 @@ R3PayloadStart:
     ud2
 R3PayloadEnd:
 
+R3DirectPayloadStart:
+    mov eax, 1                  ; Phase 13 Ping
+    int 0x80
+    cmp eax, 1
+    jnz .direct_fail
+    mov eax, 2                  ; Phase 13 Exit(0)
+    xor edi, edi
+    int 0x80
+    ud2
+.direct_fail:
+    mov eax, 2
+    mov edi, 1
+    int 0x80
+    ud2
+R3DirectPayloadEnd:
+
 R3InvalidPayloadStart:
     mov eax, 3                  ; ValidateRead(null, 1)
     xor edi, edi
     mov esi, 1
     int 0x80
     mov eax, 3                  ; ValidateRead(kernel pointer, 1)
-    mov rdi, 0xFFFF800000000000
+    mov rax, 0xFFFF800000000000
+    mov rdi, rax
     mov esi, 1
     int 0x80
     mov eax, 3                  ; ValidateRead(code end, 2)
@@ -368,7 +439,8 @@ R3InvalidPayloadStart:
     mov esi, 2
     int 0x80
     mov eax, 3                  ; ValidateRead(overflow, 0x100)
-    mov rdi, 0x7FFFFFFFFFFFFFF0
+    mov rax, 0x7FFFFFFFFFFFFFF0
+    mov rdi, rax
     mov rsi, 0x100
     int 0x80
     mov eax, 3                  ; ValidateRead(over maximum)
@@ -386,6 +458,64 @@ R3InvalidPayloadStart:
     int 0x80
     ud2
 R3InvalidPayloadEnd:
+
+R3InvalidServicePayloadStart:
+    ; Null request pointer.
+    mov eax, 5
+    xor edi, edi
+    mov esi, R3_SERVICE_REQUEST_SIZE
+    int 0x80
+    ; Kernel request pointer.
+    mov eax, 5
+    mov rax, 0xFFFF800000000000
+    mov rdi, rax
+    mov esi, R3_SERVICE_REQUEST_SIZE
+    int 0x80
+    ; A request that crosses the one-page user data mapping.
+    mov eax, 5
+    mov rdi, R3_USER_DATA + 0xFF0
+    mov esi, R3_SERVICE_REQUEST_SIZE
+    int 0x80
+    ; Oversized request length is rejected before copy-in.
+    mov eax, 5
+    mov rdi, R3_USER_DATA
+    mov esi, 0x10000
+    int 0x80
+    ; Build a valid request with a null response buffer.
+    mov rdi, R3_USER_DATA
+    mov dword [rdi + 0], 1
+    mov dword [rdi + 4], 3
+    mov dword [rdi + 8], 1
+    mov dword [rdi + 12], R3_SERVICE_REQUEST_SIZE
+    mov qword [rdi + 16], 0
+    mov dword [rdi + 24], R3_SYSTEM_INFO_SIZE
+    mov dword [rdi + 28], 0
+    mov eax, 5
+    mov esi, R3_SERVICE_REQUEST_SIZE
+    int 0x80
+    ; Too-small response buffer.
+    mov rax, qword (R3_USER_DATA + 0x100)
+    mov [rdi + 16], rax
+    mov dword [rdi + 24], 8
+    mov eax, 5
+    int 0x80
+    ; Read-only response page.
+    mov rax, qword R3_USER_CODE
+    mov [rdi + 16], rax
+    mov dword [rdi + 24], R3_SYSTEM_INFO_SIZE
+    mov eax, 5
+    int 0x80
+    ; Overflowed/non-user response range.
+    mov rax, 0x00007FFFFFFFFFF0
+    mov [rdi + 16], rax
+    mov dword [rdi + 24], R3_SYSTEM_INFO_SIZE
+    mov eax, 5
+    int 0x80
+    mov eax, 2
+    xor edi, edi
+    int 0x80
+    ud2
+R3InvalidServicePayloadEnd:
 
 R3FaultPayloadStart:
     mov rax, 0x00007FFF00010000 ; one byte above the mapped user stack
@@ -584,6 +714,7 @@ isr_common:
     mov rax, [r12 + 136]       ; selected RIP
     mov [r10 - 8], rax         ; scratch below the return address
     mov rax, [r12 + 152]       ; selected RFLAGS
+    and rax, ~0200h            ; keep IRQs masked during the handoff
     push rax
     popfq
     mov rsp, r10
@@ -602,6 +733,10 @@ isr_common:
     mov r14, [r12 + 104]
     mov r15, [r12 + 112]
     mov r12, [r12 + 88]
+    ; Every preemptible kernel frame reaches the scheduler with IF set.
+    ; STI enables delivery after the following JMP, so no interrupt can
+    ; observe the context-switch sequence half complete.
+    sti
     jmp [rsp - 8]
 
 .return_from_interrupt:

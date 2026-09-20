@@ -1480,6 +1480,9 @@ unsafe class Program {
                 _uefiMultiFrameStartTicks.ToString());
 
             int uefiFrame = 0;
+#if UEFI_DIAGNOSTIC_RING3
+            bool ring3SchedulingEnabled = false;
+#endif
             for (;;) {
                 uefiFrame++;
                 _uefiMultiFrameCurrentFrame = uefiFrame;
@@ -1491,11 +1494,23 @@ unsafe class Program {
                         return;
                     }
                     _uefiMultiFrameLastCompletedFrame = uefiFrame;
+#if UEFI_DIAGNOSTIC_RING3
+                    Ring3Proof.ObserveDesktopHeartbeat();
+#endif
                     if (!EmitUefiContinuousHeartbeat(uefiFrame)) {
                         LogUefiMultiFrameFaultContext();
                         HaltAfterUefiContinuous();
                         return;
                     }
+#if UEFI_DIAGNOSTIC_RING3
+                    if (!ring3SchedulingEnabled && uefiFrame == 1) {
+                        // Establish one real desktop frame first so the
+                        // scheduler's bootstrap context contains the normal
+                        // render loop before the diagnostic thread can run.
+                        ThreadPool.EnableScheduling();
+                        ring3SchedulingEnabled = true;
+                    }
+#endif
                     Thread.Sleep(16);
                 } catch {
                     SerialBreadcrumb("CONTINUOUS_DESKTOP_FAULT=MANAGED_EXCEPTION");

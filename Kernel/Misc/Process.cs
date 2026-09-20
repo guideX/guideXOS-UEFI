@@ -45,7 +45,7 @@ namespace guideXOS.Misc {
     }
 
     public enum Ring3PayloadKind : byte {
-        Success, InvalidInput, DeliberateFault
+        Success, InvalidInput, InvalidServiceBuffers, DeliberateFault
     }
 
     public readonly struct Ring3ProcessHandle {
@@ -121,6 +121,11 @@ namespace guideXOS.Misc {
         public int ExitCode { get; private set; }
         public Ring3FaultRecord Fault;
         public ulong OwningApplicationInstance { get; private set; }
+        public int TimerPreemptions { get; private set; }
+        public int SchedulerDispatches { get; private set; }
+        public bool SchedulerCr3Valid { get; private set; }
+        public bool SchedulerRsp0Valid { get; private set; }
+        public bool UserRspPreserved { get; private set; }
 
         private ulong _userCodePhysical;
         private ulong _userDataPhysical;
@@ -162,6 +167,12 @@ namespace guideXOS.Misc {
         }
 
         public static bool TryCreate(Ring3PayloadKind kind, out Ring3Process process) {
+            return TryCreate(kind, 0, out process);
+        }
+
+        internal static bool TryCreate(Ring3PayloadKind kind,
+                                       ulong owningApplicationInstance,
+                                       out Ring3Process process) {
             process = null;
             int slot;
             uint generation;
@@ -171,6 +182,7 @@ namespace guideXOS.Misc {
             }
 
             Ring3Process candidate = new Ring3Process(slot, generation, kind);
+            candidate.OwningApplicationInstance = owningApplicationInstance;
             Ring3ProcessTable.Slots[slot] = candidate;
             candidate.Space = new AddressSpace();
             if (candidate.Space.Pml4 == null) {
@@ -208,12 +220,21 @@ namespace guideXOS.Misc {
             ulong payloadSize = 0;
             switch (kind) {
                 case Ring3PayloadKind.Success:
-                    payload = Native.GetR3PayloadStart();
-                    payloadSize = Native.GetR3PayloadSize();
+                    if (owningApplicationInstance == 0) {
+                        payload = Native.GetR3DirectPayloadStart();
+                        payloadSize = Native.GetR3DirectPayloadSize();
+                    } else {
+                        payload = Native.GetR3PayloadStart();
+                        payloadSize = Native.GetR3PayloadSize();
+                    }
                     break;
                 case Ring3PayloadKind.InvalidInput:
                     payload = Native.GetR3InvalidPayloadStart();
                     payloadSize = Native.GetR3InvalidPayloadSize();
+                    break;
+                case Ring3PayloadKind.InvalidServiceBuffers:
+                    payload = Native.GetR3InvalidServicePayloadStart();
+                    payloadSize = Native.GetR3InvalidServicePayloadSize();
                     break;
                 case Ring3PayloadKind.DeliberateFault:
                     payload = Native.GetR3FaultPayloadStart();
@@ -252,6 +273,49 @@ namespace guideXOS.Misc {
             return process != null && process.UserThread == ThreadPool.CurrentThread;
         }
 
+        internal void RecordTimerPreemption(IDT.IDTStackGeneric* stack) {
+            if (State == Ring3ProcessState.Exited ||
+                State == Ring3ProcessState.Failed) return;
+            TimerPreemptions++;
+            if (TimerPreemptions == 1) {
+                Marker("RING3_TIMER_PREEMPTED_CPL3=1");
+            }
+            if (stack != null && (stack->irs.cs & 3UL) == 3UL &&
+                stack->irs.rsp >= UserStackStart &&
+                stack->irs.rsp <= UserStackEnd) {
+                UserRspPreserved = true;
+                if (TimerPreemptions == 1)
+                    Marker("RING3_USER_RSP_CAPTURED=1");
+            }
+        }
+
+        internal void RecordSchedulerDispatch() {
+            SchedulerDispatches++;
+            ulong activeCr3 = Native.ReadCR3() & PageTable.PageMask;
+            SchedulerCr3Valid = Space != null && activeCr3 == Space.RootPhysical;
+            SchedulerRsp0Valid = UserThread != null &&
+                                 GDT.KernelStackTop == UserThread.KernelStackTop;
+            if (SchedulerDispatches == 1) {
+                Marker("RING3_USER_THREAD_SCHEDULED=1");
+                Marker(SchedulerCr3Valid ?
+                    "RING3_PROCESS_CR3_ACTIVATED=1" :
+                    "RING3_PROCESS_CR3_ACTIVATED=0");
+                Marker(SchedulerRsp0Valid ?
+                    "RING3_TSS_RSP0_UPDATED=1" :
+                    "RING3_TSS_RSP0_UPDATED=0");
+            } else {
+                Marker("RING3_USER_THREAD_RESUMED=1");
+                if (SchedulerCr3Valid) Marker("RING3_RESUME_CR3_VALID=1");
+                if (SchedulerRsp0Valid) Marker("RING3_RESUME_RSP0_VALID=1");
+                if (UserThread != null && UserThread.Stack != null &&
+                    UserThread.Stack->irs.rsp >= UserStackStart &&
+                    UserThread.Stack->irs.rsp <= UserStackEnd) {
+                    UserRspPreserved = true;
+                    Marker("RING3_RESUME_USER_RSP_VALID=1");
+                }
+            }
+        }
+
         internal static bool HandleUserFault(int vector, ulong errorCode, ulong rip,
                                               ulong cr2, IDT.IDTStackGeneric* stack) {
             Ring3Process process;
@@ -273,7 +337,6 @@ namespace guideXOS.Misc {
             HexMarker("RING3_FAULT_CR2=0x", cr2);
             Marker("RING3_FAULT_RECORD_CREATED=1");
             Marker("RING3_FAULT_CONTAINED=1");
-            process.PrepareDirectReturn(stack);
             return true;
         }
 
@@ -310,20 +373,28 @@ namespace guideXOS.Misc {
             State = State == Ring3ProcessState.Failed ?
                 Ring3ProcessState.Failed : Ring3ProcessState.Exited;
             if (UserThread != null) {
-                UserThread.OwnerProcess = null;
-                if (UserThread.Stack != null)
-                    Allocator.Free((IntPtr)UserThread.Stack);
-                if (UserThread.KernelStackBase != 0)
-                    Allocator.Free((IntPtr)UserThread.KernelStackBase);
-                UserThread.Stack = null;
-                UserThread.KernelStackBase = 0;
+                Thread userThread = UserThread;
+                userThread.OwnerProcess = null;
+                userThread.IsUserThread = false;
+                bool removed = ThreadPool.RemoveThread(userThread);
+                if (userThread.Stack != null)
+                    Allocator.Free((IntPtr)userThread.Stack);
+                if (userThread.KernelStackBase != 0)
+                    Allocator.Free((IntPtr)userThread.KernelStackBase);
+                userThread.Stack = null;
+                userThread.KernelStackBase = 0;
+                UserThread = null;
+                Marker(removed ? "RING3_STALE_USER_THREADS=0" :
+                    "RING3_STALE_USER_THREADS=1");
             }
             if (Space != null) Space.Release();
             FreePage(ref _userCodePhysical);
             FreePage(ref _userDataPhysical);
             FreePage(ref _userStackPhysical);
+            OwningApplicationInstance = 0;
             Ring3ProcessTable.Invalidate(this);
             Marker("RING3_ADDRESS_SPACE_RECLAIMED=1");
+            Marker("RING3_STALE_USER_MAPPINGS=0");
             Marker("RING3_KERNEL_STACK_RECLAIMED=1");
             Marker("RING3_PROCESS_HANDLE_INVALIDATED=1");
         }

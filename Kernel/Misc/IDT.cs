@@ -307,6 +307,18 @@ public static class IDT {
             // kernel-originated software interrupt is not a caller identity.
             if (stack != null && (stack->irs.cs & 3UL) == 3UL) {
                 Ring3Abi.Dispatch(stack);
+                Ring3Process currentProcess;
+                if (Ring3Process.TryGetCurrent(out currentProcess) &&
+                    currentProcess.UserThread != null &&
+                    currentProcess.UserThread.Terminated) {
+                    if (ThreadPool.IsDirectUser) {
+                        currentProcess.PrepareDirectReturn(stack);
+                    } else if (ThreadPool.SchedulingEnabled) {
+                        // Exit is terminal: never iret back to a user thread
+                        // whose process has already published Exiting state.
+                        ThreadPool.Schedule(stack);
+                    }
+                }
                 return;
             }
             Panic.Error("Kernel invoked the Ring3 ABI gate");
@@ -351,6 +363,14 @@ public static class IDT {
                 if (Ring3Process.HandleUserFault(irq, actualErrorCode, irs->rip,
                                                  irq == 14 ? Native.ReadCR2() : 0,
                                                  stack)) {
+                    Ring3Process currentProcess;
+                    if (Ring3Process.TryGetCurrent(out currentProcess)) {
+                        if (ThreadPool.IsDirectUser) {
+                            currentProcess.PrepareDirectReturn(stack);
+                        } else if (ThreadPool.SchedulingEnabled) {
+                            ThreadPool.Schedule(stack);
+                        }
+                    }
                     return;
                 }
                 Panic.Error("CPL3 fault without a current process");

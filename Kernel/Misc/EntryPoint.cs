@@ -261,10 +261,17 @@ namespace guideXOS.Misc {
 
 #if UEFI_DIAGNOSTIC_RING3
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
-                // Keep the synchronous boundary proof deterministic.  The
-                // existing APIC timer is restarted by the normal post-boot
-                // scheduler path; it must not preempt the fixture while the
-                // process-owned RSP0 stack is being reclaimed.
+                // Queue the proof as an ordinary kernel thread. It will not
+                // run until the normal timer scheduler is enabled below.
+                Ring3Proof.Schedule();
+                BootConsole.WriteLine("RING3_PROOF_QUEUED_FOR_SCHEDULER=1");
+            }
+#endif
+
+#if UEFI_DIAGNOSTIC_RING3_DIRECT
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                // Retained Phase 13 regression fixture: synchronous direct
+                // entry remains selectable without changing the scheduler.
                 LocalAPICTimer.StopTimer();
                 Ring3Proof.RunDirect();
                 BootConsole.WriteLine("RING3_PROOF_RETURNED_TO_ENTRYPOINT=1");
@@ -307,7 +314,7 @@ namespace guideXOS.Misc {
 #endif
 
             BootConsole.WriteLine("[BOOT] Post-STI continue");
-#if UEFI_DIAGNOSTIC_RING3
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_DIRECT
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI)
                 BootConsole.WriteLine("RING3_DESKTOP_CONTINUED=1");
 #endif
@@ -366,7 +373,7 @@ namespace guideXOS.Misc {
             //BootConsole.WriteLine("[CALLING_KERNEL_MAIN]");
             KernelMain();
 
-#if UEFI_DIAGNOSTIC_RING3
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_DIRECT
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI)
                 LocalAPICTimer.StartTimer(1000, 0x20);
 #endif

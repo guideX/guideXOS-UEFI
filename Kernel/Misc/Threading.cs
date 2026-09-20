@@ -112,6 +112,8 @@ namespace guideXOS.Misc {
         private static Thread _directUserThread;
         private static ulong _bootstrapKernelStackTop;
 
+        internal static bool IsDirectUser => _directUserThread != null;
+
         public static Thread CurrentThread {
             get {
                 if (_directUserThread != null) return _directUserThread;
@@ -255,6 +257,22 @@ namespace guideXOS.Misc {
             }
         }
 
+        /// <summary>
+        /// Enables timer-driven scheduling without taking over the current
+        /// kernel thread.  The UEFI desktop owns a continuous render loop,
+        /// so the old StartScheduling() handoff is unreachable there.
+        /// </summary>
+        internal static void EnableScheduling() {
+            if (!Initialized || Threads == null || Threads.Count == 0) {
+                BootConsole.WriteLine("[SCHED] ThreadPool not initialized - scheduling disabled");
+                return;
+            }
+
+            SchedulingEnabled = true;
+            BootConsole.WriteLine("[SCHED] Enabling preemptive scheduling");
+            BootConsole.WriteLine("[SCHED] Using IRQ0-driven scheduling");
+        }
+
         internal static void BeginDirectUser(Thread thread) {
             if (thread == null || thread.OwnerProcess == null ||
                 thread.OwnerProcess.Space == null) return;
@@ -276,6 +294,25 @@ namespace guideXOS.Misc {
             Threads[Index].Terminated = true;
             Schedule_Next();
             Panic.Error("Termination Failed!");
+        }
+
+        internal static bool RemoveThread(Thread thread) {
+            if (thread == null || Threads == null || Threads.Count == 0)
+                return false;
+            if (CurrentThread == thread) return false;
+
+            for (int i = 0; i < Threads.Count; i++) {
+                if (Threads[i] != thread) continue;
+                Threads.RemoveAt(i);
+                if (Threads.Count == 0) return true;
+                int current = Index;
+                if (i < current) current--;
+                if (current >= Threads.Count) current = Threads.Count - 1;
+                if (current < 0) current = 0;
+                Index = current;
+                return true;
+            }
+            return false;
         }
 
         [DllImport("*")]
@@ -335,25 +372,39 @@ namespace guideXOS.Misc {
             //Lock locker CPU
             if (Locked && Locker == SMP.ThisCPU) return;
 
-            if (!Threads[Index].Terminated &&
-                Threads[Index].RunOnWhichCPU == SMP.ThisCPU) {
-                Native.Movsb(Threads[Index].Stack, stack, (ulong)sizeof(IDT.IDTStackGeneric));
+            Thread current = Threads[Index];
+            if (!current.Terminated &&
+                current.RunOnWhichCPU == SMP.ThisCPU) {
+                Native.Movsb(current.Stack, stack, (ulong)sizeof(IDT.IDTStackGeneric));
+                if (current.IsUserThread && current.OwnerProcess != null) {
+                    current.OwnerProcess.RecordTimerPreemption(stack);
+                }
                 if ((stack->irs.cs & 3UL) == 0) {
-                    // CPL0 interrupts do not receive RSP/SS from the CPU.
-                    // Preserve the actual interrupted stack for the native
-                    // ring-0 context switch path.
-                    Threads[Index].Stack->irs.rsp =
-                        (ulong)((byte*)&stack->irs + 24);
+                    // The native common stub preserves the interrupted
+                    // kernel RSP in the synthetic RSP slot used by the
+                    // scheduler frame.  Keep that authoritative value for
+                    // the ring-0 resume path.
+                    Threads[Index].Stack->irs.rsp = stack->irs.rsp;
                 }
             }
 
-            do {
-                Index = (Index + 1) % Threads.Count;
-            } while
-            (
-                Threads[Index].Terminated ||
-                Threads[Index].RunOnWhichCPU != SMP.ThisCPU
-            );
+            int fallbackIndex = -1;
+            int preferredIndex = -1;
+            for (int step = 1; step <= Threads.Count; step++) {
+                int candidate = (Index + step) % Threads.Count;
+                Thread candidateThread = Threads[candidate];
+                if (candidateThread.Terminated ||
+                    candidateThread.RunOnWhichCPU != SMP.ThisCPU)
+                    continue;
+                if (fallbackIndex < 0) fallbackIndex = candidate;
+                if (candidate != Index && !candidateThread.IsIdleThread) {
+                    preferredIndex = candidate;
+                    break;
+                }
+            }
+            if (preferredIndex >= 0) Index = preferredIndex;
+            else if (fallbackIndex >= 0) Index = fallbackIndex;
+            else return;
 
             #region CPU Usage
             if (SMP.ThisCPU == 0) {
@@ -379,9 +430,11 @@ namespace guideXOS.Misc {
         private static void PrepareThreadForRun(Thread thread) {
             if (thread == null) return;
             if (thread.IsUserThread && thread.OwnerProcess != null &&
+                !thread.OwnerProcess.IsTerminal &&
                 thread.OwnerProcess.Space != null) {
                 GDT.SetKernelStack(thread.KernelStackTop);
                 Native.WriteCR3(thread.OwnerProcess.Space.RootPhysical);
+                thread.OwnerProcess.RecordSchedulerDispatch();
             } else {
                 GDT.SetKernelStack(thread.KernelStackTop);
                 Native.WriteCR3(KernelCr3);
