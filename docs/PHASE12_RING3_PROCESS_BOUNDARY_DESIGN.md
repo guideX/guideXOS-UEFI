@@ -1098,3 +1098,100 @@ The bounded result is eight process lifetimes with
 regressions, AppRuntime, NativeInput, ContextMenu, and production Continuous
 selectors remained green. No Server, Advanced Server, or Historical Legacy
 source was modified. Managed Ring 3 and broader IPC remain future work.
+
+## 31. Phase 16 first managed Ring 3 NativeAOT bootstrap feasibility
+
+### Decision
+
+This phase is **Outcome E with bounded Outcome C prerequisites**. The Phase 15
+process-generation and reclamation substrate is accepted at commit
+`839465ebb3089363310ba647de359a5b4f952f17` on the existing `main` branch.
+The audit stops before implementation because the current image and runtime
+are not a user-process NativeAOT contract. No Phase 13--15 behavior is
+weakened, and no new user GC, dynamic loader, TLS redesign, or private runtime
+was introduced.
+
+### Current image and startup boundary
+
+The current `guideXOS` project targets `net7.0`/`win-x64` with the repository's
+old `Microsoft.DotNet.ILCompiler` alpha package. Its produced PE is a fixed
+`0x10000000` NativeAOT kernel image with relocations stripped and no import
+directory. The repository PE-to-ELF path emits a fixed-base `ET_EXEC` image
+with load segments for the whole kernel. That is suitable for the bootloader's
+kernel handoff, but there is no managed user-image loader that can select,
+map, relocate or validate a separate payload.
+
+`KMain` initializes the global kernel allocator and calls
+`StartupCodeHelpers.InitializeModules` in CPL0 before normal managed static
+use. The local runtime helpers have kernel-coupled module/statics handling,
+kernel-heap-backed `RhpNewFast`/`RhpNewArray`, no-op reverse-P/Invoke and
+P/Invoke transition helpers, and an `int 0x80` interop path. `Native` exposes
+direct hardware and CR3 operations. The existing process loader maps a
+freestanding native code/data/stack payload and has no managed metadata,
+R2R/module table, runtime-helper resolver, exception policy, GC state, or user
+TLS/FLS contract. An exact helper/import inventory for a managed payload cannot
+be claimed yet because no separate managed payload has been generated; the
+kernel-wide image's helper set would not be a valid user-process manifest.
+
+### Read-only Advanced Server comparison
+
+The Advanced Server reference was inspected read-only. Its separate runtime
+pack documents the minimum dependency shape: PAL/platform hooks, FLS/TLS and
+reverse-P/Invoke frame state, ThreadStore and stack startup, virtual-memory
+adapters, locks/events, and GC startup probes. Its minimal `HostLogProof` path
+is intentionally non-allocating and does not enter ordinary ThreadStore
+attachment, start threads, allocate/collect, or provide a general managed
+process. The Server PE-to-ELF work is also documented as an experimental
+fixed-base converter rather than a semantic linker. These facts make it a
+reference for boundaries and risks, not a source to transplant into UEFI.
+
+### Smallest bounded payload shape
+
+The first candidate should be a separate, pinned NativeAOT payload project
+whose native-first trampoline has a fixed-width entry block and performs only:
+
+1. a copied System Information request through the existing service ABI; and
+2. a copied Exit request through the existing process ABI.
+
+It must initially avoid strings, arrays, reflection, exceptions, managed
+allocation, background threads, GUI, shared memory, and TLS-dependent library
+code. That shape is intentionally narrow, but even it cannot execute until
+the image/runtime prerequisites below are satisfied.
+
+### Blocking prerequisites
+
+1. A separately built payload and compatible NativeAOT/runtime-pack version;
+   the current kernel-wide alpha toolchain does not establish that contract.
+2. A user-image loader that maps each segment with explicit RX/RW/NX policy,
+   zeroes BSS, handles the chosen fixed-base/relocation rule, and preserves
+   `.managed`, `.pdata`, R2R/module-table and startup metadata as required.
+3. Per-process private module/statics state and a fixed-width startup block;
+   kernel-global statics and the kernel allocator cannot cross the boundary.
+4. Per-process/per-thread TLS/FLS and runtime-thread state preserved across
+   preemption, resume, termination, and process-generation reuse.
+5. A GC decision backed by generated-payload evidence. A no-allocation first
+   proof may avoid exercising GC, but any required runtime startup, heap,
+   write barrier, safepoint, exception, and collection state must be private
+   and must not use kernel heap pages.
+6. A generated-payload helper, exception, and import manifest with explicit
+   kernel ABI wrappers. Current kernel runtime exports and direct hardware
+   imports cannot be reused as a user contract.
+7. A loader/startup proof that reaches a managed entry, calls copied System
+   Information, and exits through the existing cleanup path before service or
+   GUI expansion is attempted.
+
+### Phase result and regressions
+
+No managed CPL3 entry, managed System Information call, managed Exit, managed
+image load, or managed service marker was produced in this phase. The stop is
+intentional and precise: the prerequisite is the separate payload/runtime/
+loader boundary, not another change to process isolation. The committed
+Phase 15 QEMU run reports eight generations, balanced address spaces/page
+tables/kernel stacks/user pages, zero live mappings/handles/threads, and
+`RING3_PHASE15_COMPLETE=1`. Serial Phase 13 and Phase 14 reruns reached their
+proof-complete markers; Phase 14 also retained scheduled execution, service
+copy-in/copy-out rejection, contained fault, cleanup, and desktop heartbeat.
+
+Only this design documentation is changed for Phase 16. The Server reference,
+Historical Legacy tree, bootloader, kernel, loader, and managed runtime source
+were not modified by the feasibility decision.

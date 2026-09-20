@@ -2670,3 +2670,56 @@ selector. App Model, lifecycle, taskbar/grouping, Phase 8–11 service,
 AppRuntime, NativeInput, ContextMenu, and production Continuous regressions
 remained green. This phase adds no managed Ring 3 application, GUI IPC,
 shared memory, or broader application feature surface.
+
+## 30. Phase 16 first managed Ring 3 NativeAOT bootstrap feasibility
+
+Phase 16 is **Outcome E with the bounded prerequisites for Outcome C**. The
+Phase 15 substrate is accepted and committed as `839465e` on `main`. This
+phase deliberately stops at the design gate: it does not add a managed Ring 3
+image, user GC, a dynamic loader, a new TLS architecture, or changes to the
+Phase 13--15 kernel substrate.
+
+The current `guideXOS` image is a kernel-wide `net7.0` NativeAOT image using
+the repository's old `Microsoft.DotNet.ILCompiler` alpha package. Its PE is
+fixed at `0x10000000`, has relocations stripped and no import directory, and
+the PE-to-ELF output is a fixed-base `ET_EXEC` kernel image. It is therefore a
+boot artifact, not a separately loadable user payload. The current ELF
+conversion path has no managed user-image segment loader.
+
+The managed startup path confirms the same boundary. `KMain` initializes the
+global kernel allocator and calls `StartupCodeHelpers.InitializeModules` in
+CPL0 before normal managed statics. The repository runtime helpers use the
+kernel heap, provide no user TLS/FLS or per-thread runtime state, and contain
+kernel-specific `int 0x80` interop and direct hardware entry points. The
+existing Ring 3 loader accepts the small freestanding native diagnostic
+payload only; it has no managed metadata, runtime-helper, GC, exception, or
+module-startup contract.
+
+The read-only Advanced Server comparison is useful as a dependency inventory,
+not as a transplant source. Its separate NativeAOT runtime pack supplies
+PAL/FLS/TLS, reverse-P/Invoke state, thread-store and stack hooks, virtual
+memory adapters, and a bounded non-allocating `HostLogProof`. Its own
+documentation does not claim a general managed runtime, ordinary allocation,
+or same-process GC shutdown. None of that Server source was copied or
+modified here.
+
+The smallest next payload is consequently defined, but not built into this
+kernel: a separate, pinned NativeAOT payload with a fixed-width native-first
+trampoline, no strings/arrays/reflection/exceptions/threading/managed
+allocation, and only copied System Information plus Exit calls through the
+existing ABI. Before that can execute, the project needs a compatible
+toolchain/runtime pack; a per-segment PE/ELF loader with RX/RW/NX policy,
+zero-fill and managed metadata handling; private module/statics state; a
+per-process/per-thread TLS contract preserved by the scheduler; and an
+evidence-derived helper/import/exception inventory. If the selected runtime
+still requires managed startup or GC, those components must be private to the
+user process and cannot use the kernel allocator.
+
+The design gate therefore records no managed CPL3 entry, managed System
+Information call, managed Exit, managed image load, or managed service marker.
+Phase 13 `Ring3Direct`, Phase 14 `Ring3`, and the committed Phase 15 QEMU
+proofs remain green, including process-generation reuse, balanced reclamation,
+fault containment, copied service ABI validation, and the post-cleanup desktop
+heartbeat. Server and Historical Legacy trees remain untouched. The next
+implementation phase requires an explicit decision to fund the separate
+payload/runtime/loader boundary rather than weakening the accepted substrate.
