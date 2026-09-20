@@ -13,7 +13,10 @@
 /Tools/MediaCreator.Linux/bin
 /Tools/Installer/GuideXOS.Installer/obj
 /Tools/Installer/GuideXOS.Installer/bin
-/Docs
+/Docs/_archive
+/Docs/_cleanup_junk
+/Docs/_review
+/Docs/superpowers
 /guideXOSBootLoader/x64
 /guideXOS/Kernel.map
 /kernel.elf
