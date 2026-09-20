@@ -75,6 +75,7 @@ static class GDT {
     static TSS tss;
     static GDTS gdts;
     public static GDTDescriptor gdtr;
+    public static ulong KernelStackTop { get; private set; }
 
     public const ushort KernelCodeSelector = 0x08;
     public const ushort KernelDataSelector = 0x10;
@@ -131,13 +132,14 @@ static class GDT {
         // which causes interrupt returns to fail
         Native.Reload_Segments();
 
-        // Note: Loading TR requires a native implementation (ltr). Until provided in NativeLib,
-        // keep TSS defined but do not call ltr to avoid link errors.
-        // Native.Load_TR(TssSelector);
+        Native.Load_TR(TssSelector);
     }
 
     public static void SetKernelStack(ulong rsp0) {
+        KernelStackTop = rsp0;
         tss.Rsp0Low = (uint)(rsp0 & 0xFFFF_FFFF);
         tss.Rsp0High = (uint)(rsp0 >> 32);
     }
+
+    public static bool IsTaskRegisterLoaded() => Native.Read_TR() == TssSelector;
 }

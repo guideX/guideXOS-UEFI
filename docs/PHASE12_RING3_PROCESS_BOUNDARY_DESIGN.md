@@ -855,3 +855,106 @@ The defining boundary remains:
 
 > Ring 3 changes where an application executes; it must not redefine what a
 > guideXOS application is.
+
+## 28. Phase 13 implementation and acceptance result
+
+Phase 13 was implemented as the bounded first native proof described above.
+The result is **Outcome A for the first synchronous Ring 3 boundary proof**:
+the native process enters real CPL3, completes a bounded ABI round trip,
+rejects invalid input, exits normally, contains a deliberate user fault,
+reclaims its resources, and returns to the ordinary UEFI desktop initialization
+path. The general preemptive scheduler handoff of an arbitrary user thread is
+still deliberately not claimed by this phase; the proof selector reports
+`RING3_SCHEDULER_CONTEXT_SWITCHING=0` and uses one synchronous diagnostic
+fixture on the existing bootstrap CPU.
+
+### Implemented substrate
+
+* GDT now installs a 64-bit available TSS and executes `ltr 0x28`. `RSP0` is
+  updated to the active user thread's private kernel stack before entry.
+  Boot markers prove TSS installation, TR load, RSP0 configuration, and stack
+  validity.
+* A fixed four-slot process table provides generation-safe handles. A handle
+  contains a slot and generation; cleanup removes the slot and increments its
+  generation, so stale handles resolve to null.
+* `AddressSpace` clones the current CR3 root, tracks newly allocated page-table
+  branches, maps deterministic user code/data/stack regions, and releases the
+  tracked branches and backing pages. Shared supervisor branches are cloned
+  before a user U/S bit is introduced.
+* The fixed layout is: code
+  `0x0000400000000000..0x0000400000001000`, writable data at
+  `0x0000400000002000`, and stack
+  `0x00007FFF00000000..0x00007FFF00010000`. The page-table walk rejects
+  non-canonical, kernel, unmapped, partially mapped, overflowed, and
+  over-maximum ranges. Code is user-readable and read-only; data and stack are
+  user-writable; kernel mappings remain supervisor-only.
+* The payload is freestanding x86-64 NASM in `guideXOS/native_stubs.asm`.
+  It has no managed runtime, GC, libc, filesystem, GUI, or NativeAOT dependency.
+  Existing repository NASM integration assembles it into the kernel image and
+  copies it into the process-owned code page.
+* The ABI is version 1 over the Phase 12-approved `int 0x80` gate. Operations
+  are `Ping` (returns ABI version 1), `Exit`, `ValidateRead`, and
+  `ValidateWrite`; status values are fixed-width primitives. Caller identity is
+  derived from `ThreadPool.CurrentProcess`, never from a user-supplied handle.
+  The proof emits `RING3_CR3_USER_ACTIVE=1` after switching to the private root
+  and `RING3_CR3_KERNEL_RESTORED=1` before cleanup.
+
+### Runtime proof
+
+The final Ring 3 QEMU run emitted, in order, the TSS/TR/RSP0 markers, three
+process creations, deterministic code/stack ranges, `RING3_ENTER_CPL=3`, a
+successful Ping, six invalid-pointer rejections covering null, kernel,
+cross-boundary, overflow, over-maximum, and read-only-write cases, an invalid
+operation rejection, three normal cleanup sequences, a deliberate CPL3 page
+fault, a bounded fault record, fault containment, three address-space/kernel
+stack reclamations, and three stale-handle rejections. It then emitted:
+
+```text
+RING3_KERNEL_HEARTBEAT_CONTINUED=1
+RING3_PROOF_COMPLETE=1
+RING3_PROOF_RETURNED_TO_ENTRYPOINT=1
+RING3_DESKTOP_CONTINUED=1
+KERNELMAIN_ENTRY_RAW
+[KERNELMAIN]
+[BOOT_MODE] UEFI
+```
+
+The contained fault record in that run was vector `0x0E` (page fault), with
+RIP `0x000040000000000A` and CR2 `0x00007FFF00010000`, the first unmapped byte
+above the deterministic user stack.
+
+The fault path distinguishes `(CS & 3) == 3` from CPL0 exceptions; only the
+former is converted into a failed process. CPL0 faults retain the existing
+kernel panic path. Normal exit and fault cleanup both terminate the user
+thread before releasing its address-space branches, user pages, and kernel
+stack, then invalidate the generation-safe handle.
+
+The Ring 3 harness now waits for
+`RING3_PROOF_RETURNED_TO_ENTRYPOINT=1`, rather than stopping at the internal
+proof-complete marker. The ordinary production selector was also rerun after
+the change: it reached `TIMEOUT_SUCCESS`, continuous desktop entry, graphics
+validity, and advancing heartbeats (`last frame 300`, timer `5545`). The
+AppModel selector reached `DIAGNOSTIC_COMPLETE` with App Model validation true,
+12/12 descriptor/factory checks, fallback count 0, and legacy backend count 0.
+
+The same AppModel run also passed the Phase 8 service self-test, Phase 9
+dialog/file/shell self-tests, Phase 10 resource/chunk/storage self-tests, and
+Phase 11 clipboard contract/self-test/generation/lifecycle/reset checks. It
+reported zero orphan dialogs, zero stale service contexts, zero stale
+application instances, zero stale taskbar projection entries, and zero legacy
+backend calls. The focused NativeInput run reached `TIMEOUT_SUCCESS` with
+graphics valid, `ThreadPool.Locked=0`, and zero keyboard or mouse drops. The
+ContextMenu run reached `CONTEXT_MENU_COMPLETE` with graphics valid, zero input
+drops, and zero bad-bounds observations. The AppRuntime run reached
+`APP_RUNTIME_COMPLETE` with four heartbeats, graphics valid, zero input drops,
+zero runtime faults, and zero factory fallbacks. The final Ring 3 serial log is
+`phase13-ring3-serial.log` in the repository root.
+
+### Scope boundary carried to Phase 14
+
+This phase does not expose the process as a normal Start application, does not
+add a service bridge, and does not enable general user-thread preemption. The
+next slice is to integrate the proven process/address-space/TSS substrate with
+the scheduler's ordinary context-switch path, then add a small copied service
+request only if that integration remains bounded. Managed Ring 3 applications,
+GUI ownership, IPC expansion, and runtime migration remain out of scope.

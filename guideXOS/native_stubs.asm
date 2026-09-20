@@ -88,6 +88,18 @@ WriteCR3:
     mov cr3, rcx
     ret
 
+global Load_TR
+Load_TR:
+    mov ax, cx
+    ltr ax
+    ret
+
+global Read_TR
+Read_TR:
+    str ax
+    movzx eax, ax
+    ret
+
 global Invlpg
 Invlpg:
     invlpg [rcx]
@@ -229,6 +241,157 @@ Reload_Segments:
     push qword 0x08         ; Push new CS (kernel code selector)
     push rax                ; Push return address
     retfq                   ; Far return - loads CS from stack
+
+; Windows x64 arguments: RCX=RIP, RDX=CS, R8=RFLAGS, R9=RSP,
+; [RSP+28h]=SS.  The iretq frame is the only path into CPL3.
+global iret_to_user
+iret_to_user:
+    mov r10, [rsp + 28h]
+    cli
+    push r10
+    push r9
+    push r8
+    push rdx
+    push rcx
+    iretq
+
+; Tiny freestanding native payloads used only by the Phase 13 diagnostic.
+; They make no managed/runtime/libc calls and use the one int 0x80 ABI.
+global GetR3PayloadStart
+GetR3PayloadStart:
+    lea rax, [rel R3PayloadStart]
+    ret
+global GetR3PayloadSize
+GetR3PayloadSize:
+    mov eax, R3PayloadEnd - R3PayloadStart
+    ret
+global GetR3InvalidPayloadStart
+GetR3InvalidPayloadStart:
+    lea rax, [rel R3InvalidPayloadStart]
+    ret
+global GetR3InvalidPayloadSize
+GetR3InvalidPayloadSize:
+    mov eax, R3InvalidPayloadEnd - R3InvalidPayloadStart
+    ret
+global GetR3FaultPayloadStart
+GetR3FaultPayloadStart:
+    lea rax, [rel R3FaultPayloadStart]
+    ret
+global GetR3FaultPayloadSize
+GetR3FaultPayloadSize:
+    mov eax, R3FaultPayloadEnd - R3FaultPayloadStart
+    ret
+
+; Direct diagnostic fixture continuation. The Phase 13 proof runs before the
+; normal desktop loop, so it returns through the original kernel caller rather
+; than preemptively resuming the bootstrap context.
+section .data align=8
+r3_resume_rsp: dq 0
+
+section .text
+global GetR3ResumeStack
+GetR3ResumeStack:
+    mov rax, [rel r3_resume_rsp]
+    ret
+
+global GetR3ResumeStub
+GetR3ResumeStub:
+    lea rax, [rel Ring3ResumeStub]
+    ret
+
+global EnterR3AndReturn
+EnterR3AndReturn:
+    ; RCX = user RIP, RDX = user RSP, R8 = user RFLAGS.
+    ; Preserve nonvolatile registers below the caller's return address.
+    sub rsp, 80h
+    mov [rsp + 00h], rbx
+    mov [rsp + 08h], rbp
+    mov [rsp + 10h], rsi
+    mov [rsp + 18h], rdi
+    mov [rsp + 20h], r12
+    mov [rsp + 28h], r13
+    mov [rsp + 30h], r14
+    mov [rsp + 38h], r15
+    lea rax, [rsp + 80h]
+    mov [rel r3_resume_rsp], rax
+
+    cli
+    push qword 0x23
+    push rdx
+    push r8
+    push qword 0x1B
+    push rcx
+    iretq
+
+global Ring3ResumeStub
+Ring3ResumeStub:
+    ; RSP points at the caller's original return address.
+    mov rbx, [rsp - 80h]
+    mov rbp, [rsp - 78h]
+    mov rsi, [rsp - 70h]
+    mov rdi, [rsp - 68h]
+    mov r12, [rsp - 60h]
+    mov r13, [rsp - 58h]
+    mov r14, [rsp - 50h]
+    mov r15, [rsp - 48h]
+    ret
+
+%define R3_USER_CODE 0x0000400000000000
+
+R3PayloadStart:
+    mov eax, 1                  ; Ping
+    int 0x80
+    cmp eax, 1                  ; ABI version 1
+    jnz .success_fail
+    mov eax, 2                  ; Exit(0)
+    xor edi, edi
+    int 0x80
+    ud2
+.success_fail:
+    mov eax, 2
+    mov edi, 1
+    int 0x80
+    ud2
+R3PayloadEnd:
+
+R3InvalidPayloadStart:
+    mov eax, 3                  ; ValidateRead(null, 1)
+    xor edi, edi
+    mov esi, 1
+    int 0x80
+    mov eax, 3                  ; ValidateRead(kernel pointer, 1)
+    mov rdi, 0xFFFF800000000000
+    mov esi, 1
+    int 0x80
+    mov eax, 3                  ; ValidateRead(code end, 2)
+    mov rdi, R3_USER_CODE + 0xFFF
+    mov esi, 2
+    int 0x80
+    mov eax, 3                  ; ValidateRead(overflow, 0x100)
+    mov rdi, 0x7FFFFFFFFFFFFFF0
+    mov rsi, 0x100
+    int 0x80
+    mov eax, 3                  ; ValidateRead(over maximum)
+    mov rdi, R3_USER_CODE
+    mov rsi, 0x10001
+    int 0x80
+    mov eax, 4                  ; ValidateWrite(read-only code, 1)
+    mov rdi, R3_USER_CODE
+    mov esi, 1
+    int 0x80
+    mov eax, 99                 ; invalid operation
+    int 0x80
+    mov eax, 2                  ; Exit(0)
+    xor edi, edi
+    int 0x80
+    ud2
+R3InvalidPayloadEnd:
+
+R3FaultPayloadStart:
+    mov rax, 0x00007FFF00010000 ; one byte above the mapped user stack
+    mov rax, [rax]
+    ud2
+R3FaultPayloadEnd:
 
 global Load_IDT
 Load_IDT:
@@ -401,6 +564,47 @@ isr_common:
     add rsp, 30h
     mov rsp, rax
 
+    ; A ring-0 return frame does not contain a hardware RSP/SS pair.  The
+    ; managed scheduler nevertheless supplies one in its synthetic frame, so
+    ; switch the stack explicitly and resume the selected kernel context.
+    ; This is required before reclaiming a user process's RSP0 stack.
+    mov r11, rsp
+    test qword [r11 + 144], 3
+    jnz .return_from_interrupt
+    mov rax, [r11 + 128]
+    mov r10, 052494E473352304Ch
+    cmp rax, r10
+    jne .return_from_interrupt
+
+    ; Keep the selected frame in R12 while loading the target register set.
+    ; Do not place a frame pointer in the target stack: that stack may be the
+    ; bootstrap stack captured from an interrupted desktop context.
+    mov r12, r11
+    mov r10, [r12 + 160]       ; selected kernel RSP
+    mov rax, [r12 + 136]       ; selected RIP
+    mov [r10 - 8], rax         ; scratch below the return address
+    mov rax, [r12 + 152]       ; selected RFLAGS
+    push rax
+    popfq
+    mov rsp, r10
+    mov rax, [r12 + 0]
+    mov rcx, [r12 + 8]
+    mov rdx, [r12 + 16]
+    mov rbx, [r12 + 24]
+    mov rbp, [r12 + 32]
+    mov rsi, [r12 + 40]
+    mov rdi, [r12 + 48]
+    mov r8,  [r12 + 56]
+    mov r9,  [r12 + 64]
+    mov r10, [r12 + 72]
+    mov r11, [r12 + 80]
+    mov r13, [r12 + 96]
+    mov r14, [r12 + 104]
+    mov r15, [r12 + 112]
+    mov r12, [r12 + 88]
+    jmp [rsp - 8]
+
+.return_from_interrupt:
     ; Restore GPRs (in reverse order of how we pushed them)
     pop rax
     pop rcx

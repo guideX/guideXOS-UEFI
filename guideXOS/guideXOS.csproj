@@ -66,6 +66,9 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'AppRuntime'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_APP_RUNTIME</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Widget'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET</DefineConstants>
 	</PropertyGroup>

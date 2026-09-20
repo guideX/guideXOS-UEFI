@@ -69,6 +69,12 @@ static unsafe class Native {
     public static extern void Reload_Segments();
 
     [DllImport("*")]
+    public static extern void Load_TR(ushort selector);
+
+    [DllImport("*")]
+    public static extern ushort Read_TR();
+
+    [DllImport("*")]
     public static extern void Load_IDT(ref IDT.IDTDescriptor idtr);
 
     [DllImport("*")]
@@ -84,7 +90,34 @@ static unsafe class Native {
     public static extern void Sti();
 
     [DllImport("*")]
-    public extern static void Invlpg(ulong physicalAddress);
+    public extern static void Invlpg(ulong virtualAddress);
+
+    [DllImport("*")]
+    public static extern byte* GetR3PayloadStart();
+
+    [DllImport("*")]
+    public static extern ulong GetR3PayloadSize();
+
+    [DllImport("*")]
+    public static extern byte* GetR3InvalidPayloadStart();
+
+    [DllImport("*")]
+    public static extern ulong GetR3InvalidPayloadSize();
+
+    [DllImport("*")]
+    public static extern byte* GetR3FaultPayloadStart();
+
+    [DllImport("*")]
+    public static extern ulong GetR3FaultPayloadSize();
+
+    [DllImport("*")]
+    public static extern void EnterR3AndReturn(ulong rip, ulong rsp, ulong rflags);
+
+    [DllImport("*")]
+    public static extern ulong GetR3ResumeStack();
+
+    [DllImport("*")]
+    public static extern ulong GetR3ResumeStub();
 
     [DllImport("*")]
     public extern static void Nop();

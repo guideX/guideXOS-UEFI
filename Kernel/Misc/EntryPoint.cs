@@ -131,6 +131,16 @@ namespace guideXOS.Misc {
                 const ulong kStackSize = 64 * 1024;
                 ulong rsp0 = (ulong)Allocator.Allocate(kStackSize) + kStackSize;
                 GDT.SetKernelStack(rsp0);
+#if UEFI_DIAGNOSTIC_RING3
+                BootConsole.WriteLine("RING3_TSS_INSTALLED=1");
+                BootConsole.WriteLine("RING3_RSP0_CONFIGURED=1");
+                BootConsole.WriteLine((rsp0 != 0 && (rsp0 & 0xFFFUL) == 0)
+                    ? "RING3_RSP0_KERNEL_STACK_VALID=1"
+                    : "RING3_RSP0_KERNEL_STACK_VALID=0");
+                BootConsole.WriteLine(GDT.IsTaskRegisterLoaded()
+                    ? "RING3_TR_LOADED=1"
+                    : "RING3_TR_LOADED=0");
+#endif
             }
             
             BootConsole.WriteLine("[IDT] INIT");
@@ -249,6 +259,18 @@ namespace guideXOS.Misc {
             
             BootConsole.WriteLine("[SCHED] ThreadPool.Initialize complete");
 
+#if UEFI_DIAGNOSTIC_RING3
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                // Keep the synchronous boundary proof deterministic.  The
+                // existing APIC timer is restarted by the normal post-boot
+                // scheduler path; it must not preempt the fixture while the
+                // process-owned RSP0 stack is being reclaimed.
+                LocalAPICTimer.StopTimer();
+                Ring3Proof.RunDirect();
+                BootConsole.WriteLine("RING3_PROOF_RETURNED_TO_ENTRYPOINT=1");
+            }
+#endif
+
 #if !UseAPIC
             // Enable only timer IRQ (IRQ0 -> vector 0x20 with PIC remap) for scheduling.
             BootConsole.WriteLine("[PIC] Enabling IRQ0 (timer) only");
@@ -285,6 +307,10 @@ namespace guideXOS.Misc {
 #endif
 
             BootConsole.WriteLine("[BOOT] Post-STI continue");
+#if UEFI_DIAGNOSTIC_RING3
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI)
+                BootConsole.WriteLine("RING3_DESKTOP_CONTINUED=1");
+#endif
             BootConsole.WriteLine("[BOOT] About to cleanup splash");
 
             // Give the system a moment to service IRQ0 and prove the IDT path works
@@ -339,6 +365,11 @@ namespace guideXOS.Misc {
             // Call main kernel entry - this returns after GUI is set up!
             //BootConsole.WriteLine("[CALLING_KERNEL_MAIN]");
             KernelMain();
+
+#if UEFI_DIAGNOSTIC_RING3
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI)
+                LocalAPICTimer.StartTimer(1000, 0x20);
+#endif
 
             // From here on, scheduling is driven by vector 0x20.
 #if !UseAPIC

@@ -302,6 +302,17 @@ public static class IDT {
         // Prevent nested interrupts while inside managed interrupt handler.
         Native.Cli();
 
+        if (irq == 0x80) {
+            // The diagnostic ABI is intentionally usable only from CPL3.  A
+            // kernel-originated software interrupt is not a caller identity.
+            if (stack != null && (stack->irs.cs & 3UL) == 3UL) {
+                Ring3Abi.Dispatch(stack);
+                return;
+            }
+            Panic.Error("Kernel invoked the Ring3 ABI gate");
+            for (;;) Native.Hlt();
+        }
+
         if (irq < 0x20) {
             // Compute correct location of InterruptReturnStack depending on whether the CPU pushed an error code
             InterruptReturnStack* irs;
@@ -336,6 +347,18 @@ public static class IDT {
                     break;
             }
 
+            if (irs != null && (irs->cs & 3UL) == 3UL) {
+                if (Ring3Process.HandleUserFault(irq, actualErrorCode, irs->rip,
+                                                 irq == 14 ? Native.ReadCR2() : 0,
+                                                 stack)) {
+                    return;
+                }
+                Panic.Error("CPL3 fault without a current process");
+                for (;;) Native.Hlt();
+            }
+
+            // Only CPL0 faults reach the kernel panic path.  This distinction
+            // is the containment boundary for the first native process proof.
             SerialWriteFaultBreadcrumbs(irq, actualErrorCode, &stack->rs, irs);
 
             if (Program.IsUefiMultiFrameActive()) {
@@ -387,15 +410,15 @@ public static class IDT {
             
             // Context switching is disabled during boot (SchedulingEnabled = false)
             // This just returns immediately without modifying the stack
+            // A native context switch may not return to this handler, so acknowledge
+            // the timer before handing control to the scheduler.
+            Interrupts.EndOfInterrupt((byte)irq);
             ThreadPool.Schedule(stack);
             
             // Debug: after Schedule
             if (logIrq0) {
                 BootConsole.WriteLine("SCH");
             }
-            
-            // Send EOI to APIC
-            Interrupts.EndOfInterrupt((byte)irq);
             
             // Debug: after EOI, about to return
             if (logIrq0) {

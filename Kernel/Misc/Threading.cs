@@ -9,6 +9,11 @@ namespace guideXOS.Misc {
         public IDT.IDTStackGeneric* Stack;
         public int RunOnWhichCPU;
         public bool IsIdleThread = false;
+        public Ring3Process OwnerProcess;
+        public ulong KernelStackBase;
+        public ulong KernelStackSize;
+        public ulong KernelStackTop;
+        public bool IsUserThread;
 
         public Thread(delegate*<void> method, ulong stack_size = 16384) {
             NewThread(method, stack_size);
@@ -16,10 +21,13 @@ namespace guideXOS.Misc {
 
         private void NewThread(delegate*<void> method, ulong stack_size) {
             Stack = (IDT.IDTStackGeneric*)Allocator.Allocate((ulong)sizeof(IDT.IDTStackGeneric));
+            KernelStackSize = stack_size;
+            KernelStackBase = (ulong)Allocator.Allocate(stack_size);
+            KernelStackTop = KernelStackBase + stack_size;
 
             Stack->irs.cs = 0x08;
             Stack->irs.ss = 0x10;
-            Stack->irs.rsp = ((ulong)Allocator.Allocate(stack_size)) + (stack_size);
+            Stack->irs.rsp = KernelStackTop;
 
             Stack->irs.rsp -= 8;
             *(ulong*)(Stack->irs.rsp) = (ulong)(delegate*<void>)&ThreadPool.Terminate;
@@ -29,6 +37,20 @@ namespace guideXOS.Misc {
             Stack->irs.rip = (ulong)method;
 
             Terminated = false;
+        }
+
+        public static Thread CreateUser(Ring3Process process, ulong rip, ulong rsp,
+                                        ulong stack_size) {
+            if (process == null) return null;
+            Thread thread = new Thread(&ThreadPool.Terminate, stack_size);
+            thread.OwnerProcess = process;
+            thread.IsUserThread = true;
+            thread.Stack->irs.cs = GDT.UserCodeSelector;
+            thread.Stack->irs.ss = GDT.UserDataSelector;
+            thread.Stack->irs.rip = rip;
+            thread.Stack->irs.rsp = rsp;
+            thread.Stack->irs.rflags = 0x202;
+            return thread;
         }
 
         public Thread(Action action, ulong stack_size = 16384) {
@@ -74,6 +96,7 @@ namespace guideXOS.Misc {
     }
 
     internal static unsafe class ThreadPool {
+        internal const ulong Ring0ContextSwitchMarker = 0x52494E473352304CUL;
         public static List<Thread> Threads;
         public static bool Initialized = false;
         public static bool Locked = false;
@@ -85,6 +108,20 @@ namespace guideXOS.Misc {
         /// This allows boot to complete without being interrupted by scheduling.
         /// </summary>
         public static bool SchedulingEnabled = false;
+        public static ulong KernelCr3 { get; private set; }
+        private static Thread _directUserThread;
+        private static ulong _bootstrapKernelStackTop;
+
+        public static Thread CurrentThread {
+            get {
+                if (_directUserThread != null) return _directUserThread;
+                if (Threads == null || Threads.Count == 0 || Index < 0 || Index >= Threads.Count)
+                    return null;
+                return Threads[Index];
+            }
+        }
+
+        public static Ring3Process CurrentProcess => CurrentThread?.OwnerProcess;
 
         private static int Index {
             get {
@@ -97,6 +134,8 @@ namespace guideXOS.Misc {
 
         public static void Initialize() {
             Native.Cli();
+            KernelCr3 = Native.ReadCR3() & PageTable.PageMask;
+            _bootstrapKernelStackTop = GDT.KernelStackTop;
 
             // Debug: entering ThreadPool.Initialize (no wait loop - just blast it out)
             BootConsole.WriteLine("TP1");
@@ -216,6 +255,20 @@ namespace guideXOS.Misc {
             }
         }
 
+        internal static void BeginDirectUser(Thread thread) {
+            if (thread == null || thread.OwnerProcess == null ||
+                thread.OwnerProcess.Space == null) return;
+            _directUserThread = thread;
+            GDT.SetKernelStack(thread.KernelStackTop);
+            Native.WriteCR3(thread.OwnerProcess.Space.RootPhysical);
+        }
+
+        internal static void EndDirectUser() {
+            _directUserThread = null;
+            GDT.SetKernelStack(_bootstrapKernelStackTop);
+            Native.WriteCR3(KernelCr3);
+        }
+
         public static void Terminate() {
             //Console.Write("Thread ");
             //Console.Write(Index.ToString());
@@ -266,7 +319,6 @@ namespace guideXOS.Misc {
         private static uint TickIdle;
 
         public static uint CPUUsage;
-
         public static void Schedule(IDT.IDTStackGeneric* stack) {
             if (!Initialized) return;
             
@@ -283,16 +335,16 @@ namespace guideXOS.Misc {
             //Lock locker CPU
             if (Locked && Locker == SMP.ThisCPU) return;
 
-            for (; ; )
-            {
-                if (
-                    !Threads[Index].Terminated &&
-                    Threads[Index].RunOnWhichCPU == SMP.ThisCPU
-                    ) {
-                    Native.Movsb(Threads[Index].Stack, stack, (ulong)sizeof(IDT.IDTStackGeneric));
-                    break;
+            if (!Threads[Index].Terminated &&
+                Threads[Index].RunOnWhichCPU == SMP.ThisCPU) {
+                Native.Movsb(Threads[Index].Stack, stack, (ulong)sizeof(IDT.IDTStackGeneric));
+                if ((stack->irs.cs & 3UL) == 0) {
+                    // CPL0 interrupts do not receive RSP/SS from the CPU.
+                    // Preserve the actual interrupted stack for the native
+                    // ring-0 context switch path.
+                    Threads[Index].Stack->irs.rsp =
+                        (ulong)((byte*)&stack->irs + 24);
                 }
-                Index = (Index + 1) % Threads.Count;
             }
 
             do {
@@ -318,7 +370,22 @@ namespace guideXOS.Misc {
             TickAll++;
             #endregion
 
+            if ((Threads[Index].Stack->irs.cs & 3UL) == 0UL)
+                Threads[Index].Stack->vectorSlot = Ring0ContextSwitchMarker;
             Native.Movsb(stack, Threads[Index].Stack, (ulong)sizeof(IDT.IDTStackGeneric));
+            PrepareThreadForRun(Threads[Index]);
+        }
+
+        private static void PrepareThreadForRun(Thread thread) {
+            if (thread == null) return;
+            if (thread.IsUserThread && thread.OwnerProcess != null &&
+                thread.OwnerProcess.Space != null) {
+                GDT.SetKernelStack(thread.KernelStackTop);
+                Native.WriteCR3(thread.OwnerProcess.Space.RootPhysical);
+            } else {
+                GDT.SetKernelStack(thread.KernelStackTop);
+                Native.WriteCR3(KernelCr3);
+            }
         }
     }
 }

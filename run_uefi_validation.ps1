@@ -67,6 +67,9 @@
     Run real UEFI Start-menu application launches, close/return cycles, shell
     routes, and file-association opens through QMP input.
 
+.PARAMETER Ring3
+    Run the bounded first native CPL3/process-boundary proof.
+
 .PARAMETER TimeoutSeconds
     Host-side validation limit. The guest has no corresponding timeout.
 
@@ -95,6 +98,7 @@ param(
     [switch]$BackgroundRotation,
     [switch]$AppModel,
     [switch]$AppRuntime,
+    [switch]$Ring3,
     [Alias('Input')]
     [switch]$NativeInput,
     [Alias('InputStress')]
@@ -124,6 +128,7 @@ $selectorCount = @(
     $(if ($BackgroundRotation) { 1 } else { 0 }),
     $(if ($AppModel) { 1 } else { 0 }),
     $(if ($AppRuntime) { 1 } else { 0 }),
+    $(if ($Ring3) { 1 } else { 0 }),
     $(if ($NativeInput) { 1 } else { 0 }),
     $(if ($NativeInputStress) { 1 } else { 0 }),
     $(if ($ContextMenu) { 1 } else { 0 }),
@@ -146,7 +151,7 @@ if ($Frames -gt 0 -and $Frames -ne 300) {
 if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Font -and
     -not $Background -and -not $BackgroundRotation -and
-    -not $AppModel -and -not $AppRuntime -and
+    -not $AppModel -and -not $AppRuntime -and -not $Ring3 -and
     -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
     -not $ContextMenuSoak -and -not $Widget -and -not $WidgetStress -and
     -not $WidgetSoak -and
@@ -171,6 +176,8 @@ if ($Tiny) {
     $diagnosticMode = 'AppModel'
 } elseif ($AppRuntime) {
     $diagnosticMode = 'AppRuntime'
+} elseif ($Ring3) {
+    $diagnosticMode = 'Ring3'
 } elseif ($Frames -gt 0) {
     $diagnosticMode = 'Frames'
 } elseif ($NativeInput) {
@@ -188,7 +195,7 @@ if ($Tiny) {
 }
 $isWidgetValidation = $diagnosticMode -in @('Widget', 'WidgetStress', 'WidgetSoak')
 $isAppModelValidation = $diagnosticMode -eq 'AppModel'
-$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Widget', 'WidgetStress')
+$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Ring3', 'Widget', 'WidgetStress')
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu')
 $isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress')
 $isAppRuntimeValidation = $diagnosticMode -eq 'AppRuntime'
@@ -204,6 +211,7 @@ $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'BackgroundRotation' { 'BACKGROUND_ROTATION_COMPLETE'; break }
     'AppModel' { 'APP_MODEL_COMPLETE'; break }
     'AppRuntime' { 'APP_RUNTIME_COMPLETE'; break }
+    'Ring3' { 'RING3_PROOF_RETURNED_TO_ENTRYPOINT=1'; break }
     'Widget' { 'WIDGET_COMPLETE'; break }
     'WidgetStress' { 'WIDGET_STRESS_COMPLETE'; break }
     'WidgetSoak' { 'WIDGET_SOAK_COMPLETE'; break }
@@ -2259,7 +2267,7 @@ Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '   Validation Summary' -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
-Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'APP_RUNTIME_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
+Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'APP_RUNTIME_COMPLETE', 'RING3_PROOF_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
 Write-Host "Dispatch selected: $dispatchSelected" -ForegroundColor Gray
 Write-Host "Continuous entered: $continuousEntered" -ForegroundColor Gray
 Write-Host "Heartbeats: $heartbeatCount (last frame $lastHeartbeatFrame)" -ForegroundColor Gray
