@@ -13,7 +13,10 @@ namespace guideXOS.OS {
         Dialogs = 4,
         OpenFile = 5,
         SaveFile = 6,
-        Shell = 7
+        Shell = 7,
+        Resources = 8,
+        Storage = 9,
+        Clipboard = 10
     }
 
     public static class ApplicationServiceNames {
@@ -26,6 +29,9 @@ namespace guideXOS.OS {
                 case ApplicationServiceId.OpenFile: return "open-file";
                 case ApplicationServiceId.SaveFile: return "save-file";
                 case ApplicationServiceId.Shell: return "shell";
+                case ApplicationServiceId.Resources: return "resources";
+                case ApplicationServiceId.Storage: return "storage";
+                case ApplicationServiceId.Clipboard: return "clipboard";
                 default: return "unknown";
             }
         }
@@ -37,7 +43,10 @@ namespace guideXOS.OS {
                    id == ApplicationServiceId.Dialogs ||
                    id == ApplicationServiceId.OpenFile ||
                    id == ApplicationServiceId.SaveFile ||
-                   id == ApplicationServiceId.Shell;
+                   id == ApplicationServiceId.Shell ||
+                   id == ApplicationServiceId.Resources ||
+                   id == ApplicationServiceId.Storage ||
+                   id == ApplicationServiceId.Clipboard;
         }
     }
 
@@ -436,7 +445,7 @@ namespace guideXOS.OS {
     /// </summary>
     public sealed class ApplicationServiceContext {
         public const int MaxApplicationIdLength = 96;
-        public const int MaxCapabilities = 8;
+        public const int MaxCapabilities = 10;
         public const int MaxCapabilityTextLength = 64;
 
         private readonly ApplicationInstanceHandle _instanceHandle;
@@ -681,6 +690,315 @@ namespace guideXOS.OS {
             ApplicationServiceContext context);
     }
 
+    public sealed class ApplicationResourceRequest {
+        public const int MaxResourceKeyLength = 96;
+
+        private ApplicationResourceRequest(string resourceKey) {
+            ResourceKey = resourceKey ?? string.Empty;
+            IsValid = ApplicationResourceKeyRules.IsValid(ResourceKey);
+        }
+
+        public string ResourceKey { get; private set; }
+        public bool IsValid { get; private set; }
+
+        public static ApplicationResourceRequest Create(string resourceKey) {
+            return new ApplicationResourceRequest(resourceKey);
+        }
+    }
+
+    public sealed class ApplicationClipboardWriteRequest {
+        public const int MaxTextLength = 64 * 1024;
+
+        private ApplicationClipboardWriteRequest(string text) {
+            Text = text ?? string.Empty;
+            IsValid = text != null && text.Length <= MaxTextLength;
+        }
+
+        public string Text { get; private set; }
+        public bool IsValid { get; private set; }
+
+        public static ApplicationClipboardWriteRequest Create(string text) {
+            return new ApplicationClipboardWriteRequest(text);
+        }
+    }
+
+    public sealed class ApplicationClipboardSnapshot {
+        private ApplicationClipboardSnapshot(bool hasValue, string text,
+                string sourceAppId, ulong generation) {
+            HasValue = hasValue;
+            Text = CopyText(text);
+            SourceAppId = CopyText(sourceAppId);
+            Generation = generation;
+        }
+
+        public bool HasValue { get; private set; }
+        public string Text { get; private set; }
+        public string SourceAppId { get; private set; }
+        public ulong Generation { get; private set; }
+
+        internal static ApplicationClipboardSnapshot Create(
+                bool hasValue, string text, string sourceAppId,
+                ulong generation) {
+            return new ApplicationClipboardSnapshot(hasValue, text,
+                sourceAppId, generation);
+        }
+
+        private static string CopyText(string source) {
+            if (string.IsNullOrEmpty(source)) return string.Empty;
+            char[] chars = new char[source.Length];
+            for (int i = 0; i < chars.Length; i++) chars[i] = source[i];
+            return new string(chars);
+        }
+    }
+
+    public sealed class ApplicationResourceReadRequest {
+        public const int MaxChunkLength = 64 * 1024;
+
+        private ApplicationResourceReadRequest(string resourceKey,
+                long offset, int maximumBytes) {
+            ResourceKey = resourceKey ?? string.Empty;
+            Offset = offset;
+            MaximumBytes = maximumBytes;
+            IsValid = ApplicationResourceKeyRules.IsValid(ResourceKey) &&
+                      offset >= 0 && maximumBytes > 0 &&
+                      maximumBytes <= MaxChunkLength;
+        }
+
+        public string ResourceKey { get; private set; }
+        public long Offset { get; private set; }
+        public int MaximumBytes { get; private set; }
+        public bool IsValid { get; private set; }
+
+        public static ApplicationResourceReadRequest Create(
+                string resourceKey, long offset, int maximumBytes) {
+            return new ApplicationResourceReadRequest(resourceKey, offset,
+                maximumBytes);
+        }
+    }
+
+    public sealed class ApplicationResourceMetadata {
+        private ApplicationResourceMetadata(string resourceKey, long length,
+                bool readable) {
+            ResourceKey = resourceKey ?? string.Empty;
+            Length = length;
+            IsReadable = readable;
+        }
+
+        public string ResourceKey { get; private set; }
+        public long Length { get; private set; }
+        public bool IsReadable { get; private set; }
+
+        internal static ApplicationResourceMetadata Create(
+                string resourceKey, long length, bool readable) {
+            return new ApplicationResourceMetadata(resourceKey, length,
+                readable);
+        }
+    }
+
+    public sealed class ApplicationResourceReadResult {
+        private ApplicationResourceReadResult(string resourceKey, long offset,
+                byte[] bytes, int bytesRead, bool endOfResource) {
+            ResourceKey = resourceKey ?? string.Empty;
+            Offset = offset;
+            Bytes = CopyBytes(bytes);
+            BytesRead = bytesRead;
+            EndOfResource = endOfResource;
+        }
+
+        public string ResourceKey { get; private set; }
+        public long Offset { get; private set; }
+        public byte[] Bytes { get; private set; }
+        public int BytesRead { get; private set; }
+        public bool EndOfResource { get; private set; }
+
+        internal static ApplicationResourceReadResult Create(
+                string resourceKey, long offset, byte[] bytes,
+                int bytesRead, bool endOfResource) {
+            return new ApplicationResourceReadResult(resourceKey, offset,
+                bytes, bytesRead, endOfResource);
+        }
+
+        private static byte[] CopyBytes(byte[] source) {
+            if (source == null || source.Length == 0) return new byte[0];
+            byte[] copy = new byte[source.Length];
+            for (int i = 0; i < source.Length; i++) copy[i] = source[i];
+            return copy;
+        }
+    }
+
+    public enum ApplicationStorageNamespace {
+        Persistent = 0,
+        Temporary = 1
+    }
+
+    public sealed class ApplicationStorageRequest {
+        public const int MaxRelativePathLength = 192;
+        public const int MaxPathSegmentLength = 64;
+
+        private ApplicationStorageRequest(ApplicationStorageNamespace space,
+                string relativePath) {
+            Namespace = space;
+            RelativePath = relativePath ?? string.Empty;
+            IsValid = (space == ApplicationStorageNamespace.Persistent ||
+                       space == ApplicationStorageNamespace.Temporary) &&
+                      ApplicationStoragePathRules.IsValid(RelativePath);
+        }
+
+        public ApplicationStorageNamespace Namespace { get; private set; }
+        public string RelativePath { get; private set; }
+        public bool IsValid { get; private set; }
+
+        public static ApplicationStorageRequest Create(
+                ApplicationStorageNamespace space, string relativePath) {
+            return new ApplicationStorageRequest(space, relativePath);
+        }
+    }
+
+    public sealed class ApplicationStorageReadRequest {
+        public const int MaxChunkLength = 64 * 1024;
+
+        private ApplicationStorageReadRequest(
+                ApplicationStorageNamespace space, string relativePath,
+                long offset, int maximumBytes) {
+            Namespace = space;
+            RelativePath = relativePath ?? string.Empty;
+            Offset = offset;
+            MaximumBytes = maximumBytes;
+            IsValid = ApplicationStorageRequest.Create(space, RelativePath).IsValid &&
+                      offset >= 0 && maximumBytes > 0 &&
+                      maximumBytes <= MaxChunkLength;
+        }
+
+        public ApplicationStorageNamespace Namespace { get; private set; }
+        public string RelativePath { get; private set; }
+        public long Offset { get; private set; }
+        public int MaximumBytes { get; private set; }
+        public bool IsValid { get; private set; }
+
+        public static ApplicationStorageReadRequest Create(
+                ApplicationStorageNamespace space, string relativePath,
+                long offset, int maximumBytes) {
+            return new ApplicationStorageReadRequest(space, relativePath,
+                offset, maximumBytes);
+        }
+    }
+
+    public sealed class ApplicationStorageWriteRequest {
+        public const int MaxPayloadLength = 64 * 1024;
+
+        private ApplicationStorageWriteRequest(
+                ApplicationStorageNamespace space, string relativePath,
+                byte[] payload) {
+            Namespace = space;
+            RelativePath = relativePath ?? string.Empty;
+            Payload = CopyBytes(payload);
+            IsValid = ApplicationStorageRequest.Create(space, RelativePath).IsValid &&
+                      payload != null && payload.Length <= MaxPayloadLength;
+        }
+
+        public ApplicationStorageNamespace Namespace { get; private set; }
+        public string RelativePath { get; private set; }
+        public byte[] Payload { get; private set; }
+        public bool IsValid { get; private set; }
+
+        public static ApplicationStorageWriteRequest Create(
+                ApplicationStorageNamespace space, string relativePath,
+                byte[] payload) {
+            return new ApplicationStorageWriteRequest(space, relativePath,
+                payload);
+        }
+
+        private static byte[] CopyBytes(byte[] source) {
+            if (source == null || source.Length == 0) return new byte[0];
+            byte[] copy = new byte[source.Length];
+            for (int i = 0; i < source.Length; i++) copy[i] = source[i];
+            return copy;
+        }
+    }
+
+    public sealed class ApplicationStorageEntry {
+        private ApplicationStorageEntry(string relativePath, long length) {
+            RelativePath = relativePath ?? string.Empty;
+            Length = length;
+        }
+
+        public string RelativePath { get; private set; }
+        public long Length { get; private set; }
+
+        internal static ApplicationStorageEntry Create(string relativePath,
+                long length) {
+            return new ApplicationStorageEntry(relativePath, length);
+        }
+    }
+
+    public sealed class ApplicationStorageReadResult {
+        private ApplicationStorageReadResult(string relativePath, long offset,
+                byte[] bytes, int bytesRead, bool endOfResource) {
+            RelativePath = relativePath ?? string.Empty;
+            Offset = offset;
+            Bytes = CopyBytes(bytes);
+            BytesRead = bytesRead;
+            EndOfResource = endOfResource;
+        }
+
+        public string RelativePath { get; private set; }
+        public long Offset { get; private set; }
+        public byte[] Bytes { get; private set; }
+        public int BytesRead { get; private set; }
+        public bool EndOfResource { get; private set; }
+
+        internal static ApplicationStorageReadResult Create(
+                string relativePath, long offset, byte[] bytes,
+                int bytesRead, bool endOfResource) {
+            return new ApplicationStorageReadResult(relativePath, offset,
+                bytes, bytesRead, endOfResource);
+        }
+
+        private static byte[] CopyBytes(byte[] source) {
+            if (source == null || source.Length == 0) return new byte[0];
+            byte[] copy = new byte[source.Length];
+            for (int i = 0; i < source.Length; i++) copy[i] = source[i];
+            return copy;
+        }
+    }
+
+    public abstract class ApplicationResourceService {
+        public abstract ApplicationServiceResult<ApplicationResourceMetadata>
+            GetMetadata(ApplicationServiceContext context,
+                ApplicationResourceRequest request);
+        public abstract ApplicationServiceResult<ApplicationResourceReadResult>
+            Read(ApplicationServiceContext context,
+                ApplicationResourceReadRequest request);
+    }
+
+    public abstract class ApplicationStorageService {
+        public abstract ApplicationServiceResult<bool> Exists(
+            ApplicationServiceContext context, ApplicationStorageRequest request);
+        public abstract ApplicationServiceResult<ApplicationStorageReadResult>
+            Read(ApplicationServiceContext context,
+                ApplicationStorageReadRequest request);
+        public abstract ApplicationServiceResult Write(
+            ApplicationServiceContext context,
+            ApplicationStorageWriteRequest request);
+        public abstract ApplicationServiceResult Delete(
+            ApplicationServiceContext context, ApplicationStorageRequest request);
+        public abstract ApplicationServiceResult<ApplicationStorageEntry[]> Enumerate(
+            ApplicationServiceContext context,
+            ApplicationStorageNamespace space);
+        internal abstract void ResetTemporaryForAppModel();
+    }
+
+    public abstract class ApplicationClipboardService {
+        public abstract ApplicationServiceResult SetText(
+                ApplicationServiceContext context,
+                ApplicationClipboardWriteRequest request);
+        public abstract ApplicationServiceResult<ApplicationClipboardSnapshot>
+            GetText(ApplicationServiceContext context);
+        public abstract ApplicationServiceResult Clear(
+                ApplicationServiceContext context);
+        internal abstract void ResetForAppModel();
+    }
+
     /// <summary>
     /// Typed service projection.  The registry owns the adapters and is the
     /// only code allowed to construct this value.
@@ -693,6 +1011,9 @@ namespace guideXOS.OS {
         public ApplicationOpenFileService OpenFile { get; private set; }
         public ApplicationSaveFileService SaveFile { get; private set; }
         public ApplicationShellService Shell { get; private set; }
+        public ApplicationResourceService Resources { get; private set; }
+        public ApplicationStorageService Storage { get; private set; }
+        public ApplicationClipboardService Clipboard { get; private set; }
 
         internal ApplicationServiceAccess(
                 ApplicationNotificationService notifications,
@@ -701,7 +1022,10 @@ namespace guideXOS.OS {
                 ApplicationDialogService dialogs,
                 ApplicationOpenFileService openFile,
                 ApplicationSaveFileService saveFile,
-                ApplicationShellService shell) {
+                ApplicationShellService shell,
+                ApplicationResourceService resources,
+                ApplicationStorageService storage,
+                ApplicationClipboardService clipboard) {
             Notifications = notifications;
             Settings = settings;
             SystemInformation = systemInformation;
@@ -709,6 +1033,9 @@ namespace guideXOS.OS {
             OpenFile = openFile;
             SaveFile = saveFile;
             Shell = shell;
+            Resources = resources;
+            Storage = storage;
+            Clipboard = clipboard;
         }
     }
 }

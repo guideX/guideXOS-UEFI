@@ -1917,6 +1917,9 @@ unsafe class Program {
                 SerialBreadcrumb("APP_MODEL_SERVICES_SETTINGS_SELFTEST=" +
                     (ApplicationServiceRegistry.LastSettingsSelfTestFailure ??
                         "unknown"));
+                SerialBreadcrumb("APP_MODEL_SERVICES_FIRST_FAILURE=" +
+                    (ApplicationServiceRegistry.LastSelfTestFailure ??
+                        "unknown"));
                 failure = "APPLICATION_SERVICES";
             } else {
                 SerialBreadcrumb("APP_MODEL_APP_COUNT=" + Desktop.Apps.Length.ToString());
@@ -2034,6 +2037,39 @@ unsafe class Program {
                     ApplicationServiceRegistry.StaleContextRejections.ToString());
                 SerialBreadcrumb("APP_MODEL_SERVICES_CLEANUP=" +
                     (ApplicationServiceRegistry.DiagnosticsClean ? "1" : "0"));
+                SerialBreadcrumb("PHASE10_RESOURCE_STORAGE_SELFTEST_OK=" +
+                    (ApplicationServiceRegistry.LastResourceStorageSelfTestPassed
+                        ? "1" : "0"));
+                SerialBreadcrumb("PHASE10_RESOURCE_CHUNK_SELFTEST_OK=" +
+                    (ApplicationServiceRegistry.LastResourceChunkSelfTestPassed
+                        ? "1" : "0"));
+                SerialBreadcrumb("PHASE10_STORAGE_PATH_CONFINEMENT_OK=" +
+                    (ApplicationServiceRegistry.LastStoragePathSelfTestPassed
+                        ? "1" : "0"));
+                SerialBreadcrumb("PHASE10_STORAGE_PERSISTENT_UNAVAILABLE_OK=" +
+                    (ApplicationServiceRegistry.LastPersistentUnavailableSelfTestPassed
+                        ? "1" : "0"));
+                SerialBreadcrumb("PHASE10_STORAGE_APP_SCOPE_OK=" +
+                    (ApplicationServiceRegistry.LastStorageAppScopeSelfTestPassed
+                        ? "1" : "0"));
+                SerialBreadcrumb("PHASE10_STORAGE_RESET_OK=" +
+                    (ApplicationServiceRegistry.LastStorageResetSelfTestPassed
+                        ? "1" : "0"));
+                SerialBreadcrumb("PHASE11_CLIPBOARD_CONTRACT_OK=" +
+                    (ApplicationServiceRegistry.LastClipboardContractSelfTestPassed
+                        ? "1" : "0"));
+                SerialBreadcrumb("PHASE11_CLIPBOARD_SELFTEST_OK=" +
+                    (ApplicationServiceRegistry.LastClipboardSelfTestPassed
+                        ? "1" : "0"));
+                SerialBreadcrumb("PHASE11_CLIPBOARD_GENERATION_OK=" +
+                    (ApplicationServiceRegistry.LastClipboardGenerationSelfTestPassed
+                        ? "1" : "0"));
+                SerialBreadcrumb("PHASE11_CLIPBOARD_LIFECYCLE_OK=" +
+                    (ApplicationServiceRegistry.LastClipboardLifecycleSelfTestPassed
+                        ? "1" : "0"));
+                SerialBreadcrumb("PHASE11_CLIPBOARD_RESET_OK=" +
+                    (ApplicationServiceRegistry.LastClipboardResetSelfTestPassed
+                        ? "1" : "0"));
             }
         } catch {
             failure = "EXCEPTION";

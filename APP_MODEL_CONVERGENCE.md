@@ -1,11 +1,13 @@
 # guideXOS App Model Convergence
 
-**Status:** Phase 9 dialog, file-picker, and shell/open convergence complete
+**Status:** Phase 11 session-global text clipboard complete; Phase 10 remains accepted Outcome B
 **Date:** 2026-09-19
 **Scope:** guideXOS Server ↔ guideXOS C# UEFI application platform  
-**Outcome:** Outcome A — applications request user interaction and shell
-behavior through bounded platform services while built-ins remain
-factory-native and compatibility remains contained behind typed boundaries
+**Outcome:** Outcome B remains the accepted Phase 10 storage result — applications
+request logical packaged resources and application-scoped storage through
+bounded platform services; the live UEFI backend honestly reports persistent
+writes/deletes unavailable while temporary storage remains real, bounded, and
+AppId-scoped. Phase 11 adds the bounded session-global text clipboard service.
 
 This document is the canonical design reference for converging the guideXOS
 Server and guideXOS C# application models. It defines the common application
@@ -2331,7 +2333,236 @@ Server, Advanced Server, and Legacy repositories were not modified.  The
 implementation is committed in the Phase 9 service, migration, runtime-proof,
 and documentation commits; it is intentionally not pushed by this workflow.
 
-Recommended Phase 10 work is a separate design gate for one bounded next
-platform boundary, with persistence/app-local storage, resources/package
-identity, clipboard, IPC, and Ring 3 still excluded until their authorities,
-ownership, and lifecycle contracts are independently approved.
+Phase 10 is recorded below as the next bounded platform boundary. Clipboard,
+IPC, Ring 3, writable-filesystem repair, general filesystem access, and
+persistent settings remain outside the approved scope.
+
+## 26. Phase 10 app-local storage, package identity, and resources
+
+### 26.1 Audit and outcome
+
+The Phase 10 audit reused the existing C# descriptor authority and compared it
+with Server `AppManifest.id`, the Advanced Server NativeAOT lineage, and the
+Historical Legacy tree. `ApplicationDescriptor.AppId` is already the stable
+identity, so Phase 10 adds no package-ID type, second registry, or path-derived
+identity. The Server, Advanced Server, and Legacy trees were read-only
+references and were not modified.
+
+The selected live UEFI backend is `RdskFS`. Its persistent write/delete paths
+are no-op implementations and do not provide a safe verification result. No
+already-safe writable backend was found in the selected path, so the honest
+target is Outcome B: resource reads and the full typed storage contract are
+implemented; temporary storage is real in-memory storage; persistent writes
+and deletes return `ResourceUnavailable` without a temporary fallback or
+false success.
+
+The Calculator icon was audited as a shared shell/OS `Icons` asset rather than
+a proven Calculator package-owned resource. It was not misclassified or
+migrated. The runtime proof uses the bounded application-owned diagnostic
+fixture `diagnostic.fixture` for `selftest.phase8.services`.
+
+### 26.2 Approved contracts
+
+Resources and Storage extend the existing `ApplicationServiceRegistry` as
+service IDs 8 and 9. They reuse generation-safe `ApplicationServiceContext`,
+the existing typed result vocabulary, and the descriptor `AppId`.
+
+Resource access is logical-key-only: metadata and bounded chunk reads return
+bounded byte arrays and no resource handles, paths, image objects, streams, or
+renderer objects. Resource keys are bounded to 96 characters. Read chunks are
+positive and bounded to 64 KiB. Negative offsets, offsets beyond the resource,
+zero/over-bound chunk requests, invalid keys, and arithmetic overflow are
+`InvalidRequest`. `Offset == Length` succeeds with zero bytes and
+`EndOfResource = true`; an in-range partial read reports the exact byte count
+and reaches end only when its returned range reaches the resource length.
+
+Storage exposes only Exists, Read, Write, Delete, and bounded Enumerate over
+`Persistent` or `Temporary` namespaces. Relative paths are limited to 192
+characters with 64-character segments; absolute, drive/device, repeated or
+trailing separators, dot/dot-dot traversal, controls, invalid filename
+characters, and over-bound paths are rejected before any backend call.
+
+Temporary storage is keyed by AppId, shared by same-AppId instances, isolated
+between AppIds, and retained when one ApplicationInstance terminates. It is
+cleared only by the explicit App Model reset/reboot boundary. Persistent
+writes/deletes never redirect to temporary storage. Phase 9 Open/Save remains
+the path for user-selected external documents, and Phase 8 settings remain
+session-only.
+
+### 26.3 Implementation and TDD evidence
+
+The design/spec and plan were committed before implementation:
+
+| Commit | Evidence |
+| --- | --- |
+| `ee58ba3` | Approved Phase 10 design/spec |
+| `c3528d9` | Bounded resource/storage contracts and registry services |
+| `bd0dfec` | Granular Phase 10 self-test and validation markers |
+| `7a83882` | Stable QEMU validation process launch/reporting |
+
+The red step referenced the Phase 10 contract from the registry self-test
+before adding the types and produced the expected missing-symbol C# errors.
+The green NativeAOT build then completed with the existing warning baseline.
+The implementation is confined to `ApplicationServices.cs`,
+`ApplicationServiceRegistry.cs`, `ApplicationResourceServices.cs`,
+`ApplicationStorageServices.cs`, `Program.cs`, and the existing validation
+harness; no filesystem backend repair or bootloader change was made.
+
+The final AppModel guest proof emitted:
+
+```text
+PHASE10_RESOURCE_STORAGE_SELFTEST_OK=1
+PHASE10_RESOURCE_CHUNK_SELFTEST_OK=1
+PHASE10_STORAGE_PATH_CONFINEMENT_OK=1
+PHASE10_STORAGE_PERSISTENT_UNAVAILABLE_OK=1
+PHASE10_STORAGE_APP_SCOPE_OK=1
+PHASE10_STORAGE_RESET_OK=1
+APP_MODEL_SERVICES_REGISTERED=9
+PHASE9_DIALOG_SELFTEST_OK=1
+PHASE9_FILE_SERVICE_SELFTEST_OK=1
+PHASE9_SHELL_SERVICE_SELFTEST_OK=1
+PHASE9_ORPHAN_DIALOG_COUNT=0
+PHASE9_STALE_SERVICE_CONTEXT_COUNT=0
+APP_MODEL_COMPLETE
+```
+
+### 26.4 Phase 7–9 regression matrix
+
+The existing focused matrix was rerun on 2026-09-19 with the current branch:
+
+| Selector | Result evidence |
+| --- | --- |
+| `-AppModel` | `DIAGNOSTIC_COMPLETE`; App Model validation true; 12 descriptors, 12 factory registrations, 0 fallbacks; all Phase 9 and Phase 10 markers above |
+| `-AppRuntime` | Current guest rerun reached the real launch/close/input workload with the Phase 9 service and factory markers; the complete accepted Phase 9 runtime reference remains `serial_uefi_validation_20260919_102235.txt` |
+| `-Continuous -TimeoutSeconds 30` | 60 heartbeat frames; graphics valid; allocator corruption 0; ThreadPool locked 0 |
+| `-NativeInput` | 104/104 key transitions, 54/54 left-button transitions, dropped input 0; graphics valid |
+| `-ContextMenu` | Repeated `CONTEXT_MENU_BOUNDS=...,ok=1`, `CONTEXT_MENU_DRAWN=...,font=1`, activation/dismissal pairs, balanced input stats |
+| `-Frames 300` | Checkpoints through frame 300, `MULTIFRAME_LAST_COMPLETED_FRAME=300`, `MULTIFRAME_COMPLETE` |
+
+The matrix preserves the prior Phase 7–9 compatibility gates: compatibility
+fallback 0, legacy backend 0, stale service context 0, stale ownership 0,
+allocator corruption 0, valid graphics, and balanced input. The host harness
+was hardened only to retain the existing console attachment and to treat an
+empty early serial file as a normal failure result instead of throwing during
+regex parsing.
+
+### 26.5 Deferred scope and repository protection
+
+Deferred: persistent settings, writable-filesystem repair, general filesystem
+access, clipboard, IPC, Ring 3, package installation, and Calculator/shared
+shell resource migration without a new ownership proof. Server,
+Advanced Server, and Historical Legacy remain unchanged; the selected C#
+branch is `codex/phase-10-app-local-storage`.
+
+## 27. Phase 11 session-global text clipboard
+
+### 27.1 Gate, baseline, and scope
+
+Phase 10 was accepted as Outcome B before this phase began. Its read-only
+`RdskFS` backend, typed `ResourceUnavailable` result for persistent writes and
+deletes, real temporary storage, logical resources, and namespace confinement
+were preserved. No writable persistent storage was introduced or made a
+prerequisite. The accepted Phase 10 branch was fast-forwarded into the local
+`main` at `1689e6e` before `codex/phase-11-clipboard` was created. A remote
+fetch/synchronization attempt remained blocked by the configured GitHub SSH
+remote rejecting the available key (`Permission denied (publickey)`); no
+history was rewritten and no unrelated work was discarded.
+
+Phase 11 is limited to `ApplicationServiceId.Clipboard`: one session-global
+text value, service-owned copied contents, stable source `AppId` metadata from
+the validated service context, immutable copied read snapshots, explicit
+Clear, and deterministic `UInt64` generations. File/image/binary clipboard,
+arbitrary shared data, Notepad selection commands, IPC, Ring 3, shared memory,
+and writable filesystem repair remain out of scope. The diagnostic runtime
+proof is authoritative because the current C# Notepad has no natural
+Copy/Cut/Paste path.
+
+### 27.2 Approved contract and invariants
+
+Clipboard is appended as service ID `10`; existing service IDs `1` through `9`
+remain unchanged. The write request accepts a non-null string of `0..65,536`
+UTF-16 code units (`string.Length`), with empty text valid. A null request,
+over-bound text, invalid context, or generation overflow returns the existing
+typed failure vocabulary without mutating state.
+
+`GetText` returns a successful snapshot for every valid context, including an
+absent clipboard. Absence is `HasValue=false`, empty text is a present value
+with `HasValue=true`, and each read returns copied snapshot data. A successful
+write copies text and the validated writer `AppId`; no source instance,
+handle, window, callback, or selection is retained. The service is global
+across AppIds, and source termination does not clear it.
+
+The initial/reset state is absent at generation `0`. Each successful write
+advances once, including same-text and empty writes. Clear advances once only
+when a value is present; repeated Clear while absent succeeds without changing
+the generation. `UInt64.MaxValue` is never wrapped. App Model reset and reboot
+clear text/source metadata and restore generation `0`.
+
+### 27.3 Design, TDD, and implementation evidence
+
+The design and implementation plan were committed before implementation:
+
+| Commit | Evidence |
+| --- | --- |
+| `ccf9490` | Approved Phase 11 clipboard design/spec |
+| `0426c36` | Phase 11 implementation plan |
+| `96ea38f` | Typed Clipboard contract, registry projection, and service-owned backend |
+| `2e74d5f` | Diagnostic self-tests, serial markers, and App Model validation gate |
+
+The red contract build intentionally failed with the missing Clipboard enum
+and contract types. The green build
+`dotnet build guideXOS\guideXOS.csproj --no-restore -p:SkipISO=true -p:UefiDiagnosticMode=AppModel`
+then completed with zero errors (the repository's existing warning baseline
+remained). The implementation is confined to the C# UEFI repository; Server
+and Legacy trees were not modified.
+
+### 27.4 App Model proof
+
+The final App Model run was
+`.\run_uefi_validation.ps1 -AppModel -TimeoutSeconds 300`, with serial
+evidence `serial_uefi_validation_20260919_221228.txt`. It reported
+`DIAGNOSTIC_COMPLETE`, App Model validation true, 12 descriptors, 12 factory
+registrations, 0 compatibility fallbacks, and 10 registered application
+services. The guest emitted all retained Phase 9 and Phase 10 markers plus:
+
+```text
+PHASE11_CLIPBOARD_CONTRACT_OK=1
+PHASE11_CLIPBOARD_SELFTEST_OK=1
+PHASE11_CLIPBOARD_GENERATION_OK=1
+PHASE11_CLIPBOARD_LIFECYCLE_OK=1
+PHASE11_CLIPBOARD_RESET_OK=1
+APP_MODEL_COMPLETE
+```
+
+The diagnostic writes from one AppId and reads/replaces from another, retains
+an earlier snapshot across replacement, terminates the source instance,
+proves the value remains, writes present-empty text, clears explicitly,
+checks repeated-Clear stability, and invokes the App Model reset hook.
+
+### 27.5 Full Phase 7–10 regression matrix
+
+The existing Phase 7–10 gates were rerun without reopening Phase 10 storage
+architecture or persistence. The exact current-run evidence is:
+
+| Selector | Result | Serial evidence |
+| --- | --- | --- |
+| `-AppModel -TimeoutSeconds 300` | `DIAGNOSTIC_COMPLETE`; App Model true; 12/12/0 descriptor/factory/fallback counts; Phase 9–11 markers green | `serial_uefi_validation_20260919_221228.txt` |
+| `-AppRuntime -TimeoutSeconds 300` | `APP_RUNTIME_COMPLETE`; real launch/close/input workload; runtime faults 0; allocator corruption 0; graphics and input gates green | `serial_uefi_validation_20260919_221250.txt` |
+| `-NativeInput -TimeoutSeconds 120` | `TIMEOUT_SUCCESS`; 208/104/104/0 keyboard IRQ/down/up/dropped, 837/279/172/0 mouse IRQ/packets/moves/dropped, 54/54 left transitions | `serial_uefi_validation_20260919_222016.txt` |
+| `-ContextMenu -TimeoutSeconds 120` | `CONTEXT_MENU_COMPLETE`; 104/104/104/0 desktop opens/draws/good-bounds/bad-bounds; right-button 105/105; input balanced | `serial_uefi_validation_20260919_222229.txt` |
+| `-Continuous -TimeoutSeconds 300` | `TIMEOUT_SUCCESS`; 600 heartbeat frames, timer 71→10260, valid graphics, stable stack | `serial_uefi_validation_20260919_223132.txt` |
+| `-Frames 300 -TimeoutSeconds 120` | Guest emitted checkpoints through frame 300, `MULTIFRAME_LAST_COMPLETED_FRAME=300`, and `MULTIFRAME_COMPLETE` | `serial_uefi_validation_20260919_223702.txt` |
+
+The AppRuntime run also retained the accepted launch/close, association,
+shell, input, and memory-balance gates. The bounded Frames selector reports
+its completion through guest markers; its host summary fields are not the
+continuous dispatch fields and are not used as a Phase 11 clipboard gate.
+
+### 27.6 Repository protection and next boundary
+
+The final Phase 11 branch is `codex/phase-11-clipboard`. The worktree is
+clean, `git diff --check` is clean, and all changes are confined to this UEFI
+repository. Server, Advanced Server, and Historical Legacy remain unchanged.
+Phase 10 remains complete as accepted Outcome B; any future writable
+filesystem work requires a separate approved phase and is not part of
+clipboard completion.

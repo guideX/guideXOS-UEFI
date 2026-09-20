@@ -8,8 +8,8 @@ namespace guideXOS.OS {
     /// this class only validates access and projects typed adapters.
     /// </summary>
     public static class ApplicationServiceRegistry {
-        public const int Capacity = 8;
-        public const int SelectedServiceCount = 7;
+        public const int Capacity = 11;
+        public const int SelectedServiceCount = 10;
 
         private sealed class ServiceEntry {
             internal ApplicationServiceId Id;
@@ -27,6 +27,18 @@ namespace guideXOS.OS {
         private static bool _lastDialogSelfTestPassed;
         private static bool _lastFileDialogSelfTestPassed;
         private static bool _lastShellSelfTestPassed;
+        private static bool _lastResourceStorageSelfTestPassed;
+        private static bool _lastResourceChunkSelfTestPassed;
+        private static bool _lastStoragePathSelfTestPassed;
+        private static bool _lastPersistentUnavailableSelfTestPassed;
+        private static bool _lastStorageAppScopeSelfTestPassed;
+        private static bool _lastStorageResetSelfTestPassed;
+        private static bool _lastClipboardSelfTestPassed;
+        private static bool _lastClipboardContractSelfTestPassed;
+        private static bool _lastClipboardGenerationSelfTestPassed;
+        private static bool _lastClipboardLifecycleSelfTestPassed;
+        private static bool _lastClipboardResetSelfTestPassed;
+        private static string _lastSelfTestFailure;
 
         public static void Initialize() {
             if (_initialized) return;
@@ -40,6 +52,18 @@ namespace guideXOS.OS {
             _lastDialogSelfTestPassed = false;
             _lastFileDialogSelfTestPassed = false;
             _lastShellSelfTestPassed = false;
+            _lastResourceStorageSelfTestPassed = false;
+            _lastResourceChunkSelfTestPassed = false;
+            _lastStoragePathSelfTestPassed = false;
+            _lastPersistentUnavailableSelfTestPassed = false;
+            _lastStorageAppScopeSelfTestPassed = false;
+            _lastStorageResetSelfTestPassed = false;
+            _lastClipboardSelfTestPassed = false;
+            _lastClipboardContractSelfTestPassed = false;
+            _lastClipboardGenerationSelfTestPassed = false;
+            _lastClipboardLifecycleSelfTestPassed = false;
+            _lastClipboardResetSelfTestPassed = false;
+            _lastSelfTestFailure = "not-run";
             _access = new ApplicationServiceAccess(
                 new CSharpApplicationNotificationService(),
                 new CSharpApplicationSettingsService(),
@@ -47,7 +71,10 @@ namespace guideXOS.OS {
                 new CSharpApplicationDialogService(),
                 new CSharpApplicationOpenFileService(),
                 new CSharpApplicationSaveFileService(),
-                new CSharpApplicationShellService());
+                new CSharpApplicationShellService(),
+                new CSharpApplicationResourceService(),
+                new CSharpApplicationStorageService(),
+                new CSharpApplicationClipboardService());
             _initialized = true;
 
             RegisterInitial(ApplicationServiceId.Notifications);
@@ -57,6 +84,9 @@ namespace guideXOS.OS {
             RegisterInitial(ApplicationServiceId.OpenFile);
             RegisterInitial(ApplicationServiceId.SaveFile);
             RegisterInitial(ApplicationServiceId.Shell);
+            RegisterInitial(ApplicationServiceId.Resources);
+            RegisterInitial(ApplicationServiceId.Storage);
+            RegisterInitial(ApplicationServiceId.Clipboard);
             ApplicationServiceSessionTable.Reset();
         }
 
@@ -71,6 +101,7 @@ namespace guideXOS.OS {
             _registeredCount = 0;
             _initialized = false;
             Initialize();
+            ResetForAppModel();
         }
 
         public static int RegisteredCount {
@@ -99,7 +130,10 @@ namespace guideXOS.OS {
                        _access.Dialogs != null &&
                        _access.OpenFile != null &&
                        _access.SaveFile != null &&
-                       _access.Shell != null;
+                       _access.Shell != null &&
+                       _access.Resources != null &&
+                       _access.Storage != null &&
+                       _access.Clipboard != null;
             }
         }
 
@@ -113,6 +147,23 @@ namespace guideXOS.OS {
 
         public static int OrphanTransientWindowCount {
             get { Initialize(); return ApplicationServiceSessionTable.OrphanTransientWindowCount; }
+        }
+
+        internal static void ResetTemporaryStorageForAppModel() {
+            Initialize();
+            if (_access != null && _access.Storage != null) {
+                _access.Storage.ResetTemporaryForAppModel();
+            }
+        }
+
+        internal static void ResetForAppModel() {
+            Initialize();
+            if (_access != null && _access.Storage != null) {
+                _access.Storage.ResetTemporaryForAppModel();
+            }
+            if (_access != null && _access.Clipboard != null) {
+                _access.Clipboard.ResetForAppModel();
+            }
         }
 
         public static string LastSettingsSelfTestFailure {
@@ -129,6 +180,54 @@ namespace guideXOS.OS {
 
         public static bool LastShellSelfTestPassed {
             get { return _lastShellSelfTestPassed; }
+        }
+
+        public static bool LastResourceStorageSelfTestPassed {
+            get { return _lastResourceStorageSelfTestPassed; }
+        }
+
+        public static bool LastResourceChunkSelfTestPassed {
+            get { return _lastResourceChunkSelfTestPassed; }
+        }
+
+        public static bool LastStoragePathSelfTestPassed {
+            get { return _lastStoragePathSelfTestPassed; }
+        }
+
+        public static bool LastPersistentUnavailableSelfTestPassed {
+            get { return _lastPersistentUnavailableSelfTestPassed; }
+        }
+
+        public static bool LastStorageAppScopeSelfTestPassed {
+            get { return _lastStorageAppScopeSelfTestPassed; }
+        }
+
+        public static bool LastStorageResetSelfTestPassed {
+            get { return _lastStorageResetSelfTestPassed; }
+        }
+
+        public static bool LastClipboardSelfTestPassed {
+            get { return _lastClipboardSelfTestPassed; }
+        }
+
+        public static bool LastClipboardContractSelfTestPassed {
+            get { return _lastClipboardContractSelfTestPassed; }
+        }
+
+        public static bool LastClipboardGenerationSelfTestPassed {
+            get { return _lastClipboardGenerationSelfTestPassed; }
+        }
+
+        public static bool LastClipboardLifecycleSelfTestPassed {
+            get { return _lastClipboardLifecycleSelfTestPassed; }
+        }
+
+        public static bool LastClipboardResetSelfTestPassed {
+            get { return _lastClipboardResetSelfTestPassed; }
+        }
+
+        public static string LastSelfTestFailure {
+            get { return _lastSelfTestFailure; }
         }
 
         public static bool TryCreateContext(
@@ -690,6 +789,11 @@ namespace guideXOS.OS {
             _lastDialogSelfTestPassed = false;
             _lastFileDialogSelfTestPassed = false;
             _lastShellSelfTestPassed = false;
+            _lastClipboardSelfTestPassed = false;
+            _lastClipboardContractSelfTestPassed = false;
+            _lastClipboardGenerationSelfTestPassed = false;
+            _lastClipboardLifecycleSelfTestPassed = false;
+            _lastClipboardResetSelfTestPassed = false;
             int passed = 0;
             int failed = 0;
             string firstFailure = null;
@@ -698,6 +802,13 @@ namespace guideXOS.OS {
                 ref failed, ref firstFailure);
             Check(RunPhase9ContractSelfTest(), "phase 9 contract bounds",
                 ref passed, ref failed, ref firstFailure);
+            Check(RunPhase10ContractSelfTest(), "phase 10 contract bounds",
+                ref passed, ref failed, ref firstFailure);
+            _lastClipboardContractSelfTestPassed =
+                RunPhase11ContractSelfTest();
+            Check(_lastClipboardContractSelfTestPassed,
+                "phase 11 clipboard contract bounds", ref passed,
+                ref failed, ref firstFailure);
             Check(!TryRegisterForSelfTest(ApplicationServiceId.Notifications),
                 "duplicate service registration rejected", ref passed,
                 ref failed, ref firstFailure);
@@ -780,6 +891,16 @@ namespace guideXOS.OS {
                 Check(_lastShellSelfTestPassed,
                     "shell service lifecycle", ref passed,
                     ref failed, ref firstFailure);
+                _lastResourceStorageSelfTestPassed =
+                    RunResourceStorageSelfTest(context, access);
+                Check(_lastResourceStorageSelfTestPassed,
+                    "resource and storage services", ref passed,
+                    ref failed, ref firstFailure);
+                _lastClipboardSelfTestPassed =
+                    RunClipboardSelfTest(context, access);
+                Check(_lastClipboardSelfTestPassed,
+                    "clipboard service", ref passed, ref failed,
+                    ref firstFailure);
                 Check(RunTransientServiceWindowSelfTest(),
                     "transient service window ownership", ref passed,
                     ref failed, ref firstFailure);
@@ -830,7 +951,376 @@ namespace guideXOS.OS {
             bool clean = ApplicationInstanceRegistry.ActiveCount == 0;
             Check(clean, "service registry instance cleanup", ref passed,
                 ref failed, ref firstFailure);
+            _lastSelfTestFailure = failed == 0 && clean ? "pass" :
+                (firstFailure ?? "instance cleanup");
             return failed == 0 && clean;
+        }
+
+        private static bool RunResourceStorageSelfTest(
+                ApplicationServiceContext context,
+                ApplicationServiceAccess access) {
+            if (context == null || access == null || access.Resources == null ||
+                    access.Storage == null) return false;
+
+            _lastResourceChunkSelfTestPassed = false;
+            _lastStoragePathSelfTestPassed = false;
+            _lastPersistentUnavailableSelfTestPassed = false;
+            _lastStorageAppScopeSelfTestPassed = false;
+            _lastStorageResetSelfTestPassed = false;
+            ResetTemporaryStorageForAppModel();
+            ApplicationInstance sharedFirst = null;
+            ApplicationInstance sharedSecond = null;
+            ApplicationInstance other = null;
+            ApplicationInstance survivor = null;
+            ApplicationInstance survivorRelaunched = null;
+            ApplicationServiceContext sharedFirstContext = null;
+            ApplicationServiceContext sharedSecondContext = null;
+            ApplicationServiceContext otherContext = null;
+            ApplicationServiceContext survivorContext = null;
+            ApplicationServiceContext survivorRelaunchedContext = null;
+            try {
+                ApplicationResourceRequest resourceRequest =
+                    ApplicationResourceRequest.Create("diagnostic.fixture");
+                ApplicationServiceResult<ApplicationResourceMetadata> metadata =
+                    access.Resources.GetMetadata(context, resourceRequest);
+                if (!metadata.Succeeded || metadata.Value == null ||
+                        metadata.Value.Length <= 0 || !metadata.Value.IsReadable) {
+                    return false;
+                }
+
+                ApplicationResourceReadRequest firstReadRequest =
+                    ApplicationResourceReadRequest.Create(
+                        "diagnostic.fixture", 0, 8);
+                ApplicationServiceResult<ApplicationResourceReadResult> firstRead =
+                    access.Resources.Read(context, firstReadRequest);
+                if (!firstRead.Succeeded || firstRead.Value == null ||
+                        firstRead.Value.BytesRead <= 0 ||
+                        firstRead.Value.BytesRead != firstRead.Value.Bytes.Length ||
+                        firstRead.Value.EndOfResource) return false;
+
+                ApplicationResourceReadRequest endRequest =
+                    ApplicationResourceReadRequest.Create(
+                        "diagnostic.fixture", metadata.Value.Length, 1);
+                ApplicationServiceResult<ApplicationResourceReadResult> endRead =
+                    access.Resources.Read(context, endRequest);
+                if (!endRead.Succeeded || endRead.Value == null ||
+                        endRead.Value.BytesRead != 0 ||
+                        endRead.Value.Bytes.Length != 0 ||
+                        !endRead.Value.EndOfResource) return false;
+
+                ApplicationResourceReadRequest beyondRequest =
+                    ApplicationResourceReadRequest.Create(
+                        "diagnostic.fixture", metadata.Value.Length + 1, 1);
+                if (access.Resources.Read(context, beyondRequest).Code !=
+                        ApplicationServiceResultCode.InvalidRequest) return false;
+                if (access.Resources.GetMetadata(context,
+                        ApplicationResourceRequest.Create("missing.fixture")).Code !=
+                        ApplicationServiceResultCode.NotFound) return false;
+                _lastResourceChunkSelfTestPassed = true;
+
+                CSharpApplicationStorageService storage =
+                    access.Storage as CSharpApplicationStorageService;
+                if (storage == null) return false;
+                ApplicationStorageWriteRequest temporaryWrite =
+                    ApplicationStorageWriteRequest.Create(
+                        ApplicationStorageNamespace.Temporary, "state.bin",
+                        new byte[] { 1, 2, 3 });
+                if (!access.Storage.Write(context, temporaryWrite).Succeeded) {
+                    return false;
+                }
+                ApplicationServiceResult<ApplicationStorageReadResult> shortRead =
+                    access.Storage.Read(context,
+                        ApplicationStorageReadRequest.Create(
+                            ApplicationStorageNamespace.Temporary, "state.bin",
+                            0, 2));
+                if (!shortRead.Succeeded || shortRead.Value == null ||
+                        shortRead.Value.BytesRead != 2 ||
+                        shortRead.Value.Bytes.Length != 2 ||
+                        shortRead.Value.EndOfResource) return false;
+                ApplicationServiceResult<ApplicationStorageReadResult> endStorageRead =
+                    access.Storage.Read(context,
+                        ApplicationStorageReadRequest.Create(
+                            ApplicationStorageNamespace.Temporary, "state.bin",
+                            3, 1));
+                if (!endStorageRead.Succeeded || endStorageRead.Value == null ||
+                        endStorageRead.Value.BytesRead != 0 ||
+                        !endStorageRead.Value.EndOfResource) return false;
+                if (access.Storage.Read(context,
+                        ApplicationStorageReadRequest.Create(
+                            ApplicationStorageNamespace.Temporary, "state.bin",
+                            4, 1)).Code !=
+                        ApplicationServiceResultCode.InvalidRequest) return false;
+
+                int backendCallsBeforeEscape = storage.BackendCallCount;
+                ApplicationStorageRequest escape = ApplicationStorageRequest.Create(
+                    ApplicationStorageNamespace.Persistent, "../escape");
+                bool escapeRejected = !escape.IsValid &&
+                    access.Storage.Exists(context, escape).Code ==
+                        ApplicationServiceResultCode.InvalidRequest &&
+                    storage.BackendCallCount == backendCallsBeforeEscape;
+                if (!escapeRejected) return false;
+                _lastStoragePathSelfTestPassed = true;
+
+                ApplicationStorageRequest persistentPath =
+                    ApplicationStorageRequest.Create(
+                        ApplicationStorageNamespace.Persistent, "state.bin");
+                if (access.Storage.Write(context,
+                        ApplicationStorageWriteRequest.Create(
+                            ApplicationStorageNamespace.Persistent, "state.bin",
+                            new byte[] { 9 })).Code !=
+                        ApplicationServiceResultCode.ResourceUnavailable ||
+                    access.Storage.Delete(context, persistentPath).Code !=
+                        ApplicationServiceResultCode.ResourceUnavailable) {
+                    return false;
+                }
+                ApplicationServiceResult<ApplicationStorageReadResult> retained =
+                    access.Storage.Read(context,
+                        ApplicationStorageReadRequest.Create(
+                            ApplicationStorageNamespace.Temporary, "state.bin",
+                            0, 3));
+                if (!retained.Succeeded || retained.Value == null ||
+                        retained.Value.BytesRead != 3 ||
+                        retained.Value.Bytes[0] != 1 ||
+                        retained.Value.Bytes[1] != 2 ||
+                        retained.Value.Bytes[2] != 3) return false;
+                _lastPersistentUnavailableSelfTestPassed = true;
+
+                bool sharedStarted = TryCreateServiceSelfTestInstance(
+                    "selftest.phase10.shared", out sharedFirst,
+                    out sharedFirstContext);
+                bool secondStarted = TryCreateServiceSelfTestInstance(
+                    "selftest.phase10.shared", out sharedSecond,
+                    out sharedSecondContext);
+                if (!sharedStarted || !secondStarted ||
+                        !access.Storage.Write(sharedFirstContext,
+                            ApplicationStorageWriteRequest.Create(
+                                ApplicationStorageNamespace.Temporary,
+                                "shared.bin", new byte[] { 7 })).Succeeded ||
+                    !access.Storage.Exists(sharedSecondContext,
+                        ApplicationStorageRequest.Create(
+                            ApplicationStorageNamespace.Temporary,
+                            "shared.bin")).Succeeded ||
+                    !access.Storage.Exists(sharedSecondContext,
+                        ApplicationStorageRequest.Create(
+                            ApplicationStorageNamespace.Temporary,
+                            "shared.bin")).Value) return false;
+                if (!ApplicationInstanceRegistry.TryTerminate(sharedSecond,
+                        "Phase 10 shared instance cleanup") ||
+                    !access.Storage.Exists(sharedFirstContext,
+                        ApplicationStorageRequest.Create(
+                            ApplicationStorageNamespace.Temporary,
+                            "shared.bin")).Succeeded ||
+                    !access.Storage.Exists(sharedFirstContext,
+                        ApplicationStorageRequest.Create(
+                            ApplicationStorageNamespace.Temporary,
+                            "shared.bin")).Value) return false;
+                sharedSecond = null;
+
+                bool survivorStarted = TryCreateServiceSelfTestInstance(
+                    "selftest.phase10.survival", out survivor,
+                    out survivorContext);
+                if (!survivorStarted || !access.Storage.Write(survivorContext,
+                        ApplicationStorageWriteRequest.Create(
+                            ApplicationStorageNamespace.Temporary,
+                            "survive.bin", new byte[] { 4 })).Succeeded ||
+                    !ApplicationInstanceRegistry.TryTerminate(survivor,
+                        "Phase 10 termination survival") ) return false;
+                survivor = null;
+                bool survivorRelaunch = TryCreateServiceSelfTestInstance(
+                    "selftest.phase10.survival", out survivorRelaunched,
+                    out survivorRelaunchedContext);
+                if (!survivorRelaunch ||
+                    !access.Storage.Exists(survivorRelaunchedContext,
+                        ApplicationStorageRequest.Create(
+                            ApplicationStorageNamespace.Temporary,
+                            "survive.bin")).Succeeded ||
+                    !access.Storage.Exists(survivorRelaunchedContext,
+                        ApplicationStorageRequest.Create(
+                            ApplicationStorageNamespace.Temporary,
+                            "survive.bin")).Value) return false;
+
+                bool otherStarted = TryCreateServiceSelfTestInstance(
+                    "selftest.phase10.other", out other, out otherContext);
+                if (!otherStarted) return false;
+                ApplicationServiceResult<bool> otherExists = access.Storage.Exists(
+                    otherContext, ApplicationStorageRequest.Create(
+                        ApplicationStorageNamespace.Temporary, "state.bin"));
+                if (!otherExists.Succeeded || otherExists.Value ||
+                        access.Storage.Delete(otherContext,
+                            ApplicationStorageRequest.Create(
+                                ApplicationStorageNamespace.Temporary,
+                                "state.bin")).Code !=
+                            ApplicationServiceResultCode.NotFound) return false;
+                _lastStorageAppScopeSelfTestPassed = true;
+
+                ResetTemporaryStorageForAppModel();
+                ApplicationServiceResult<bool> resetState = access.Storage.Exists(
+                    context,
+                        ApplicationStorageRequest.Create(
+                            ApplicationStorageNamespace.Temporary,
+                            "state.bin"));
+                ApplicationServiceResult<bool> resetSurvivor = access.Storage.Exists(
+                    survivorRelaunchedContext,
+                        ApplicationStorageRequest.Create(
+                            ApplicationStorageNamespace.Temporary,
+                            "survive.bin"));
+                if (!resetState.Succeeded || resetState.Value ||
+                    !resetSurvivor.Succeeded || resetSurvivor.Value) return false;
+                _lastStorageResetSelfTestPassed = true;
+                return true;
+            } finally {
+                if (sharedSecond != null) ApplicationInstanceRegistry.TryTerminate(
+                    sharedSecond, "Phase 10 shared cleanup");
+                if (sharedFirst != null) ApplicationInstanceRegistry.TryTerminate(
+                    sharedFirst, "Phase 10 shared cleanup");
+                if (other != null) ApplicationInstanceRegistry.TryTerminate(
+                    other, "Phase 10 isolation cleanup");
+                if (survivor != null) ApplicationInstanceRegistry.TryTerminate(
+                    survivor, "Phase 10 survival cleanup");
+                if (survivorRelaunched != null) ApplicationInstanceRegistry.TryTerminate(
+                    survivorRelaunched, "Phase 10 survival cleanup");
+                ResetTemporaryStorageForAppModel();
+            }
+        }
+
+        private static bool RunClipboardSelfTest(
+                ApplicationServiceContext context,
+                ApplicationServiceAccess access) {
+            if (context == null || access == null || access.Clipboard == null) {
+                return false;
+            }
+
+            _lastClipboardGenerationSelfTestPassed = false;
+            _lastClipboardLifecycleSelfTestPassed = false;
+            _lastClipboardResetSelfTestPassed = false;
+            ResetForAppModel();
+
+            ApplicationInstance source = null;
+            ApplicationInstance reader = null;
+            ApplicationServiceContext sourceContext = null;
+            ApplicationServiceContext readerContext = null;
+            try {
+                ApplicationServiceResult<ApplicationClipboardSnapshot> initial =
+                    access.Clipboard.GetText(context);
+                if (!initial.Succeeded || initial.Value == null ||
+                        initial.Value.HasValue || initial.Value.Text.Length != 0 ||
+                        initial.Value.SourceAppId.Length != 0 ||
+                        initial.Value.Generation != 0UL) return false;
+
+                bool sourceStarted = TryCreateServiceSelfTestInstance(
+                    "selftest.phase11.source", out source, out sourceContext);
+                bool readerStarted = TryCreateServiceSelfTestInstance(
+                    "selftest.phase11.reader", out reader, out readerContext);
+                if (!sourceStarted || !readerStarted || sourceContext == null ||
+                        readerContext == null) return false;
+
+                ApplicationServiceResult sourceWrite = access.Clipboard.SetText(
+                    sourceContext,
+                    ApplicationClipboardWriteRequest.Create("source text"));
+                ApplicationServiceResult<ApplicationClipboardSnapshot> firstRead =
+                    access.Clipboard.GetText(readerContext);
+                if (!sourceWrite.Succeeded || !firstRead.Succeeded ||
+                        firstRead.Value == null || !firstRead.Value.HasValue ||
+                        firstRead.Value.Text != "source text" ||
+                        firstRead.Value.SourceAppId != sourceContext.ApplicationId ||
+                        firstRead.Value.Generation != 1UL) return false;
+                ApplicationClipboardSnapshot firstSnapshot = firstRead.Value;
+
+                if (!ApplicationInstanceRegistry.TryTerminate(source,
+                        "Phase 11 source termination proof")) return false;
+                source = null;
+                ApplicationServiceResult<ApplicationClipboardSnapshot> afterTermination =
+                    access.Clipboard.GetText(readerContext);
+                bool lifecycle = afterTermination.Succeeded &&
+                    afterTermination.Value != null &&
+                    afterTermination.Value.HasValue &&
+                    afterTermination.Value.Text == "source text" &&
+                    afterTermination.Value.SourceAppId ==
+                        sourceContext.ApplicationId &&
+                    afterTermination.Value.Generation == 1UL;
+                _lastClipboardLifecycleSelfTestPassed = lifecycle;
+                if (!lifecycle) return false;
+
+                ApplicationServiceResult replacement = access.Clipboard.SetText(
+                    readerContext,
+                    ApplicationClipboardWriteRequest.Create("reader text"));
+                ApplicationServiceResult<ApplicationClipboardSnapshot> secondRead =
+                    access.Clipboard.GetText(context);
+                bool immutable = replacement.Succeeded && secondRead.Succeeded &&
+                    secondRead.Value != null && secondRead.Value.HasValue &&
+                    secondRead.Value.Text == "reader text" &&
+                    secondRead.Value.SourceAppId == readerContext.ApplicationId &&
+                    secondRead.Value.Generation == 2UL &&
+                    firstSnapshot.HasValue && firstSnapshot.Text == "source text" &&
+                    firstSnapshot.SourceAppId == sourceContext.ApplicationId &&
+                    firstSnapshot.Generation == 1UL;
+                if (!immutable) return false;
+
+                ApplicationServiceResult emptyWrite = access.Clipboard.SetText(
+                    readerContext,
+                    ApplicationClipboardWriteRequest.Create(string.Empty));
+                ApplicationServiceResult<ApplicationClipboardSnapshot> emptyRead =
+                    access.Clipboard.GetText(context);
+                bool generation = emptyWrite.Succeeded && emptyRead.Succeeded &&
+                    emptyRead.Value != null && emptyRead.Value.HasValue &&
+                    emptyRead.Value.Text.Length == 0 &&
+                    emptyRead.Value.SourceAppId == readerContext.ApplicationId &&
+                    emptyRead.Value.Generation == 3UL;
+                if (!generation) return false;
+
+                ApplicationServiceResult clear = access.Clipboard.Clear(context);
+                ApplicationServiceResult<ApplicationClipboardSnapshot> cleared =
+                    access.Clipboard.GetText(readerContext);
+                ApplicationServiceResult repeatedClear =
+                    access.Clipboard.Clear(readerContext);
+                ApplicationServiceResult<ApplicationClipboardSnapshot> repeated =
+                    access.Clipboard.GetText(context);
+                generation = generation && clear.Succeeded &&
+                    cleared.Succeeded && cleared.Value != null &&
+                    !cleared.Value.HasValue && cleared.Value.Text.Length == 0 &&
+                    cleared.Value.SourceAppId.Length == 0 &&
+                    cleared.Value.Generation == 4UL &&
+                    repeatedClear.Succeeded && repeated.Succeeded &&
+                    repeated.Value != null && !repeated.Value.HasValue &&
+                    repeated.Value.Generation == 4UL;
+                _lastClipboardGenerationSelfTestPassed = generation;
+                if (!generation) return false;
+
+                ResetForAppModel();
+                ApplicationServiceResult<ApplicationClipboardSnapshot> reset =
+                    access.Clipboard.GetText(readerContext);
+                bool resetPassed = reset.Succeeded && reset.Value != null &&
+                    !reset.Value.HasValue && reset.Value.Text.Length == 0 &&
+                    reset.Value.SourceAppId.Length == 0 &&
+                    reset.Value.Generation == 0UL;
+                _lastClipboardResetSelfTestPassed = resetPassed;
+                return resetPassed;
+            } finally {
+                if (source != null) ApplicationInstanceRegistry.TryTerminate(
+                    source, "Phase 11 clipboard source cleanup");
+                if (reader != null) ApplicationInstanceRegistry.TryTerminate(
+                    reader, "Phase 11 clipboard reader cleanup");
+                ResetForAppModel();
+            }
+        }
+
+        private static bool TryCreateServiceSelfTestInstance(string id,
+                out ApplicationInstance instance,
+                out ApplicationServiceContext context) {
+            instance = null;
+            context = null;
+            bool reused;
+            LaunchResult failure;
+            if (!ApplicationInstanceRegistry.TryBeginLaunch(
+                    id, ApplicationInstancePolicy.MultiInstance,
+                    LaunchRequest.ForAppId(id, null, null,
+                        LaunchActivationIntent.NewInstance), out instance,
+                    out reused, out failure) || instance == null) return false;
+            if (!ApplicationInstanceRegistry.TryCompleteLaunch(instance, false,
+                    out failure)) return false;
+            ApplicationServiceResult result;
+            return TryCreateContext(instance.Handle, out context, out result) &&
+                result.Succeeded;
         }
 
         private static bool RunTransientServiceWindowSelfTest() {
@@ -1303,7 +1793,7 @@ namespace guideXOS.OS {
         internal static void SetTypedAccess(ApplicationServiceAccess access) {
             Initialize();
             _access = access ?? new ApplicationServiceAccess(null, null, null,
-                null, null, null, null);
+                null, null, null, null, null, null, null);
         }
 
         private static void RegisterInitial(ApplicationServiceId id) {
@@ -1433,6 +1923,14 @@ namespace guideXOS.OS {
                        state == ApplicationInstanceLifecycleState.Activated ||
                        state == ApplicationInstanceLifecycleState.Inactive;
             }
+            if (serviceId == ApplicationServiceId.Resources ||
+                    serviceId == ApplicationServiceId.Storage ||
+                    serviceId == ApplicationServiceId.Clipboard) {
+                return state == ApplicationInstanceLifecycleState.Initialized ||
+                       state == ApplicationInstanceLifecycleState.Running ||
+                       state == ApplicationInstanceLifecycleState.Activated ||
+                       state == ApplicationInstanceLifecycleState.Inactive;
+            }
             return false;
         }
 
@@ -1546,6 +2044,107 @@ namespace guideXOS.OS {
                   ApplicationServiceRequestState.Completed,
                 "request handle/status shape", ref passed, ref failed,
                 ref failure);
+            return failed == 0;
+        }
+
+        private static bool RunPhase10ContractSelfTest() {
+            int passed = 0;
+            int failed = 0;
+            string failure = null;
+
+            Check(ApplicationServiceNames.IsKnown(ApplicationServiceId.Resources) &&
+                  ApplicationServiceNames.IsKnown(ApplicationServiceId.Storage),
+                "phase 10 service ids", ref passed, ref failed, ref failure);
+            ApplicationResourceRequest resource =
+                ApplicationResourceRequest.Create(
+                    Repeat('r', ApplicationResourceRequest.MaxResourceKeyLength));
+            Check(resource.IsValid, "resource key maximum", ref passed,
+                ref failed, ref failure);
+            Check(!ApplicationResourceRequest.Create(Repeat('r',
+                    ApplicationResourceRequest.MaxResourceKeyLength + 1)).IsValid,
+                "resource key bound", ref passed, ref failed, ref failure);
+            Check(!ApplicationResourceRequest.Create(".").IsValid &&
+                  !ApplicationResourceRequest.Create("..").IsValid,
+                "resource key traversal shape", ref passed, ref failed,
+                ref failure);
+            ApplicationResourceReadRequest read =
+                ApplicationResourceReadRequest.Create("fixture", 0,
+                    ApplicationResourceReadRequest.MaxChunkLength);
+            Check(read.IsValid, "resource read maximum", ref passed,
+                ref failed, ref failure);
+            Check(!ApplicationResourceReadRequest.Create("fixture", -1, 1).IsValid &&
+                  !ApplicationResourceReadRequest.Create("fixture", 0, 0).IsValid &&
+                  !ApplicationResourceReadRequest.Create("fixture", 0,
+                      ApplicationResourceReadRequest.MaxChunkLength + 1).IsValid,
+                "resource read bounds", ref passed, ref failed, ref failure);
+            string maximumTemporaryPath = Repeat('p',
+                    ApplicationStorageRequest.MaxPathSegmentLength) + "/" +
+                Repeat('q', ApplicationStorageRequest.MaxPathSegmentLength) +"/"+
+                Repeat('r', ApplicationStorageRequest.MaxRelativePathLength -
+                    (ApplicationStorageRequest.MaxPathSegmentLength * 2) - 2);
+            ApplicationStorageRequest temporary = ApplicationStorageRequest.Create(
+                ApplicationStorageNamespace.Temporary,
+                maximumTemporaryPath);
+            Check(temporary.IsValid, "storage path maximum", ref passed,
+                ref failed, ref failure);
+            Check(!ApplicationStorageRequest.Create(
+                    ApplicationStorageNamespace.Persistent, "../escape").IsValid &&
+                  !ApplicationStorageRequest.Create(
+                    ApplicationStorageNamespace.Persistent, "C:\\escape").IsValid,
+                "storage path confinement shape", ref passed, ref failed,
+                ref failure);
+            ApplicationStorageWriteRequest write =
+                ApplicationStorageWriteRequest.Create(
+                    ApplicationStorageNamespace.Temporary, "state.bin",
+                    new byte[ApplicationStorageWriteRequest.MaxPayloadLength]);
+            Check(write.IsValid, "storage payload maximum", ref passed,
+                ref failed, ref failure);
+            Check(!ApplicationStorageWriteRequest.Create(
+                    ApplicationStorageNamespace.Temporary, "state.bin",
+                    new byte[ApplicationStorageWriteRequest.MaxPayloadLength + 1]).IsValid,
+                "storage payload bound", ref passed, ref failed, ref failure);
+            return failed == 0;
+        }
+
+        private static bool RunPhase11ContractSelfTest() {
+            int passed = 0;
+            int failed = 0;
+            string failure = null;
+
+            Check(ApplicationServiceNames.IsKnown(ApplicationServiceId.Clipboard) &&
+                  ApplicationServiceNames.For(ApplicationServiceId.Clipboard) ==
+                      "clipboard",
+                "phase 11 clipboard service id", ref passed, ref failed,
+                ref failure);
+            ApplicationClipboardWriteRequest empty =
+                ApplicationClipboardWriteRequest.Create(string.Empty);
+            ApplicationClipboardWriteRequest maximum =
+                ApplicationClipboardWriteRequest.Create(
+                    Repeat('c', ApplicationClipboardWriteRequest.MaxTextLength));
+            Check(empty.IsValid && maximum.IsValid && empty.Text.Length == 0 &&
+                  maximum.Text.Length == ApplicationClipboardWriteRequest.MaxTextLength,
+                "clipboard text maximum and empty value", ref passed,
+                ref failed, ref failure);
+            Check(!ApplicationClipboardWriteRequest.Create(null).IsValid &&
+                  !ApplicationClipboardWriteRequest.Create(
+                      Repeat('c', ApplicationClipboardWriteRequest.MaxTextLength + 1)).IsValid,
+                "clipboard text rejection", ref passed, ref failed,
+                ref failure);
+            ApplicationClipboardSnapshot absent =
+                ApplicationClipboardSnapshot.Create(false, string.Empty,
+                    string.Empty, 0UL);
+            Check(!absent.HasValue && absent.Text.Length == 0 &&
+                  absent.SourceAppId.Length == 0 && absent.Generation == 0UL,
+                "clipboard absent snapshot shape", ref passed, ref failed,
+                ref failure);
+            ApplicationClipboardSnapshot presentEmpty =
+                ApplicationClipboardSnapshot.Create(true, string.Empty,
+                    "selftest.clipboard", 1UL);
+            Check(presentEmpty.HasValue && presentEmpty.Text.Length == 0 &&
+                  presentEmpty.SourceAppId == "selftest.clipboard" &&
+                  presentEmpty.Generation == 1UL,
+                "clipboard present empty snapshot shape", ref passed,
+                ref failed, ref failure);
             return failed == 0;
         }
 

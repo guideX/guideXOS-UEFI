@@ -1416,7 +1416,9 @@ if ($isInteractiveValidation) {
 
 Write-Host "Serial log: $serialPath" -ForegroundColor Gray
 Write-Host 'Starting QEMU...' -ForegroundColor Green
-$qemu = Start-Process -FilePath $qemuPath -ArgumentList $qemuArgs -PassThru
+$qemuArgumentString = $qemuArgs -join ' '
+$qemu = Start-Process -FilePath $qemuPath -ArgumentList $qemuArgumentString `
+    -WorkingDirectory $PSScriptRoot -NoNewWindow -PassThru
 $qmp = $null
 if ($isInteractiveValidation) {
     Write-Host "QMP input port: $qmpPort" -ForegroundColor Gray
@@ -1447,6 +1449,9 @@ try {
         $content = ''
         if (Test-Path -LiteralPath $serialPath) {
             $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+            if ($null -eq $content) {
+                $content = ''
+            }
         }
 
         if ($content -and $content -ne $lastContent) {
@@ -1596,6 +1601,9 @@ $finalContent = ''
 for ($flushAttempt = 0; $flushAttempt -lt 20; $flushAttempt++) {
     if (Test-Path -LiteralPath $serialPath) {
         $finalContent = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+        if ($null -eq $finalContent) {
+            $finalContent = ''
+        }
     }
     if (-not $isStartMenuValidation -or $finalContent -match '(?m)^START_MENU_OPENED(?:=|$)') {
         break
@@ -1874,6 +1882,28 @@ if ($isAppModelValidation) {
         '(?m)^APP_MODEL_COMPAT_SELFTEST_OK=1$').Count
     $appModelServiceSelfTest = [regex]::Matches($finalContent,
         '(?m)^APP_MODEL_SERVICES_SELFTEST_OK=1$').Count
+    $phase10ResourceStorageSelfTest = [regex]::Matches($finalContent,
+        '(?m)^PHASE10_RESOURCE_STORAGE_SELFTEST_OK=1$').Count
+    $phase10ResourceChunkSelfTest = [regex]::Matches($finalContent,
+        '(?m)^PHASE10_RESOURCE_CHUNK_SELFTEST_OK=1$').Count
+    $phase10StoragePathSelfTest = [regex]::Matches($finalContent,
+        '(?m)^PHASE10_STORAGE_PATH_CONFINEMENT_OK=1$').Count
+    $phase10PersistentUnavailableSelfTest = [regex]::Matches($finalContent,
+        '(?m)^PHASE10_STORAGE_PERSISTENT_UNAVAILABLE_OK=1$').Count
+    $phase10StorageScopeSelfTest = [regex]::Matches($finalContent,
+        '(?m)^PHASE10_STORAGE_APP_SCOPE_OK=1$').Count
+    $phase10StorageResetSelfTest = [regex]::Matches($finalContent,
+        '(?m)^PHASE10_STORAGE_RESET_OK=1$').Count
+    $phase11ClipboardContract = [regex]::Matches($finalContent,
+        '(?m)^PHASE11_CLIPBOARD_CONTRACT_OK=1$').Count
+    $phase11ClipboardSelfTest = [regex]::Matches($finalContent,
+        '(?m)^PHASE11_CLIPBOARD_SELFTEST_OK=1$').Count
+    $phase11ClipboardGeneration = [regex]::Matches($finalContent,
+        '(?m)^PHASE11_CLIPBOARD_GENERATION_OK=1$').Count
+    $phase11ClipboardLifecycle = [regex]::Matches($finalContent,
+        '(?m)^PHASE11_CLIPBOARD_LIFECYCLE_OK=1$').Count
+    $phase11ClipboardReset = [regex]::Matches($finalContent,
+        '(?m)^PHASE11_CLIPBOARD_RESET_OK=1$').Count
     $phase9DialogSelfTest = [regex]::Matches($finalContent,
         '(?m)^PHASE9_DIALOG_SELFTEST_OK=1$').Count
     $phase9FileSelfTest = [regex]::Matches($finalContent,
@@ -1920,6 +1950,17 @@ if ($isAppModelValidation) {
         [int]$appModelCompatFailures[$appModelCompatFailures.Count - 1].Groups[1].Value -eq 1 -and
         $appModelCompatSelfTest -ge 1 -and
         $appModelServiceSelfTest -ge 1 -and
+        $phase10ResourceStorageSelfTest -ge 1 -and
+        $phase10ResourceChunkSelfTest -ge 1 -and
+        $phase10StoragePathSelfTest -ge 1 -and
+        $phase10PersistentUnavailableSelfTest -ge 1 -and
+        $phase10StorageScopeSelfTest -ge 1 -and
+        $phase10StorageResetSelfTest -ge 1 -and
+        $phase11ClipboardContract -ge 1 -and
+        $phase11ClipboardSelfTest -ge 1 -and
+        $phase11ClipboardGeneration -ge 1 -and
+        $phase11ClipboardLifecycle -ge 1 -and
+        $phase11ClipboardReset -ge 1 -and
         $phase9DialogSelfTest -ge 1 -and
         $phase9FileSelfTest -ge 1 -and
         $phase9ShellSelfTest -ge 1 -and
@@ -1943,6 +1984,17 @@ if ($isAppModelValidation) {
         compatibilityLegacyBackendCalls = if ($appModelCompatLegacy.Count -gt 0) { [int]$appModelCompatLegacy[$appModelCompatLegacy.Count - 1].Groups[1].Value } else { 0 }
         compatibilityFailures = if ($appModelCompatFailures.Count -gt 0) { [int]$appModelCompatFailures[$appModelCompatFailures.Count - 1].Groups[1].Value } else { 0 }
         serviceSelfTest = $appModelServiceSelfTest
+        phase10ResourceStorageSelfTest = $phase10ResourceStorageSelfTest
+        phase10ResourceChunkSelfTest = $phase10ResourceChunkSelfTest
+        phase10StoragePathSelfTest = $phase10StoragePathSelfTest
+        phase10PersistentUnavailableSelfTest = $phase10PersistentUnavailableSelfTest
+        phase10StorageScopeSelfTest = $phase10StorageScopeSelfTest
+        phase10StorageResetSelfTest = $phase10StorageResetSelfTest
+        phase11ClipboardContract = $phase11ClipboardContract
+        phase11ClipboardSelfTest = $phase11ClipboardSelfTest
+        phase11ClipboardGeneration = $phase11ClipboardGeneration
+        phase11ClipboardLifecycle = $phase11ClipboardLifecycle
+        phase11ClipboardReset = $phase11ClipboardReset
         notificationDirectDependencies = $notificationDirectDependencies.Count
         notepadSettingsMigration = $notepadSettingsMigration
         taskManagerRawMetrics = $taskManagerRawMetrics

@@ -451,4 +451,99 @@ namespace guideXOS.OS {
                 snapshot);
         }
     }
+
+    /// <summary>
+    /// Session-global text clipboard.  Only copied bounded text and the
+    /// validated source AppId are retained; no instance or window ownership
+    /// crosses the service boundary.
+    /// </summary>
+    internal sealed class CSharpApplicationClipboardService :
+            ApplicationClipboardService {
+        private const ulong MaxGeneration = 0xffffffffffffffffUL;
+
+        private bool _hasValue;
+        private string _text = string.Empty;
+        private string _sourceAppId = string.Empty;
+        private ulong _generation;
+
+        public override ApplicationServiceResult SetText(
+                ApplicationServiceContext context,
+                ApplicationClipboardWriteRequest request) {
+            ApplicationInstance instance;
+            ApplicationServiceResult valid;
+            if (!TryValidate(context, out instance, out valid)) return valid;
+            if (request == null || !request.IsValid) {
+                return ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.InvalidRequest,
+                    "Clipboard text is null or exceeds its bound");
+            }
+            if (_generation == MaxGeneration) {
+                return ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.ResourceUnavailable,
+                    "Clipboard generation cannot advance without wrapping");
+            }
+
+            _text = CopyText(request.Text);
+            _sourceAppId = CopyText(context.ApplicationId);
+            _hasValue = true;
+            _generation++;
+            return ApplicationServiceResult.SuccessResult();
+        }
+
+        public override ApplicationServiceResult<ApplicationClipboardSnapshot>
+                GetText(ApplicationServiceContext context) {
+            ApplicationInstance instance;
+            ApplicationServiceResult valid;
+            if (!TryValidate(context, out instance, out valid)) {
+                return ApplicationServiceResult<ApplicationClipboardSnapshot>.Failure(
+                    valid.Code, valid.BoundedDiagnostic);
+            }
+            return ApplicationServiceResult<ApplicationClipboardSnapshot>.SuccessResult(
+                ApplicationClipboardSnapshot.Create(_hasValue,
+                    _hasValue ? _text : string.Empty,
+                    _hasValue ? _sourceAppId : string.Empty,
+                    _generation));
+        }
+
+        public override ApplicationServiceResult Clear(
+                ApplicationServiceContext context) {
+            ApplicationInstance instance;
+            ApplicationServiceResult valid;
+            if (!TryValidate(context, out instance, out valid)) return valid;
+            if (!_hasValue) return ApplicationServiceResult.SuccessResult();
+            if (_generation == MaxGeneration) {
+                return ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.ResourceUnavailable,
+                    "Clipboard generation cannot advance without wrapping");
+            }
+
+            _generation++;
+            _hasValue = false;
+            _text = string.Empty;
+            _sourceAppId = string.Empty;
+            return ApplicationServiceResult.SuccessResult();
+        }
+
+        internal override void ResetForAppModel() {
+            _hasValue = false;
+            _text = string.Empty;
+            _sourceAppId = string.Empty;
+            _generation = 0UL;
+        }
+
+        private bool TryValidate(ApplicationServiceContext context,
+                out ApplicationInstance instance,
+                out ApplicationServiceResult result) {
+            return ApplicationServiceRegistry.TryValidateContext(
+                context, ApplicationServiceId.Clipboard, out instance,
+                out result);
+        }
+
+        private static string CopyText(string source) {
+            if (string.IsNullOrEmpty(source)) return string.Empty;
+            char[] chars = new char[source.Length];
+            for (int i = 0; i < chars.Length; i++) chars[i] = source[i];
+            return new string(chars);
+        }
+    }
 }
