@@ -1284,6 +1284,33 @@ Every rejection occurs before simulated mapping. This proves the descriptor
 policy and actual artifact layout; it does not claim kernel-QEMU mapping or
 managed execution.
 
+### Placement and bounded descriptor contract
+
+The first managed-image reservation is fixed at
+`0x0000401000000000–0x0000401100000000`, below the canonical user limit and
+separate from the Phase 13 low native image. The inspected image occupies only
+`[base, base + 0x000F4000)`. The existing bounded startup/IPC window remains
+`0x0000000040000000–0x0000000040010000`; the existing guard page and stack
+remain `0x00007FFF7FFE0000–0x00007FFF7FFF0000` and
+`0x00007FFF7FFF0000–0x0000800000000000`. These reservations do not overlap
+the managed image, stack, or kernel mappings.
+
+The future kernel descriptor is fixed-width and contains only bounded values:
+format/version, preferred base, image size, entry RVA, segment count, per-
+segment virtual/file offsets and sizes, permissions, alignment, BSS ranges,
+TLS-template metadata, runtime/module metadata ranges, manifest identity, and
+flags. It contains no kernel pointers, managed object references, or imported
+kernel symbol addresses. The startup-block v2 contract carries ABI version,
+runtime-bootstrap version, image base/entry, module metadata, TLS template,
+private-static range, future heap range, ABI-stub address, and bounded launch
+payload; it likewise contains no kernel pointers or managed references.
+
+The ABI-stub design is a user-side process-local veneer for System Information
+and Exit, supplied through the startup/ABI window rather than the PE import
+table. It is defined but not linked or invoked in Phase 17. A native-first
+trampoline will consume startup-block v2, prepare private runtime state, and
+only then call the managed entrypoint in Phase 18.
+
 ### Design approval gate
 
 No kernel `ManagedImageLoader`, PE import resolver, relocation engine, TLS/FLS

@@ -2796,6 +2796,15 @@ The existing kernel loader remains the freestanding native proof loader. No
 managed code executed, no managed System Information or Exit call was made,
 and no kernel image, runtime, TLS, GC, or import resolver was repurposed.
 
+The bounded placement contract reserves
+`0x0000401000000000–0x0000401100000000` for the managed image, while retaining
+the Phase 13 startup/IPC window at `0x0000000040000000–0x0000000040010000`
+and the existing high stack guard/stack ranges. The future descriptor is
+fixed-width, contains only image/segment/BSS/TLS/runtime metadata ranges and
+flags, and contains no kernel pointers or managed references. Startup-block v2
+and the user-side System Information/Exit ABI veneer are defined as contracts
+only; neither is linked or invoked in this phase.
+
 Before kernel integration, Phase 18 must fund and separately review: a
 guideXOS-compatible NativeAOT PAL/import surface; process-private module and
 static-state registration; a per-process/per-thread TLS/FLS block and runtime
