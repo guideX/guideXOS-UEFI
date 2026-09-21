@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "phase": 20,
+  "target": "guidexos-x64",
+  "status": "source-audit-hard-stop",
+  "source": {
+    "repository": "https://github.com/dotnet/runtime.git",
+    "commit": "9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3",
+    "submodules": [],
+    "cachePath": "out/rt",
+    "cachePolicy": "repository-owned ignored generated checkout; never vendored into Git",
+    "absentSourcePolicy": "fail clearly before any runtime-pack or payload build"
+  },
+  "toolchain": {
+    "host": "windows-amd64",
+    "nativeCompiler": "MSVC 19.51.36257 from Visual Studio 18 Community native x64 tools",
+    "buildSystem": "CMake 4.3.1 + Ninja 1.13.2",
+    "runtimeBuildSubset": "Clr.NativeAotRuntime",
+    "runtimeBuildConfiguration": "Release",
+    "runtimeBuildArchitecture": "x64",
+    "runtimeBuildOS": "windows",
+    "runtimeBuildCommand": "build.cmd -subset Clr.NativeAotRuntime -arch x64 -c Release -rc Release -lc Release -os windows -ninja /p:IlcUseEnvironmentalTools=true"
+  },
+  "sourceAdaptation": {
+    "decision": "stop-before-modification",
+    "outcome": "Outcome E - source adaptation expands beyond the approved bounded PAL boundary",
+    "contract": "Tools/Phase19/pal-contract.json",
+    "contractExternalSymbolCount": 20,
+    "stockWindowsPalOperations": "Runtime/PalRedhawk.h, Runtime/PalRedhawkFunctions.h, Runtime/windows/PalRedhawkCommon.cpp, and Runtime/windows/PalRedhawkMinWin.cpp expose or forward VM, context, thread, event/wait, module, loader, thunk, timing, and termination operations beyond the contract",
+    "gcBoundary": "gc/windows/gcenv.windows.cpp is a full Windows OS adapter, not a five-operation VM shim; it includes synchronization/event, affinity/NUMA, process-memory, write-watch, timing, and Windows privilege APIs",
+    "packageBoundary": "Microsoft.NETCore.Native.targets selects Microsoft.NETCore.Native.Windows.targets for _targetOS=win; that target adds Windows SDK libraries, WindowsAPIs.txt, UCRT defaults, and the Windows bootstrapper/runtime asset family",
+    "coreLibBoundary": "System.Private.CoreLib contains Windows-specific time, entropy, loader, COM, environment, process, and interop surfaces; reachability must be reduced by a target-specific build rather than broad managed edits",
+    "estimatedMinimumPatch": "No runtime source was modified. A first bounded-looking implementation would touch at least 11 runtime/GC/build files plus targeted CoreLib build items and is estimated at 1500-3000 changed lines before compile-driven iteration; this is a broad source fork, not a Phase 19 PAL forwarding layer."
+  }
+}

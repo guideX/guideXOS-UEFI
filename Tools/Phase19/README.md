@@ -45,3 +45,15 @@ The design-stop rule remains active: do not maintain a large undocumented
 runtime fork. Phase 20 should begin with a small pinned source patch set and a
 review of the exact changed runtime files before producing a new managed
 payload.
+
+Phase 20 performed that source review against the pinned checkout. The
+repository-owned result is recorded in `Tools/Phase20/runtime-source.lock.json`
+and reproduced by `Tools/Phase20/phase20_source_audit.ps1`. The audit found
+that the stock `WIN32` NativeAOT path imports 41 PAL operations and selects a
+1,486-line Windows GC environment with synchronization, affinity/NUMA,
+process-memory, write-watch, and Windows VM behavior. The Windows packaging
+target also injects Windows SDK libraries and UCRT defaults. This is broader
+than the 20-symbol contract, so Phase 20 stops before modifying runtime source
+or producing a renamed stock pack; `guidexos-x64` cannot fall back to
+`win-x64`. The fail-closed check is
+`Tools/Phase20/verify_guidexos_runtime_pack.ps1`.

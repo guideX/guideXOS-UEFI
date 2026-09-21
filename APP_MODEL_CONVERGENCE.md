@@ -2919,3 +2919,59 @@ Phase 20 should fund only the smallest pinned runtime source adaptation:
 No kernel VM implementation, managed process startup, managed service, GUI,
 or App Model IPC change is authorized by this phase. Server and Historical
 Legacy references were read-only and unmodified.
+
+## 33. Phase 20 NativeAOT source audit and hard stop
+
+### Outcome
+
+Phase 20 is **Outcome E - source adaptation expands beyond the approved
+boundary**. The pinned runtime source is real and builds its stock NativeAOT
+runtime subset, but it does not yet produce a `guidexos-x64` runtime pack. No
+managed code was executed at CPL3 and no runtime source was modified.
+
+The source lock is
+`Tools/Phase20/runtime-source.lock.json`; its canonical provenance is
+`https://github.com/dotnet/runtime.git` at commit
+`9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3`. The reproducible checkout is the
+ignored `out/rt` cache. `Clr.NativeAOTRuntime` builds successfully with the
+recorded MSVC/CMake/Ninja toolchain, producing the ordinary Windows
+`aotsdk` object/library family. That is source-build evidence only, not a
+custom package.
+
+### Exact boundary found
+
+`Tools/Phase20/phase20_source_audit.ps1` records hashes and metrics for the
+source files that own the seam. The stock `Runtime/PalRedhawk.h` surface has
+41 PAL imports, including context capture, background threads, event/wait,
+module/loader, thunk, Windows VM, timing, and fail-fast operations. The
+Phase 19 contract has exactly 20 external guideXOS symbols and no external
+synchronization symbols. The stock source therefore cannot be adapted by
+renaming the target or adding a small forwarding library.
+
+The GC boundary is wider still. `src/coreclr/gc/windows/gcenv.windows.cpp`
+is 1,486 lines and implements 53 GC OS methods. It covers the GC event and
+critical-section objects, virtual reserve/commit/decommit/reset, write-watch,
+processor affinity and NUMA, process-memory limits, timing, and thread
+yield/priority behavior. The NativeAOT CMake path selects it whenever `WIN32`
+is true, while the Windows packaging target adds Windows SDK libraries,
+`WindowsAPIs.txt`, and UCRT defaults. CoreLib also has target-specific Windows
+time, loader, process, COM, environment, and interop files that require a
+target-specific reachability/build decision.
+
+No diff was applied to the external runtime checkout. The estimated minimum
+change is at least 11 runtime/GC/build files plus targeted CoreLib build items,
+roughly 1,500–3,000 changed lines before compile-driven iteration. That is a
+broad runtime fork, so the GC source-build gate correctly stops here rather
+than expanding the PAL contract or emulating Windows synchronization and
+loader APIs.
+
+### Phase 21 prerequisites
+
+Phase 21 must first introduce an explicit build-only `GUIDEXOS` identity and a
+separate NativeAOT source set. It must then measure the complete generated PAL
+surface, decide whether GC blocking synchronization can be made user-runtime
+local or requires one intentionally added primitive, replace the Windows
+bootstrapper/GC/build target path, and prove CoreLib reachability without
+Windows runtime imports. Only after those checks may a private runtime pack,
+custom `UserManagedProof` build, image manifest, loader probe, and repeated
+no-execute mapping tests be claimed.

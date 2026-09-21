@@ -30,3 +30,10 @@ owned guideXOS target identity is the private `guidexos-x64` contract in
 `Tools\Phase19`; its source-built runtime pack is not silently substituted for
 this stock artifact. Run `Tools\build_phase19_runtime_pack.ps1` to verify the
 pinned package and build the freestanding PAL contract gate.
+
+Phase 20 audits the pinned NativeAOT source in `Tools/Phase20` and stops before
+creating a custom pack because the stock Windows PAL, GC environment, and
+packaging target exceed the approved 20-symbol boundary. A custom payload must
+not be built from this project until an adapted pack manifest exists; the
+fail-closed check is `Tools/Phase20/verify_guidexos_runtime_pack.ps1`, which
+rejects missing, foreign, or stock-fallback packs.
