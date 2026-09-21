@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <PublishAot>true</PublishAot>
+    <SelfContained>true</SelfContained>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TrimMode>link</TrimMode>
+    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <IlcGenerateMapFile>true</IlcGenerateMapFile>
+    <IlcDisableReflection>true</IlcDisableReflection>
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <StripSymbols>true</StripSymbols>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <!-- VS 18 is newer than the ILCompiler 9 findvcvarsall version range;
+         publish under the native-tools environment supplied by VsDevCmd. -->
+    <IlcUseEnvironmentalTools>true</IlcUseEnvironmentalTools>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
+
+  </PropertyGroup>
+
+  <!-- The payload is a fixed-base Phase 17 artifact. The loader will reject
+       relocation-bearing images until a reviewed relocation policy exists. -->
+  <ItemGroup>
+    <LinkerArg Include="/base:0x0000401000000000" />
+    <LinkerArg Include="/fixed" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Keep the user toolchain independent from the kernel's 7.0 alpha pack. -->
+    <PackageReference Include="Microsoft.DotNet.ILCompiler" Version="9.0.0" />
+  </ItemGroup>
+</Project>

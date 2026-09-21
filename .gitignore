@@ -7,6 +7,9 @@
 /guideXOS.Web/.vs
 /guideXOS/bin
 /guideXOS/obj
+/UserManagedProof/bin
+/UserManagedProof/obj
+/Tools/__pycache__
 /Tools/MediaCreator.Windows/obj
 /Tools/MediaCreator.Windows/bin
 /Tools/MediaCreator.Linux/obj

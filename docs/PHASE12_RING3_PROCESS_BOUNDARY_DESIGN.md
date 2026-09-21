@@ -2,8 +2,10 @@
 
 ## Ring 3 process boundary and IPC architecture proposal
 
-**Status:** Phase 15 accepted — Outcome A. Sections 1–27 preserve the original
-design record; implementation results are recorded in Sections 28–30.
+**Status:** Phase 15 accepted — Outcome A. Phase 17 has an independent
+managed-image artifact and host-side contract proof, but stops at the required
+private TLS/GC/PAL design gate. Sections 1–27 preserve the original design
+record; implementation results are recorded in Sections 28–32.
 
 **Audit date:** 2026-09-20
 
@@ -1195,3 +1197,103 @@ copy-in/copy-out rejection, contained fault, cleanup, and desktop heartbeat.
 Only this design documentation is changed for Phase 16. The Server reference,
 Historical Legacy tree, bootloader, kernel, loader, and managed runtime source
 were not modified by the feasibility decision.
+
+## 32. Phase 17 separate NativeAOT user payload and loader substrate gate
+
+### Decision
+
+Phase 17 is **Outcome D + Outcome E with bounded Outcome C prerequisites**.
+It successfully builds and inspects a NativeAOT image independent of the
+kernel project, and it proves the bounded segment/mapping contract against the
+real artifact in a host-side no-execute model. The design-approval rule then
+stops before kernel loader integration because the smallest generated payload
+requires private TLS/FLS, GC/runtime state, exception support, and a custom
+PAL/import policy.
+
+### Independent payload
+
+`UserManagedProof/guideXOS.UserManagedProof.csproj` contains only an ordinary
+`Main()` returning `42`; it has no project reference to `guideXOS.csproj` and
+does not use `Native`, hardware, filesystem, network, reflection, dynamic
+loading, GUI, threading, allocation, or guideXOS ABI calls. The project pins
+SDK `10.0.401` in `UserManagedProof/global.json`, target `net9.0`, RID
+`win-x64`, AMD64, and `Microsoft.DotNet.ILCompiler` `9.0.0`. The linker is
+invoked from the installed VS 18 native-tools environment because the
+ILCompiler 9.0 `findvcvarsall.bat` range stops before VS 18; this is recorded
+as `IlcUseEnvironmentalTools=true` and does not change the kernel toolchain.
+
+Two clean publishes match byte-for-byte. The result is PE32+ AMD64, 886,784
+bytes, SHA-256
+`2ab3f8394b20c35889a5a3073bf9b322b5d79ddc447910ad1fe7a6eadc4b7ec8`, fixed
+base `0x0000401000000000`, no relocation directory, entry RVA `0x985b0`, and
+entry VA `0x00004010000985b0`. The five sections are `.text` RX, `.rdata` R,
+`.data` RW, `.pdata` R, and `.rsrc` R; no section is RWX. The `.data` section
+has 99,096 section-level zero-fill bytes and 102,400 page-tail bytes.
+
+The artifact has no RWX segment and no guideXOS/kernel symbol import. It does
+have 131 external imports across 11 Windows/CRT DLLs, including KERNEL32 FLS,
+thread, process, virtual-memory, exception, and loader APIs. Those imports
+are evidence of a stock Windows PAL dependency, not a valid guideXOS user ABI.
+
+### Runtime/helper/import manifest
+
+`Tools/inspect_managed_image.py` produces the exact ignored local
+`managed-image-manifest.json` from the PE and NativeAOT `map.xml`. The map has
+3,530 records, including 31 ReadyToRun helpers, 13 TLS/thread-static entries,
+43 GC/frozen-object entries, 355 writable-static records, and explicit
+metadata/module/type-manager/module-initializer structures. The PE has a
+272-byte TLS template and 30,276 bytes of `.pdata` unwind data. The evidence
+classification is:
+
+| Area | Evidence-derived result |
+| --- | --- |
+| TLS/FLS | `PRIVATE_TLS_FLS_REQUIRED`; PE TLS directory and 13 map entries |
+| GC | `PRIVATE_GC_REQUIRED`; GC statics, frozen objects, GC info, writable statics, and allocator imports |
+| Exceptions | `UNWIND_METADATA_AND_EXCEPTION_RUNTIME_REFERENCED`; `.pdata`, EH map records, Raise/Unwind imports |
+| Startup | module metadata, module initializer, type-manager, R2R header/helpers, GC statics, frozen objects |
+| Relocations | none emitted; fixed-base policy is sufficient for this artifact |
+| Native imports | external Windows/CRT imports only; no guideXOS kernel symbols |
+
+This evidence prevents reusing the kernel's global `KMain` startup, kernel
+heap, kernel statics, kernel scheduler TLS, or direct `Native` imports. It also
+means that “Main returns 42” is not evidence of a no-GC/no-TLS runtime.
+
+### Host-side loader contract proof
+
+`Tools/phase17_loader_probe.py` derives a bounded descriptor from the actual
+PE, validates all segments before allocation, maps RX/R/RW pages in a simulated
+process address space, zero-fills the `.data` tail, checks that the entrypoint
+is in RX, and releases the simulated mappings. Four process generations pass:
+
+```text
+managedImagesValidated=4
+managedImagesRejected=11
+segmentsMapped=20
+segmentsReclaimed=20
+imagePagesAllocated=972
+imagePagesReclaimed=972
+bssBytesZeroed=438272
+outstandingManagedMappings=0
+managedCodeExecuted=false
+```
+
+The negative suite rejects bad format, too many segments, overlap, an entrypoint
+outside RX, file-range overflow, memory smaller than file, kernel-space VA,
+stack/user-boundary violation, BSS overflow, RWX, and malformed TLS metadata.
+Every rejection occurs before simulated mapping. This proves the descriptor
+policy and actual artifact layout; it does not claim kernel-QEMU mapping or
+managed execution.
+
+### Design approval gate
+
+No kernel `ManagedImageLoader`, PE import resolver, relocation engine, TLS/FLS
+subsystem, private GC, exception runtime, or startup trampoline was added.
+The existing freestanding Ring 3 path remains unchanged. The following are
+explicit Phase 18 prerequisites: a guideXOS PAL/import design; private
+module/statics and runtime-thread state; per-process/per-thread TLS/FLS; a
+private GC or a genuinely no-GC runtime-pack proof; exception/unwind policy;
+fixed-width startup block and native-first bootstrap; process ABI stubs for
+System Information and Exit; then bounded kernel descriptor validation,
+RX/R/NX mapping, BSS zero-fill, ownership, teardown, and generation-safe
+cleanup. Broad relocation, dynamic linking, shared libraries, and RWX are not
+authorized by Phase 17.
