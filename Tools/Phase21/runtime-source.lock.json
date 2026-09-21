@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "phase": 21,
+  "target": "guidexos-x64",
+  "targetOsValue": "guidexos",
+  "runtimeCommit": "9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3",
+  "patchMechanism": "Tools/Phase21/apply_phase21_patch.ps1",
+  "sourceFiles": [
+    {
+      "path": "eng/build.ps1",
+      "sha256": "66D1F9B3545C7266F28D2FE1BE895A2A5FCCFF64924B1E5BB8A10B73A0AD16B3"
+    },
+    {
+      "path": "eng/native/configureplatform.cmake",
+      "sha256": "84573E469E6AC703CED93A80DEFF224CBC040F549EECAA3FF362BC3091EDA416"
+    },
+    {
+      "path": "eng/native/configurecompiler.cmake",
+      "sha256": "BB57C2C5AC1B55B7D3041BC73902944A72739B620AE5A21744FB041375A7A3C5"
+    },
+    {
+      "path": "Directory.Build.props",
+      "sha256": "09EE5BE3F213248788851D796BD31D1E3F0BFFFF2BB55AC19E758DEC185E9956"
+    },
+    {
+      "path": "src/coreclr/clrdefinitions.cmake",
+      "sha256": "9F1F02DBD708FAD94C4BFFDCF8766DAD495A4D07F7FB21021F60F09EE600763C"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Directory.Build.props",
+      "sha256": "3C932A17BE8BF69E1FEFEC5EF7DAD63FC6D572B9D740D806C8307CC552909FFE"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Runtime/CMakeLists.txt",
+      "sha256": "48AF1F22B399396FA9059C4D0B9E72EB2D6F80FF1DC3C2D2584E6C0A0C236ACD"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Runtime/Full/CMakeLists.txt",
+      "sha256": "AD344FFAA1044D1543058FE5D033D5778FDE08AEE82FABCB237403AD17FBF81B"
+    },
+    {
+      "path": "src/native/libs/CMakeLists.txt",
+      "sha256": "49C5D0EE8105E948E87593A51FDDAB68A7CB8020BD270E77DFA91F058937E205"
+    },
+    {
+      "path": "src/coreclr/gc/env/gcenv.structs.h",
+      "sha256": "A353067FCD363E0A24608D8CEC9469CE140A2D17D7F44FBB470AE2941DDC4616"
+    },
+    {
+      "path": "src/coreclr/gc/env/gcenv.base.h",
+      "sha256": "673DCA9C1F0D41A72BDEC896221C94DBCA1D6DCBD2FAA14305BCD1EEAECBA797"
+    }
+  ],
+  "repositoryOwnedTemplates": [
+    "src/coreclr/gc/env/gcenv.guidexos.inl",
+    "src/coreclr/gc/guidexos/gcenv.guidexos.cpp",
+    "src/coreclr/nativeaot/Runtime/guidexos/AsmOffsets.cpp",
+    "src/coreclr/nativeaot/Runtime/guidexos/GuidexosGcPal.h"
+  ],
+  "forbiddenTargetFallbacks": [
+    "gcenv.windows.cpp",
+    "Runtime/windows/PalRedhawkCommon.cpp",
+    "Runtime/windows/PalRedhawkMinWin.cpp",
+    "windows.h",
+    "KERNEL32",
+    "ADVAPI32",
+    "bcrypt",
+    "ole32",
+    "win-x64"
+  ]
+}
