@@ -8,7 +8,6 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <new>
 
 #include "common.h"
@@ -32,7 +31,11 @@ namespace
     [[noreturn]] void GuidexosUnsupported(const char* operation)
     {
         (void)operation;
-        std::abort();
+        guidexos_pal_fail_fast(0x47585553u, nullptr);
+        for (;;)
+        {
+            YieldProcessor();
+        }
     }
 }
 

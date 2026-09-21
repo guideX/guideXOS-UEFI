@@ -36,7 +36,7 @@ $command = $command.Replace('TARGET_WINDOWS', 'TARGET_GUIDEXOS')
 $command = $command.Replace('gcenv.windows.cpp', 'gcenv.guidexos.cpp')
 $command = [regex]::Replace($command, '/Fo\S+', '/Fo"' + $objectFile + '"')
 $command = [regex]::Replace($command, '/Fd\S+', '/Fd"' + (Join-Path $OutputRoot 'gcenv.guidexos.cpp.pdb') + '"')
-$command = $command + ' /I"' + (Join-Path $SourceRoot 'src\coreclr\nativeaot\Runtime\guidexos') + '"'
+$command = $command + ' /I"' + (Join-Path $SourceRoot 'src\coreclr\gc\env') + '" /I"' + (Join-Path $SourceRoot 'src\coreclr\nativeaot\Runtime\guidexos') + '"'
 
 $vcvars = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat'
 if (-not (Test-Path -LiteralPath $vcvars -PathType Leaf)) { throw "The required native x64 compiler environment was not found: $vcvars" }

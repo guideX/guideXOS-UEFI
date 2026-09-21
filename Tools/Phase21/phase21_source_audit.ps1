@@ -81,6 +81,8 @@ Require ($runtimeCmake -match '(?m)gcenv\.guidexos\.cpp') 'Runtime CMake does no
 Require ($fullCmake -match '(?m)CLR_CMAKE_HOST_WIN32') 'Full runtime assembler selection lost host/target separation'
 Require ($fullCmake -match '(?ms)CLR_CMAKE_TARGET_GUIDEXOS.*?guidexos/AsmOffsets\.cpp') 'GUIDEXOS AsmOffsets selection is absent'
 Require ($nativeLibsCmake -match '(?m)CLR_CMAKE_TARGET_BROWSER OR CLR_CMAKE_TARGET_WASI OR CLR_CMAKE_TARGET_GUIDEXOS') 'unsupported native security libraries are not excluded for GUIDEXOS'
+Require ($gcStructs -match '(?m)guidexos_pal_thread_id') 'GC thread identity is not routed through the existing guideXOS PAL'
+Require ($gcGuidexos -match '(?m)guidexos_pal_fail_fast') 'unsupported GC paths do not use the bounded PAL fail-fast boundary'
 
 $guidexosBranch = [regex]::Match($runtimeCmake, '(?ms)elseif \(CLR_CMAKE_TARGET_GUIDEXOS\)(.*?)(?=\nelse\(\))')
 Require $guidexosBranch.Success 'could not isolate GUIDEXOS runtime source branch'
@@ -93,7 +95,7 @@ $forbiddenTargetPatterns = @(
     '(?i)windows\.h', '(?i)\bKERNEL32(?:\.dll|\.lib)?\b', '(?i)\bADVAPI32(?:\.dll|\.lib)?\b',
     '(?i)\bbcrypt(?:\.dll|\.lib)?\b', '(?i)\bole32(?:\.dll|\.lib)?\b',
     '(?i)WaitForSingleObject', '(?i)CreateEvent(?:W|A)?\b', '(?i)LoadLibrary(?:W|A)?\b',
-    '(?i)win-x64', '(?i)gcenv\.windows\.cpp'
+    '(?i)win-x64', '(?i)gcenv\.windows\.cpp', '(?i)std::abort', '(?i)#include\s*<cstdlib>'
 )
 $forbiddenMatches = @()
 foreach ($pattern in $forbiddenTargetPatterns) {
@@ -159,7 +161,7 @@ $result = [ordered]@{
         compileEvidence = $compileEvidence
     }
     failClosed = [ordered]@{
-        missingGcBlockingWait = 'explicit abort in gcenv.guidexos.cpp'
+        missingGcBlockingWait = 'explicit PAL fail-fast in gcenv.guidexos.cpp'
         missingGcDecommit = 'returns failure; never reports a false success'
         missingGcReset = 'returns failure; never reports a false success'
         missingWindowsFallback = $true

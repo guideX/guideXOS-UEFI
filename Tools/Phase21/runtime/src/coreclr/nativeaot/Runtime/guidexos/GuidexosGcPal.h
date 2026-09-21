@@ -13,6 +13,7 @@ extern "C"
     uint64_t guidexos_pal_thread_id(void);
     uint64_t guidexos_pal_monotonic_ticks(void);
     uint64_t guidexos_pal_monotonic_frequency(void);
+    void guidexos_pal_fail_fast(uint32_t reason, void* context);
 }
 
 #endif // GUIDEXOS_GC_PAL_H

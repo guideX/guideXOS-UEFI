@@ -33,9 +33,12 @@ toolchain requirement. Target source selection is based on
 The new `gcenv.guidexos.cpp` is intentionally bounded. It provides the
 workstation GC interface shape without including Windows headers or copying
 the Windows environment. VM reserve/commit/release and timing use existing
-Phase 19 PAL declarations. Write-watch, large pages, NUMA, CPU groups,
-affinity, process-memory telemetry, and blocking event waits fail closed or
-report unsupported. Critical-section fast paths use process-local atomics.
+Phase 19 PAL declarations; GC thread ownership uses the existing
+process-private thread identity symbol, and unsupported paths use the existing
+PAL fail-fast boundary rather than CRT termination. Write-watch, large pages,
+NUMA, CPU groups, affinity, process-memory telemetry, and blocking event waits
+fail closed or report unsupported. Critical-section fast paths use
+process-local atomics.
 
 The semantic inventory identifies that workstation GC needs event and lock
 semantics, but a multi-threaded runtime needs a blocking address/value wait and
@@ -52,10 +55,12 @@ The pinned source is `9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3`. The patch
 mechanism verifies that commit and the stock source hashes, requires a clean
 checkout, applies exact-context transforms, copies four repository-owned
 templates, and records the runtime diff under the ignored `out/dotnet`
-evidence directory. The runtime source was applied from a clean checkout and
+evidence directory. `upgrade_phase21_cache.ps1` updates an already-applied
+Phase 21 cache only after verifying its exact earlier file set and source
+context. The runtime source was applied from a clean pinned checkout and
 reapplied successfully from a second clean checkout. The patch changes eleven
 tracked runtime files and adds four guideXOS-specific runtime files; the
-tracked transform diff is 61 insertions and 10 deletions.
+tracked transform diff is 63 insertions and 10 deletions.
 
 The platform identity is explicit at every native selection point:
 
@@ -73,7 +78,9 @@ The platform identity is explicit at every native selection point:
 
 The isolated MSVC compile proof succeeds for `gcenv.guidexos.cpp` with
 `TARGET_GUIDEXOS`, no `TARGET_WINDOWS`, no Windows GC source entry, and no
-target-side `windows.h` dependency. The complete pinned
+target-side `windows.h` dependency. GC ownership checks use the existing
+process-private thread identity PAL symbol, and unsupported GC operations use
+the existing PAL fail-fast symbol without direct CRT termination. The complete pinned
 `build-runtime.cmd -component nativeaot -os guidexos -outputrid guidexos-x64`
 configuration reaches CMake with the correct target identity but currently
 stops in the host/apphost security-library path while requesting

@@ -2975,3 +2975,63 @@ bootstrapper/GC/build target path, and prove CoreLib reachability without
 Windows runtime imports. Only after those checks may a private runtime pack,
 custom `UserManagedProof` build, image manifest, loader probe, and repeated
 no-execute mapping tests be claimed.
+
+## 34. Phase 21 NativeAOT `GUIDEXOS` platform identity and GC boundary
+
+Phase 21 is **Outcome A for the source-level platform and bounded GC
+environment gate**. It does not claim a custom runtime pack or managed CPL3
+execution. The pinned NativeAOT source now has an explicit `guidexos` target
+OS path and emits `CLR_CMAKE_TARGET_GUIDEXOS`, `TARGET_GUIDEXOS`,
+`TargetsGuidexos`, and the NativeAOT `TARGET_GUIDEXOS` build constant. The
+Windows workstation remains the build host; host MSVC/CMake preprocessing is
+kept separate from target runtime source selection.
+
+The repository-owned mechanism is
+`Tools/Phase21/apply_phase21_patch.ps1`. It verifies the exact pinned commit
+and stock source hashes, applies exact-context transforms, installs four
+guideXOS runtime templates, and records the changed runtime file set. The
+patch was replayed from clean pinned source twice. An already-applied ignored
+cache can be advanced only through `Tools/Phase21/upgrade_phase21_cache.ps1`,
+which verifies the earlier Phase 21 state before changing it. The patch
+changes eleven tracked runtime files and adds four guideXOS-specific runtime
+files; the tracked transform diff is 63 insertions and 10 deletions. No
+runtime tree is vendored into this repository.
+
+The GUIDEXOS runtime CMake branch selects `gcenv.guidexos.cpp` and the
+GUIDEXOS assembler-offset source. It does not select `gcenv.windows.cpp`, the
+Windows NativeAOT PAL source family, or the Windows target packaging branch.
+The isolated MSVC compile proof succeeds with `TARGET_GUIDEXOS`, without
+`TARGET_WINDOWS`, without a Windows GC source entry, and without a target-side
+Windows header dependency. The GC thread-ownership type uses the existing
+process-private `guidexos_pal_thread_id` contract, and unsupported GC paths
+fail through the existing PAL fail-fast boundary rather than direct CRT
+termination.
+
+The workstation GC inventory covers 53 semantic operations, including the
+inline page-size operation, with 13 synchronization methods. Twenty-five
+operations are required for the bounded workstation startup/correctness set;
+18 are optional or optimization/server-only. The first target keeps the
+Phase 19 PAL at exactly 20 external symbols. Atomic lock ownership, event
+state, acquire/release publication, bounded spinning, and timeout-zero
+polling remain user-local. A future blocking path, if emitted-use evidence
+requires it, is bounded to the proposed semantic pair
+`wait(address, expectedValue, timeout)` and `wake(address, count)`. No HANDLE,
+event-object, critical-section-object, or Win32 wait API is admitted.
+
+Large pages, write watch, NUMA, CPU groups, processor affinity, priority
+boosting, cache-size discovery, and Windows memory notifications are disabled
+or deferred. GC decommit/reset remain explicit unresolved operations and do
+not report false success. The first one-thread payload must disable helper
+thread/concurrent-suspension paths; no fake thread-store or suspension
+protocol is introduced. GC pages, statics, write-barrier state, and runtime
+TLS remain process/thread-private.
+
+The full source build reaches the explicit `guidexos` configuration but is
+currently blocked in the host/apphost security-library path before the
+NativeAOT runtime target compiles (`libgssapi_krb5`). This is recorded as a
+toolchain/packaging prerequisite, not accepted as a runtime pack. Phase 22
+must add target-native linker/object/archive and asset selection, target
+CoreLib/ILCompiler assets, startup/TLS/FLS/fail-fast adaptations, real GC
+decommit semantics, and any emitted-use-proven wait/wake primitive. It must
+continue to reject Windows headers/imports, Windows DLLs, and `win-x64`
+fallback assets.

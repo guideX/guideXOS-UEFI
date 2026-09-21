@@ -122,12 +122,14 @@ Rewrite 'src/coreclr/gc/env/gcenv.structs.h' '#define __GCENV_STRUCTS_INCLUDED__
 Rewrite 'src/coreclr/gc/env/gcenv.structs.h' '#else // TARGET_UNIX' @'
 #elif defined(TARGET_GUIDEXOS)
 
+extern "C" uint64_t guidexos_pal_thread_id(void);
+
 class EEThreadId
 {
     uint64_t m_id = 0;
 public:
-    bool IsCurrentThread() { return false; }
-    void SetToCurrentThread() { m_id = 0; }
+    bool IsCurrentThread() { return m_id != 0 && m_id == guidexos_pal_thread_id(); }
+    void SetToCurrentThread() { m_id = guidexos_pal_thread_id(); }
     void Clear() { m_id = 0; }
 };
 
