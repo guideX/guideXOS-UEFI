@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "phase": 19,
+  "targetIdentity": "guidexos-x64",
+  "targetIdentityStatus": "private repository target; no standard RID claim",
+  "architecture": "AMD64",
+  "sdk": {
+    "version": "10.0.401",
+    "rollForward": "disable",
+    "globalJson": "UserManagedProof/global.json"
+  },
+  "nativeAot": {
+    "ilcompilerPackage": "Microsoft.DotNet.ILCompiler",
+    "version": "9.0.0",
+    "runtimePackage": "runtime.win-x64.Microsoft.DotNet.ILCompiler",
+    "runtimeVersion": "9.0.0",
+    "sourceRepository": "https://github.com/dotnet/runtime",
+    "sourceCommit": "9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3",
+    "stockTarget": "win-x64",
+    "sourceAdaptationRequired": true
+  },
+  "observedStockArtifacts": [
+    { "package": "Microsoft.DotNet.ILCompiler", "relativePath": "build/Microsoft.NETCore.Native.Windows.targets", "sha256": "F001FBC7933D8C57F7B0AF6B9261A63AAB52ADDFFA4350E674B694E525F57264" },
+    { "package": "Microsoft.DotNet.ILCompiler", "relativePath": "build/WindowsAPIs.txt", "sha256": "54B672743B6D5E3D97D5B7FD90577CA72887592EB411C0593158D56CB3800DCF" },
+    { "package": "runtime.win-x64.Microsoft.DotNet.ILCompiler", "relativePath": "sdk/bootstrapper.obj", "sha256": "E97995D4179E4B493232CE386DC8D2780E53E5EAF8724E663E598EA096FD7685" },
+    { "package": "runtime.win-x64.Microsoft.DotNet.ILCompiler", "relativePath": "sdk/Runtime.WorkstationGC.lib", "sha256": "0E6A134AD4150CD604317A47860DAE82EB30AAE4D9CDB14144E06454E7BB1948" },
+    { "package": "runtime.win-x64.Microsoft.DotNet.ILCompiler", "relativePath": "sdk/eventpipe-disabled.lib", "sha256": "E93CB51344EE86484AC09E8DC13B80FAE269719432775E3E4F012C6C18184027" },
+    { "package": "runtime.win-x64.Microsoft.DotNet.ILCompiler", "relativePath": "sdk/Runtime.VxsortDisabled.lib", "sha256": "75779AE574059A3F05A71D992A4B146EFC93B2E2DF5A5C80D765DAFBB507017B" },
+    { "package": "runtime.win-x64.Microsoft.DotNet.ILCompiler", "relativePath": "sdk/standalonegc-disabled.lib", "sha256": "7CE4836B9D161503F0A78E7BC4B9952181EE47CAEAE41B5B7B497FD1B4001CE7" }
+  ],
+  "sourceAreasRequiringAdaptation": [
+    "src/coreclr/nativeaot/Runtime/Full",
+    "src/coreclr/nativeaot/Runtime/windows",
+    "src/coreclr/gc/windows/gcenv.windows.cpp",
+    "src/libraries/System.Private.CoreLib/src/Interop/Windows",
+    "eng/native and runtime-pack packaging targets"
+  ],
+  "policy": {
+    "globalSdkModification": false,
+    "stockRuntimeLibrariesMayBeRelabeled": false,
+    "largeRuntimeForkApproved": false,
+    "phase19ManagedExecution": false
+  }
+}

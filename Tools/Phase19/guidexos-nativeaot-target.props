@@ -1,0 +1,13 @@
+<Project>
+  <!-- Private repository identity. This file is descriptive until a source-built
+       runtime pack supplies the matching NativeAOT targets and native libraries. -->
+  <PropertyGroup>
+    <GuidexosNativeAotTargetIdentity>guidexos-x64</GuidexosNativeAotTargetIdentity>
+    <GuidexosNativeAotArchitecture>AMD64</GuidexosNativeAotArchitecture>
+    <GuidexosNativeAotPrivateTarget>true</GuidexosNativeAotPrivateTarget>
+    <GuidexosNativeAotFreestanding>true</GuidexosNativeAotFreestanding>
+    <GuidexosNativeAotRuntimePackStatus>source-adaptation-required</GuidexosNativeAotRuntimePackStatus>
+    <GuidexosNativeAotUsesWindowsPAL>false</GuidexosNativeAotUsesWindowsPAL>
+    <GuidexosNativeAotUsesDynamicLoader>false</GuidexosNativeAotUsesDynamicLoader>
+  </PropertyGroup>
+</Project>

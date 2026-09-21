@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "phase": 19,
+  "targetIdentity": "guidexos-x64",
+  "identityStatus": "private-repository-target; not a standard .NET RID",
+  "architecture": "AMD64",
+  "runtimeModel": "NativeAOT user process with guideXOS PAL and private workstation GC",
+  "externalSymbolBudget": {
+    "count": 20,
+    "policy": "Every symbol has a documented purpose, a future guideXOS implementation, and process-isolation semantics. No Windows ABI name is admitted."
+  },
+  "categories": [
+    {
+      "name": "vm",
+      "semantics": "Process-local page operations. Inputs and outputs are user-process addresses; the kernel owns validation and page-table authority.",
+      "symbols": [
+        { "name": "guidexos_pal_vm_reserve", "prototype": "void* (uint64_t size, uint64_t alignment)", "purpose": "Reserve process-local virtual address space without creating executable pages.", "futureImplementation": "Bounded Ring 3 VM reserve ABI; no kernel VA or cross-process authority." },
+        { "name": "guidexos_pal_vm_commit", "prototype": "int32_t (void* address, uint64_t size, uint32_t protection)", "purpose": "Commit user pages with explicit R/RW/RX protection.", "futureImplementation": "Process-owned page mapping through the bounded VM ABI; reject RWX." },
+        { "name": "guidexos_pal_vm_protect", "prototype": "int32_t (void* address, uint64_t size, uint32_t protection)", "purpose": "Change protection on already-owned process pages.", "futureImplementation": "Validated process-local page-table update; no kernel mappings." },
+        { "name": "guidexos_pal_vm_release", "prototype": "int32_t (void* address, uint64_t size)", "purpose": "Release a reservation and its process-owned pages.", "futureImplementation": "Generation-owned Ring 3 VM teardown with deterministic failure." },
+        { "name": "guidexos_pal_vm_query", "prototype": "int32_t (void* address, uint64_t* base, uint64_t* size, uint32_t* protection)", "purpose": "Return bounded attributes only when the runtime requires a query.", "futureImplementation": "Read-only query against the current process address-space descriptor." }
+      ]
+    },
+    {
+      "name": "tls_fls",
+      "semantics": "Process-private runtime blocks and scheduler-preserved thread-private state; no Windows handle emulation.",
+      "symbols": [
+        { "name": "guidexos_pal_tls_initialize", "prototype": "int32_t (void* process_state, uint64_t template_size, uint64_t zero_size)", "purpose": "Initialize the process runtime TLS template and private block bookkeeping.", "futureImplementation": "Runtime-owned process state initialized from the loader descriptor." },
+        { "name": "guidexos_pal_tls_current_block", "prototype": "void* (void)", "purpose": "Return the current managed thread's private runtime block.", "futureImplementation": "Scheduler-managed user-thread transition state, not a scheduler object pointer." },
+        { "name": "guidexos_pal_fls_alloc", "prototype": "int32_t (void (*cleanup)(void*))", "purpose": "Allocate one bounded runtime FLS slot.", "futureImplementation": "Process-local slot table with cleanup at user-thread termination." },
+        { "name": "guidexos_pal_fls_get", "prototype": "void* (int32_t slot)", "purpose": "Read a value from the current thread's FLS block.", "futureImplementation": "Validated slot lookup in the current runtime block." },
+        { "name": "guidexos_pal_fls_set", "prototype": "int32_t (int32_t slot, void* value)", "purpose": "Write a value to the current thread's FLS block.", "futureImplementation": "Process/thread-private write with generation-safe cleanup." },
+        { "name": "guidexos_pal_fls_cleanup", "prototype": "void (void)", "purpose": "Run and clear current-thread FLS cleanup during termination.", "futureImplementation": "Called by the user-thread termination path before the process generation is reclaimed." }
+      ]
+    },
+    {
+      "name": "thread_identity",
+      "semantics": "Stable user-runtime identity is separate from kernel scheduler object addresses.",
+      "symbols": [
+        { "name": "guidexos_pal_thread_id", "prototype": "uint64_t (void)", "purpose": "Return a stable integer identity for the current managed user thread.", "futureImplementation": "Generation-scoped scheduler-assigned user-thread ID copied into runtime state." },
+        { "name": "guidexos_pal_thread_stack_bounds", "prototype": "int32_t (void** low, void** high)", "purpose": "Return the current user stack bounds for runtime bookkeeping.", "futureImplementation": "Bounded user-stack descriptor supplied by process/thread startup." },
+        { "name": "guidexos_pal_thread_runtime_state", "prototype": "void* (void)", "purpose": "Return the private runtime-thread state pointer.", "futureImplementation": "Pointer to a user-owned runtime structure, never a kernel scheduler pointer." }
+      ]
+    },
+    {
+      "name": "time",
+      "semantics": "Small scalar primitives; no Windows FILETIME, timer handle, or wait-object surface.",
+      "symbols": [
+        { "name": "guidexos_pal_monotonic_ticks", "prototype": "uint64_t (void)", "purpose": "Read a monotonic high-resolution counter.", "futureImplementation": "Bounded read-only time ABI with no user pointer." },
+        { "name": "guidexos_pal_monotonic_frequency", "prototype": "uint64_t (void)", "purpose": "Return the counter frequency.", "futureImplementation": "Fixed platform contract or bounded kernel-provided scalar." },
+        { "name": "guidexos_pal_system_time_ns", "prototype": "uint64_t (void)", "purpose": "Return wall/system time in nanoseconds when runtime semantics require it.", "futureImplementation": "Bounded system-time scalar; no calendar or timezone PAL." }
+      ]
+    },
+    {
+      "name": "entropy",
+      "semantics": "Caller supplies a process-owned buffer; the eventual ABI validates the user range and never returns a constant stream.",
+      "symbols": [
+        { "name": "guidexos_pal_random_bytes", "prototype": "int32_t (void* buffer, uint64_t length)", "purpose": "Fill bounded process-local storage with cryptographically appropriate entropy.", "futureImplementation": "Kernel entropy source exposed through a validated user buffer; failure is explicit." }
+      ]
+    },
+    {
+      "name": "termination",
+      "semantics": "Runtime failure terminates the current process generation and cannot panic or mutate the kernel runtime.",
+      "symbols": [
+        { "name": "guidexos_pal_process_exit", "prototype": "void (int32_t status)", "purpose": "Terminate a managed process with its final status.", "futureImplementation": "Existing Ring 3 Exit/process cleanup path." },
+        { "name": "guidexos_pal_fail_fast", "prototype": "void (uint32_t reason, void* context)", "purpose": "Terminate on unsupported runtime startup or fatal managed failure.", "futureImplementation": "Existing process-fault/Exit semantics with bounded diagnostic data; no kernel panic." }
+      ]
+    }
+  ],
+  "localHelpers": [
+    { "name": "guidexos_pal_memcpy", "purpose": "Process-local non-overlapping byte copy." },
+    { "name": "guidexos_pal_memmove", "purpose": "Process-local overlapping byte move." },
+    { "name": "guidexos_pal_memset", "purpose": "Process-local byte fill." },
+    { "name": "guidexos_pal_memcmp", "purpose": "Process-local byte comparison." },
+    { "name": "guidexos_pal_strlen", "purpose": "Process-local bounded C-string length helper when emitted code requires it." }
+  ],
+  "synchronization": {
+    "externalSymbols": [],
+    "initialPolicy": "Compiler/CPU atomics remain user-space. No external wait/event/critical-section symbol is admitted until generated evidence proves blocking synchronization is unavoidable.",
+    "deferredPrimitive": "A minimal process-local wait/wake ABI may be added later only with an emitted-use manifest and bounded user-thread semantics."
+  },
+  "deliberateAbsences": [
+    "COM",
+    "dynamic loader",
+    "module enumeration",
+    "Windows environment/process inspection",
+    "event logging",
+    "filesystem",
+    "networking",
+    "general P/Invoke",
+    "process spawning",
+    "shared libraries",
+    "kernel heap allocation"
+  ],
+  "ownership": {
+    "writableStatics": "Private to the user process generation.",
+    "gc": "Retain NativeAOT workstation GC if source adaptation permits; all GC heap, statics, frozen objects, write-barrier state, and VM pages remain process-private.",
+    "tls": "Private to the process and current scheduler-managed user thread; never reuse kernel global TLS or scheduler object pointers.",
+    "module": "Statically linked first payload; no DLL loading or import resolver in Phase 19.",
+    "exceptions": "Keep required unwind metadata; unsupported managed exception semantics may fail-fast the process."
+  }
+}
