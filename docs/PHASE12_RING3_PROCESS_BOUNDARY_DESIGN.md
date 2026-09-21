@@ -1324,3 +1324,70 @@ System Information and Exit; then bounded kernel descriptor validation,
 RX/R/NX mapping, BSS zero-fill, ownership, teardown, and generation-safe
 cleanup. Broad relocation, dynamic linking, shared libraries, and RWX are not
 authorized by Phase 17.
+
+## 33. Phase 19 runtime-pack/PAL boundary
+
+Phase 19 converts the Phase 18 decision into a repository-owned build gate. The
+approved direction is still `NativeAOT -> guideXOS runtime pack -> guideXOS
+user PAL -> bounded user ABI -> Ring 3 kernel substrate`; it is not a Win32
+compatibility layer. The private target identity is `guidexos-x64` (AMD64 and
+freestanding), and it is not asserted as a standard .NET RID.
+
+The reproducible gate is `Tools/build_phase19_runtime_pack.ps1`. It pins SDK
+`10.0.401`, NativeAOT package `9.0.0`, runtime source commit
+`9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3`, verifies package hashes, builds a
+freestanding PAL contract archive, and emits the ignored
+`out/dotnet/phase19-runtime-pack/phase19-manifest.json`. It does not alter the
+global SDK and does not relabel stock Windows libraries. The current result is
+**Outcome C - bounded CoreCLR/NativeAOT runtime source-build prerequisite**:
+the contract builds, but a custom managed payload is not yet built.
+
+The installed `win-x64` target hard-codes Windows SDK libraries and Windows
+NativeAOT bootstrap/GC/runtime objects. The generated minimal payload's stock
+comparison is 131 imports across 11 DLLs, including Windows VM, FLS/thread,
+timing, entropy, loader, COM, exception, event/process, and CRT dependencies.
+The source adaptation must therefore be small and explicit in NativeAOT
+`Runtime/Full`, `Runtime/windows`, the Windows GC environment, CoreLib Windows
+interop, and runtime-pack packaging. The design-stop rule prohibits a broad
+undocumented runtime fork without approval.
+
+### Phase 20 PAL contract
+
+`Tools/Phase19/pal-contract.json` is the exact contract source. It admits 20
+external `guidexos_pal_` symbols: five process-local VM operations; six private
+TLS/FLS operations; three user-thread identity/stack operations; three scalar
+time operations; one validated entropy operation; and two process
+exit/fail-fast operations. It also defines local `memcpy`, `memmove`, `memset`,
+`memcmp`, and `strlen` helpers. No external wait/event/critical-section
+symbol is admitted initially; atomics stay in user space and any blocking
+primitive must be justified by emitted evidence.
+
+The future VM calls are reserve/commit/protect/release/query on page-aligned
+process-local ranges, with deterministic failure and no RWX. TLS/FLS is
+process/thread private and scheduler-preserved but does not expose scheduler
+object pointers. Thread identity is a stable generation-scoped integer plus
+user stack bounds and a private runtime-state pointer. Time is monotonic
+counter/frequency plus bounded system nanoseconds. Entropy fills a validated
+user buffer from a real source. Runtime failure converges on existing Ring 3
+Exit/process-fault cleanup, never a kernel panic.
+
+NativeAOT workstation GC is retained as the preferred implementation: all
+heap pages, GC statics, frozen objects, write barriers, writable statics,
+module state, and runtime helpers are process-owned. Required unwind metadata
+may remain; unsupported managed exception semantics may fail-fast. The first
+image is statically linked with no COM, dynamic loader, module enumeration,
+event logging, Windows process/environment PAL, filesystem/networking PAL,
+general P/Invoke, process spawning, shared libraries, or kernel heap use.
+
+The Phase 17 PE descriptor remains the loader contract. Its RX/R/RW policy,
+fixed-base rule, BSS zero-fill, bounded TLS/runtime metadata, no-RWX rule,
+host mapping model, and generation-safe teardown are compatible with the
+future custom artifact. The stock artifact continues to pass the existing
+host-side no-execute probe; the custom descriptor probe waits for the
+source-built payload. Phase 19 made no kernel, managed-entry, GUI, service,
+or App Model change, and Server/Legacy trees remain untouched.
+
+Phase 20 is limited to the pinned source patch, private target packaging, a
+separate `Main() => 42` payload, regenerated dependency/helper manifests, and
+the existing descriptor/BSS/negative/teardown validation. No managed CPL3
+execution is required until those artifacts pass.

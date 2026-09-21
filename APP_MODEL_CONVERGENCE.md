@@ -2815,3 +2815,107 @@ kernel-side bounded PE/managed-image descriptor, validator, RX/R/NX mapper,
 BSS zero-fill, ownership, and teardown integration. No broad relocation
 engine, dynamic linker, shared library loader, or RWX exception is authorized
 by this phase.
+
+## 32. Phase 19 guideXOS NativeAOT runtime-pack/PAL foundation
+
+### Decision and outcome
+
+Phase 19 establishes the repository-owned runtime-pack boundary and the exact
+Phase 20 implementation contract. Its current result is **Outcome C - bounded
+CoreCLR/NativeAOT runtime source-build prerequisite**, not Outcome A: the
+freestanding PAL contract archive builds reproducibly, but the installed .NET 9
+NativeAOT package cannot produce a guideXOS image without source adaptation.
+No managed entry was attempted.
+
+The private target identity is `guidexos-x64`: AMD64, NativeAOT, and
+freestanding guideXOS user-runtime semantics. It is a repository/toolchain
+identity, not a claim that a standard .NET RID exists. The descriptive target
+properties are in `Tools/Phase19/guidexos-nativeaot-target.props`.
+
+### Reproducible gate and provenance
+
+`Tools/build_phase19_runtime_pack.ps1` verifies SDK `10.0.401` with
+`rollForward=disable`, `Microsoft.DotNet.ILCompiler` `9.0.0`, runtime source
+commit `9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3`, and locked package hashes.
+It uses the existing VS 18 native-tools environment, compiles the contract
+source with no CRT/Win32 references, archives it, checks its symbols, and runs
+`Tools/Phase19/phase19_runtime_audit.py`. It does not modify the global SDK or
+copy stock Windows libraries into a renamed pack. Generated records remain
+under the ignored `out/dotnet/phase19-runtime-pack` path.
+
+The installed package selects `Microsoft.NETCore.Native.Windows.targets`,
+Windows SDK libraries, and stock Windows bootstrapper/GC/runtime objects. The
+generated ILC object for the existing `Main() => 42` payload also references
+Windows VM, FLS/thread, time, entropy, exception/unwind, loader, COM, and CRT
+facilities. Therefore a RID rename would be cosmetic. The minimum source-build
+adaptation areas are NativeAOT `Runtime/Full`, `Runtime/windows`, the Windows
+GC environment, CoreLib Windows interop bindings, and native/runtime-pack
+packaging targets. The large-fork stop rule remains active.
+
+### Bounded PAL contract
+
+The exact contract is `Tools/Phase19/pal-contract.json` and contains 20
+external symbols, five local memory helpers, and no external synchronization
+symbols. The external groups are:
+
+| Group | Contract | Ownership rule |
+| --- | --- | --- |
+| VM | reserve, commit, protect, release, bounded query | process-local pages, page aligned, no kernel VA, no RWX |
+| TLS/FLS | initialize, current block, alloc/get/set/cleanup | process/thread private; no Windows handle emulation |
+| Thread | stable ID, stack bounds, runtime-state pointer | user runtime identity is separate from scheduler objects |
+| Time | monotonic ticks/frequency, system nanoseconds | scalar bounded primitives, not Windows timer APIs |
+| Entropy | bounded random-byte fill | validated user buffer and real entropy source |
+| Termination | process exit and fail-fast | existing Ring 3 cleanup/fault path, never kernel panic |
+
+The local helpers are `memcpy`, `memmove`, `memset`, `memcmp`, and `strlen`
+under the `guidexos_pal_` prefix. Initial synchronization uses compiler/CPU
+atomics in user space; a wait/wake primitive requires emitted-use evidence.
+COM, dynamic loading, module enumeration, event logging, Windows environment
+and process inspection, filesystem/networking PALs, general P/Invoke, process
+spawning, shared libraries, and kernel-heap allocation are absent by policy.
+
+### Runtime ownership and generated evidence
+
+The stock Phase 17 comparison remains reproducible: PE32+ AMD64, fixed base
+`0x0000401000000000`, entry RVA `0x985b0`, SHA-256
+`2ab3f8394b20c35889a5a3073bf9b322b5d79ddc447910ad1fe7a6eadc4b7ec8`, five
+RX/R/RW/R/R sections, no RWX, no relocations, 131 imports across 11 DLLs,
+272-byte TLS template, 3,530 map records, 355 writable-static records, 43
+GC/frozen-object records, 13 TLS records, 31 ReadyToRun helpers, and 30,276
+bytes of unwind data. The exact comparison and PAL manifest are generated
+under the Phase 19 output path rather than copied into this document.
+
+The guideXOS target retains the NativeAOT workstation GC if the source
+adaptation permits it. GC heap pages, GC statics, frozen objects, write-barrier
+state, writable statics, module metadata, and runtime helper state remain
+private to the process generation. TLS/FLS remains private to the process and
+the scheduler-managed user thread. Required unwind metadata may remain; an
+unsupported managed exception may fail-fast the process. The first payload is
+statically linked and has no dynamic linker.
+
+The Phase 17 descriptor remains the executable-format contract: explicit
+RX/R/RW permissions, deterministic BSS zeroing, fixed-base policy, bounded TLS
+and runtime metadata, no RWX, no kernel pointers, and process-private mapping
+and teardown. It can describe the future custom artifact without redesign,
+but the custom image probe is correctly `not-run` until a source-built payload
+exists. The existing stock artifact still passes the no-execute Phase 17
+loader probe.
+
+### Phase 20 prerequisite and stop point
+
+Phase 20 should fund only the smallest pinned runtime source adaptation:
+
+1. replace the Windows PAL/bootstrapper and GC VM adapters with the bounded
+   contract;
+2. remove Windows default library lists, COM, dynamic loader, event-log, and
+   process/environment assumptions;
+3. retain private workstation GC and its required unwind/runtime metadata;
+4. package the private `guidexos-x64` runtime target reproducibly;
+5. rebuild `Main() => 42` as a separate artifact and regenerate the helper,
+   import, TLS, GC, exception, and writable-static manifests; and
+6. run the existing descriptor/probe, host mapping, BSS, negative validation,
+   and teardown proofs without managed CPL3 entry.
+
+No kernel VM implementation, managed process startup, managed service, GUI,
+or App Model IPC change is authorized by this phase. Server and Historical
+Legacy references were read-only and unmodified.

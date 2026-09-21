@@ -24,3 +24,9 @@ dotnet publish .\guideXOS.UserManagedProof.csproj -c Release --no-restore
 The generated native PE and map file are build outputs. They are intentionally
 not checked into the repository. Run `Tools\inspect_managed_image.py` against
 the generated PE to produce the local manifest used by the Phase 17 report.
+
+Phase 19 keeps this `win-x64` build as comparison evidence. The repository
+owned guideXOS target identity is the private `guidexos-x64` contract in
+`Tools\Phase19`; its source-built runtime pack is not silently substituted for
+this stock artifact. Run `Tools\build_phase19_runtime_pack.ps1` to verify the
+pinned package and build the freestanding PAL contract gate.
