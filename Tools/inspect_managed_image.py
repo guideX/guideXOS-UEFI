@@ -326,8 +326,23 @@ def read_map_symbols(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         }
         return symbols, evidence
     symbols: list[dict[str, str]] = []
+    # MSVC link maps use section:offset, public name, and RVA+base columns.
+    # Keep the simple-address form as a fallback for older hand-written maps.
+    map_public = re.compile(
+        r"^\s*[0-9A-Fa-f]{4}:[0-9A-Fa-f]{8}\s+(\S+)\s+([0-9A-Fa-f]{16})\s+(.*)$"
+    )
     address_name = re.compile(r"^\s*([0-9A-Fa-f]{8,16})\s+(.+?)\s*$")
     for raw_line in path.read_text(errors="replace").splitlines():
+        structured = map_public.match(raw_line)
+        if structured:
+            name = structured.group(1).strip()
+            if name and not name.startswith("Absolute") and not name.startswith("entry point"):
+                symbols.append({
+                    "address": "0x" + structured.group(2).lower(),
+                    "name": name,
+                    "classification": classify_symbol(name),
+                })
+            continue
         match = address_name.match(raw_line)
         if not match:
             continue
@@ -339,7 +354,14 @@ def read_map_symbols(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             "name": name,
             "classification": classify_symbol(name),
         })
-    return symbols, {"format": "linker map", "entryCount": len(symbols)}
+    return symbols, {
+        "format": "MSVC linker map",
+        "entryCount": len(symbols),
+        "tlsSections": [item for item in symbols if "tls" in item["name"].lower() or "threadstatic" in item["name"].lower()],
+        "gcSections": [item for item in symbols if any(token in item["name"].lower() for token in ("gcstatic", "frozenobject", "gcheap", "gcroot"))],
+        "writableStaticSections": [item for item in symbols if any(token in item["name"].lower() for token in ("writabledata", "nongcstatic", "threadstatic"))],
+        "readyToRunHelpers": [item for item in symbols if "readytorun" in item["name"].lower()],
+    }
 
 
 def main() -> int:

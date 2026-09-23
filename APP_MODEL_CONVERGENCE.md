@@ -3062,3 +3062,53 @@ support, final linking, runtime imports, startup/TLS/FLS, and loader evidence
 are not complete. Phase 22 therefore produces no accepted custom payload and
 does not run managed code. Detailed commands and generated evidence are under
 `Tools/Phase22` and `out/dotnet/phase22-*`.
+
+## 36. Phase 23 private ILCompiler and first custom artifact
+
+Phase 23 reaches **Outcome A for artifact generation and no-execute loader
+validation**. It does not authorize managed execution or kernel loading.
+
+The repository-owned `Tools/Phase23/apply_phase23_ilc_patch.ps1` transforms the
+pinned runtime checkout after the Phase 21/22 transforms. It adds a distinct
+`TargetOS.Guidexos` representation, parser/help support, AMD64-only validation,
+explicit Microsoft x64 ABI compatibility, COFF object selection, and the
+GUIDEXOS target/linker path. `IsWindows` remains false. The private compiler is
+built under ignored `out/dotnet/phase23-private-ilc`; installed SDK files are
+not modified.
+
+The initial target deliberately uses the Microsoft AMD64 calling convention,
+COFF objects, PE32+ output, and MSVC `link.exe` as a host linker. The linker
+contract uses `/NODEFAULTLIB`, explicit startup/runtime objects, `wmain`, a
+fixed image base, no relocation output, and no SDK or direct P/Invoke inputs.
+The host-only Windows RID package is not a target fallback. The target pack is
+`runtime.guidexos-x64.Microsoft.DotNet.ILCompiler`, sourced from the pinned
+Workstation-GC runtime and Phase 19 PAL object.
+
+`UserManagedProof` with `Main() => 42` now reaches final native linking and
+produces `out/dotnet/phase23-user-managed-proof/publish/guideXOS.UserManagedProof.exe`.
+The evidence image is PE32+ AMD64 at fixed base
+`0x0000401000000000`, has `wmain` at RVA `0x1420`, RX/R/RW sections, unwind
+metadata, no RWX, no relocations, no import directory, and no direct kernel
+imports. The linked map has zero unresolved symbols, all 20 Phase 19 external
+PAL symbols plus five local memory helpers, 46 TLS/thread-static references,
+30 GC/frozen-object records, 413 writable-static records, and 874 runtime
+helper records. The link warning about the runtime `.CRT` section remains
+recorded as a startup caveat.
+
+The TLS decision is X3: user GS base points to a guideXOS TLS vector at offset
+`0x58`, with `_tls_index` selecting process/thread-private state. The PE TLS
+directory is intentionally not emitted; loader/bootstrap code must construct
+and tear down the bounded runtime TLS/FLS state. GC decommit remains explicit
+failure (`VirtualDecommit` returns false), and the first one-payload link emits
+no external wait/wake requirement, so the synchronization result is M1. The
+Phase 19 PAL schema remains version 1 with 20 external symbols.
+
+`Tools/inspect_managed_image.py`, `Tools/phase17_loader_probe.py`, and
+`Tools/Phase23/verify_guidexos_artifact.py` provide the no-execute evidence.
+The loader probe maps and tears down four simulated lifetimes, validates BSS
+zero-fill and section permissions, and rejects malformed descriptors. The
+Phase 23 verifier rejects incorrect target/compiler/source/pack/PAL identity,
+Windows or kernel imports, invalid TLS/runtime metadata, RWX, and descriptor
+version mismatches. The next phase must implement reviewed loader/bootstrap
+ownership of GS TLS, PAL state, process-private GC pages, module metadata, and
+teardown before any managed image is loaded by the kernel.

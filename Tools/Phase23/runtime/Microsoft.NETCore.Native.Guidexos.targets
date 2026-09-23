@@ -1,0 +1,70 @@
+<!--
+  Private Phase 23 GUIDEXOS NativeAOT linker contract.
+
+  GUIDEXOS deliberately reuses the Microsoft x64 ABI and PE/COFF object
+  format, but it has no Windows SDK/runtime imports.  This file is imported
+  only when _targetOS is guidexos.
+-->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <CppLinker Condition="'$(CppLinker)' == ''">link</CppLinker>
+    <CppLibCreator Condition="'$(CppLibCreator)' == ''">lib</CppLibCreator>
+    <ObjectSuffix>.obj</ObjectSuffix>
+    <LibrarySuffix>.lib</LibrarySuffix>
+    <FullRuntimeName>Runtime.WorkstationGC</FullRuntimeName>
+    <FullRuntimeName Condition="'$(ServerGarbageCollection)' == 'true' or '$(IlcLinkServerGC)' == 'true'">Runtime.ServerGC</FullRuntimeName>
+    <BootstrapperName>bootstrapper</BootstrapperName>
+    <VxSortSupportName>Runtime.VxsortDisabled</VxSortSupportName>
+    <StandaloneGCSupportName>standalonegc-disabled</StandaloneGCSupportName>
+    <PalSupportName>guidexos_nativeaot_pal_contract</PalSupportName>
+    <LinkShimName>guidexos_link_shim</LinkShimName>
+    <EntryPointSymbol Condition="'$(EntryPointSymbol)' == ''">wmain</EntryPointSymbol>
+    <LinkerSubsystem Condition="'$(LinkerSubsystem)' == ''">CONSOLE</LinkerSubsystem>
+    <IlcDefaultStackSize Condition="'$(IlcDefaultStackSize)' == ''">1572864</IlcDefaultStackSize>
+  </PropertyGroup>
+
+  <Target Name="SetupOSSpecificProps" DependsOnTargets="$(IlcDynamicBuildPropertyDependencies)">
+    <ItemGroup>
+      <NativeLibrary Include="$(IlcSdkPath)$(BootstrapperName)$(ObjectSuffix)" />
+      <NativeLibrary Include="$(IlcSdkPath)$(FullRuntimeName)$(LibrarySuffix)" />
+      <NativeLibrary Include="$(IlcSdkPath)$(VxSortSupportName)$(LibrarySuffix)" Condition="'$(_targetArchitecture)' == 'x64'" />
+      <NativeLibrary Include="$(IlcSdkPath)$(StandaloneGCSupportName)$(LibrarySuffix)" />
+      <NativeLibrary Include="$(IlcSdkPath)$(PalSupportName)$(ObjectSuffix)" />
+      <NativeLibrary Include="$(IlcSdkPath)$(LinkShimName)$(ObjectSuffix)" />
+      <NativeLibrary Include="$(IlcSdkPath)zlibstatic$(LibFileExt)" />
+      <NativeLibrary Include="$(SharedLibrary)" Condition="'$(IlcMultiModule)' == 'true'" />
+    </ItemGroup>
+
+    <!-- There are intentionally no SdkNativeLibrary or DirectPInvoke items. -->
+    <ItemGroup>
+      <LinkerArg Include="@(NativeLibrary->'&quot;%(Identity)&quot;')" />
+      <LinkerArg Include="/NOLOGO /MANIFEST:NO /NODEFAULTLIB" />
+      <LinkerArg Condition="$(IlcMergeSections) != 'false'" Include="/MERGE:.managedcode=.text /MERGE:hydrated=.bss" />
+      <LinkerArg Condition="$(NativeDebugSymbols) == 'true'" Include="/DEBUG" />
+      <LinkerArg Include="/INCREMENTAL:NO" />
+      <LinkerArg Condition="'$(NativeLib)' == ''" Include="/SUBSYSTEM:$(LinkerSubsystem) /ENTRY:$(EntryPointSymbol) /NOEXP /NOIMPLIB /STACK:$(IlcDefaultStackSize)" />
+      <LinkerArg Condition="'$(NativeLib)' == ''" Include="/include:g_guidexos_tls_anchor" />
+      <LinkerArg Condition="'$(Phase23LinkMap)' != ''" Include="/MAP:&quot;$(Phase23LinkMap)&quot;" />
+      <LinkerArg Include="/IGNORE:4104" />
+      <LinkerArg Condition="'$(Configuration)' != 'Debug'" Include="/OPT:REF /OPT:ICF" />
+    </ItemGroup>
+
+    <Exec Condition="'$(IlcUseEnvironmentalTools)' != 'true'" Command="&quot;$(MSBuildThisFileDirectory)findvcvarsall.bat&quot; $(_targetArchitecture)"
+      IgnoreExitCode="true" ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_FindVCVarsallOutput" />
+      <Output TaskParameter="ExitCode" PropertyName="_VCVarsAllFound" />
+    </Exec>
+
+    <ItemGroup Condition="'$(_VCVarsAllFound)' == '0'">
+      <AdditionalNativeLibraryDirectories Include="$(_FindVCVarsallOutput.Split(`#`)[1].Split(';'))" />
+    </ItemGroup>
+
+    <PropertyGroup Condition="'$(_VCVarsAllFound)' == '0'">
+      <_CppToolsDirectory>$(_FindVCVarsallOutput.Split(`#`)[0])</_CppToolsDirectory>
+      <CppLinker>$(_CppToolsDirectory)link.exe</CppLinker>
+      <CppLibCreator>$(_CppToolsDirectory)lib.exe</CppLibCreator>
+    </PropertyGroup>
+
+    <Error Condition="'$(_VCVarsAllFound)' == '1'" Text="Platform linker not found for the GUIDEXOS private NativeAOT target." />
+  </Target>
+</Project>
