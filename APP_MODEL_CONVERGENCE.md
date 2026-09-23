@@ -3035,3 +3035,30 @@ CoreLib/ILCompiler assets, startup/TLS/FLS/fail-fast adaptations, real GC
 decommit semantics, and any emitted-use-proven wait/wake primitive. It must
 continue to reject Windows headers/imports, Windows DLLs, and `win-x64`
 fallback assets.
+
+## 35. Phase 22 NativeAOT target build and packaging boundary
+
+Phase 22 is **Outcome F - packaging/toolchain seam blocks the custom
+artifact**. The pinned source now configures and clean-builds the smallest
+target-native subset, `Runtime.WorkstationGC`, under the explicit
+`guidexos-x64` identity. The resulting COFF archive contains 61 object
+members, including the GUIDEXOS GC environment, and contains no Windows GC or
+Windows NativeAOT PAL member. The host remains Windows/MSVC; this does not
+make the target Windows.
+
+The host/apphost blocker was isolated as
+`static apphost -> System.Net.Security.Native -> extra_libs.cmake ->
+find_library(gssapi_krb5)`. That host-only path is excluded from the GUIDEXOS
+target; no `libgssapi_krb5` substitute is installed. A private
+`guidexos-x64` RID graph and preliminary
+`runtime.guidexos-x64.Microsoft.DotNet.ILCompiler` package are staged with no
+RID fallback. Restore selects the private target package, but the stock host
+ILCompiler rejects the explicit `--targetos:guidexos` value before native code
+generation. The installed SDK is not patched and the target is not relabeled
+as Windows.
+
+The preliminary package remains fail-closed because CoreLib, ILCompiler target
+support, final linking, runtime imports, startup/TLS/FLS, and loader evidence
+are not complete. Phase 22 therefore produces no accepted custom payload and
+does not run managed code. Detailed commands and generated evidence are under
+`Tools/Phase22` and `out/dotnet/phase22-*`.

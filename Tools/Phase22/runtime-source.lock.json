@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "phase": 22,
+  "target": "guidexos-x64",
+  "targetOsValue": "guidexos",
+  "runtimeCommit": "9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3",
+  "phase21PatchRecord": "out/dotnet/phase21-source-patch/phase21-source-patch-record.json",
+  "patchMechanism": "Tools/Phase22/apply_phase22_patch.ps1",
+  "sourceFiles": [
+    "src/coreclr/CMakeLists.txt",
+    "src/coreclr/inc/daccess.h",
+    "src/coreclr/nativeaot/Runtime/CMakeLists.txt",
+    "src/coreclr/nativeaot/Runtime/regdisplay.h"
+  ],
+  "repositoryOwnedTemplates": [
+    "src/coreclr/nativeaot/Runtime/guidexos/PalRedhawkInline.h"
+  ],
+  "forbiddenFallbacks": [
+    "win-x64",
+    "Microsoft.NETCore.Native.Windows.targets",
+    "gcenv.windows.cpp",
+    "Runtime/windows/PalRedhawkCommon.cpp",
+    "Runtime/windows/PalRedhawkMinWin.cpp",
+    "windows.h",
+    "KERNEL32",
+    "ADVAPI32",
+    "bcrypt",
+    "ole32"
+  ]
+}
