@@ -36,7 +36,7 @@
 .PARAMETER UefiDiagnosticMode
     Optional UEFI regression build variant: Tiny, FirstFrame, Frames, Input,
     InputStress, ContextMenu, Png, Font, Background, BackgroundRotation,
-    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
+    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
     WidgetOnlyClock, WidgetOnlyMonitor, or WidgetOnlyUptime
 
 .EXAMPLE
@@ -60,7 +60,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
+  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
     [string]$UefiDiagnosticMode = ''
 )
 
@@ -552,6 +552,25 @@ if (-not $SkipRamdisk) {
         Set-Content -Path "$RamdiskSrc\Fonts\enludo.btf" -Value "PLACEHOLDER_FONT" -Encoding ASCII
         
         Write-Warning "Created placeholder files - replace with real assets!"
+    }
+
+    # Phase 24 uses the existing RDSK source path.  Stage only the exact,
+    # already-validated Phase 23 image; the kernel still treats both the PE and
+    # its compact descriptor as untrusted input and validates them again.
+    $phase24Stage = Join-Path $RootDir "Tools\Phase24\stage_phase24_image.ps1"
+    $phase23Artifact = Join-Path $RootDir "out\dotnet\phase23-user-managed-proof\publish\guideXOS.UserManagedProof.exe"
+    $phase23Map = Join-Path $RootDir "out\dotnet\phase23-user-managed-proof\guidexos.map"
+    if ((Test-Path -LiteralPath $phase24Stage) -and
+        (Test-Path -LiteralPath $phase23Artifact) -and
+        (Test-Path -LiteralPath $phase23Map)) {
+        Write-Info "Staging exact Phase 23 image for the Phase 24 kernel loader..."
+        & $phase24Stage -Artifact $phase23Artifact -Map $phase23Map -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Phase 24 image staging failed"
+            exit 1
+        }
+    } else {
+        Write-Info "Phase 24 image not staged (accepted Phase 23 artifact/map unavailable)"
     }
     
     $ramdiskBuilder = (Resolve-Path "$ToolsDir\ramdisk_builder.py").Path

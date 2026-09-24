@@ -10,6 +10,7 @@ namespace guideXOS.Misc {
         private static bool _ownerCreated;
         private static bool _awaitingDesktopHeartbeat;
         private static bool _desktopHeartbeatObserved;
+        private static bool _phase24Scheduled;
 
         private sealed class Phase15Lifetime {
             internal Ring3Process Process;
@@ -79,6 +80,100 @@ namespace guideXOS.Misc {
             _direct = false;
             Marker("RING3_PHASE15_SCHEDULED=1");
             new Thread(&RunPhase15, 32768).Start(0);
+        }
+
+        // Phase 24 intentionally stops at the real kernel mapping boundary.
+        // The exact Phase 23 image has no reviewed native-only bootstrap, so
+        // this selector never dispatches wmain or any managed instruction.
+        internal static void SchedulePhase24() {
+            if (_phase24Scheduled) return;
+            _phase24Scheduled = true;
+            Marker("PHASE24_SCHEDULED=1");
+            new Thread(&RunPhase24, 32768).Start(0);
+        }
+
+        private static void RunPhase24() {
+            Native.Cli();
+            Marker("PHASE24_BEGIN=1");
+            Marker("PHASE24_MANAGED_ENTRY_READY=0");
+            ManagedImageProcess first = null;
+            bool all = true;
+            ulong firstCr3 = 0;
+            ulong firstGs = 0;
+            for (uint generation = 1; generation <= 4; generation++) {
+                ManagedImageProcess process;
+                string failure;
+                bool created = ManagedImageProcess.TryCreateFromRamdisk(
+                    0, generation, out process, out failure);
+                if (!created || process == null) {
+                    Marker("PHASE24_MAPPING_RESULT=FAIL");
+                    if (failure != null) Marker("PHASE24_MAPPING_REJECTED=" + failure);
+                    all = false;
+                    continue;
+                }
+                if (generation == 1) {
+                    first = process;
+                    firstCr3 = process.Space.RootPhysical;
+                    firstGs = process.UserGsBase;
+                }
+                bool scaffold = process.ValidateRuntimeScaffold();
+                int flsSlot;
+                ulong flsValue;
+                bool fls = scaffold && process.TryFlsAllocate(out flsSlot) &&
+                    process.TryFlsSet(flsSlot, 0x50483234464C5355UL) &&
+                    process.TryFlsGet(flsSlot, out flsValue) &&
+                    flsValue == 0x50483234464C5355UL &&
+                    process.TryFlsFree(flsSlot) &&
+                    !process.TryFlsGet(flsSlot, out flsValue);
+                bool entryRejected = !process.TryEnterManagedEntry();
+                all = all && scaffold && fls && entryRejected && process.Cleanup();
+                Marker(fls ? "PHASE24_FLS_SENTINEL_PASS=1" :
+                             "PHASE24_FLS_SENTINEL_PASS=0");
+                Marker(scaffold && fls && entryRejected ?
+                    "PHASE24_SCAFFOLD_RESULT=PASS" :
+                    "PHASE24_SCAFFOLD_RESULT=FAIL");
+            }
+
+            // Exercise the negative readiness boundary on a real mapped state
+            // without ever executing or corrupting the image bytes.
+            bool invalidGsRejected = false;
+            bool invalidTlsRejected = false;
+            ManagedImageProcess negative;
+            string negativeFailure;
+            if (ManagedImageProcess.TryCreateFromRamdisk(0, 5, out negative,
+                                                         out negativeFailure)) {
+                ulong savedGs = negative.UserGsBase;
+                ulong savedTls = negative.TlsVectorPhysical;
+                negative.UserGsBase = 0;
+                invalidGsRejected = !negative.ValidateRuntimeScaffold();
+                negative.UserGsBase = savedGs;
+                negative.TlsVectorPhysical = 0;
+                invalidTlsRejected = !negative.ValidateRuntimeScaffold();
+                negative.TlsVectorPhysical = savedTls;
+                all = all && negative.Cleanup();
+            } else {
+                all = false;
+            }
+            Marker(invalidGsRejected ? "PHASE24_INVALID_GS_REJECTED=1" :
+                                        "PHASE24_INVALID_GS_REJECTED=0");
+            Marker(invalidTlsRejected ? "PHASE24_INVALID_TLS_REJECTED=1" :
+                                         "PHASE24_INVALID_TLS_REJECTED=0");
+            Marker(first != null && firstCr3 != 0 && firstGs != 0 ?
+                "PHASE24_PRIVATE_STATE_CREATED=1" : "PHASE24_PRIVATE_STATE_CREATED=0");
+            Marker("PHASE24_NATIVE_BOOTSTRAP_EXECUTED=0");
+            Marker("PHASE24_CPL3_BOOTSTRAP=0");
+            Marker("PHASE24_SYSTEM_INFORMATION=0");
+            Marker("PHASE24_BOOTSTRAP_EXIT=0");
+            Marker(ManagedImageDiagnostics.ManagedEntryAttemptsRejected > 0 ?
+                "PHASE24_MANAGED_ENTRY_REJECTIONS=1" :
+                "PHASE24_MANAGED_ENTRY_REJECTIONS=0");
+            Marker(ManagedImageDiagnostics.IsBalanced && all ?
+                "PHASE24_MAPPING_LIFETIMES_PASS=1" :
+                "PHASE24_MAPPING_LIFETIMES_PASS=0");
+            Marker(ManagedImageDiagnostics.IsBalanced ?
+                "PHASE24_RUNTIME_CLEANUP_BALANCED=1" :
+                "PHASE24_RUNTIME_CLEANUP_BALANCED=0");
+            Native.Sti();
         }
 
         internal static void ObserveDesktopHeartbeat() {

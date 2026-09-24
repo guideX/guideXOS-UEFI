@@ -3112,3 +3112,32 @@ Windows or kernel imports, invalid TLS/runtime metadata, RWX, and descriptor
 version mismatches. The next phase must implement reviewed loader/bootstrap
 ownership of GS TLS, PAL state, process-private GC pages, module metadata, and
 teardown before any managed image is loaded by the kernel.
+
+## Phase 24 real kernel mapping boundary
+
+Phase 24 turns that boundary into a real kernel-owned, fail-closed mapping
+path for the exact Phase 23 image. `Tools/Phase24/stage_phase24_image.ps1`
+requires the published SHA-256
+`C8D60ABE6D91917F4E236F435A8C2D4272386CEC830C07AFA691897A23DA195A`, copies
+the image into the ramdisk as an untrusted input, and emits a bounded GXMI
+descriptor. `Kernel/Misc/ManagedImage.cs` re-parses the PE before allocation,
+cross-checks the descriptor, enforces AMD64 PE32+, fixed base
+`0x0000401000000000`, RX/R/RW/NX permissions, bounded ranges and alignment,
+rejects imports, relocations, PE TLS, overlaps, and RWX, copies raw bytes,
+zero-fills BSS, and releases every process-owned page on teardown.
+
+The runtime scaffold is process-private and generation-scoped: startup block,
+runtime state, FLS table, GS block, and TLS vector are mapped at fixed bounded
+user addresses. X3 is explicit: user GS plus `0x58` names the TLS vector, and
+the mapped `_tls_index` is initialized to zero so vector slot zero names the
+private runtime state. Scheduler transitions preserve the user GS base while
+the kernel treats GS data as untrusted. The managed-entry gate remains closed;
+`.CRT` is read-only and never invoked.
+
+The exact Phase 23 image has `wmain` at RVA `0x1420` but no reviewed native-only
+bootstrap RVA. The Phase 24 UEFI diagnostic selector therefore maps, validates,
+negatively tests, and tears down four real image lifetimes, then refuses entry.
+This is **Outcome D — real kernel mapping with bootstrap blocked**, not managed
+CPL3 execution. System Information, Exit, IPC, managed exceptions, and GUI
+integration remain unclaimed. A later phase needs a separately reviewed
+native-first bootstrap artifact before the gate can open.

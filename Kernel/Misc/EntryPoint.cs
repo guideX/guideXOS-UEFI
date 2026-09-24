@@ -288,6 +288,16 @@ namespace guideXOS.Misc {
             }
 #endif
 
+#if UEFI_DIAGNOSTIC_RING3_PHASE24
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                // The Phase 24 selector performs real image validation and
+                // process-private mapping after the filesystem is mounted. It
+                // has a hard gate against wmain/managed entry.
+                Ring3Proof.SchedulePhase24();
+                BootConsole.WriteLine("PHASE24_QUEUED_FOR_SCHEDULER=1");
+            }
+#endif
+
 #if !UseAPIC
             // Enable only timer IRQ (IRQ0 -> vector 0x20 with PIC remap) for scheduling.
             BootConsole.WriteLine("[PIC] Enabling IRQ0 (timer) only");

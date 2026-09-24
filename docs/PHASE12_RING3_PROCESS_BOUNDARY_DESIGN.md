@@ -1391,3 +1391,32 @@ Phase 20 is limited to the pinned source patch, private target packaging, a
 separate `Main() => 42` payload, regenerated dependency/helper manifests, and
 the existing descriptor/BSS/negative/teardown validation. No managed CPL3
 execution is required until those artifacts pass.
+
+## Phase 24: real kernel image mapping and X3 runtime scaffold
+
+Phase 24 implements the first kernel-side loader boundary for the exact Phase
+23 `UserManagedProof` PE. The normal ramdisk build stages only the approved
+SHA-256 artifact and a bounded GXMI cross-check descriptor. The kernel does
+not trust descriptor JSON or host addresses: it re-parses the image, verifies
+PE32+ AMD64 identity, fixed base, section ranges/alignment/overlap, raw-file
+bounds, entrypoint containment, RX/R/RW/NX policy, and the absence of imports,
+relocations, and the PE TLS directory before allocating image pages.
+
+Each accepted section is copied into process-owned pages with deterministic
+zero-fill for its BSS tail. The loader creates and destroys process-private
+startup, runtime, GS, TLS-vector, and FLS pages, initializes the mapped
+`_tls_index`, and records balanced ownership counters. X3 is the selected
+runtime model: user GS base names the GS block and GS offset `0x58` names the
+TLS vector; vector slot zero points at the generation-scoped runtime state.
+The scheduler preserves the user GS base for user threads and clears it for
+kernel-only execution. Kernel code does not dereference user GS state as a
+trusted kernel pointer.
+
+The exact Phase 23 entrypoint is `wmain` at RVA `0x1420`, not a native-only
+bootstrap. `.CRT` is mapped read-only and not invoked. `NativeBootstrapRva == 0`
+and `ManagedEntryReady == false` are hard gates, so the UEFI diagnostic path
+performs real mapping, scaffold validation, negative GS/TLS checks, and
+teardown but never enters CPL3 or executes managed instructions. This is
+**Outcome D**. System Information, Exit, IPC, managed exceptions, and GUI
+integration are deliberately still unclaimed; a reviewed native-first
+bootstrap artifact is the prerequisite for the next execution phase.

@@ -22,6 +22,8 @@
 /Docs/_review
 /Docs/superpowers
 /out
+/ramdisk_src/Native/guideXOS.UserManagedProof.exe
+/ramdisk_src/Native/guideXOS.UserManagedProof.gxmi
 /guideXOSBootLoader/x64
 /guideXOS/Kernel.map
 /kernel.elf

@@ -14,6 +14,8 @@ namespace guideXOS.Misc {
         public ulong KernelStackSize;
         public ulong KernelStackTop;
         public bool IsUserThread;
+        // X3 runtime state is user-owned and never a kernel object pointer.
+        public ulong UserGsBase;
         internal bool IsValid => Stack != null && KernelStackBase != 0;
 
         public Thread(delegate*<void> method, ulong stack_size = 16384) {
@@ -59,6 +61,7 @@ namespace guideXOS.Misc {
             if (!thread.IsValid) return null;
             thread.OwnerProcess = process;
             thread.IsUserThread = true;
+            thread.UserGsBase = 0;
             Ring3ProcessDiagnostics.KernelStacksCreated++;
             thread.Stack->irs.cs = GDT.UserCodeSelector;
             thread.Stack->irs.ss = GDT.UserDataSelector;
@@ -153,6 +156,14 @@ namespace guideXOS.Misc {
 
         public static void Initialize() {
             Native.Cli();
+            // Enable architectural NX before the loader publishes any
+            // non-executable user mappings.  Phase 24's R/RW pages otherwise
+            // would only carry an advisory software permission bit.
+            ulong efer = Native.Rdmsr(0xC0000080UL);
+            Native.Wrmsr(0xC0000080UL, efer | (1UL << 11));
+            // The kernel has no GS-backed trusted data path.  User GS is
+            // installed only when a user thread is selected by the scheduler.
+            Native.Wrmsr(0xC0000101UL, 0);
             KernelCr3 = Native.ReadCR3() & PageTable.PageMask;
             _bootstrapKernelStackTop = GDT.KernelStackTop;
 
@@ -296,10 +307,12 @@ namespace guideXOS.Misc {
             _directUserThread = thread;
             GDT.SetKernelStack(thread.KernelStackTop);
             Native.WriteCR3(thread.OwnerProcess.Space.RootPhysical);
+            ApplyUserGs(thread);
         }
 
         internal static void EndDirectUser() {
             _directUserThread = null;
+            Native.Wrmsr(0xC0000101UL, 0);
             GDT.SetKernelStack(_bootstrapKernelStackTop);
             Native.WriteCR3(KernelCr3);
         }
@@ -433,6 +446,7 @@ namespace guideXOS.Misc {
             Thread current = Threads[Index];
             if (!current.Terminated &&
                 current.RunOnWhichCPU == SMP.ThisCPU) {
+                CaptureUserGs(current);
                 Native.Movsb(current.Stack, stack, (ulong)sizeof(IDT.IDTStackGeneric));
                 if (current.IsUserThread && current.OwnerProcess != null) {
                     current.OwnerProcess.RecordTimerPreemption(stack);
@@ -495,11 +509,29 @@ namespace guideXOS.Misc {
                 thread.OwnerProcess.Space != null) {
                 GDT.SetKernelStack(thread.KernelStackTop);
                 Native.WriteCR3(thread.OwnerProcess.Space.RootPhysical);
+                ApplyUserGs(thread);
                 thread.OwnerProcess.RecordSchedulerDispatch();
             } else {
                 GDT.SetKernelStack(thread.KernelStackTop);
                 Native.WriteCR3(KernelCr3);
+                Native.Wrmsr(0xC0000101UL, 0);
             }
+        }
+
+        private static void CaptureUserGs(Thread thread) {
+            if (thread != null && thread.IsUserThread)
+                thread.UserGsBase = Native.Rdmsr(0xC0000101UL);
+        }
+
+        private static void ApplyUserGs(Thread thread) {
+            if (thread == null || !thread.IsUserThread || thread.UserGsBase == 0) {
+                Native.Wrmsr(0xC0000101UL, 0);
+                return;
+            }
+            // No swapgs is used.  Kernel code does not trust or dereference
+            // GS; the scheduler owns the user value and restores it only for
+            // the selected user thread.
+            Native.Wrmsr(0xC0000101UL, thread.UserGsBase);
         }
     }
 }

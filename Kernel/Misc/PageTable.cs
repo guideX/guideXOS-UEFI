@@ -78,7 +78,11 @@ namespace guideXOS {
             if (pageSize != PageSize.Typical) return;
             ulong* pte = GetPageInternal(rootPml4, virtualAddress, user, pageSize);
             if (pte == null) return;
-            ulong flags = 0b1UL | (writable ? 0b10UL : 0) | (user ? 0b100UL : 0);
+            // Bit 63 is NX when EFER.NXE is enabled.  Keep executable state
+            // explicit: Phase 24 relies on RX/R/RW rather than a writable
+            // user mapping that is executable by default.
+            ulong flags = 0b1UL | (writable ? 0b10UL : 0) | (user ? 0b100UL : 0) |
+                          (executable ? 0UL : (1UL << 63));
             *pte = (physicalAddress & PageMask) | flags;
             Native.Invlpg(virtualAddress);
         }
@@ -92,7 +96,8 @@ namespace guideXOS {
             ulong* pte = GetPageInternal(rootPml4, virtualAddress, user, pageSize,
                                          allocations, ref allocationCount);
             if (pte == null) return;
-            ulong flags = 0b1UL | (writable ? 0b10UL : 0) | (user ? 0b100UL : 0);
+            ulong flags = 0b1UL | (writable ? 0b10UL : 0) | (user ? 0b100UL : 0) |
+                          (executable ? 0UL : (1UL << 63));
             *pte = (physicalAddress & PageMask) | flags;
             Native.Invlpg(virtualAddress);
         }
