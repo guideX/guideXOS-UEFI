@@ -14,6 +14,8 @@ namespace guideXOS.Misc {
         internal static int UserStackPagesReclaimed;
         internal static int KernelStacksCreated;
         internal static int KernelStacksReclaimed;
+        internal static int ProcessHandlesCreated;
+        internal static int ProcessHandlesReclaimed;
         internal static int StaleHandleRejections;
 
         internal static int LiveAddressSpaces {
@@ -43,7 +45,8 @@ namespace guideXOS.Misc {
                        UserCodePagesCreated == UserCodePagesReclaimed &&
                        UserDataPagesCreated == UserDataPagesReclaimed &&
                        UserStackPagesCreated == UserStackPagesReclaimed &&
-                       LiveKernelStacks == 0;
+                       LiveKernelStacks == 0 &&
+                       ProcessHandlesCreated == ProcessHandlesReclaimed;
             }
         }
     }
@@ -105,7 +108,8 @@ namespace guideXOS.Misc {
     }
 
     public enum Ring3PayloadKind : byte {
-        Success, InvalidInput, InvalidServiceBuffers, DeliberateFault
+        Success, InvalidInput, InvalidServiceBuffers, DeliberateFault,
+        ManagedBootstrap
     }
 
     public readonly struct Ring3ProcessHandle {
@@ -215,6 +219,9 @@ namespace guideXOS.Misc {
         public bool SchedulerCr3Valid { get; private set; }
         public bool SchedulerRsp0Valid { get; private set; }
         public bool UserRspPreserved { get; private set; }
+        internal ManagedImageProcess ManagedImage { get; private set; }
+        internal NativeBootstrapImage NativeBootstrap { get; private set; }
+        public uint BootstrapResultFlags { get; private set; }
         internal ulong UserCodePhysical => _userCodePhysical;
         internal ulong UserDataPhysical => _userDataPhysical;
         internal ulong UserStackPhysical => _userStackPhysical;
@@ -264,6 +271,126 @@ namespace guideXOS.Misc {
             return TryCreate(kind, 0, out process);
         }
 
+        internal static bool TryCreateManagedBootstrap(
+            ulong owningApplicationInstance, bool deliberateFault,
+            out Ring3Process process, out string failure) {
+            process = null;
+            failure = null;
+            int slot;
+            uint generation;
+            if (!Ring3ProcessTable.Reserve(out slot, out generation)) {
+                failure = "PROCESS_TABLE_FULL";
+                Marker("PHASE25_PROCESS_TABLE_FULL=1");
+                return false;
+            }
+
+            Ring3Process candidate = new Ring3Process(
+                slot, generation, Ring3PayloadKind.ManagedBootstrap);
+            candidate.OwningApplicationInstance = owningApplicationInstance;
+            Ring3ProcessTable.Slots[slot] = candidate;
+            Ring3ProcessDiagnostics.ProcessHandlesCreated++;
+            candidate.Space = new AddressSpace();
+            if (candidate.Space.Pml4 == null) {
+                failure = "ADDRESS_SPACE_FAILED";
+                candidate.Cleanup();
+                return false;
+            }
+
+            ManagedImageProcess managedImage;
+            if (!ManagedImageProcess.TryCreateFromRamdisk(
+                    owningApplicationInstance, generation, candidate.Space,
+                    NativeBootstrapContract.ImageBase,
+                    out managedImage, out failure) || managedImage == null) {
+                candidate.Cleanup();
+                return false;
+            }
+            candidate.ManagedImage = managedImage;
+            NativeBootstrapImage nativeBootstrap;
+            if (!NativeBootstrapImage.TryCreateFromRamdisk(
+                    candidate.Space, out nativeBootstrap, out failure) ||
+                nativeBootstrap == null ||
+                nativeBootstrap.EntryAddress !=
+                    candidate.ManagedImage.NativeBootstrapAddress) {
+                candidate.Cleanup();
+                return false;
+            }
+            candidate.NativeBootstrap = nativeBootstrap;
+            candidate.ManagedImage.SetNativeBootstrapRange(
+                nativeBootstrap.ImageBase, nativeBootstrap.ImageSize);
+
+            candidate._userStackPhysical = (ulong)Allocator.Allocate(UserStackSize);
+            if (candidate._userStackPhysical == 0) {
+                failure = "USER_STACK_FAILED";
+                candidate.Cleanup();
+                return false;
+            }
+            Ring3ProcessDiagnostics.UserStackPagesCreated +=
+                (int)(UserStackSize / PageSize);
+            Native.Stosb((void*)candidate._userStackPhysical, 0, UserStackSize);
+            for (ulong offset = 0; offset < UserStackSize; offset += PageSize) {
+                if (!candidate.Space.MapUser(UserStackStart + offset,
+                                             candidate._userStackPhysical + offset,
+                                             writable: true, executable: false)) {
+                    failure = "USER_STACK_MAP_FAILED";
+                    candidate.Cleanup();
+                    return false;
+                }
+            }
+            candidate.UserThread = Thread.CreateUser(candidate,
+                candidate.NativeBootstrap.EntryAddress,
+                UserStackStart + UserStackSize - 16, KernelStackSize);
+            if (candidate.UserThread == null) {
+                failure = "KERNEL_STACK_FAILED";
+                candidate.Cleanup();
+                return false;
+            }
+            candidate.UserThread.UserGsBase = candidate.ManagedImage.UserGsBase;
+            Native.Stosb(&candidate.UserThread.Stack->rs, 0,
+                (ulong)sizeof(IDT.RegistersStack));
+            candidate.UserThread.Stack->rs.rdi =
+                ManagedImageContract.StartupBlockAddress;
+            if (deliberateFault && !candidate.ManagedImage.SetBootstrapFaultMode()) {
+                failure = "FAULT_MODE_SETUP_FAILED";
+                candidate.Cleanup();
+                return false;
+            }
+            if (!candidate.ManagedImage.ValidateRuntimeScaffold() ||
+                !candidate.TryAuthorizeUserEntry(
+                    candidate.NativeBootstrap.EntryAddress)) {
+                failure = "DISPATCH_CONTRACT_FAILED";
+                candidate.Cleanup();
+                return false;
+            }
+            Marker("PHASE25_PROCESS_CREATED=1");
+            HexMarker("PHASE25_PROCESS_HANDLE=0x", candidate.Handle.Value);
+            HexMarker("PHASE25_PROCESS_SLOT=0x", (ulong)slot);
+            HexMarker("PHASE25_PROCESS_GENERATION=0x", generation);
+            HexMarker("PHASE25_PROCESS_CR3=0x", candidate.Space.RootPhysical);
+            HexMarker("PHASE25_BOOTSTRAP_ENTRY=0x",
+                candidate.NativeBootstrap.EntryAddress);
+            HexMarker("PHASE25_USER_STACK_START=0x", UserStackStart);
+            HexMarker("PHASE25_USER_STACK_END=0x", candidate.UserStackEnd);
+            HexMarker("PHASE25_KERNEL_STACK_TOP=0x",
+                candidate.UserThread.KernelStackTop);
+            HexMarker("PHASE25_USER_GS_BASE=0x",
+                candidate.UserThread.UserGsBase);
+            HexMarker("PHASE25_OWNER_HANDLE=0x",
+                owningApplicationInstance);
+            process = candidate;
+            return true;
+        }
+
+        internal bool StartManagedBootstrap() {
+            if (ManagedImage == null || NativeBootstrap == null ||
+                UserThread == null || State != Ring3ProcessState.Created)
+                return false;
+            if (!TryAuthorizeUserEntry(NativeBootstrap.EntryAddress)) return false;
+            UserThread.Start(0);
+            State = Ring3ProcessState.Ready;
+            Marker("PHASE25_BOOTSTRAP_SCHEDULED=1");
+            return true;
+        }
+
         internal static bool TryCreate(Ring3PayloadKind kind,
                                        ulong owningApplicationInstance,
                                        out Ring3Process process) {
@@ -278,6 +405,7 @@ namespace guideXOS.Misc {
             Ring3Process candidate = new Ring3Process(slot, generation, kind);
             candidate.OwningApplicationInstance = owningApplicationInstance;
             Ring3ProcessTable.Slots[slot] = candidate;
+            Ring3ProcessDiagnostics.ProcessHandlesCreated++;
             candidate.Space = new AddressSpace();
             if (candidate.Space.Pml4 == null) {
                 candidate.Cleanup();
@@ -387,6 +515,44 @@ namespace guideXOS.Misc {
             return process != null && process.UserThread == ThreadPool.CurrentThread;
         }
 
+        internal bool TryAuthorizeUserEntry(ulong rip) {
+            if (ManagedImage == null) return true;
+            return ManagedImage.TryAuthorizeEntry(rip);
+        }
+
+        internal void RejectUserDispatch(ulong rip) {
+            if (ManagedImage == null) return;
+            State = Ring3ProcessState.Failed;
+            if (UserThread != null) UserThread.Terminated = true;
+            Marker("PHASE25_USER_DISPATCH_REJECTED=1");
+            HexMarker("PHASE25_REJECTED_RIP=0x", rip);
+        }
+
+        internal bool TryReadBootstrapResult() {
+            if (ManagedImage == null) return false;
+            uint flags;
+            bool valid = ManagedImage.TryReadBootstrapResult(out flags);
+            BootstrapResultFlags = flags;
+            return valid;
+        }
+
+        internal bool CorruptManagedStartupVersionForTest() {
+            if (ManagedImage == null) return false;
+            return ManagedImage.CorruptStartupVersionForTest();
+        }
+
+        internal bool CorruptManagedGsForTest() {
+            if (ManagedImage == null) return false;
+            return ManagedImage.CorruptGsForTest();
+        }
+
+        internal bool BootstrapResultSucceeded {
+            get {
+                return TryReadBootstrapResult() &&
+                    BootstrapResultFlags == ManagedBootstrapResultContract.SuccessFlags;
+            }
+        }
+
         internal void RecordTimerPreemption(IDT.IDTStackGeneric* stack) {
             if (State == Ring3ProcessState.Exited ||
                 State == Ring3ProcessState.Failed) return;
@@ -466,6 +632,10 @@ namespace guideXOS.Misc {
         internal void PrepareDirectReturn(IDT.IDTStackGeneric* stack) {
             if (stack == null) return;
             stack->vectorSlot = ThreadPool.Ring0ContextSwitchMarker;
+            // The native epilogue receives the stable selected-frame pointer
+            // through the dummy error slot.  Direct user mode returns use the
+            // active frame itself as that stable descriptor.
+            stack->errorCode = (ulong)stack;
             stack->irs.rip = Native.GetR3ResumeStub();
             stack->irs.cs = GDT.KernelCodeSelector;
             stack->irs.rflags = 0x2;
@@ -532,6 +702,14 @@ namespace guideXOS.Misc {
                 Marker(!remains ? "RING3_STALE_USER_THREADS=0" :
                     "RING3_STALE_USER_THREADS=1");
             }
+            if (NativeBootstrap != null) {
+                NativeBootstrap.Cleanup();
+                NativeBootstrap = null;
+            }
+            if (ManagedImage != null) {
+                ManagedImage.Cleanup();
+                ManagedImage = null;
+            }
             if (Space != null) {
                 Space.Release();
                 Space = null;
@@ -558,7 +736,9 @@ namespace guideXOS.Misc {
             SchedulerCr3Valid = false;
             SchedulerRsp0Valid = false;
             UserRspPreserved = false;
+            BootstrapResultFlags = 0;
             Ring3ProcessTable.Invalidate(this);
+            Ring3ProcessDiagnostics.ProcessHandlesReclaimed++;
             Marker("RING3_ADDRESS_SPACE_RECLAIMED=1");
             Marker("RING3_STALE_USER_MAPPINGS=0");
             Marker("RING3_KERNEL_STACK_RECLAIMED=1");

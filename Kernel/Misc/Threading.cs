@@ -323,7 +323,13 @@ namespace guideXOS.Misc {
             BootConsole.WriteLine(" Has Exited");
             Threads[Index].Terminated = true;
             Schedule_Next();
-            Panic.Error("Termination Failed!");
+            // Schedule_Next is a native hook retained for the legacy path.
+            // The IRQ scheduler performs the actual handoff; if this hook
+            // returns, keep the terminated frame parked until the next IRQ
+            // selects a runnable thread instead of executing a panic path on
+            // a thread that has already been retired.
+            Native.Sti();
+            for (;;) Native.Hlt();
         }
 
         internal static bool RemoveThread(Thread thread) {
@@ -446,17 +452,29 @@ namespace guideXOS.Misc {
             Thread current = Threads[Index];
             if (!current.Terminated &&
                 current.RunOnWhichCPU == SMP.ThisCPU) {
-                CaptureUserGs(current);
-                Native.Movsb(current.Stack, stack, (ulong)sizeof(IDT.IDTStackGeneric));
-                if (current.IsUserThread && current.OwnerProcess != null) {
-                    current.OwnerProcess.RecordTimerPreemption(stack);
+                bool allowed = true;
+                if (current.IsUserThread && current.OwnerProcess != null &&
+                    stack != null && (stack->irs.cs & 3UL) == 3UL) {
+                    allowed = current.OwnerProcess.TryAuthorizeUserEntry(
+                        stack->irs.rip);
                 }
-                if ((stack->irs.cs & 3UL) == 0) {
-                    // The native common stub preserves the interrupted
-                    // kernel RSP in the synthetic RSP slot used by the
-                    // scheduler frame.  Keep that authoritative value for
-                    // the ring-0 resume path.
-                    Threads[Index].Stack->irs.rsp = stack->irs.rsp;
+                if (!allowed) {
+                    current.OwnerProcess.RejectUserDispatch(stack->irs.rip);
+                } else {
+                    CaptureUserGs(current);
+                    Native.Movsb(current.Stack, stack, (ulong)sizeof(IDT.IDTStackGeneric));
+                    if (current.IsUserThread && current.OwnerProcess != null) {
+                        current.OwnerProcess.RecordTimerPreemption(stack);
+                    }
+                }
+                if (allowed && stack != null && (stack->irs.cs & 3UL) == 0) {
+                    // The native ISR preserves the interrupted kernel RSP in
+                    // the managed irs.rsp slot for the ring-0 scheduler path.
+                    // Retain that exact value; deriving it from the managed
+                    // field address would point 24 bytes below the caller
+                    // stack with this ISR's native frame layout.
+                    ulong interruptedRsp = stack->irs.rsp;
+                    Threads[Index].Stack->irs.rsp = interruptedRsp;
                 }
             }
 
@@ -471,6 +489,17 @@ namespace guideXOS.Misc {
                       candidateThread.OwnerProcess.IsTerminal)) ||
                     candidateThread.RunOnWhichCPU != SMP.ThisCPU)
                     continue;
+                if (candidateThread.IsUserThread &&
+                    candidateThread.OwnerProcess != null &&
+                    !candidateThread.OwnerProcess.TryAuthorizeUserEntry(
+                        candidateThread.Stack == null ? 0UL :
+                        candidateThread.Stack->irs.rip)) {
+                    candidateThread.OwnerProcess.RejectUserDispatch(
+                        candidateThread.Stack == null ? 0UL :
+                        candidateThread.Stack->irs.rip);
+                    candidateThread.Terminated = true;
+                    continue;
+                }
                 if (fallbackIndex < 0) fallbackIndex = candidate;
                 if (candidate != Index && !candidateThread.IsIdleThread) {
                     preferredIndex = candidate;
@@ -496,9 +525,14 @@ namespace guideXOS.Misc {
             TickAll++;
             #endregion
 
-            if ((Threads[Index].Stack->irs.cs & 3UL) == 0UL)
-                Threads[Index].Stack->vectorSlot = Ring0ContextSwitchMarker;
-            Native.Movsb(stack, Threads[Index].Stack, (ulong)sizeof(IDT.IDTStackGeneric));
+            // A saved ring-0 RSP points into the target thread's live kernel
+            // stack. Copying any selected frame over the active IDT frame can
+            // overwrite caller bytes at that RSP, so pass the stable frame
+            // pointer through the dummy error slot for every handoff. The
+            // native epilogue chooses JMP/RSP or IRETQ from that frame.
+            Threads[Index].Stack->vectorSlot = Ring0ContextSwitchMarker;
+            stack->vectorSlot = Ring0ContextSwitchMarker;
+            stack->errorCode = (ulong)Threads[Index].Stack;
             PrepareThreadForRun(Threads[Index]);
         }
 
@@ -507,6 +541,15 @@ namespace guideXOS.Misc {
             if (thread.IsUserThread && thread.OwnerProcess != null &&
                 !thread.OwnerProcess.IsTerminal &&
                 thread.OwnerProcess.Space != null) {
+                if (!thread.OwnerProcess.TryAuthorizeUserEntry(
+                        thread.Stack == null ? 0UL : thread.Stack->irs.rip)) {
+                    thread.OwnerProcess.RejectUserDispatch(
+                        thread.Stack == null ? 0UL : thread.Stack->irs.rip);
+                    thread.Terminated = true;
+                    Native.WriteCR3(KernelCr3);
+                    Native.Wrmsr(0xC0000101UL, 0);
+                    return;
+                }
                 GDT.SetKernelStack(thread.KernelStackTop);
                 Native.WriteCR3(thread.OwnerProcess.Space.RootPhysical);
                 ApplyUserGs(thread);

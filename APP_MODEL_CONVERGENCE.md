@@ -3141,3 +3141,24 @@ This is **Outcome D — real kernel mapping with bootstrap blocked**, not manage
 CPL3 execution. System Information, Exit, IPC, managed exceptions, and GUI
 integration remain unclaimed. A later phase needs a separately reviewed
 native-first bootstrap artifact before the gate can open.
+
+## Phase 25 independent native bootstrap
+
+Phase 25 keeps the Phase 23 PE byte-identical and adds the independently
+reviewed `GXBI v1` raw bootstrap described in
+`Docs/PHASE25_NATIVE_BOOTSTRAP_DESIGN.md`. The bootstrap is mapped as private
+RX user pages at `0x0000401200000000` in the existing Phase 13–15
+`Ring3Process` address space. It receives the 144-byte startup block in `RDI`,
+uses the existing TSS RSP0/CR3/GS scheduler path, validates actual X3
+GS-relative TLS/FLS state, calls the bounded Ping and System Information ABI,
+and exits through the existing ABI. The scheduler accepts only the reviewed
+bootstrap range; `wmain` remains rejected while the kernel-owned readiness bit
+is false. Invalid startup/GS state is rejected before dispatch, and the
+controlled bootstrap fault follows the established CPL3 containment path.
+
+`Tools/Phase25/verify_phase25.py` validates the sidecar hash, fixed range,
+RX-only contract, zero imports/relocations, and negative descriptor cases. The
+`Ring3Phase25` selector contains the four-lifetime runtime proof and emits
+balanced bootstrap, managed-image, process, stack, GS/TLS/FLS, and service
+ownership markers. A host build is not runtime CPL3 evidence; QEMU/hardware
+execution remains required for Outcome A.

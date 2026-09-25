@@ -1480,7 +1480,7 @@ unsafe class Program {
                 _uefiMultiFrameStartTicks.ToString());
 
             int uefiFrame = 0;
-#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25
             bool ring3SchedulingEnabled = false;
 #endif
             for (;;) {
@@ -1502,7 +1502,7 @@ unsafe class Program {
                         HaltAfterUefiContinuous();
                         return;
                     }
-#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25
                     if (!ring3SchedulingEnabled && uefiFrame == 1) {
                         // Establish one real desktop frame first so the
                         // scheduler's bootstrap context contains the normal

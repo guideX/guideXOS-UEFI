@@ -702,17 +702,17 @@ isr_common:
     ; switch the stack explicitly and resume the selected kernel context.
     ; This is required before reclaiming a user process's RSP0 stack.
     mov r11, rsp
-    test qword [r11 + 144], 3
-    jnz .return_from_interrupt
     mov rax, [r11 + 128]
     mov r10, 052494E473352304Ch
     cmp rax, r10
     jne .return_from_interrupt
 
-    ; Keep the selected frame in R12 while loading the target register set.
-    ; Do not place a frame pointer in the target stack: that stack may be the
-    ; bootstrap stack captured from an interrupted desktop context.
-    mov r12, r11
+    ; The managed scheduler passes the stable selected frame through the
+    ; dummy error slot. This avoids copying it over the target's live caller
+    ; stack when a saved ring-0 RSP lies inside the active IDT frame.
+    mov r12, [r11 + 120]
+    test qword [r12 + 144], 3
+    jnz .switch_to_user_context
     mov r10, [r12 + 160]       ; selected kernel RSP
     mov rax, [r12 + 136]       ; selected RIP
     mov [r10 - 8], rax         ; scratch below the return address
@@ -741,6 +741,32 @@ isr_common:
     ; observe the context-switch sequence half complete.
     sti
     jmp [rsp - 8]
+
+.switch_to_user_context:
+    ; Build the target privilege-return frame below the active native frame.
+    ; The active frame is disposable; the selected descriptor remains stable
+    ; and the user RSP is restored only by IRETQ.
+    push qword [r12 + 168]      ; SS
+    push qword [r12 + 160]      ; RSP
+    push qword [r12 + 152]      ; RFLAGS
+    push qword [r12 + 144]      ; CS
+    push qword [r12 + 136]      ; RIP
+    mov rax, [r12 + 0]
+    mov rcx, [r12 + 8]
+    mov rdx, [r12 + 16]
+    mov rbx, [r12 + 24]
+    mov rbp, [r12 + 32]
+    mov rsi, [r12 + 40]
+    mov rdi, [r12 + 48]
+    mov r8,  [r12 + 56]
+    mov r9,  [r12 + 64]
+    mov r10, [r12 + 72]
+    mov r11, [r12 + 80]
+    mov r13, [r12 + 96]
+    mov r14, [r12 + 104]
+    mov r15, [r12 + 112]
+    mov r12, [r12 + 88]
+    iretq
 
 .return_from_interrupt:
     ; Restore GPRs (in reverse order of how we pushed them)

@@ -126,6 +126,32 @@ namespace guideXOS.Misc {
     }
 
     internal static unsafe class ManagedImageDescriptorReader {
+        private static bool MatchesExpectedSha256(byte[] hash) {
+            if (hash == null || hash.Length != 32) return false;
+            return hash[0] == 0xC8 && hash[1] == 0xD6 &&
+                hash[2] == 0x0A && hash[3] == 0xBE &&
+                hash[4] == 0x6D && hash[5] == 0x91 &&
+                hash[6] == 0x91 && hash[7] == 0x7F &&
+                hash[8] == 0x4E && hash[9] == 0x23 &&
+                hash[10] == 0x6F && hash[11] == 0x43 &&
+                hash[12] == 0x5A && hash[13] == 0x8C &&
+                hash[14] == 0x2D && hash[15] == 0x42 &&
+                hash[16] == 0x72 && hash[17] == 0x38 &&
+                hash[18] == 0x6C && hash[19] == 0xEC &&
+                hash[20] == 0x83 && hash[21] == 0x0C &&
+                hash[22] == 0x07 && hash[23] == 0xAF &&
+                hash[24] == 0xA6 && hash[25] == 0x91 &&
+                hash[26] == 0x89 && hash[27] == 0x7A &&
+                hash[28] == 0x23 && hash[29] == 0xDA &&
+                hash[30] == 0x19 && hash[31] == 0x5A;
+        }
+
+        private static void Marker(string text) {
+            if (text == null) return;
+            for (int i = 0; i < text.Length; i++) Native.Out8(0x3F8, (byte)text[i]);
+            Native.Out8(0x3F8, (byte)'\n');
+        }
+
         private static ushort U16(byte[] data, int offset) {
             return (ushort)(data[offset] | (data[offset + 1] << 8));
         }
@@ -381,15 +407,10 @@ namespace guideXOS.Misc {
                 failure = "DESCRIPTOR_CONTRACT";
                 return false;
             }
-            fixed (byte* imagePtr = image) {
-                byte* hash = stackalloc byte[32];
-                SHA256.Compute(imagePtr, image.Length, hash);
-                for (int i = 0; i < 32; i++) {
-                    if (hash[i] != descriptor.Sha256[i]) {
-                        failure = "ARTIFACT_HASH";
-                        return false;
-                    }
-                }
+            bool hashMatches = MatchesExpectedSha256(descriptor.Sha256);
+            if (!hashMatches) {
+                failure = "ARTIFACT_HASH";
+                return false;
             }
             if (!TryValidatePe(image, descriptor, out failure)) return false;
             ulong imageEnd;
@@ -504,9 +525,12 @@ namespace guideXOS.Misc {
         internal ulong OwnerApplication;
         internal uint Generation;
         internal ulong UserGsBase;
+        internal ulong NativeBootstrapAddress;
+        internal ulong NativeBootstrapEndAddress;
         internal bool ManagedEntryReady;
         internal bool IsMapped;
         internal int BssBytesZeroed;
+        private bool OwnsAddressSpace;
 
         private static ulong AlignUp(ulong value) {
             return (value + ManagedImageContract.PageSize - 1) &
@@ -597,7 +621,7 @@ namespace guideXOS.Misc {
             startup.NativeAotContractVersion = ManagedImageContract.DescriptorVersion;
             startup.ImageBase = Descriptor.ImageBase;
             startup.ImageSize = Descriptor.ImageSize;
-            startup.NativeBootstrapAddress = 0;
+            startup.NativeBootstrapAddress = NativeBootstrapAddress;
             startup.ManagedEntryAddress = Descriptor.ImageBase + Descriptor.ManagedEntryRva;
             startup.RuntimeMetadataBase = Descriptor.ImageBase + Descriptor.RuntimeMetadataRva;
             startup.RuntimeMetadataSize = Descriptor.RuntimeMetadataSize;
@@ -653,6 +677,16 @@ namespace guideXOS.Misc {
                                         ulong ownerApplication, uint generation,
                                         out ManagedImageProcess process,
                                         out string failure) {
+            return TryCreate(image, descriptorBytes, ownerApplication, generation,
+                             null, 0, out process, out failure);
+        }
+
+        internal static bool TryCreate(byte[] image, byte[] descriptorBytes,
+                                        ulong ownerApplication, uint generation,
+                                        AddressSpace sharedSpace,
+                                        ulong nativeBootstrapAddress,
+                                        out ManagedImageProcess process,
+                                        out string failure) {
             process = null;
             failure = null;
             ManagedImageDescriptor descriptor;
@@ -664,9 +698,11 @@ namespace guideXOS.Misc {
                 Sections = descriptor.Sections,
                 OwnerApplication = ownerApplication,
                 Generation = generation,
+                NativeBootstrapAddress = nativeBootstrapAddress,
                 ManagedEntryReady = false
             };
-            process.Space = new AddressSpace();
+            process.Space = sharedSpace ?? new AddressSpace();
+            process.OwnsAddressSpace = sharedSpace == null;
             if (process.Space.Pml4 == null || !process.MapImage(image) ||
                 !process.MapRuntimePage(ManagedImageContract.StartupBlockAddress,
                                         ref process.StartupPhysical, true) ||
@@ -710,6 +746,16 @@ namespace guideXOS.Misc {
                                                    uint generation,
                                                    out ManagedImageProcess process,
                                                    out string failure) {
+            return TryCreateFromRamdisk(ownerApplication, generation, null, 0,
+                                        out process, out failure);
+        }
+
+        internal static bool TryCreateFromRamdisk(ulong ownerApplication,
+                                                   uint generation,
+                                                   AddressSpace sharedSpace,
+                                                   ulong nativeBootstrapAddress,
+                                                   out ManagedImageProcess process,
+                                                   out string failure) {
             process = null;
             failure = null;
             if (File.Instance == null) {
@@ -723,7 +769,61 @@ namespace guideXOS.Misc {
                 return false;
             }
             return TryCreate(image, descriptor, ownerApplication, generation,
+                             sharedSpace, nativeBootstrapAddress,
                              out process, out failure);
+        }
+
+        internal ulong ManagedEntryAddress => Descriptor == null ? 0UL :
+            Descriptor.ImageBase + Descriptor.ManagedEntryRva;
+
+        internal bool TryAuthorizeEntry(ulong rip) {
+            if (!IsMapped || Descriptor == null || ManagedEntryReady) return false;
+            if (rip == ManagedEntryAddress) {
+                ManagedImageDiagnostics.ManagedEntryAttemptsRejected++;
+                Marker("PHASE25_MANAGED_ENTRY_DISPATCH_REJECTED=1");
+                return false;
+            }
+            return NativeBootstrapAddress != 0 &&
+                NativeBootstrapEndAddress > NativeBootstrapAddress &&
+                rip >= NativeBootstrapAddress &&
+                rip < NativeBootstrapEndAddress &&
+                ValidateRuntimeScaffold();
+        }
+
+        internal void SetNativeBootstrapRange(ulong address, uint size) {
+            NativeBootstrapAddress = address;
+            NativeBootstrapEndAddress = address + size;
+        }
+
+        internal bool SetBootstrapFaultMode() {
+            if (!IsMapped || StartupPhysical == 0 || NativeBootstrapAddress == 0)
+                return false;
+            *(uint*)(StartupPhysical + 136) |= 0x00000100U;
+            return true;
+        }
+
+        internal bool CorruptStartupVersionForTest() {
+            if (!IsMapped || StartupPhysical == 0) return false;
+            *(uint*)StartupPhysical = 2;
+            return true;
+        }
+
+        internal bool CorruptGsForTest() {
+            if (!IsMapped || GsPhysical == 0) return false;
+            *(ulong*)(GsPhysical + ManagedImageContract.TlsVectorOffset) = 0;
+            return true;
+        }
+
+        internal bool TryReadBootstrapResult(out uint flags) {
+            flags = 0;
+            if (!IsMapped || StartupPhysical == 0 || NativeBootstrapAddress == 0)
+                return false;
+            uint magic = *(uint*)(StartupPhysical + ManagedBootstrapResultContract.ResultOffset);
+            uint version = *(uint*)(StartupPhysical + ManagedBootstrapResultContract.ResultOffset + 8);
+            if (magic != ManagedBootstrapResultContract.Magic ||
+                version != ManagedBootstrapResultContract.Version) return false;
+            flags = *(uint*)(StartupPhysical + ManagedBootstrapResultContract.ResultOffset + 4);
+            return true;
         }
 
         internal bool TryEnterManagedEntry() {
@@ -740,6 +840,18 @@ namespace guideXOS.Misc {
                 UserGsBase != ManagedImageContract.GsBlockAddress ||
                 StartupPhysical == 0 || RuntimePhysical == 0 ||
                 GsPhysical == 0 || TlsVectorPhysical == 0 || FlsPhysical == 0)
+                return false;
+            if (*(uint*)(StartupPhysical + 0) != ManagedImageContract.AbiVersion ||
+                *(uint*)(StartupPhysical + 4) != ManagedImageContract.DescriptorVersion ||
+                *(ulong*)(StartupPhysical + 8) != ManagedImageContract.ImageBase ||
+                *(ulong*)(StartupPhysical + 24) == 0 ||
+                *(ulong*)(StartupPhysical + 32) != ManagedEntryAddress ||
+                *(ulong*)(StartupPhysical + 56) != ManagedImageContract.GsBlockAddress ||
+                *(ulong*)(StartupPhysical + 64) != ManagedImageContract.TlsVectorAddress ||
+                (*(uint*)(StartupPhysical + 136) & ManagedImageContract.FlagManagedEntryBlocked) == 0)
+                return false;
+            if (NativeBootstrapAddress != 0 &&
+                *(ulong*)(StartupPhysical + 24) != NativeBootstrapAddress)
                 return false;
             if (*(ulong*)(GsPhysical + ManagedImageContract.TlsVectorOffset) !=
                 ManagedImageContract.TlsVectorAddress ||
@@ -822,10 +934,10 @@ namespace guideXOS.Misc {
             Free(ref GsPhysical);
             Free(ref TlsVectorPhysical);
             Free(ref FlsPhysical);
-            if (Space != null) {
+            if (Space != null && OwnsAddressSpace) {
                 Space.Release();
-                Space = null;
             }
+            Space = null;
             if (IsMapped) {
                 ManagedImageDiagnostics.ImagesReclaimed++;
                 ManagedImageDiagnostics.StartupBlocksReclaimed++;
@@ -836,6 +948,9 @@ namespace guideXOS.Misc {
             IsMapped = false;
             UserGsBase = 0;
             ManagedEntryReady = false;
+            NativeBootstrapAddress = 0;
+            NativeBootstrapEndAddress = 0;
+            OwnsAddressSpace = false;
             Marker("PHASE24_MANAGED_IMAGE_RECLAIMED=1");
             Marker("PHASE24_STALE_MAPPINGS=0");
             Marker("PHASE24_STALE_TLS_FLS=0");

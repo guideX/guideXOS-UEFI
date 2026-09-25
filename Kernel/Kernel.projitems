@@ -95,6 +95,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Misc\LodePNG.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\ManagedPNG.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\ManagedImage.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Misc\NativeBootstrap.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\MMIO.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\Multiboot.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\Native.cs" />

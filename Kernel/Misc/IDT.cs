@@ -321,6 +321,13 @@ public static class IDT {
                 }
                 return;
             }
+            SerialWriteLineLiteral("RING3_ABI_KERNEL_GATE");
+            if (stack != null) {
+                SerialWriteHexLine64("ABI_GATE_RIP=", stack->irs.rip);
+                SerialWriteHexLine64("ABI_GATE_CS=", stack->irs.cs);
+                SerialWriteHexLine64("ABI_GATE_RSP=", stack->irs.rsp);
+                SerialWriteStackNeighborhood(GetInterruptedRsp(&stack->irs));
+            }
             Panic.Error("Kernel invoked the Ring3 ABI gate");
             for (;;) Native.Hlt();
         }

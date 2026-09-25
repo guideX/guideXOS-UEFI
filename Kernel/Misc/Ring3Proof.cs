@@ -11,6 +11,7 @@ namespace guideXOS.Misc {
         private static bool _awaitingDesktopHeartbeat;
         private static bool _desktopHeartbeatObserved;
         private static bool _phase24Scheduled;
+        private static bool _phase25Scheduled;
 
         private sealed class Phase15Lifetime {
             internal Ring3Process Process;
@@ -90,6 +91,13 @@ namespace guideXOS.Misc {
             _phase24Scheduled = true;
             Marker("PHASE24_SCHEDULED=1");
             new Thread(&RunPhase24, 32768).Start(0);
+        }
+
+        internal static void SchedulePhase25() {
+            if (_phase25Scheduled) return;
+            _phase25Scheduled = true;
+            Marker("PHASE25_SCHEDULED=1");
+            new Thread(&RunPhase25, 131072).Start(0);
         }
 
         private static void RunPhase24() {
@@ -173,6 +181,133 @@ namespace guideXOS.Misc {
             Marker(ManagedImageDiagnostics.IsBalanced ?
                 "PHASE24_RUNTIME_CLEANUP_BALANCED=1" :
                 "PHASE24_RUNTIME_CLEANUP_BALANCED=0");
+            Native.Sti();
+        }
+
+        private static bool RunOnePhase25Lifetime(bool deliberateFault,
+                                                  bool requirePreemption,
+                                                  out Ring3Process process) {
+            process = null;
+            if (_owner == null) return false;
+            Native.Cli();
+            string failure;
+            if (!Ring3Process.TryCreateManagedBootstrap(
+                    _owner.Handle.Value, deliberateFault, out process,
+                    out failure) || process == null) {
+                Marker("PHASE25_PROCESS_CREATE_FAILED=1");
+                if (failure != null) Marker("PHASE25_PROCESS_CREATE_REJECTED=" + failure);
+                return false;
+            }
+
+            bool managedEntryRejected = process.ManagedImage != null &&
+                !process.TryAuthorizeUserEntry(
+                    process.ManagedImage.ManagedEntryAddress);
+            bool scaffold = process.ManagedImage != null &&
+                process.ManagedImage.ValidateRuntimeScaffold();
+            bool started = process.StartManagedBootstrap();
+            if (started) Native.Sti();
+            int spins = 0;
+            while (started && !process.IsTerminal && spins++ < 4000000) {
+                Native.Hlt();
+            }
+
+            bool completed = process.IsTerminal;
+            bool stateOk = deliberateFault
+                ? process.State == Ring3ProcessState.Failed
+                : process.State == Ring3ProcessState.Exiting;
+            bool dispatchOk = process.SchedulerDispatches >= 1 &&
+                process.SchedulerCr3Valid && process.SchedulerRsp0Valid;
+            bool resumeOk = !requirePreemption ||
+                (process.TimerPreemptions > 0 &&
+                 process.SchedulerDispatches >= 2 &&
+                 process.UserRspPreserved);
+            bool resultOk = deliberateFault
+                ? (process.TryReadBootstrapResult() &&
+                   (process.BootstrapResultFlags &
+                    ManagedBootstrapResultContract.SetupFlags) ==
+                        ManagedBootstrapResultContract.SetupFlags)
+                : process.BootstrapResultSucceeded;
+            bool ownerOk = process.ManagedImage != null &&
+                process.ManagedImage.OwnerApplication ==
+                    _owner.Handle.Value;
+            bool clean = process.Cleanup();
+            bool staleHandle = !process.TryResolveHandle(process.Handle);
+            Marker(managedEntryRejected ?
+                "PHASE25_MANAGED_ENTRY_REJECTION_PASS=1" :
+                "PHASE25_MANAGED_ENTRY_REJECTION_PASS=0");
+            Marker(scaffold ? "PHASE25_SCAFFOLD_PASS=1" :
+                "PHASE25_SCAFFOLD_PASS=0");
+            Marker(dispatchOk ? "PHASE25_DISPATCH_PASS=1" :
+                "PHASE25_DISPATCH_PASS=0");
+            Marker(resumeOk ? "PHASE25_RESUME_PASS=1" :
+                "PHASE25_RESUME_PASS=0");
+            Marker(resultOk ? "PHASE25_BOOTSTRAP_RESULT_PASS=1" :
+                "PHASE25_BOOTSTRAP_RESULT_PASS=0");
+            Marker(clean && staleHandle ? "PHASE25_LIFETIME_CLEAN=1" :
+                "PHASE25_LIFETIME_CLEAN=0");
+            return started && completed && stateOk && managedEntryRejected &&
+                scaffold && dispatchOk && resumeOk && resultOk && ownerOk &&
+                clean && staleHandle;
+        }
+
+        private static bool RunPhase25NegativeLifetime(bool corruptStartup,
+                                                        bool corruptGs) {
+            if (_owner == null) return false;
+            string failure;
+            Ring3Process process;
+            if (!Ring3Process.TryCreateManagedBootstrap(
+                    _owner.Handle.Value, false, out process, out failure) ||
+                process == null) return false;
+            bool corrupted = corruptStartup
+                ? process.CorruptManagedStartupVersionForTest()
+                : process.CorruptManagedGsForTest();
+            ulong entry = process.NativeBootstrap == null ? 0UL :
+                process.NativeBootstrap.EntryAddress;
+            bool rejected = corrupted && !process.TryAuthorizeUserEntry(entry);
+            bool notStarted = process.State == Ring3ProcessState.Created;
+            bool clean = process.Cleanup();
+            Marker(rejected && notStarted ?
+                (corruptStartup ? "PHASE25_INVALID_STARTUP_REJECTED=1" :
+                                  "PHASE25_INVALID_GS_REJECTED=1") :
+                (corruptStartup ? "PHASE25_INVALID_STARTUP_REJECTED=0" :
+                                  "PHASE25_INVALID_GS_REJECTED=0"));
+            return rejected && notStarted && clean;
+        }
+
+        private static void RunPhase25() {
+            Native.Cli();
+            Marker("PHASE25_BEGIN=1");
+            Marker("PHASE25_MANAGED_ENTRY_READY=0");
+            bool owner = TryCreateOwner();
+            bool negativeStartup = owner && RunPhase25NegativeLifetime(true, false);
+            bool negativeGs = owner && RunPhase25NegativeLifetime(false, true);
+            bool first = owner && RunOnePhase25Lifetime(false, true, out _);
+            bool second = owner && RunOnePhase25Lifetime(false, true, out _);
+            bool fault = owner && RunOnePhase25Lifetime(true, false, out _);
+            bool replacement = owner && RunOnePhase25Lifetime(false, true, out _);
+            CleanupOwner();
+
+            Marker(first && second && fault && replacement ?
+                "PHASE25_REPEATED_LIFETIMES=4" :
+                "PHASE25_REPEATED_LIFETIMES=0");
+            Marker(negativeStartup ? "PHASE25_INVALID_STARTUP_PASS=1" :
+                "PHASE25_INVALID_STARTUP_PASS=0");
+            Marker(negativeGs ? "PHASE25_INVALID_GS_PASS=1" :
+                "PHASE25_INVALID_GS_PASS=0");
+            Marker(NativeBootstrapDiagnostics.IsBalanced ?
+                "PHASE25_BOOTSTRAP_CLEANUP_BALANCED=1" :
+                "PHASE25_BOOTSTRAP_CLEANUP_BALANCED=0");
+            Marker(ManagedImageDiagnostics.IsBalanced ?
+                "PHASE25_MANAGED_CLEANUP_BALANCED=1" :
+                "PHASE25_MANAGED_CLEANUP_BALANCED=0");
+            Marker(Ring3ProcessTable.LiveCount == 0 &&
+                   ThreadPool.LiveUserThreadCount == 0 &&
+                   Ring3ProcessDiagnostics.IsBalanced ?
+                "PHASE25_PROCESS_CLEANUP_BALANCED=1" :
+                "PHASE25_PROCESS_CLEANUP_BALANCED=0");
+            Marker(ManagedImageDiagnostics.ManagedEntryAttemptsRejected > 0 ?
+                "PHASE25_MANAGED_ENTRY_REJECTIONS=1" :
+                "PHASE25_MANAGED_ENTRY_REJECTIONS=0");
             Native.Sti();
         }
 
