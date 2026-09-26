@@ -36,7 +36,7 @@
 .PARAMETER UefiDiagnosticMode
     Optional UEFI regression build variant: Tiny, FirstFrame, Frames, Input,
     InputStress, ContextMenu, Png, Font, Background, BackgroundRotation,
-    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
+    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Phase27, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
     WidgetOnlyClock, WidgetOnlyMonitor, or WidgetOnlyUptime
 
 .EXAMPLE
@@ -60,7 +60,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
+  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
     [string]$UefiDiagnosticMode = ''
 )
 
@@ -607,6 +607,24 @@ if (-not $SkipRamdisk) {
             Write-Error "Phase 26 bootstrap staging failed"
             exit 1
         }
+    }
+
+    $phase27Build = Join-Path $RootDir "Tools\Phase27\build_phase27_managed_service_proof.ps1"
+    $phase27BootstrapBuild = Join-Path $RootDir "Tools\Phase27\build_phase27_bootstrap.ps1"
+    $phase27Stage = Join-Path $RootDir "Tools\Phase27\stage_phase27_image.ps1"
+    $phase27BuildRoot = Join-Path $RootDir "out\dotnet\phase27-managed-service-proof"
+    if ((Test-Path -LiteralPath $phase27Build) -and
+        (Test-Path -LiteralPath $phase27BootstrapBuild)) {
+        Write-Info "Building the Phase 27 managed App Model service proof..."
+        & $phase27Build
+        if ($LASTEXITCODE -ne 0) { throw "Phase 27 managed proof build failed: $LASTEXITCODE" }
+        & $phase27BootstrapBuild
+        if ($LASTEXITCODE -ne 0) { throw "Phase 27 bootstrap build failed: $LASTEXITCODE" }
+    }
+    if (Test-Path -LiteralPath $phase27Stage) {
+        Write-Info "Staging the Phase 27 managed System Information proof..."
+        & $phase27Stage -BuildRoot $phase27BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) { throw "Phase 27 image staging failed: $LASTEXITCODE" }
     }
     
     $ramdiskBuilder = (Resolve-Path "$ToolsDir\ramdisk_builder.py").Path

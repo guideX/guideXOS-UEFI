@@ -74,8 +74,27 @@ namespace guideXOS.Misc {
             Native.Out8(0x3F8, (byte)'\n');
         }
 
-        private static bool MatchesExpectedSha256(byte[] hash, bool phase26) {
+        private static bool MatchesExpectedSha256(byte[] hash, bool phase26,
+                                                  bool phase27) {
             if (hash == null || hash.Length != 32) return false;
+            if (phase27) {
+                return hash[0] == 0xFE && hash[1] == 0x5C &&
+                    hash[2] == 0xCB && hash[3] == 0x9D &&
+                    hash[4] == 0x1B && hash[5] == 0x8F &&
+                    hash[6] == 0x4C && hash[7] == 0x2B &&
+                    hash[8] == 0xF8 && hash[9] == 0xA2 &&
+                    hash[10] == 0xE5 && hash[11] == 0xCA &&
+                    hash[12] == 0xE4 && hash[13] == 0x70 &&
+                    hash[14] == 0x84 && hash[15] == 0x4D &&
+                    hash[16] == 0x3C && hash[17] == 0x7E &&
+                    hash[18] == 0x41 && hash[19] == 0x23 &&
+                    hash[20] == 0xE5 && hash[21] == 0xAB &&
+                    hash[22] == 0x99 && hash[23] == 0x24 &&
+                    hash[24] == 0x32 && hash[25] == 0xD4 &&
+                    hash[26] == 0x2D && hash[27] == 0xC0 &&
+                    hash[28] == 0xE8 && hash[29] == 0xE3 &&
+                    hash[30] == 0xB8 && hash[31] == 0xF1;
+            }
             if (phase26) {
                 return hash[0] == 0xEB && hash[1] == 0xE9 &&
                     hash[2] == 0x84 && hash[3] == 0x4E &&
@@ -155,7 +174,7 @@ namespace guideXOS.Misc {
         }
 
         internal static bool TryValidate(NativeBootstrapDescriptor descriptor,
-                                         byte[] image, bool phase26,
+                                         byte[] image, bool phase26, bool phase27,
                                          out string failure) {
             failure = null;
             if (descriptor == null || image == null) {
@@ -180,10 +199,17 @@ namespace guideXOS.Misc {
                 failure = "DESCRIPTOR_CONTRACT";
                 return false;
             }
-            if (phase26) {
+            if (phase26 || phase27) {
                 HexMarker("PHASE26_BOOTSTRAP_HASH0=0x", U64(descriptor.Sha256, 0));
+                HexMarker("PHASE27_BOOTSTRAP_MODE=0x", phase27 ? 1UL : 0UL);
+                HexMarker("PHASE27_BOOTSTRAP_HASH26=0x", descriptor.Sha256[26]);
             }
-            bool hashMatches = MatchesExpectedSha256(descriptor.Sha256, phase26);
+            bool hashMatches = MatchesExpectedSha256(descriptor.Sha256, phase26,
+                                                      phase27);
+            if (phase27) {
+                HexMarker("PHASE27_BOOTSTRAP_HASH_MATCH=0x",
+                    hashMatches ? 1UL : 0UL);
+            }
             if (!hashMatches) {
                 failure = "ARTIFACT_HASH";
                 return false;
@@ -260,22 +286,32 @@ namespace guideXOS.Misc {
                                                    bool phase26,
                                                    out NativeBootstrapImage bootstrap,
                                                    out string failure) {
+            return TryCreateFromRamdisk(space, phase26, false,
+                                        out bootstrap, out failure);
+        }
+
+        internal static bool TryCreateFromRamdisk(AddressSpace space,
+                                                   bool phase26, bool phase27,
+                                                   out NativeBootstrapImage bootstrap,
+                                                   out string failure) {
             bootstrap = null;
             failure = null;
             if (space == null || File.Instance == null) {
                 failure = "NO_ADDRESS_SPACE_OR_FILESYSTEM";
                 return false;
             }
-            string prefix = phase26 ? "Native/guideXOS.Phase26Bootstrap" :
-                "Native/guideXOS.Phase25Bootstrap";
+            string prefix = phase27 ? "Native/guideXOS.Phase27Bootstrap" :
+                (phase26 ? "Native/guideXOS.Phase26Bootstrap" :
+                    "Native/guideXOS.Phase25Bootstrap");
             byte[] image = File.ReadAllBytes(prefix + ".bin");
             byte[] descriptor = File.ReadAllBytes(prefix + ".gxbi");
             if (image == null || descriptor == null) {
-                failure = phase26 ? "PHASE26_BOOTSTRAP_NOT_STAGED" :
-                    "PHASE25_BOOTSTRAP_NOT_STAGED";
+                failure = phase27 ? "PHASE27_BOOTSTRAP_NOT_STAGED" :
+                    (phase26 ? "PHASE26_BOOTSTRAP_NOT_STAGED" :
+                        "PHASE25_BOOTSTRAP_NOT_STAGED");
                 return false;
             }
-            return TryCreate(space, image, descriptor, phase26,
+            return TryCreate(space, image, descriptor, phase26, phase27,
                              out bootstrap, out failure);
         }
 
@@ -291,13 +327,22 @@ namespace guideXOS.Misc {
                                        byte[] descriptorBytes, bool phase26,
                                        out NativeBootstrapImage bootstrap,
                                        out string failure) {
+            return TryCreate(space, image, descriptorBytes, phase26, false,
+                             out bootstrap, out failure);
+        }
+
+        internal static bool TryCreate(AddressSpace space, byte[] image,
+                                       byte[] descriptorBytes, bool phase26,
+                                       bool phase27,
+                                       out NativeBootstrapImage bootstrap,
+                                       out string failure) {
             bootstrap = null;
             failure = null;
             NativeBootstrapDescriptor descriptor;
             if (!NativeBootstrapDescriptorReader.TryRead(descriptorBytes,
                     out descriptor, out failure) ||
                 !NativeBootstrapDescriptorReader.TryValidate(descriptor, image,
-                    phase26, out failure)) return false;
+                    phase26, phase27, out failure)) return false;
 
             bootstrap = new NativeBootstrapImage {
                 Space = space,

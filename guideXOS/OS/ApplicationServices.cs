@@ -623,14 +623,14 @@ namespace guideXOS.OS {
         public const int MaxOsVersionLength = 32;
         public const int MaxArchitectureLength = 16;
 
-        public readonly ulong UptimeTicks { get; }
-        public readonly ulong MemorySizeBytes { get; }
-        public readonly ulong MemoryInUseBytes { get; }
-        public readonly int ThreadCount { get; }
-        public readonly int CpuUsagePercent { get; }
-        public readonly string OsName { get; }
-        public readonly string OsVersion { get; }
-        public readonly string Architecture { get; }
+        public readonly ulong UptimeTicks;
+        public readonly ulong MemorySizeBytes;
+        public readonly ulong MemoryInUseBytes;
+        public readonly int ThreadCount;
+        public readonly int CpuUsagePercent;
+        public readonly string OsName;
+        public readonly string OsVersion;
+        public readonly string Architecture;
 
         internal SystemInformationSnapshot(ulong uptimeTicks,
                                            ulong memorySizeBytes,

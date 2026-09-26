@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$PackRoot = '',
-    [string]$OutputRoot = ''
+    [string]$OutputRoot = '',
+    [string]$ProjectPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,7 +14,9 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) { $OutputRoot = Join-Path $root '
 
 $manifestPath = Join-Path $PackRoot 'guidexos-runtime-pack.manifest.json'
 $feed = Join-Path $PackRoot 'packages'
-$project = Join-Path $root 'UserManagedProof\guideXOS.UserManagedProof.csproj'
+$project = if ([string]::IsNullOrWhiteSpace($ProjectPath)) {
+    Join-Path $root 'UserManagedProof\guideXOS.UserManagedProof.csproj'
+} else { $ProjectPath }
 $publishDirectory = Join-Path $OutputRoot 'publish'
 $recordPath = Join-Path $OutputRoot 'user-managed-proof-build.json'
 $packagesPath = Join-Path $OutputRoot 'packages-cache'

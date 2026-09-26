@@ -13,6 +13,7 @@ namespace guideXOS.Misc {
         private static bool _phase24Scheduled;
         private static bool _phase25Scheduled;
         private static bool _phase26Scheduled;
+        private static bool _phase27Scheduled;
 
         private sealed class Phase15Lifetime {
             internal Ring3Process Process;
@@ -179,6 +180,134 @@ namespace guideXOS.Misc {
                    Ring3ProcessDiagnostics.IsBalanced ?
                 "PHASE26_PROCESS_CLEANUP_BALANCED=1" :
                 "PHASE26_PROCESS_CLEANUP_BALANCED=0");
+            Native.Sti();
+        }
+
+        internal static void SchedulePhase27() {
+            if (_phase27Scheduled) return;
+            _phase27Scheduled = true;
+            Marker("PHASE27_SCHEDULED=1");
+            new Thread(&RunPhase27, 131072).Start(0);
+        }
+
+        private static bool RunOnePhase27Lifetime(bool failureMode,
+                                                   out Ring3Process process) {
+            process = null;
+            if (_owner == null) return false;
+            Native.Cli();
+            string failure;
+            if (!Ring3Process.TryCreateManagedServiceEntry(
+                    _owner.Handle.Value, failureMode, out process, out failure) ||
+                process == null) {
+                Native.Sti();
+                Marker("PHASE27_PROCESS_CREATE_FAILED=1");
+                if (failure != null) Marker("PHASE27_PROCESS_CREATE_REJECTED=" + failure);
+                return false;
+            }
+            Ring3ProcessHandle oldHandle = process.Handle;
+            bool scaffold = process.ManagedImage != null &&
+                process.ManagedImage.ValidateRuntimeScaffold();
+            bool authorized = process.ManagedImage != null &&
+                process.ManagedImage.TryEnterManagedEntry();
+            bool started = process.StartManagedBootstrap();
+            if (started) Native.Sti();
+            int spins = 0;
+            while (started && !process.IsTerminal && spins++ < 6000000)
+                Native.Hlt();
+
+            bool completed = process.IsTerminal;
+            bool dispatched = process.SchedulerDispatches >= 1 &&
+                process.SchedulerCr3Valid && process.SchedulerRsp0Valid;
+            bool resumed = process.TimerPreemptions > 0 &&
+                process.SchedulerDispatches >= 2 && process.UserRspPreserved;
+            bool service = failureMode ? process.ServiceRequestsSucceeded == 0 :
+                process.ServiceRequestsSucceeded > 0;
+            int expected = failureMode ? 21 : 27;
+            bool result = process.BootstrapResultSucceeded;
+            bool mainReturned = process.BootstrapReturnCode == expected &&
+                process.ExitCode == expected;
+            HexMarker("PHASE27_BOOTSTRAP_RETURN=0x",
+                (ulong)(uint)process.BootstrapReturnCode);
+            HexMarker("PHASE27_EXIT_CODE=0x", (ulong)(uint)process.ExitCode);
+            bool clean = process.Cleanup();
+            bool staleHandle = !process.TryResolveHandle(oldHandle);
+            Marker(scaffold ? "PHASE27_SCAFFOLD_PASS=1" :
+                "PHASE27_SCAFFOLD_PASS=0");
+            Marker(authorized ? "PHASE27_ENTRY_AUTHORIZED=1" :
+                "PHASE27_ENTRY_AUTHORIZED=0");
+            Marker(dispatched ? "PHASE27_DISPATCH_PASS=1" :
+                "PHASE27_DISPATCH_PASS=0");
+            Marker(resumed ? "PHASE27_RESUME_PASS=1" :
+                "PHASE27_RESUME_PASS=0");
+            Marker(service ? (failureMode ? "PHASE27_TYPED_FAILURE_PASS=1" :
+                              "PHASE27_SERVICE_REQUEST_PASS=1") :
+                (failureMode ? "PHASE27_TYPED_FAILURE_PASS=0" :
+                              "PHASE27_SERVICE_REQUEST_PASS=0"));
+            Marker(completed && result && mainReturned ?
+                "PHASE27_MAIN_RESULT_PASS=1" : "PHASE27_MAIN_RESULT_PASS=0");
+            Marker(clean && staleHandle ? "PHASE27_LIFETIME_CLEAN=1" :
+                "PHASE27_LIFETIME_CLEAN=0");
+            return started && completed && scaffold && authorized &&
+                dispatched && resumed && service && result && mainReturned &&
+                clean && staleHandle;
+        }
+
+        private static void RunPhase27() {
+            Native.Cli();
+            Marker("PHASE27_BEGIN=1");
+            bool owner = TryCreateOwner();
+            ApplicationServiceContext context = null;
+            ApplicationServiceResult contextResult;
+            if (owner) {
+                ApplicationServiceRegistry.TryCreateContext(_owner.Handle,
+                    out context, out contextResult);
+            }
+            bool first = owner && RunOnePhase27Lifetime(false, out _);
+            bool second = owner && RunOnePhase27Lifetime(false, out _);
+            bool third = owner && RunOnePhase27Lifetime(false, out _);
+            bool fourth = owner && RunOnePhase27Lifetime(false, out _);
+            bool typedFailure = owner &&
+                RunOnePhase27Lifetime(true, out _);
+            ulong staleOwnerHandle = owner ? _owner.Handle.Value : 0UL;
+            CleanupOwner();
+
+            ApplicationInstance ignored;
+            ApplicationInstance staleContextOwner;
+            ApplicationServiceResult staleResult;
+            bool staleApplication = staleOwnerHandle != 0 &&
+                !ApplicationInstanceRegistry.TryGet(
+                    ApplicationInstanceHandle.FromValue(staleOwnerHandle),
+                    out ignored);
+            bool staleContext = context != null &&
+                !ApplicationServiceRegistry.TryValidateContext(
+                    context, ApplicationServiceId.SystemInformation,
+                    out staleContextOwner, out staleResult) &&
+                staleContextOwner == null;
+            bool newOwner = TryCreateOwner();
+            bool newGeneration = newOwner && _owner.Handle.Value != staleOwnerHandle;
+            CleanupOwner();
+
+            Marker(first && second && third && fourth ?
+                "PHASE27_REPEATED_LIFETIMES=4" :
+                "PHASE27_REPEATED_LIFETIMES=0");
+            Marker(typedFailure ? "PHASE27_TYPED_FAILURE_RESULT=21" :
+                "PHASE27_TYPED_FAILURE_RESULT=0");
+            Marker(staleApplication && newGeneration ?
+                "PHASE27_STALE_APPLICATION_INSTANCE_REJECTED=1" :
+                "PHASE27_STALE_APPLICATION_INSTANCE_REJECTED=0");
+            Marker(staleContext ? "PHASE27_STALE_SERVICE_CONTEXT_REJECTED=1" :
+                "PHASE27_STALE_SERVICE_CONTEXT_REJECTED=0");
+            Marker(ManagedImageDiagnostics.IsBalanced ?
+                "PHASE27_MANAGED_CLEANUP_BALANCED=1" :
+                "PHASE27_MANAGED_CLEANUP_BALANCED=0");
+            Marker(NativeBootstrapDiagnostics.IsBalanced ?
+                "PHASE27_BOOTSTRAP_CLEANUP_BALANCED=1" :
+                "PHASE27_BOOTSTRAP_CLEANUP_BALANCED=0");
+            Marker(Ring3ProcessTable.LiveCount == 0 &&
+                   ThreadPool.LiveUserThreadCount == 0 &&
+                   Ring3ProcessDiagnostics.IsBalanced ?
+                "PHASE27_PROCESS_CLEANUP_BALANCED=1" :
+                "PHASE27_PROCESS_CLEANUP_BALANCED=0");
             Native.Sti();
         }
 

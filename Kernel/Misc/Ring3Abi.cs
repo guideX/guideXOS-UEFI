@@ -359,13 +359,33 @@ namespace guideXOS.Misc {
 
             Ring3SystemInformationResponse response =
                 default(Ring3SystemInformationResponse);
+            ulong memorySize = result.Value.MemorySizeBytes;
+            ulong memoryInUse = result.Value.MemoryInUseBytes;
+            int threadCount = result.Value.ThreadCount;
+            int cpuUsage = result.Value.CpuUsagePercent;
+            bool scalarFallback = memorySize == 0;
+            if (scalarFallback) {
+                // The existing App Model backend remains authoritative for
+                // context, capability, and bounded text.  Recover only the
+                // scalar counters from the same kernel sources when the
+                // generic value projection is zeroed by the custom AOT path.
+                memorySize = Allocator.MemorySize;
+                memoryInUse = Allocator.MemoryInUse;
+                threadCount = ThreadPool.ThreadCount;
+                uint rawCpu = ThreadPool.CPUUsage;
+                cpuUsage = rawCpu > 100 ? 100 : (int)rawCpu;
+            }
+            if (memoryInUse > memorySize) memoryInUse = memorySize;
+            if (threadCount < 0) threadCount = 0;
+            if (cpuUsage < 0) cpuUsage = 0;
+            if (cpuUsage > 100) cpuUsage = 100;
             response.StructureVersion = 1;
             response.Size = (uint)sizeof(Ring3SystemInformationResponse);
             response.UptimeTicks = result.Value.UptimeTicks;
-            response.MemorySizeBytes = result.Value.MemorySizeBytes;
-            response.MemoryInUseBytes = result.Value.MemoryInUseBytes;
-            response.ThreadCount = result.Value.ThreadCount;
-            response.CpuUsagePercent = result.Value.CpuUsagePercent;
+            response.MemorySizeBytes = memorySize;
+            response.MemoryInUseBytes = memoryInUse;
+            response.ThreadCount = threadCount;
+            response.CpuUsagePercent = cpuUsage;
             byte* osName = response.OsName;
             byte* osVersion = response.OsVersion;
             byte* architecture = response.Architecture;
@@ -378,6 +398,27 @@ namespace guideXOS.Misc {
             response.ArchitectureLength = CopyText(architecture,
                 SystemInformationSnapshot.MaxArchitectureLength,
                 result.Value.Architecture);
+            if (process.ManagedImage != null && process.ManagedImage.IsPhase27) {
+                HexMarker("PHASE27_RESPONSE_SCALAR_FALLBACK=0x",
+                    scalarFallback ? 1UL : 0UL);
+                HexMarker("PHASE27_RESPONSE_VERSION=0x", response.StructureVersion);
+                HexMarker("PHASE27_RESPONSE_SIZE=0x", response.Size);
+                HexMarker("PHASE27_RESPONSE_MEMORY=0x", response.MemorySizeBytes);
+                HexMarker("PHASE27_RESPONSE_IN_USE=0x", response.MemoryInUseBytes);
+                HexMarker("PHASE27_RESPONSE_THREADS=0x",
+                    (ulong)(uint)response.ThreadCount);
+                HexMarker("PHASE27_RESPONSE_CPU=0x",
+                    (ulong)(uint)response.CpuUsagePercent);
+                HexMarker("PHASE27_RESPONSE_OS_LEN=0x", response.OsNameLength);
+                HexMarker("PHASE27_RESPONSE_VERSION_LEN=0x", response.OsVersionLength);
+                HexMarker("PHASE27_RESPONSE_ARCH_LEN=0x", response.ArchitectureLength);
+                HexMarker("PHASE27_RESPONSE_ARCH0=0x", architecture[0]);
+                HexMarker("PHASE27_RESPONSE_ARCH1=0x", architecture[1]);
+                HexMarker("PHASE27_RESPONSE_ARCH2=0x", architecture[2]);
+                HexMarker("PHASE27_RESPONSE_ARCH3=0x", architecture[3]);
+                HexMarker("PHASE27_RESPONSE_ARCH4=0x", architecture[4]);
+                HexMarker("PHASE27_RESPONSE_ARCH5=0x", architecture[5]);
+            }
             Native.Movsb((void*)request.ResponseBuffer, &response,
                 (ulong)sizeof(Ring3SystemInformationResponse));
             process.RecordServiceRequestSuccess();

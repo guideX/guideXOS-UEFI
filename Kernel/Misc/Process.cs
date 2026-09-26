@@ -304,8 +304,23 @@ namespace guideXOS.Misc {
                 true, out process, out failure);
         }
 
+        internal static bool TryCreateManagedServiceEntry(
+            ulong owningApplicationInstance, bool failureMode,
+            out Ring3Process process, out string failure) {
+            return TryCreateManagedBootstrap(owningApplicationInstance, false,
+                true, true, failureMode, out process, out failure);
+        }
+
         private static bool TryCreateManagedBootstrap(
             ulong owningApplicationInstance, bool deliberateFault, bool phase26,
+            out Ring3Process process, out string failure) {
+            return TryCreateManagedBootstrap(owningApplicationInstance,
+                deliberateFault, phase26, false, false, out process, out failure);
+        }
+
+        private static bool TryCreateManagedBootstrap(
+            ulong owningApplicationInstance, bool deliberateFault, bool phase26,
+            bool phase27, bool phase27Failure,
             out Ring3Process process, out string failure) {
             process = null;
             failure = null;
@@ -332,24 +347,28 @@ namespace guideXOS.Misc {
             ManagedImageProcess managedImage;
             if (!ManagedImageProcess.TryCreateFromRamdisk(
                     owningApplicationInstance, generation, candidate.Space,
-                    NativeBootstrapContract.ImageBase, phase26,
+                    NativeBootstrapContract.ImageBase, phase26, phase27,
+                    phase27Failure,
                     out managedImage, out failure) || managedImage == null) {
-                if (failure != null) Marker(phase26 ?
-                    "PHASE26_IMAGE_CREATE_REJECTED=" + failure :
-                    "PHASE25_IMAGE_CREATE_REJECTED=" + failure);
+                if (failure != null) Marker(phase27 ?
+                    "PHASE27_IMAGE_CREATE_REJECTED=" + failure :
+                    (phase26 ? "PHASE26_IMAGE_CREATE_REJECTED=" + failure :
+                        "PHASE25_IMAGE_CREATE_REJECTED=" + failure));
                 candidate.Cleanup();
                 return false;
             }
             candidate.ManagedImage = managedImage;
             NativeBootstrapImage nativeBootstrap;
             if (!NativeBootstrapImage.TryCreateFromRamdisk(
-                    candidate.Space, phase26, out nativeBootstrap, out failure) ||
+                    candidate.Space, phase26, phase27,
+                    out nativeBootstrap, out failure) ||
                 nativeBootstrap == null ||
                 nativeBootstrap.EntryAddress !=
                     candidate.ManagedImage.NativeBootstrapAddress) {
-                if (failure != null) Marker(phase26 ?
-                    "PHASE26_BOOTSTRAP_CREATE_REJECTED=" + failure :
-                    "PHASE25_BOOTSTRAP_CREATE_REJECTED=" + failure);
+                if (failure != null) Marker(phase27 ?
+                    "PHASE27_BOOTSTRAP_CREATE_REJECTED=" + failure :
+                    (phase26 ? "PHASE26_BOOTSTRAP_CREATE_REJECTED=" + failure :
+                        "PHASE25_BOOTSTRAP_CREATE_REJECTED=" + failure));
                 candidate.Cleanup();
                 return false;
             }
@@ -605,10 +624,13 @@ namespace guideXOS.Misc {
 
         internal bool BootstrapResultSucceeded {
             get {
+                int expectedReturn = ManagedImage != null &&
+                    ManagedImage.IsPhase27Failure ? 21 :
+                    (ManagedImage != null && ManagedImage.IsPhase27 ? 27 : 42);
                 return TryReadBootstrapResult() &&
                     (ManagedImage != null && ManagedImage.IsPhase26 ?
                         BootstrapResultFlags == ManagedBootstrapResultContract.Phase26SuccessFlags &&
-                        BootstrapReturnCode == 42 :
+                        BootstrapReturnCode == expectedReturn :
                         BootstrapResultFlags == ManagedBootstrapResultContract.SuccessFlags);
             }
         }

@@ -2,7 +2,11 @@
 param(
     [string]$Phase23Pack = '',
     [string]$PackRoot = '',
-    [string]$OutputRoot = ''
+    [string]$OutputRoot = '',
+    [string]$ProjectPath = '',
+    [string]$PalSource = '',
+    [string]$ShimSource = '',
+    [string]$SyscallSource = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,6 +16,10 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if ([string]::IsNullOrWhiteSpace($Phase23Pack)) { $Phase23Pack = Join-Path $root 'out\dotnet\phase23-runtime-pack' }
 if ([string]::IsNullOrWhiteSpace($PackRoot)) { $PackRoot = Join-Path $root 'out\dotnet\phase26-runtime-pack' }
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) { $OutputRoot = Join-Path $root 'out\dotnet\phase26-user-managed-proof' }
+if ([string]::IsNullOrWhiteSpace($ProjectPath)) { $ProjectPath = Join-Path $root 'UserManagedProof\guideXOS.UserManagedProof.csproj' }
+if ([string]::IsNullOrWhiteSpace($PalSource)) { $PalSource = Join-Path $PSScriptRoot 'guidexos_phase26_pal_contract.cpp' }
+if ([string]::IsNullOrWhiteSpace($ShimSource)) { $ShimSource = Join-Path $PSScriptRoot 'guidexos_link_shim.cpp' }
+if ([string]::IsNullOrWhiteSpace($SyscallSource)) { $SyscallSource = Join-Path $PSScriptRoot 'guidexos_phase26_syscall.asm' }
 
 $vsRoot = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC'
 $compiler = Get-ChildItem -LiteralPath $vsRoot -Filter cl.exe -File -Recurse |
@@ -370,9 +378,9 @@ function Expand-Nupkg([string]$source, [string]$destination) {
 $palObject = Join-Path $work 'guidexos_nativeaot_pal_contract.obj'
 $shimObject = Join-Path $work 'guidexos_link_shim.obj'
 $syscallObject = Join-Path $work 'guidexos_phase26_syscall.obj'
-$palSource = Join-Path $PSScriptRoot 'guidexos_phase26_pal_contract.cpp'
-$shimSource = Join-Path $PSScriptRoot 'guidexos_link_shim.cpp'
-$syscallSource = Join-Path $PSScriptRoot 'guidexos_phase26_syscall.asm'
+$palSource = $PalSource
+$shimSource = $ShimSource
+$syscallSource = $SyscallSource
 
 $compileArgs = @('/nologo', '/c', '/O1', '/GS-', '/GR-', '/EHs-c-', '/Zl',
     '/D_CRT_SECURE_NO_WARNINGS', "/Fo$palObject", $palSource)
@@ -521,7 +529,7 @@ Compress-Archive -Path (Join-Path $compilerExpanded '*') -DestinationPath $compi
 Move-Item -LiteralPath $compilerZip -Destination $compilerPackage.FullName -Force
 
 $buildScript = Join-Path $root 'Tools\Phase23\build_user_managed_proof.ps1'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript -PackRoot $PackRoot -OutputRoot $OutputRoot
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript -PackRoot $PackRoot -OutputRoot $OutputRoot -ProjectPath $ProjectPath
 if ($LASTEXITCODE -ne 0) { throw "Phase 26 managed proof build failed with exit code $LASTEXITCODE." }
 
 $artifact = Get-ChildItem -LiteralPath (Join-Path $OutputRoot 'publish') -Filter '*.exe' -File | Select-Object -First 1

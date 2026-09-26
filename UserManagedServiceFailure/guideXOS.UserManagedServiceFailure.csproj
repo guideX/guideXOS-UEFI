@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>guideXOS.Phase27ManagedFailureProof</AssemblyName>
+    <TargetFramework>net9.0</TargetFramework>
+    <RuntimeIdentifier Condition="'$(Phase22Guidexos)' != 'true' and '$(Phase23Guidexos)' != 'true'">win-x64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(Phase22Guidexos)' == 'true' or '$(Phase23Guidexos)' == 'true'">guidexos-x64</RuntimeIdentifier>
+    <RuntimeFrameworkVersion Condition="'$(Phase22Guidexos)' == 'true' or '$(Phase23Guidexos)' == 'true'">9.0.0</RuntimeFrameworkVersion>
+    <TargetLatestRuntimePatch Condition="'$(Phase22Guidexos)' == 'true' or '$(Phase23Guidexos)' == 'true'">false</TargetLatestRuntimePatch>
+    <UseAppHost Condition="'$(Phase22Guidexos)' == 'true' or '$(Phase23Guidexos)' == 'true'">false</UseAppHost>
+    <RuntimeIdentifierGraphPath Condition="'$(Phase22Guidexos)' == 'true' or '$(Phase23Guidexos)' == 'true'">$(MSBuildProjectDirectory)\..\Tools\Phase22\runtime-identifier.graph.json</RuntimeIdentifierGraphPath>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublishAot>true</PublishAot>
+    <SelfContained>true</SelfContained>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TrimMode>link</TrimMode>
+    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <IlcGenerateMapFile>true</IlcGenerateMapFile>
+    <IlcDisableReflection>true</IlcDisableReflection>
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <StripSymbols>true</StripSymbols>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <IlcUseEnvironmentalTools>true</IlcUseEnvironmentalTools>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DefineConstants>$(DefineConstants);PHASE27_FAILURE</DefineConstants>
+    <AssemblyName>guideXOS.Phase27ManagedFailureProof</AssemblyName>
+    <RootNamespace>guideXOS.Phase27ManagedFailureProof</RootNamespace>
+    <NoWarn>$(NoWarn);IL2026;IL3050;IL3053</NoWarn>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+  </PropertyGroup>
+  <ItemGroup>
+    <KnownILCompilerPack Update="Microsoft.DotNet.ILCompiler" Condition="'$(Phase22Guidexos)' == 'true' or '$(Phase23Guidexos)' == 'true'">
+      <ILCompilerRuntimeIdentifiers>%(ILCompilerRuntimeIdentifiers);guidexos-x64</ILCompilerRuntimeIdentifiers>
+    </KnownILCompilerPack>
+    <KnownRuntimePack Update="Microsoft.NETCore.App" Condition="'$(Phase22Guidexos)' == 'true' or '$(Phase23Guidexos)' == 'true'">
+      <RuntimePackRuntimeIdentifiers>%(RuntimePackRuntimeIdentifiers);guidexos-x64</RuntimePackRuntimeIdentifiers>
+    </KnownRuntimePack>
+  </ItemGroup>
+  <ItemGroup>
+    <LinkerArg Include="/base:0x0000401000000000" />
+    <LinkerArg Include="/fixed" />
+    <PackageReference Include="Microsoft.DotNet.ILCompiler" Version="9.0.0" />
+    <Compile Include="..\UserManagedServiceProof\Program.cs" Link="Program.cs" />
+  </ItemGroup>
+</Project>
