@@ -77,22 +77,22 @@ namespace guideXOS.Misc {
         private static bool MatchesExpectedSha256(byte[] hash, bool phase26) {
             if (hash == null || hash.Length != 32) return false;
             if (phase26) {
-                return hash[0] == 0xDA && hash[1] == 0x8C &&
-                    hash[2] == 0x20 && hash[3] == 0x68 &&
-                    hash[4] == 0x6A && hash[5] == 0x8F &&
-                    hash[6] == 0xAF && hash[7] == 0x02 &&
-                    hash[8] == 0x71 && hash[9] == 0x4C &&
-                    hash[10] == 0xDD && hash[11] == 0x26 &&
-                    hash[12] == 0x07 && hash[13] == 0xBE &&
-                    hash[14] == 0xE2 && hash[15] == 0x08 &&
-                    hash[16] == 0x12 && hash[17] == 0xE4 &&
-                    hash[18] == 0xC6 && hash[19] == 0x08 &&
-                    hash[20] == 0x36 && hash[21] == 0x99 &&
-                    hash[22] == 0xB5 && hash[23] == 0x10 &&
-                    hash[24] == 0x65 && hash[25] == 0x9E &&
-                    hash[26] == 0x9F && hash[27] == 0xC9 &&
-                    hash[28] == 0xE6 && hash[29] == 0x3B &&
-                    hash[30] == 0x11 && hash[31] == 0x4F;
+                return hash[0] == 0xEB && hash[1] == 0xE9 &&
+                    hash[2] == 0x84 && hash[3] == 0x4E &&
+                    hash[4] == 0x84 && hash[5] == 0xF5 &&
+                    hash[6] == 0x47 && hash[7] == 0x00 &&
+                    hash[8] == 0x85 && hash[9] == 0x23 &&
+                    hash[10] == 0x15 && hash[11] == 0x65 &&
+                    hash[12] == 0x93 && hash[13] == 0x69 &&
+                    hash[14] == 0x30 && hash[15] == 0x14 &&
+                    hash[16] == 0x86 && hash[17] == 0x9E &&
+                    hash[18] == 0xF6 && hash[19] == 0x7D &&
+                    hash[20] == 0x4D && hash[21] == 0x74 &&
+                    hash[22] == 0xCE && hash[23] == 0x8E &&
+                    hash[24] == 0xDB && hash[25] == 0x68 &&
+                    hash[26] == 0xE1 && hash[27] == 0x29 &&
+                    hash[28] == 0xA8 && hash[29] == 0x7D &&
+                    hash[30] == 0x83 && hash[31] == 0xA2;
             }
             return hash[0] == 0xFA && hash[1] == 0xE4 &&
                 hash[2] == 0x25 && hash[3] == 0x24 &&

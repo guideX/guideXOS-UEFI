@@ -44,11 +44,92 @@ $runtimeSourceRoot = Join-Path $root 'out\rt'
 $runtimeDotnet = Join-Path $runtimeSourceRoot '.dotnet\dotnet.exe'
 $coreLibProject = Join-Path $runtimeSourceRoot 'src\coreclr\nativeaot\System.Private.CoreLib\src\System.Private.CoreLib.csproj'
 $coreLibSource = Join-Path $runtimeSourceRoot 'src\coreclr\nativeaot\System.Private.CoreLib\src\Internal\Runtime\CompilerHelpers\InteropHelpers.cs'
+$startupCodeExtensionsSource = Join-Path $runtimeSourceRoot 'src\coreclr\nativeaot\System.Private.CoreLib\src\Internal\Runtime\CompilerHelpers\StartupCode\StartupCodeHelpers.Extensions.cs'
+$threadNativeAotWindowsSource = Join-Path $runtimeSourceRoot 'src\coreclr\nativeaot\System.Private.CoreLib\src\System\Threading\Thread.NativeAot.Windows.cs'
 $coreLibOutputRoot = Join-Path $work 'corelib-output'
 $coreLibIntermediate = Join-Path $runtimeSourceRoot 'artifacts\obj\coreclr\guidexos.x64.Release'
-foreach ($path in @($runtimeDotnet, $coreLibProject, $coreLibSource, $coreLibIntermediate)) {
+foreach ($path in @($runtimeDotnet, $coreLibProject, $coreLibSource, $startupCodeExtensionsSource, $threadNativeAotWindowsSource, $coreLibIntermediate)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "The Phase 26 CoreLib build input is absent: $path" }
 }
+
+# NativeAOT is compiled with the Windows CoreLib surface for this target, but
+# GUIDEXOS has no COM apartment or host Windows thread handle.  Keep those
+# Windows-only startup paths out of the GUIDEXOS closure and preserve a logical
+# managed Thread for the current PAL thread.  Apply the narrow source edits
+# here so rebuilding from a clean runtime checkout does not depend on ignored
+# edits under out/rt.
+$startupCodeExtensionsText = Get-Content -LiteralPath $startupCodeExtensionsSource -Raw
+$startupWindowsGuardMatches = [regex]::Matches($startupCodeExtensionsText, '(?m)^#if TARGET_WINDOWS$')
+if ($startupWindowsGuardMatches.Count -eq 1) {
+    $startupCodeExtensionsText = [regex]::Replace(
+        $startupCodeExtensionsText,
+        '(?m)^#if TARGET_WINDOWS$',
+        '#if TARGET_WINDOWS && !TARGET_GUIDEXOS',
+        1)
+}
+elseif (-not $startupCodeExtensionsText.Contains('#if TARGET_WINDOWS && !TARGET_GUIDEXOS')) {
+    throw 'The expected StartupCodeHelpers apartment-state target seam is absent or ambiguous.'
+}
+[IO.File]::WriteAllText($startupCodeExtensionsSource,
+    $startupCodeExtensionsText,
+    [Text.UTF8Encoding]::new($false))
+
+$threadNativeAotWindowsText = Get-Content -LiteralPath $threadNativeAotWindowsSource -Raw
+$threadExistingGuidexos = @'
+#pragma warning disable CA1822
+        private void PlatformSpecificInitializeExistingThread()
+        {
+#if TARGET_GUIDEXOS
+            // GUIDEXOS has no host Windows thread handle.  The managed startup
+            // path only needs the logical Thread state for shutdown; do not
+            // manufacture a successful DuplicateHandle result.
+            return;
+#else
+            _osHandle = GetOSHandleForCurrentThread();
+#endif
+        }
+'@
+if ([regex]::IsMatch($threadNativeAotWindowsText,
+        '(?ms)^        private void PlatformSpecificInitializeExistingThread\(\)\r?\n        \{\r?\n            _osHandle = GetOSHandleForCurrentThread\(\);\r?\n        \}\r?\n')) {
+    $threadNativeAotWindowsText = [regex]::Replace(
+        $threadNativeAotWindowsText,
+        '(?ms)^        private void PlatformSpecificInitializeExistingThread\(\)\r?\n        \{\r?\n            _osHandle = GetOSHandleForCurrentThread\(\);\r?\n        \}\r?\n',
+        $threadExistingGuidexos,
+        1)
+}
+elseif (-not $threadNativeAotWindowsText.Contains('#if TARGET_GUIDEXOS') -or
+        -not $threadNativeAotWindowsText.Contains('manufacture a successful DuplicateHandle result.')) {
+    throw 'The expected Thread existing-thread target seam is absent or ambiguous.'
+}
+
+$threadPriorityGuidexos = @'
+        private ThreadPriority GetPriorityLive()
+        {
+#if TARGET_GUIDEXOS
+            return ThreadPriority.Normal;
+#else
+            Debug.Assert(!_osHandle.IsInvalid);
+            return MapFromOSPriority(Interop.Kernel32.GetThreadPriority(_osHandle));
+#endif
+        }
+#pragma warning restore CA1822
+'@
+if ([regex]::IsMatch($threadNativeAotWindowsText,
+        '(?ms)^        private ThreadPriority GetPriorityLive\(\)\r?\n        \{\r?\n            Debug\.Assert\(!_osHandle\.IsInvalid\);\r?\n            return MapFromOSPriority\(Interop\.Kernel32\.GetThreadPriority\(_osHandle\)\);\r?\n        \}\r?\n')) {
+    $threadNativeAotWindowsText = [regex]::Replace(
+        $threadNativeAotWindowsText,
+        '(?ms)^        private ThreadPriority GetPriorityLive\(\)\r?\n        \{\r?\n            Debug\.Assert\(!_osHandle\.IsInvalid\);\r?\n            return MapFromOSPriority\(Interop\.Kernel32\.GetThreadPriority\(_osHandle\)\);\r?\n        \}\r?\n',
+        $threadPriorityGuidexos,
+        1)
+}
+elseif (-not $threadNativeAotWindowsText.Contains('return ThreadPriority.Normal;') -or
+        -not $threadNativeAotWindowsText.Contains('#if TARGET_GUIDEXOS')) {
+    throw 'The expected Thread priority target seam is absent or ambiguous.'
+}
+[IO.File]::WriteAllText($threadNativeAotWindowsSource,
+    $threadNativeAotWindowsText,
+    [Text.UTF8Encoding]::new($false))
+
 $coreLibText = Get-Content -LiteralPath $coreLibSource -Raw
 if (-not $coreLibText.Contains('TARGET_GUIDEXOS') -or
     -not $coreLibText.Contains('Marshal.GetLastPInvokeError()') -or
@@ -92,15 +173,6 @@ if (-not (Test-Path -LiteralPath $gcEnvironmentTemplate -PathType Leaf)) {
 }
 Copy-Item -LiteralPath $gcEnvironmentTemplate -Destination $gcEnvironmentSource -Force
 $gcEnvironmentText = Get-Content -LiteralPath $gcEnvironmentSource -Raw
-$gcEnvironmentText = $gcEnvironmentText.Replace(
-    'GCSystemInfo g_SystemInfo;',
-    'extern "C" void guidexos_pal_runtime_diagnostic(unsigned long long marker);' + [Environment]::NewLine + [Environment]::NewLine +
-        'GCSystemInfo g_SystemInfo;')
-$gcEnvironmentText = $gcEnvironmentText.Replace(
-    'return guidexos_pal_vm_reserve(static_cast<uint64_t>(size), static_cast<uint64_t>(alignment));',
-    'void* address = guidexos_pal_vm_reserve(static_cast<uint64_t>(size), static_cast<uint64_t>(alignment));' + [Environment]::NewLine +
-        '    if (address == nullptr) guidexos_pal_runtime_diagnostic(0x4000000000000000ULL | ((static_cast<unsigned long long>(size) >> 12) & 0x0FFFFFFFULL) | ((static_cast<unsigned long long>(alignment) & 0xFFFULL) << 28));' + [Environment]::NewLine +
-        '    return address;')
 $gcEnvironmentOld = @'
 size_t GCToOSInterface::GetVirtualMemoryLimit()
 {
@@ -148,10 +220,9 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gcEnvironmentObject -P
     throw 'The Phase 26 GUIDEXOS GC environment overlay failed to compile.'
 }
 
-# Temporary Phase 26 startup diagnostics.  The native runtime's wmain wrapper
-# maps every RhInitialize false return to -1, so the first proof boot needs a
-# target-native breadcrumb at each exact gate.  The overlay is private to the
-# Phase 26 package and is removed from this script after the gate is identified.
+# Phase 26 startup overlay. The pinned runtime package omits this target-native
+# source member from its replacement archive, so compile the stock source
+# explicitly and replace only that member in the private Phase 26 pack.
 $startupSource = Join-Path $work 'startup.phase26.cpp'
 $startupTemplate = Join-Path $root 'out\rt\src\coreclr\nativeaot\Runtime\startup.cpp'
 if (-not (Test-Path -LiteralPath $startupTemplate -PathType Leaf)) {
@@ -160,35 +231,6 @@ if (-not (Test-Path -LiteralPath $startupTemplate -PathType Leaf)) {
 Copy-Item -LiteralPath $startupTemplate -Destination $startupSource -Force
 $startupText = Get-Content -LiteralPath $startupSource -Raw
 $startupNewLine = [Environment]::NewLine
-$startupText = $startupText.Replace(
-    'extern RhConfig * g_pRhConfig;',
-    'extern RhConfig * g_pRhConfig;' + $startupNewLine + $startupNewLine +
-        'extern "C" void guidexos_pal_runtime_diagnostic(unsigned long long marker);')
-$startupText = [regex]::Replace($startupText,
-    'if \(!InitializeInterfaceDispatch\(\)\)\r?\n        return false;',
-    'guidexos_pal_runtime_diagnostic(0x201);' + $startupNewLine +
-        '    if (!InitializeInterfaceDispatch()) { guidexos_pal_runtime_diagnostic(0x202); return false; }' + $startupNewLine +
-        '    guidexos_pal_runtime_diagnostic(0x203);')
-$startupText = [regex]::Replace($startupText,
-    'if \(!RestrictedCallouts::Initialize\(\)\)\r?\n        return false;',
-    'guidexos_pal_runtime_diagnostic(0x210);' + $startupNewLine +
-        '    if (!RestrictedCallouts::Initialize()) { guidexos_pal_runtime_diagnostic(0x211); return false; }' + $startupNewLine +
-        '    guidexos_pal_runtime_diagnostic(0x212);')
-$startupText = [regex]::Replace($startupText,
-    'if \(!RuntimeInstance::Initialize\(hPalInstance\)\)\r?\n        return false;',
-    'guidexos_pal_runtime_diagnostic(0x220);' + $startupNewLine +
-        '    if (!RuntimeInstance::Initialize(hPalInstance)) { guidexos_pal_runtime_diagnostic(0x221); return false; }' + $startupNewLine +
-        '    guidexos_pal_runtime_diagnostic(0x222);')
-$startupText = [regex]::Replace($startupText,
-    'if \(!InitializeGC\(\)\)\r?\n        return false;',
-    'guidexos_pal_runtime_diagnostic(0x230);' + $startupNewLine +
-        '    if (!InitializeGC()) { guidexos_pal_runtime_diagnostic(0x231); return false; }' + $startupNewLine +
-        '    guidexos_pal_runtime_diagnostic(0x232);')
-$startupText = [regex]::Replace($startupText,
-    'if \(!DetectCPUFeatures\(\)\)\r?\n        return false;',
-    'guidexos_pal_runtime_diagnostic(0x240);' + $startupNewLine +
-        '    if (!DetectCPUFeatures()) { guidexos_pal_runtime_diagnostic(0x241); return false; }' + $startupNewLine +
-        '    guidexos_pal_runtime_diagnostic(0x242);')
 [IO.File]::WriteAllText($startupSource, $startupText, [Text.UTF8Encoding]::new($false))
 $startupCompileEntry = @($gcCompileEntries | Where-Object {
     ([string]$_.file) -match '(?i)[\\/]nativeaot[\\/]Runtime[\\/]startup\.cpp$' -and
@@ -205,7 +247,7 @@ $startupCompileCommand = [regex]::Replace($startupCompileCommand, '/Fd("[^"]+"|\
 $startupBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $startupCompileCommand
 & cmd.exe /d /s /c $startupBuildCommand 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $startupObject -PathType Leaf)) {
-    throw 'The Phase 26 NativeAOT startup diagnostic overlay failed to compile.'
+    throw 'The Phase 26 NativeAOT startup overlay failed to compile.'
 }
 
 $gcHelpersSource = Join-Path $work 'GCHelpers.phase26.cpp'
@@ -215,32 +257,6 @@ if (-not (Test-Path -LiteralPath $gcHelpersTemplate -PathType Leaf)) {
 }
 Copy-Item -LiteralPath $gcHelpersTemplate -Destination $gcHelpersSource -Force
 $gcHelpersText = Get-Content -LiteralPath $gcHelpersSource -Raw
-$gcHelpersText = $gcHelpersText.Replace(
-    'bool RhInitializeFinalization();',
-    'bool RhInitializeFinalization();' + $startupNewLine +
-        'extern "C" void guidexos_pal_runtime_diagnostic(unsigned long long marker);')
-$gcHelpersText = [regex]::Replace($gcHelpersText,
-    'HRESULT hr = GCHeapUtilities::InitializeGC\(\);\r?\n    if \(FAILED\(hr\)\)\r?\n        return false;',
-    'guidexos_pal_runtime_diagnostic(0x301);' + $startupNewLine +
-        '    HRESULT hr = GCHeapUtilities::InitializeGC();' + $startupNewLine +
-        '    if (FAILED(hr)) { guidexos_pal_runtime_diagnostic(0x302); return false; }' + $startupNewLine +
-        '    guidexos_pal_runtime_diagnostic(0x303);')
-$gcHelpersText = [regex]::Replace($gcHelpersText,
-    'hr = g_pGCHeap->Initialize\(\);\r?\n    if \(FAILED\(hr\)\)\r?\n        return false;',
-    'guidexos_pal_runtime_diagnostic(0x310);' + $startupNewLine +
-        '    hr = g_pGCHeap->Initialize();' + $startupNewLine +
-        '    if (FAILED(hr)) { guidexos_pal_runtime_diagnostic(0x311); return false; }' + $startupNewLine +
-        '    guidexos_pal_runtime_diagnostic(0x312);')
-$gcHelpersText = [regex]::Replace($gcHelpersText,
-    'if \(!RhInitializeFinalization\(\)\)\r?\n        return false;',
-    'guidexos_pal_runtime_diagnostic(0x320);' + $startupNewLine +
-        '    if (!RhInitializeFinalization()) { guidexos_pal_runtime_diagnostic(0x321); return false; }' + $startupNewLine +
-        '    guidexos_pal_runtime_diagnostic(0x322);')
-$gcHelpersText = [regex]::Replace($gcHelpersText,
-    'if \(!GCHandleUtilities::GetGCHandleManager\(\)->Initialize\(\)\)\r?\n        return false;',
-    'guidexos_pal_runtime_diagnostic(0x330);' + $startupNewLine +
-        '    if (!GCHandleUtilities::GetGCHandleManager()->Initialize()) { guidexos_pal_runtime_diagnostic(0x331); return false; }' + $startupNewLine +
-        '    guidexos_pal_runtime_diagnostic(0x332);')
 [IO.File]::WriteAllText($gcHelpersSource, $gcHelpersText, [Text.UTF8Encoding]::new($false))
 $gcHelpersCompileEntry = @($gcCompileEntries | Where-Object {
     ([string]$_.file) -match '(?i)[\\/]nativeaot[\\/]Runtime[\\/]GCHelpers\.cpp$' -and
@@ -257,14 +273,11 @@ $gcHelpersCompileCommand = [regex]::Replace($gcHelpersCompileCommand, '/Fd("[^"]
 $gcHelpersBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $gcHelpersCompileCommand
 & cmd.exe /d /s /c $gcHelpersBuildCommand 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gcHelpersObject -PathType Leaf)) {
-    throw 'The Phase 26 NativeAOT GC helper diagnostic overlay failed to compile.'
+    throw 'The Phase 26 NativeAOT GC helper overlay failed to compile.'
 }
 
-# Temporary Phase 26 stack-walk diagnostics.  The first managed lifetime now
-# reaches StackFrameIterator::CalculateCurrentMethodState and fails when its
-# current control PC cannot be resolved to the registered NativeAOT code
-# manager.  Capture that PC and the two lookup results before changing the
-# inherited runtime implementation.
+# Phase 26 stack-walk overlay. The pinned source member is compiled explicitly
+# because it is absent from the inherited replacement archive.
 $stackIteratorSource = Join-Path $work 'StackFrameIterator.phase26.cpp'
 $stackIteratorTemplate = Join-Path $root 'out\rt\src\coreclr\nativeaot\Runtime\StackFrameIterator.cpp'
 if (-not (Test-Path -LiteralPath $stackIteratorTemplate -PathType Leaf)) {
@@ -272,24 +285,6 @@ if (-not (Test-Path -LiteralPath $stackIteratorTemplate -PathType Leaf)) {
 }
 Copy-Item -LiteralPath $stackIteratorTemplate -Destination $stackIteratorSource -Force
 $stackIteratorText = Get-Content -LiteralPath $stackIteratorSource -Raw
-$stackIteratorText = $stackIteratorText.Replace(
-    '#pragma warning(disable:4061)',
-    'extern "C" void guidexos_pal_runtime_diagnostic(unsigned long long marker);' + $startupNewLine + $startupNewLine +
-        '#pragma warning(disable:4061)')
-$stackIteratorNeedle = '        m_pCodeManager = dac_cast<PTR_ICodeManager>(m_pInstance->GetCodeManagerForAddress(m_ControlPC));'
-if (-not $stackIteratorText.Contains($stackIteratorNeedle)) {
-    throw 'The expected NativeAOT stack-frame code-manager lookup seam is absent.'
-}
-$stackIteratorReplacement = @'
-        guidexos_pal_runtime_diagnostic(0x7200000000000000ULL |
-            ((unsigned long long)(uintptr_t)m_ControlPC & 0x0000FFFFFFFFFFFFULL));
-        guidexos_pal_runtime_diagnostic(0x7300000000000000ULL |
-            (m_pInstance->IsManaged(m_ControlPC) ? 1ULL : 0ULL));
-        m_pCodeManager = dac_cast<PTR_ICodeManager>(m_pInstance->GetCodeManagerForAddress(m_ControlPC));
-        guidexos_pal_runtime_diagnostic(0x7400000000000000ULL |
-            (m_pCodeManager != NULL ? 1ULL : 0ULL));
-'@
-$stackIteratorText = $stackIteratorText.Replace($stackIteratorNeedle, $stackIteratorReplacement.TrimEnd())
 [IO.File]::WriteAllText($stackIteratorSource, $stackIteratorText, [Text.UTF8Encoding]::new($false))
 $stackIteratorCompileEntry = @($gcCompileEntries | Where-Object {
     ([string]$_.file) -match '(?i)[\\/]nativeaot[\\/]Runtime[\\/]StackFrameIterator\.cpp$' -and
@@ -306,13 +301,11 @@ $stackIteratorCompileCommand = [regex]::Replace($stackIteratorCompileCommand, '/
 $stackIteratorBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $stackIteratorCompileCommand
 & cmd.exe /d /s /c $stackIteratorBuildCommand 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $stackIteratorObject -PathType Leaf)) {
-    throw 'The Phase 26 NativeAOT stack-frame iterator diagnostic overlay failed to compile.'
+    throw 'The Phase 26 NativeAOT stack-frame iterator overlay failed to compile.'
 }
 
-# Temporary Phase 26 runtime-instance diagnostics.  The generated wmain now
-# passes the actual .__managedcode range, so record the range as it enters the
-# runtime and as StackFrameIterator queries it.  This separates a bad native
-# registration call from a runtime-instance state/identity problem.
+# Phase 26 runtime-instance overlay. The pinned source member is compiled
+# explicitly because it is absent from the inherited replacement archive.
 $runtimeInstanceSource = Join-Path $work 'RuntimeInstance.phase26.cpp'
 $runtimeInstanceTemplate = Join-Path $root 'out\rt\src\coreclr\nativeaot\Runtime\RuntimeInstance.cpp'
 if (-not (Test-Path -LiteralPath $runtimeInstanceTemplate -PathType Leaf)) {
@@ -320,44 +313,6 @@ if (-not (Test-Path -LiteralPath $runtimeInstanceTemplate -PathType Leaf)) {
 }
 Copy-Item -LiteralPath $runtimeInstanceTemplate -Destination $runtimeInstanceSource -Force
 $runtimeInstanceText = Get-Content -LiteralPath $runtimeInstanceSource -Raw
-$runtimeInstanceText = $runtimeInstanceText.Replace(
-    '#include "common.h"',
-    '#include "common.h"' + $startupNewLine +
-        'extern "C" void guidexos_pal_runtime_diagnostic(unsigned long long marker);')
-$runtimeInstanceIsManagedNeedle = '    return (dac_cast<TADDR>(pvAddress) - dac_cast<TADDR>(m_pvManagedCodeStartRange) < m_cbManagedCodeRange);'
-if (-not $runtimeInstanceText.Contains($runtimeInstanceIsManagedNeedle)) {
-    throw 'The expected NativeAOT RuntimeInstance::IsManaged seam is absent.'
-}
-$runtimeInstanceIsManagedReplacement = @'
-    const bool isManaged = (dac_cast<TADDR>(pvAddress) - dac_cast<TADDR>(m_pvManagedCodeStartRange) < m_cbManagedCodeRange);
-    guidexos_pal_runtime_diagnostic(0x7500000000000000ULL |
-        ((unsigned long long)(uintptr_t)m_pvManagedCodeStartRange & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x7600000000000000ULL |
-        ((unsigned long long)m_cbManagedCodeRange & 0x00000000FFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x7700000000000000ULL |
-        ((unsigned long long)(uintptr_t)pvAddress & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x7A00000000000000ULL | (isManaged ? 1ULL : 0ULL));
-    return isManaged;
-'@
-$runtimeInstanceText = $runtimeInstanceText.Replace(
-    $runtimeInstanceIsManagedNeedle,
-    $runtimeInstanceIsManagedReplacement.TrimEnd())
-$runtimeInstanceRegisterNeedle = '    m_CodeManager = pCodeManager;'
-if (-not $runtimeInstanceText.Contains($runtimeInstanceRegisterNeedle)) {
-    throw 'The expected NativeAOT RuntimeInstance registration seam is absent.'
-}
-$runtimeInstanceRegisterReplacement = @'
-    guidexos_pal_runtime_diagnostic(0x7800000000000000ULL |
-        ((unsigned long long)(uintptr_t)pvStartRange & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x7900000000000000ULL |
-        ((unsigned long long)cbRange & 0x00000000FFFFFFFFULL));
-    m_CodeManager = pCodeManager;
-    m_pvManagedCodeStartRange = pvStartRange;
-    m_cbManagedCodeRange = cbRange;
-'@
-$runtimeInstanceText = $runtimeInstanceText.Replace(
-    $runtimeInstanceRegisterNeedle,
-    $runtimeInstanceRegisterReplacement.TrimEnd())
 [IO.File]::WriteAllText($runtimeInstanceSource, $runtimeInstanceText, [Text.UTF8Encoding]::new($false))
 $runtimeInstanceCompileEntry = @($gcCompileEntries | Where-Object {
     ([string]$_.file) -match '(?i)[\\/]nativeaot[\\/]Runtime[\\/]RuntimeInstance\.cpp$' -and
@@ -374,12 +329,11 @@ $runtimeInstanceCompileCommand = [regex]::Replace($runtimeInstanceCompileCommand
 $runtimeInstanceBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $runtimeInstanceCompileCommand
 & cmd.exe /d /s /c $runtimeInstanceBuildCommand 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $runtimeInstanceObject -PathType Leaf)) {
-    throw 'The Phase 26 NativeAOT runtime-instance diagnostic overlay failed to compile.'
+    throw 'The Phase 26 NativeAOT runtime-instance overlay failed to compile.'
 }
 
-# Temporary Phase 26 NativeAOT module-registration diagnostics.  RuntimeInstance
-# sees an empty range, so capture RhRegisterOSModule's incoming range and the
-# exact point at which it attempts to publish the code manager.
+# Phase 26 NativeAOT module-registration overlay. The pinned source member is
+# compiled explicitly because it is absent from the inherited replacement archive.
 $coffNativeCodeManagerSource = Join-Path $work 'CoffNativeCodeManager.phase26.cpp'
 $coffNativeCodeManagerTemplate = Join-Path $root 'out\rt\src\coreclr\nativeaot\Runtime\windows\CoffNativeCodeManager.cpp'
 if (-not (Test-Path -LiteralPath $coffNativeCodeManagerTemplate -PathType Leaf)) {
@@ -387,133 +341,6 @@ if (-not (Test-Path -LiteralPath $coffNativeCodeManagerTemplate -PathType Leaf))
 }
 Copy-Item -LiteralPath $coffNativeCodeManagerTemplate -Destination $coffNativeCodeManagerSource -Force
 $coffNativeCodeManagerText = Get-Content -LiteralPath $coffNativeCodeManagerSource -Raw
-$coffNativeCodeManagerText = $coffNativeCodeManagerText.Replace(
-    '#include "common.h"',
-    '#include "common.h"' + $startupNewLine +
-        'extern "C" void guidexos_pal_runtime_diagnostic(unsigned long long marker);')
-$coffGcProbeNeedle = '#include "ICodeManager.h"'
-$coffGcProbeText = $coffGcProbeNeedle + $startupNewLine + @'
-static void guidexos_phase26_gc_probe(void* hCallback, PTR_PTR_VOID pObject, uint32_t flags)
-{
-    guidexos_pal_runtime_diagnostic(0x8D00000000000000ULL |
-        ((unsigned long long)(uintptr_t)pObject & 0x0000FFFFFFFFFFFFULL));
-    GCEnumContext* context = (GCEnumContext*)hCallback;
-    context->pCallback(hCallback, pObject, flags);
-}
-'@
-$coffNativeCodeManagerText = $coffNativeCodeManagerText.Replace(
-    $coffGcProbeNeedle,
-    $coffGcProbeText.TrimEnd())
-$coffRegistrationNeedle = '    IMAGE_DATA_DIRECTORY * pRuntimeFunctions = &(pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION]);'
-if (-not $coffNativeCodeManagerText.Contains($coffRegistrationNeedle)) {
-    throw 'The expected NativeAOT RhRegisterOSModule seam is absent.'
-}
-$coffRegistrationReplacement = @'
-    guidexos_pal_runtime_diagnostic(0x7C00000000000000ULL |
-        ((unsigned long long)(uintptr_t)pModule & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x7D00000000000000ULL |
-        ((unsigned long long)(uintptr_t)pvManagedCodeStartRange & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x7E00000000000000ULL |
-        ((unsigned long long)cbManagedCodeRange & 0x00000000FFFFFFFFULL));
-    IMAGE_DATA_DIRECTORY * pRuntimeFunctions = &(pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION]);
-'@
-$coffNativeCodeManagerText = $coffNativeCodeManagerText.Replace(
-    $coffRegistrationNeedle,
-    $coffRegistrationReplacement.TrimEnd())
-$coffRegisterCallNeedle = '    RegisterCodeManager(pCoffNativeCodeManager, pvManagedCodeStartRange, cbManagedCodeRange);'
-if (-not $coffNativeCodeManagerText.Contains($coffRegisterCallNeedle)) {
-    throw 'The expected NativeAOT COFF RegisterCodeManager call seam is absent.'
-}
-$coffRegisterCallReplacement = @'
-    guidexos_pal_runtime_diagnostic(0x7F00000000000000ULL);
-    RegisterCodeManager(pCoffNativeCodeManager, pvManagedCodeStartRange, cbManagedCodeRange);
-    guidexos_pal_runtime_diagnostic(0x8000000000000000ULL);
-'@
-$coffNativeCodeManagerText = $coffNativeCodeManagerText.Replace(
-    $coffRegisterCallNeedle,
-    $coffRegisterCallReplacement.TrimEnd())
-$coffEnumPattern = '(?s)(void CoffNativeCodeManager::EnumGcRefs\(.*?\{\r?\n)(    PTR_uint8_t gcInfo;\r?\n    uint32_t codeOffset = GetCodeOffset\(pMethodInfo, safePointAddress, &gcInfo\);\r?\n)'
-if (-not [regex]::IsMatch($coffNativeCodeManagerText, $coffEnumPattern)) {
-    throw 'The expected NativeAOT EnumGcRefs seam is absent.'
-}
-$coffEnumReplacement = @'
-    guidexos_pal_runtime_diagnostic(0x8100000000000000ULL |
-        ((unsigned long long)(uintptr_t)safePointAddress & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8200000000000000ULL |
-        ((unsigned long long)pRegisterSet->IP & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8300000000000000ULL |
-        ((unsigned long long)pRegisterSet->SP & 0x0000FFFFFFFFFFFFULL));
-    PTR_uint8_t gcInfo;
-    uint32_t codeOffset = GetCodeOffset(pMethodInfo, safePointAddress, &gcInfo);
-    guidexos_pal_runtime_diagnostic(0x8400000000000000ULL |
-        ((unsigned long long)codeOffset & 0x00000000FFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8500000000000000ULL |
-        ((unsigned long long)pRegisterSet->pRbx & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8600000000000000ULL |
-        ((unsigned long long)pRegisterSet->pRbp & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8700000000000000ULL |
-        ((unsigned long long)pRegisterSet->pRsi & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8800000000000000ULL |
-        ((unsigned long long)pRegisterSet->pRdi & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8900000000000000ULL |
-        ((unsigned long long)pRegisterSet->pR12 & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8A00000000000000ULL |
-        ((unsigned long long)pRegisterSet->pR13 & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8B00000000000000ULL |
-        ((unsigned long long)pRegisterSet->pR14 & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8C00000000000000ULL |
-        ((unsigned long long)pRegisterSet->pR15 & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8E00000000000000ULL |
-        ((unsigned long long)pRegisterSet->pRax & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8F00000000000000ULL |
-        ((unsigned long long)pRegisterSet->pRcx & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9000000000000000ULL |
-        ((unsigned long long)pRegisterSet->pRdx & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9100000000000000ULL |
-        ((unsigned long long)pRegisterSet->pR8 & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9200000000000000ULL |
-        ((unsigned long long)pRegisterSet->pR9 & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9300000000000000ULL |
-        ((unsigned long long)pRegisterSet->pR10 & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9400000000000000ULL |
-        ((unsigned long long)pRegisterSet->pR11 & 0x0000FFFFFFFFFFFFULL));
-'@
-$coffNativeCodeManagerText = [regex]::Replace(
-    $coffNativeCodeManagerText,
-    $coffEnumPattern,
-    ('$1' + $coffEnumReplacement.TrimEnd() + $startupNewLine),
-    1)
-$coffDecoderNeedle = '    if (!decoder.EnumerateLiveSlots('
-if (-not $coffNativeCodeManagerText.Contains($coffDecoderNeedle)) {
-    throw 'The expected NativeAOT GC decoder enumeration seam is absent.'
-}
-$coffDecoderReplacement = @'
-    guidexos_pal_runtime_diagnostic(0x9500000000000000ULL |
-        ((unsigned long long)decoder.GetStackBaseRegister() & 0x00000000000000FFULL));
-    guidexos_pal_runtime_diagnostic(0x9600000000000000ULL |
-        ((unsigned long long)(pRegisterSet->pRbx != 0 ? *(uintptr_t*)pRegisterSet->pRbx : 0) & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9700000000000000ULL |
-        ((unsigned long long)(pRegisterSet->pRbp != 0 ? *(uintptr_t*)pRegisterSet->pRbp : 0) & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9800000000000000ULL |
-        ((unsigned long long)(pRegisterSet->pRsi != 0 ? *(uintptr_t*)pRegisterSet->pRsi : 0) & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9900000000000000ULL |
-        ((unsigned long long)(pRegisterSet->pRdi != 0 ? *(uintptr_t*)pRegisterSet->pRdi : 0) & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9A00000000000000ULL |
-        ((unsigned long long)(pRegisterSet->pR12 != 0 ? *(uintptr_t*)pRegisterSet->pR12 : 0) & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9B00000000000000ULL |
-        ((unsigned long long)(pRegisterSet->pR13 != 0 ? *(uintptr_t*)pRegisterSet->pR13 : 0) & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9C00000000000000ULL |
-        ((unsigned long long)(pRegisterSet->pR14 != 0 ? *(uintptr_t*)pRegisterSet->pR14 : 0) & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x9D00000000000000ULL |
-        ((unsigned long long)(pRegisterSet->pR15 != 0 ? *(uintptr_t*)pRegisterSet->pR15 : 0) & 0x0000FFFFFFFFFFFFULL));
-    if (!decoder.EnumerateLiveSlots(
-'@
-$coffNativeCodeManagerText = $coffNativeCodeManagerText.Replace(
-    $coffDecoderNeedle,
-    $coffDecoderReplacement.TrimEnd())
-$coffNativeCodeManagerText = $coffNativeCodeManagerText.Replace(
-    'hCallback->pCallback,',
-    'guidexos_phase26_gc_probe,')
 [IO.File]::WriteAllText($coffNativeCodeManagerSource, $coffNativeCodeManagerText, [Text.UTF8Encoding]::new($false))
 $coffNativeCodeManagerCompileEntry = @($windowsCompileEntries | Where-Object {
     ([string]$_.file) -match '(?i)[\\/]nativeaot[\\/]Runtime[\\/]windows[\\/]CoffNativeCodeManager\.cpp$' -and
@@ -530,7 +357,7 @@ $coffNativeCodeManagerCompileCommand = [regex]::Replace($coffNativeCodeManagerCo
 $coffNativeCodeManagerBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $coffNativeCodeManagerCompileCommand
 & cmd.exe /d /s /c $coffNativeCodeManagerBuildCommand 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $coffNativeCodeManagerObject -PathType Leaf)) {
-    throw 'The Phase 26 NativeAOT COFF code-manager diagnostic overlay failed to compile.'
+    throw 'The Phase 26 NativeAOT COFF code-manager overlay failed to compile.'
 }
 
 function Expand-Nupkg([string]$source, [string]$destination) {
@@ -590,61 +417,61 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gcLibraryPhase26 -Path
 Move-Item -LiteralPath $gcLibraryPhase26 -Destination $runtimeGcLibrary -Force
 $startupLibraryMember = 'nativeaot\Runtime\Full\CMakeFiles\Runtime.WorkstationGC.dir\__\startup.cpp.obj'
 $startupLibraryWithout = Join-Path $work 'Runtime.WorkstationGC.without-startup.lib'
-$startupLibraryPhase26 = Join-Path $work 'Runtime.WorkstationGC.with-startup-diagnostic.lib'
+$startupLibraryPhase26 = Join-Path $work 'Runtime.WorkstationGC.with-startup.lib'
 & $libraryTool.FullName /nologo "/out:$startupLibraryWithout" "/remove:$startupLibraryMember" $runtimeGcLibrary 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $startupLibraryWithout -PathType Leaf)) {
     throw 'The inherited Runtime.WorkstationGC startup member could not be removed.'
 }
 & $libraryTool.FullName /nologo "/out:$startupLibraryPhase26" $startupLibraryWithout $startupObject 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $startupLibraryPhase26 -PathType Leaf)) {
-    throw 'The Phase 26 NativeAOT startup diagnostic replacement failed.'
+    throw 'The Phase 26 NativeAOT startup replacement failed.'
 }
 Move-Item -LiteralPath $startupLibraryPhase26 -Destination $runtimeGcLibrary -Force
 $gcHelpersLibraryMember = 'nativeaot\Runtime\Full\CMakeFiles\Runtime.WorkstationGC.dir\__\GCHelpers.cpp.obj'
 $gcHelpersLibraryWithout = Join-Path $work 'Runtime.WorkstationGC.without-gchelpers.lib'
-$gcHelpersLibraryPhase26 = Join-Path $work 'Runtime.WorkstationGC.with-gchelpers-diagnostic.lib'
+$gcHelpersLibraryPhase26 = Join-Path $work 'Runtime.WorkstationGC.with-gchelpers.lib'
 & $libraryTool.FullName /nologo "/out:$gcHelpersLibraryWithout" "/remove:$gcHelpersLibraryMember" $runtimeGcLibrary 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gcHelpersLibraryWithout -PathType Leaf)) {
     throw 'The inherited Runtime.WorkstationGC GC helper member could not be removed.'
 }
 & $libraryTool.FullName /nologo "/out:$gcHelpersLibraryPhase26" $gcHelpersLibraryWithout $gcHelpersObject 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gcHelpersLibraryPhase26 -PathType Leaf)) {
-    throw 'The Phase 26 NativeAOT GC helper diagnostic replacement failed.'
+    throw 'The Phase 26 NativeAOT GC helper replacement failed.'
 }
 Move-Item -LiteralPath $gcHelpersLibraryPhase26 -Destination $runtimeGcLibrary -Force
 $stackIteratorLibraryMember = 'nativeaot\Runtime\Full\CMakeFiles\Runtime.WorkstationGC.dir\__\StackFrameIterator.cpp.obj'
 $stackIteratorLibraryWithout = Join-Path $work 'Runtime.WorkstationGC.without-stack-iterator.lib'
-$stackIteratorLibraryPhase26 = Join-Path $work 'Runtime.WorkstationGC.with-stack-iterator-diagnostic.lib'
+$stackIteratorLibraryPhase26 = Join-Path $work 'Runtime.WorkstationGC.with-stack-iterator.lib'
 & $libraryTool.FullName /nologo "/out:$stackIteratorLibraryWithout" "/remove:$stackIteratorLibraryMember" $runtimeGcLibrary 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $stackIteratorLibraryWithout -PathType Leaf)) {
     throw 'The inherited Runtime.WorkstationGC stack-frame iterator member could not be removed.'
 }
 & $libraryTool.FullName /nologo "/out:$stackIteratorLibraryPhase26" $stackIteratorLibraryWithout $stackIteratorObject 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $stackIteratorLibraryPhase26 -PathType Leaf)) {
-    throw 'The Phase 26 NativeAOT stack-frame iterator diagnostic replacement failed.'
+    throw 'The Phase 26 NativeAOT stack-frame iterator replacement failed.'
 }
 Move-Item -LiteralPath $stackIteratorLibraryPhase26 -Destination $runtimeGcLibrary -Force
 $runtimeInstanceLibraryMember = 'nativeaot\Runtime\Full\CMakeFiles\Runtime.WorkstationGC.dir\__\RuntimeInstance.cpp.obj'
 $runtimeInstanceLibraryWithout = Join-Path $work 'Runtime.WorkstationGC.without-runtime-instance.lib'
-$runtimeInstanceLibraryPhase26 = Join-Path $work 'Runtime.WorkstationGC.with-runtime-instance-diagnostic.lib'
+$runtimeInstanceLibraryPhase26 = Join-Path $work 'Runtime.WorkstationGC.with-runtime-instance.lib'
 & $libraryTool.FullName /nologo "/out:$runtimeInstanceLibraryWithout" "/remove:$runtimeInstanceLibraryMember" $runtimeGcLibrary 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $runtimeInstanceLibraryWithout -PathType Leaf)) {
     throw 'The inherited Runtime.WorkstationGC runtime-instance member could not be removed.'
 }
 & $libraryTool.FullName /nologo "/out:$runtimeInstanceLibraryPhase26" $runtimeInstanceLibraryWithout $runtimeInstanceObject 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $runtimeInstanceLibraryPhase26 -PathType Leaf)) {
-    throw 'The Phase 26 NativeAOT runtime-instance diagnostic replacement failed.'
+    throw 'The Phase 26 NativeAOT runtime-instance replacement failed.'
 }
 Move-Item -LiteralPath $runtimeInstanceLibraryPhase26 -Destination $runtimeGcLibrary -Force
 $coffNativeCodeManagerLibraryMember = 'nativeaot\Runtime\Full\CMakeFiles\Runtime.WorkstationGC.dir\__\windows\CoffNativeCodeManager.cpp.obj'
-$coffNativeCodeManagerLibraryPhase26 = Join-Path $work 'Runtime.WorkstationGC.with-coff-code-manager-diagnostic.lib'
+$coffNativeCodeManagerLibraryPhase26 = Join-Path $work 'Runtime.WorkstationGC.with-coff-code-manager.lib'
 # Phase23's GUIDEXOS package intentionally omits the Windows COFF code-manager
 # member because its link shim supplied a blocked RhRegisterOSModule stub.
 # Append the source-built member now that Phase26 supplies the real registration
 # path; no inherited member is expected to be removed.
 & $libraryTool.FullName /nologo "/out:$coffNativeCodeManagerLibraryPhase26" $runtimeGcLibrary $coffNativeCodeManagerObject 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $coffNativeCodeManagerLibraryPhase26 -PathType Leaf)) {
-    throw 'The Phase 26 NativeAOT COFF code-manager diagnostic replacement failed.'
+    throw 'The Phase 26 NativeAOT COFF code-manager replacement failed.'
 }
 Move-Item -LiteralPath $coffNativeCodeManagerLibraryPhase26 -Destination $runtimeGcLibrary -Force
 Copy-Item -LiteralPath $palObject -Destination (Join-Path $expanded 'sdk\guidexos_nativeaot_pal_contract.obj') -Force

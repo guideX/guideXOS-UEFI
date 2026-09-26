@@ -6,7 +6,6 @@ BITS 64
 %define STARTUP_VERSION         1
 %define MANAGED_IMAGE_BASE      0x0000401000000000
 %define BOOTSTRAP_BASE          0x0000401200000000
-%define MANAGED_ENTRY           (MANAGED_IMAGE_BASE + 0x1430)
 %define RUNTIME_STATE            0x0000401100010000
 %define GS_BLOCK                0x0000401100020000
 %define TLS_VECTOR              0x0000401100030000
@@ -33,9 +32,18 @@ phase26_bootstrap_start:
     mov rax, BOOTSTRAP_BASE
     cmp qword [rdi + 24], rax
     jne .fail
-    mov rax, MANAGED_ENTRY
-    cmp qword [rdi + 32], rax
-    jne .fail
+    ; The kernel has already validated the descriptor-derived managed entry
+    ; and copied that address into the startup block.  Consume that validated
+    ; value instead of duplicating a generated wmain RVA here, while retaining
+    ; a bootstrap-side image-range check.
+    mov rax, [rdi + 32]
+    cmp rax, [rdi + 8]
+    jb .fail
+    mov rdx, [rdi + 8]
+    add rdx, [rdi + 16]
+    jc .fail
+    cmp rax, rdx
+    jae .fail
     mov rax, GS_BLOCK
     cmp qword [rdi + 56], rax
     jne .fail
@@ -81,7 +89,7 @@ phase26_bootstrap_start:
     mov qword [rdx + 0x08], 0
     mov word [rax], 0
     mov ecx, 1
-    mov rax, MANAGED_ENTRY
+    mov rax, [r15 + 32]
     call rax
     add rsp, 0x40
     mov r14d, eax

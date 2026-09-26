@@ -9,8 +9,6 @@
 
 #include "..\Phase19\guidexos_nativeaot_pal_contract.h"
 
-extern "C" void guidexos_pal_runtime_diagnostic(unsigned long long marker);
-
 typedef unsigned char u8;
 typedef unsigned int u32;
 typedef unsigned long long u64;
@@ -39,17 +37,12 @@ static void* shim_alloc(u64 size)
 {
     // NativeAOT uses zero-byte nothrow allocations for empty runtime records;
     // the PAL contract still requires a unique, page-backed non-null result.
-    u64 requested_size = size;
     if (size == 0) size = 1;
     void* address = guidexos_pal_vm_reserve(size, 0x1000);
     if (address == 0) {
-        guidexos_pal_runtime_diagnostic(0x6000000000000000ULL |
-            (requested_size & 0x0000FFFFFFFFFFFFULL));
         return 0;
     }
     if (guidexos_pal_vm_commit(address, size, 0x04) != 0) {
-        guidexos_pal_runtime_diagnostic(0x6100000000000000ULL |
-            (requested_size & 0x0000FFFFFFFFFFFFULL));
         (void)guidexos_pal_vm_release(address, 0);
         return 0;
     }
@@ -239,14 +232,6 @@ int PalGetModuleFileName(const char** name, HANDLE) { if (name) *name = 0; retur
 HANDLE PalGetModuleHandleFromPointer(void*) { return (HANDLE)&__ImageBase; }
 void PalPrintFatalError(const char* message)
 {
-    // Temporary Phase 26 breadcrumb: preserve the bounded fatal message
-    // prefix without introducing a host console dependency.
-    u64 prefix = 0;
-    if (message) {
-        for (u64 i = 0; i < 8 && message[i] != 0; ++i)
-            prefix |= ((u64)(u8)message[i]) << (i * 8);
-    }
-    guidexos_pal_runtime_diagnostic(0x7000000000000000ULL | prefix);
     guidexos_pal_fail_fast(0, (void*)message);
 }
 char* PalCopyTCharAsChar(const char* value) { return (char*)value; }
@@ -294,15 +279,6 @@ void* PalGetProcAddress(HANDLE module, const char* functionName)
     // must remain valid while that slot is zero during first-cell fixup.
     (void)module;
     if (functionName == 0) return 0;
-    static u32 guidexos_resolver_diagnostic_count = 0;
-    if (guidexos_resolver_diagnostic_count < 32) {
-        u64 prefix = 0;
-        for (u32 i = 0; i < 6 && functionName[i] != 0; ++i)
-            prefix |= ((u64)(u8)functionName[i]) << (i * 8);
-        guidexos_pal_runtime_diagnostic(
-            0xD000000000000000ULL |
-            ((u64)guidexos_resolver_diagnostic_count++ << 48) | prefix);
-    }
     if (shim_name_is(functionName, "GetLastError"))
         return (void*)&GetLastError;
     if (shim_name_is(functionName, "SetLastError"))
@@ -712,10 +688,6 @@ static u32 guidexos_rtl_virtual_unwind(u32, u64 imageBase, u64 controlPc,
     GuidexosUnwindContext* registers = (GuidexosUnwindContext*)context;
     if (handlerData) *handlerData = 0;
     if (registers == 0 || registers->Rsp == 0) return 0;
-    guidexos_pal_runtime_diagnostic(0x8100000000000000ULL |
-        (controlPc & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8200000000000000ULL |
-        (registers->Rsp & 0x0000FFFFFFFFFFFFULL));
     if (functionEntry == 0) {
         registers->Rip = *(u64*)registers->Rsp;
         registers->Rsp += sizeof(u64);
@@ -726,10 +698,6 @@ static u32 guidexos_rtl_virtual_unwind(u32, u64 imageBase, u64 controlPc,
         registers->Rip = *(u64*)registers->Rsp;
         registers->Rsp += sizeof(u64);
     }
-    guidexos_pal_runtime_diagnostic(0x8300000000000000ULL |
-        (registers->Rip & 0x0000FFFFFFFFFFFFULL));
-    guidexos_pal_runtime_diagnostic(0x8400000000000000ULL |
-        (registers->Rsp & 0x0000FFFFFFFFFFFFULL));
     if (establisherFrame) *establisherFrame = registers->Rsp;
     return 0;
 }

@@ -568,7 +568,10 @@ namespace guideXOS.Misc {
 
         internal bool TryAuthorizeUserEntry(ulong rip) {
             if (ManagedImage == null) return true;
-            return ManagedImage.TryAuthorizeEntry(rip);
+            bool allowManagedEntryResume = ManagedImage.IsPhase26 &&
+                SchedulerDispatches > 0;
+            return ManagedImage.TryAuthorizeEntry(rip,
+                allowManagedEntryResume);
         }
 
         internal void RejectUserDispatch(ulong rip) {

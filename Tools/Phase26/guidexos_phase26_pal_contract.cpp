@@ -30,7 +30,6 @@ namespace {
         RandomBytes = 0x60,
         ProcessExit = 0x70,
         FailFast = 0x71,
-        RuntimeDiagnostic = 0x72
     };
 
     static u64 Call(u64 operation, u64 a1 = 0, u64 a2 = 0, u64 a3 = 0,
@@ -110,13 +109,6 @@ void guidexos_pal_fail_fast(u32 reason, void* context) {
     (void)Call(FailFast, reason, (u64)context);
     for (;;) { }
 }
-void guidexos_pal_runtime_diagnostic(u64 marker) {
-    // Temporarily retain the diagnostic syscall while auditing the first
-    // target-native P/Invoke fixups.  The resolver emits only a bounded sample;
-    // the source-overlay breadcrumbs remain otherwise quiet.
-    (void)Call(RuntimeDiagnostic, marker);
-}
-
 void* guidexos_pal_memcpy(void* destination, const void* source, u64 length) {
     volatile u8* d = (volatile u8*)destination;
     const volatile u8* s = (const volatile u8*)source;

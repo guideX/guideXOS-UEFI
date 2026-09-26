@@ -61,7 +61,6 @@ namespace guideXOS.Misc {
         internal const ulong RandomBytes = 0x60;
         internal const ulong ProcessExit = 0x70;
         internal const ulong FailFast = 0x71;
-        internal const ulong RuntimeDiagnostic = 0x72;
         internal const ulong Success = 0;
         internal const ulong InvalidOperation = unchecked((ulong)-38L);
         internal const ulong InvalidPointer = unchecked((ulong)-14L);
@@ -251,11 +250,6 @@ namespace guideXOS.Misc {
                     HexMarker("PHASE26_FAILFAST_CONTEXT=0x", stack->rs.rsi);
                     stack->rs.rax = Success;
                     process.Exit(-1);
-                    break;
-
-                case RuntimeDiagnostic:
-                    HexMarker("PHASE26_RUNTIME_GATE=0x", stack->rs.rdi);
-                    stack->rs.rax = Success;
                     break;
 
                 case Exit:

@@ -139,14 +139,14 @@ namespace guideXOS.Misc {
         private static bool MatchesExpectedSha256(byte[] hash, bool phase26) {
             if (hash == null || hash.Length != 32) return false;
             if (phase26) {
-                return U32(hash, 0) == 0x57D8F2C8U &&
-                    U32(hash, 4) == 0xF2014C3FU &&
-                    U32(hash, 8) == 0xD3815D2FU &&
-                    U32(hash, 12) == 0x7753AF86U &&
-                    U32(hash, 16) == 0xACC6D5D9U &&
-                    U32(hash, 20) == 0x0F429917U &&
-                    U32(hash, 24) == 0x6D5A9D5DU &&
-                    U32(hash, 28) == 0x04D076C6U;
+                return U32(hash, 0) == 0x22183B30U &&
+                    U32(hash, 4) == 0x1B1220D1U &&
+                    U32(hash, 8) == 0x84F55384U &&
+                    U32(hash, 12) == 0x1E077C7EU &&
+                    U32(hash, 16) == 0xC09B69D6U &&
+                    U32(hash, 20) == 0x89925A50U &&
+                    U32(hash, 24) == 0x842D3A4DU &&
+                    U32(hash, 28) == 0x0F8E74FBU;
             }
             return hash[0] == 0xC8 && hash[1] == 0xD6 &&
                 hash[2] == 0x0A && hash[3] == 0xBE &&
@@ -948,10 +948,19 @@ namespace guideXOS.Misc {
         internal bool IsPhase26 => Descriptor != null &&
             (Descriptor.Flags & ManagedImageContract.FlagPhase26ManagedEntry) != 0;
 
-        internal bool TryAuthorizeEntry(ulong rip) {
+        internal bool TryAuthorizeEntry(ulong rip,
+                                        bool allowManagedEntryResume = false) {
             if (!IsMapped || Descriptor == null ||
                 ((!IsPhase26) && ManagedEntryReady)) return false;
-            if (IsPhase26 && rip == ManagedEntryAddress) return false;
+            if (IsPhase26 && rip == ManagedEntryAddress) {
+                // The first dispatch must always enter through the native
+                // bootstrap.  Once that dispatch has occurred, however, a
+                // timer may legitimately save RIP at the managed entry while
+                // the bootstrap's call is in flight.  Resume that existing
+                // frame without authorizing a fresh direct entry.
+                return allowManagedEntryResume && ManagedEntryReady &&
+                    ValidateRuntimeScaffold();
+            }
             if (rip == ManagedEntryAddress) {
                 ManagedImageDiagnostics.ManagedEntryAttemptsRejected++;
                 Marker("PHASE25_MANAGED_ENTRY_DISPATCH_REJECTED=1");
