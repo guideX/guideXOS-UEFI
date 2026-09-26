@@ -50,6 +50,42 @@ namespace guideXOS.Misc {
         public fixed byte Body[ApplicationNotificationRequest.MaxBodyLength * 2];
     }
 
+    // Phase 11 SetText is copied into a bounded kernel-owned allocation before
+    // decoding. The fixed record deliberately contains no user pointer.
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct Ring3ClipboardSetRequest {
+        public uint StructureVersion;
+        public uint ServiceId;
+        public uint OperationId;
+        public uint RequestLength;
+        public uint TextLength;
+        public uint Reserved;
+        public fixed byte Text[ApplicationClipboardWriteRequest.MaxTextLength * 2];
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct Ring3ClipboardResponse {
+        public uint StructureVersion;
+        public uint Size;
+        public uint HasValue;
+        public uint TextLength;
+        public uint SourceApplicationIdLength;
+        public uint Reserved;
+        public ulong Generation;
+        public fixed byte Text[ApplicationClipboardWriteRequest.MaxTextLength * 2];
+        public fixed byte SourceApplicationId[
+            ApplicationServiceContext.MaxApplicationIdLength * 2];
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct Ring3ClipboardClearRequest {
+        public uint StructureVersion;
+        public uint ServiceId;
+        public uint OperationId;
+        public uint RequestLength;
+        public uint Reserved;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct Ring3ApplicationIdentityResponse {
         public uint StructureVersion;
@@ -104,6 +140,11 @@ namespace guideXOS.Misc {
         internal const uint NotificationsService =
             (uint)ApplicationServiceId.Notifications;
         internal const uint NotificationsPublishOperation = 1;
+        internal const uint ClipboardService =
+            (uint)ApplicationServiceId.Clipboard;
+        internal const uint ClipboardSetTextOperation = 1;
+        internal const uint ClipboardGetTextOperation = 2;
+        internal const uint ClipboardClearOperation = 3;
 
         private static void Marker(string text) {
             if (text == null) return;
@@ -312,12 +353,18 @@ namespace guideXOS.Misc {
                 Marker("RING3_SERVICE_INVALID_REQUEST_REJECTED=1");
                 return InvalidPointer;
             }
-            if (requestLength > 4096) {
+            if (requestLength > (ulong)sizeof(Ring3ClipboardSetRequest)) {
                 Marker("RING3_SERVICE_INVALID_REQUEST_REJECTED=1");
                 return InvalidRequest;
             }
             if (requestLength == (ulong)sizeof(Ring3NotificationRequest))
                 return DispatchNotificationRequest(process, requestPointer,
+                    requestLength);
+            if (requestLength == (ulong)sizeof(Ring3ClipboardSetRequest))
+                return DispatchClipboardSetRequest(process, requestPointer,
+                    requestLength);
+            if (requestLength == (ulong)sizeof(Ring3ClipboardClearRequest))
+                return DispatchClipboardClearRequest(process, requestPointer,
                     requestLength);
             if (requestLength != (ulong)sizeof(Ring3ServiceRequest)) {
                 Marker("RING3_SERVICE_INVALID_REQUEST_REJECTED=1");
@@ -335,10 +382,30 @@ namespace guideXOS.Misc {
                 (ulong)sizeof(Ring3ServiceRequest));
             Marker("RING3_SERVICE_REQUEST_COPIED_IN=1");
             if (request.StructureVersion != AbiVersion ||
-                request.ServiceId != SystemInformationService ||
-                request.OperationId != SystemInformationSnapshotOperation ||
                 request.RequestLength != sizeof(Ring3ServiceRequest) ||
                 request.Reserved != 0) {
+                Marker("RING3_SERVICE_INVALID_REQUEST_REJECTED=1");
+                return InvalidRequest;
+            }
+
+            if (request.ServiceId == ClipboardService &&
+                request.OperationId == ClipboardGetTextOperation) {
+                if (request.ResponseCapacity !=
+                        (uint)sizeof(Ring3ClipboardResponse)) {
+                    Marker("RING3_CLIPBOARD_INVALID_RESPONSE_REJECTED=1");
+                    return InvalidRequest;
+                }
+                if (!ValidateClipboardWritableRange(process,
+                        request.ResponseBuffer, request.ResponseCapacity)) {
+                    Marker("RING3_CLIPBOARD_INVALID_RESPONSE_REJECTED=1");
+                    return InvalidPointer;
+                }
+                Marker("RING3_CLIPBOARD_GET_REQUEST_COPIED_IN=1");
+                return DispatchClipboardGetRequest(process, request);
+            }
+
+            if (request.ServiceId != SystemInformationService ||
+                request.OperationId != SystemInformationSnapshotOperation) {
                 Marker("RING3_SERVICE_INVALID_REQUEST_REJECTED=1");
                 return InvalidRequest;
             }
@@ -469,6 +536,290 @@ namespace guideXOS.Misc {
             Marker("RING3_SERVICE_RESPONSE_SERIALIZED=1");
             Marker("RING3_SERVICE_RESPONSE_COPIED_OUT=1");
             return Success;
+        }
+
+        private static ulong DispatchClipboardSetRequest(
+                Ring3Process process, ulong requestPointer,
+                ulong requestLength) {
+            Marker("RING3_CLIPBOARD_SET_ABI_ENTERED=1");
+            if (requestLength != (ulong)sizeof(Ring3ClipboardSetRequest) ||
+                !ValidateClipboardReadableRange(process, requestPointer,
+                    requestLength)) {
+                Marker("RING3_CLIPBOARD_INVALID_REQUEST_REJECTED=1");
+                return InvalidPointer;
+            }
+
+            byte* storage = (byte*)Allocator.Allocate(
+                (ulong)sizeof(Ring3ClipboardSetRequest));
+            if (storage == null) {
+                Marker("RING3_CLIPBOARD_KERNEL_COPY_ALLOC_FAILED=1");
+                return InvalidOperation;
+            }
+            try {
+                Native.Movsb(storage, (void*)requestPointer,
+                    (ulong)sizeof(Ring3ClipboardSetRequest));
+                Marker("RING3_CLIPBOARD_SET_REQUEST_COPIED_IN=1");
+                Ring3ClipboardSetRequest* request =
+                    (Ring3ClipboardSetRequest*)storage;
+                if (request->StructureVersion != AbiVersion ||
+                    request->ServiceId != ClipboardService ||
+                    request->OperationId != ClipboardSetTextOperation ||
+                    request->RequestLength != sizeof(Ring3ClipboardSetRequest) ||
+                    request->Reserved != 0 ||
+                    request->TextLength >
+                        ApplicationClipboardWriteRequest.MaxTextLength) {
+                    Marker("RING3_CLIPBOARD_INVALID_REQUEST_REJECTED=1");
+                    return InvalidRequest;
+                }
+
+                string text = DecodeClipboardText(request->Text,
+                    request->TextLength);
+                ApplicationServiceContext context;
+                ApplicationServiceAccess access;
+                ApplicationServiceResult contextResult;
+                ApplicationInstance instance;
+                if (!TryResolveClipboardAccess(process, out context,
+                        out access, out contextResult, out instance)) {
+                    return MapServiceResult(contextResult);
+                }
+                ApplicationServiceResult result = access.Clipboard.SetText(
+                    context, ApplicationClipboardWriteRequest.Create(text));
+                if (!result.Succeeded) {
+                    Marker("RING3_CLIPBOARD_SET_BACKEND_ACCEPTED=0");
+                    return MapServiceResult(result);
+                }
+
+                ApplicationServiceResult<ApplicationClipboardSnapshot> check =
+                    access.Clipboard.GetText(context);
+                bool sourceMatches = check.Succeeded && check.Value != null &&
+                    check.Value.HasValue &&
+                    check.Value.SourceAppId == instance.ApplicationId &&
+                    check.Value.Text == text;
+                Marker(sourceMatches ?
+                    "RING3_CLIPBOARD_SOURCE_IDENTITY_MATCHED=1" :
+                    "RING3_CLIPBOARD_SOURCE_IDENTITY_MATCHED=0");
+                if (check.Succeeded && check.Value != null)
+                    HexMarker("RING3_CLIPBOARD_GENERATION=0x",
+                        check.Value.Generation);
+                if (!sourceMatches) {
+                    Marker("RING3_CLIPBOARD_SET_BACKEND_ACCEPTED=0");
+                    return InvalidContext;
+                }
+
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_CLIPBOARD_SET_BACKEND_ACCEPTED=1");
+                Marker("RING3_CLIPBOARD_RESPONSE_COPIED_OUT=1");
+                return Success;
+            } finally {
+                Allocator.Free((System.IntPtr)storage);
+            }
+        }
+
+        private static ulong DispatchClipboardGetRequest(
+                Ring3Process process, Ring3ServiceRequest request) {
+            Marker("RING3_CLIPBOARD_GET_ABI_ENTERED=1");
+            ApplicationServiceContext context;
+            ApplicationServiceAccess access;
+            ApplicationServiceResult contextResult;
+            ApplicationInstance instance;
+            if (!TryResolveClipboardAccess(process, out context, out access,
+                    out contextResult, out instance)) {
+                return MapServiceResult(contextResult);
+            }
+            ApplicationServiceResult<ApplicationClipboardSnapshot> result =
+                access.Clipboard.GetText(context);
+            if (!result.Succeeded || result.Value == null) {
+                Marker("RING3_CLIPBOARD_GET_BACKEND_ACCEPTED=0");
+                return MapServiceResult(ApplicationServiceResult.Failure(
+                    result.Code, result.BoundedDiagnostic));
+            }
+
+            byte* storage = (byte*)Allocator.Allocate(
+                (ulong)sizeof(Ring3ClipboardResponse));
+            if (storage == null) {
+                Marker("RING3_CLIPBOARD_KERNEL_RESPONSE_ALLOC_FAILED=1");
+                return InvalidOperation;
+            }
+            try {
+                Native.Stosb(storage, 0, (ulong)sizeof(Ring3ClipboardResponse));
+                Ring3ClipboardResponse* response =
+                    (Ring3ClipboardResponse*)storage;
+                ApplicationClipboardSnapshot snapshot = result.Value;
+                response->StructureVersion = (uint)AbiVersion;
+                response->Size = (uint)sizeof(Ring3ClipboardResponse);
+                response->HasValue = snapshot.HasValue ? 1U : 0U;
+                response->Generation = snapshot.Generation;
+                response->TextLength = CopyUtf16Text(response->Text,
+                    ApplicationClipboardWriteRequest.MaxTextLength,
+                    snapshot.HasValue ? snapshot.Text : string.Empty);
+                response->SourceApplicationIdLength = CopyUtf16Text(
+                    response->SourceApplicationId,
+                    ApplicationServiceContext.MaxApplicationIdLength,
+                    snapshot.HasValue ? snapshot.SourceAppId : string.Empty);
+                if (response->TextLength >
+                        ApplicationClipboardWriteRequest.MaxTextLength ||
+                    response->SourceApplicationIdLength >
+                        ApplicationServiceContext.MaxApplicationIdLength) {
+                    Marker("RING3_CLIPBOARD_GET_BACKEND_ACCEPTED=0");
+                    return InvalidRequest;
+                }
+                Native.Movsb((void*)request.ResponseBuffer, response,
+                    (ulong)sizeof(Ring3ClipboardResponse));
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_CLIPBOARD_GET_BACKEND_ACCEPTED=1");
+                Marker("RING3_CLIPBOARD_USER_BUFFER_COPY=1");
+                Marker("RING3_CLIPBOARD_RESPONSE_COPIED_OUT=1");
+                HexMarker("RING3_CLIPBOARD_GENERATION=0x",
+                    response->Generation);
+                HexMarker("RING3_CLIPBOARD_TEXT_LENGTH=0x",
+                    response->TextLength);
+                HexMarker("RING3_CLIPBOARD_SOURCE_LENGTH=0x",
+                    response->SourceApplicationIdLength);
+                return Success;
+            } finally {
+                Allocator.Free((System.IntPtr)storage);
+            }
+        }
+
+        private static ulong DispatchClipboardClearRequest(
+                Ring3Process process, ulong requestPointer,
+                ulong requestLength) {
+            Marker("RING3_CLIPBOARD_CLEAR_ABI_ENTERED=1");
+            if (requestLength != (ulong)sizeof(Ring3ClipboardClearRequest) ||
+                !PageTable.ValidateReadableUserRange(process.Space.Pml4,
+                    requestPointer, requestLength)) {
+                Marker("RING3_CLIPBOARD_INVALID_REQUEST_REJECTED=1");
+                return InvalidPointer;
+            }
+            Ring3ClipboardClearRequest request =
+                default(Ring3ClipboardClearRequest);
+            Native.Movsb(&request, (void*)requestPointer,
+                (ulong)sizeof(Ring3ClipboardClearRequest));
+            Marker("RING3_CLIPBOARD_CLEAR_REQUEST_COPIED_IN=1");
+            if (request.StructureVersion != AbiVersion ||
+                request.ServiceId != ClipboardService ||
+                request.OperationId != ClipboardClearOperation ||
+                request.RequestLength != sizeof(Ring3ClipboardClearRequest) ||
+                request.Reserved != 0) {
+                Marker("RING3_CLIPBOARD_INVALID_REQUEST_REJECTED=1");
+                return InvalidRequest;
+            }
+
+            ApplicationServiceContext context;
+            ApplicationServiceAccess access;
+            ApplicationServiceResult contextResult;
+            ApplicationInstance instance;
+            if (!TryResolveClipboardAccess(process, out context, out access,
+                    out contextResult, out instance)) {
+                return MapServiceResult(contextResult);
+            }
+            ApplicationServiceResult result = access.Clipboard.Clear(context);
+            if (!result.Succeeded) {
+                Marker("RING3_CLIPBOARD_CLEAR_BACKEND_ACCEPTED=0");
+                return MapServiceResult(result);
+            }
+            process.RecordServiceRequestSuccess();
+            Marker("RING3_CLIPBOARD_CLEAR_BACKEND_ACCEPTED=1");
+            Marker("RING3_CLIPBOARD_RESPONSE_COPIED_OUT=1");
+            return Success;
+        }
+
+        // The general user ABI transfer cap is intentionally 64 KiB. The
+        // authoritative Phase 11 clipboard value is bounded at 64 Ki UTF-16
+        // code units, so its fixed Set/Get records are larger than one general
+        // transfer. Validate those records in capped contiguous slices while
+        // keeping the global transfer policy unchanged.
+        private static bool ValidateClipboardReadableRange(
+                Ring3Process process, ulong address, ulong length) {
+            while (length != 0) {
+                ulong chunk = length > PageTable.MaxUserTransfer ?
+                    PageTable.MaxUserTransfer : length;
+                if (!PageTable.ValidateReadableUserRange(process.Space.Pml4,
+                        address, chunk)) return false;
+                address += chunk;
+                length -= chunk;
+            }
+            return true;
+        }
+
+        private static bool ValidateClipboardWritableRange(
+                Ring3Process process, ulong address, ulong length) {
+            while (length != 0) {
+                ulong chunk = length > PageTable.MaxUserTransfer ?
+                    PageTable.MaxUserTransfer : length;
+                if (!PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                        address, chunk)) return false;
+                address += chunk;
+                length -= chunk;
+            }
+            return true;
+        }
+
+        private static bool TryResolveClipboardAccess(
+                Ring3Process process, out ApplicationServiceContext context,
+                out ApplicationServiceAccess access,
+                out ApplicationServiceResult result,
+                out ApplicationInstance instance) {
+            context = null;
+            access = null;
+            instance = null;
+            result = ApplicationServiceResult.InvalidContextResult();
+            Marker("RING3_CLIPBOARD_PROCESS_IDENTITY_DERIVED=1");
+            ApplicationInstanceHandle owner =
+                ApplicationInstanceHandle.FromValue(
+                    process.OwningApplicationInstance);
+            if (!owner.IsValid ||
+                !ApplicationInstanceRegistry.TryGet(owner, out instance) ||
+                instance == null) {
+                Marker("RING3_CLIPBOARD_PROCESS_IDENTITY_DERIVED=0");
+                return false;
+            }
+            Marker("RING3_CLIPBOARD_APP_MODEL_OWNER_DERIVED=1");
+            if (!ApplicationServiceRegistry.TryCreateContext(owner,
+                    out context, out result)) {
+                Marker("RING3_CLIPBOARD_SERVICE_CONTEXT_DERIVED=0");
+                return false;
+            }
+            ApplicationInstance resolved;
+            ApplicationServiceResult validation;
+            if (!ApplicationServiceRegistry.TryValidateContext(context,
+                    ApplicationServiceId.Clipboard, out resolved,
+                    out validation) || resolved != instance) {
+                result = validation;
+                Marker("RING3_CLIPBOARD_SERVICE_CONTEXT_DERIVED=0");
+                return false;
+            }
+            if (!ApplicationServiceRegistry.TryGetAccess(context,
+                    out access, out result) || access == null ||
+                access.Clipboard == null) {
+                Marker("RING3_CLIPBOARD_SERVICE_CONTEXT_DERIVED=0");
+                return false;
+            }
+            Marker("RING3_CLIPBOARD_SERVICE_CONTEXT_DERIVED=1");
+            Marker("RING3_CLIPBOARD_SOURCE_IDENTITY_DERIVED=1");
+            return true;
+        }
+
+        private static string DecodeClipboardText(byte* source, uint length) {
+            if (source == null || length == 0) return string.Empty;
+            char[] text = new char[(int)length];
+            for (int i = 0; i < (int)length; i++) {
+                text[i] = (char)(source[i * 2] |
+                    ((uint)source[(i * 2) + 1] << 8));
+            }
+            return new string(text);
+        }
+
+        private static uint CopyUtf16Text(byte* destination, int capacity,
+                                          string source) {
+            if (destination == null || source == null ||
+                    source.Length > capacity) return 0xffffffffU;
+            for (int i = 0; i < source.Length; i++) {
+                char value = source[i];
+                destination[(i * 2) + 0] = (byte)value;
+                destination[(i * 2) + 1] = (byte)(value >> 8);
+            }
+            return (uint)source.Length;
         }
 
         private static ulong DispatchNotificationRequest(

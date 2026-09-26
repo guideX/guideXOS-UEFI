@@ -25,7 +25,9 @@ The intentionally small public surface is:
 
 There is no GUI, windowing, input, filesystem, networking, clipboard, shell,
 notification, process-spawn, managed-thread, reflection, or dynamic-loading
-API in this SDK.
+API in the Phase 28 baseline. The SDK was extended in later phases with
+Notifications and bounded text clipboard operations; the latter are
+documented in [`Docs/PHASE30_MANAGED_CLIPBOARD.md`](../Docs/PHASE30_MANAGED_CLIPBOARD.md).
 
 ## Boundary and wire contracts
 

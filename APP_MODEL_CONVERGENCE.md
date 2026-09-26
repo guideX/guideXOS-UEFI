@@ -3162,3 +3162,22 @@ RX-only contract, zero imports/relocations, and negative descriptor cases. The
 balanced bootstrap, managed-image, process, stack, GS/TLS/FLS, and service
 ownership markers. A host build is not runtime CPL3 evidence; QEMU/hardware
 execution remains required for Outcome A.
+
+## Managed Ring 3 SDK service extension: Phases 26–30
+
+The earlier Phase 11 scope statement records the boundary at the time of that
+phase. Phase 30 now proves text clipboard access from a separately compiled
+NativeAOT Ring 3 application through the public `GuideXos.User` SDK. This
+extends the managed runtime and service proofs from Phases 26–29 without
+changing the Phase 11 service contract or adding a second clipboard backend.
+The implementation and reproducible evidence are recorded in
+[`Docs/PHASE30_MANAGED_CLIPBOARD.md`](Docs/PHASE30_MANAGED_CLIPBOARD.md).
+
+The key lifetime boundary remains unchanged: clipboard text, generation, and
+validated source AppId are copied session-global value data; application
+instances, process handles, service contexts, and authority are derived anew
+for each process lifetime and do not survive as clipboard state. The public
+SDK exposes only bounded text operations and an immutable copied snapshot.
+This does not add clipboard UI, widgets, input shortcuts, or shared buffers.
+The next managed App Model boundary is launch through the existing Phase 9
+Shell service, not shell implementation or GUI work in the clipboard phase.

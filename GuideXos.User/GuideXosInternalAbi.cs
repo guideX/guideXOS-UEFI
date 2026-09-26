@@ -49,6 +49,47 @@ namespace GuideXos
         internal fixed byte Body[GuideXosNotifications.MaxBodyLength * 2];
     }
 
+    // Phase 11 SetText wire record.  The complete bounded value is copied
+    // into this fixed UTF-16LE buffer; no pointer is authoritative.
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct GuideXosClipboardSetRequestWire
+    {
+        internal uint StructureVersion;
+        internal uint ServiceId;
+        internal uint OperationId;
+        internal uint RequestLength;
+        internal uint TextLength;
+        internal uint Reserved;
+        internal fixed byte Text[GuideXosClipboard.MaxTextLength * 2];
+    }
+
+    // Get uses the existing service-request envelope.  The response is a
+    // fixed-width copied snapshot, including only value metadata and text.
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct GuideXosClipboardResponseWire
+    {
+        internal uint StructureVersion;
+        internal uint Size;
+        internal uint HasValue;
+        internal uint TextLength;
+        internal uint SourceApplicationIdLength;
+        internal uint Reserved;
+        internal ulong Generation;
+        internal fixed byte Text[GuideXosClipboard.MaxTextLength * 2];
+        internal fixed byte SourceApplicationId[
+            GuideXosClipboard.MaxApplicationIdLength * 2];
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct GuideXosClipboardClearRequestWire
+    {
+        internal uint StructureVersion;
+        internal uint ServiceId;
+        internal uint OperationId;
+        internal uint RequestLength;
+        internal uint Reserved;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct GuideXosIdentityWire
     {
@@ -74,6 +115,10 @@ namespace GuideXos
         private const uint SystemInformationSnapshotOperation = 1;
         private const uint NotificationsService = 1;
         private const uint NotificationsPublishOperation = 1;
+        private const uint ClipboardService = 10;
+        private const uint ClipboardSetTextOperation = 1;
+        private const uint ClipboardGetTextOperation = 2;
+        private const uint ClipboardClearOperation = 3;
 
         [DllImport("*", EntryPoint = "guidexos_pal_abi_version",
             CallingConvention = CallingConvention.Cdecl)]
@@ -203,6 +248,76 @@ namespace GuideXos
             ulong result = InvokeServiceRequest(
                 (ulong)(nuint)requestPointer,
                 (ulong)sizeof(GuideXosNotificationRequestWire));
+            return MapStatus(result);
+        }
+
+        internal static GuideXosResult TrySetClipboardText(string text)
+        {
+            if (text == null || text.Length > GuideXosClipboard.MaxTextLength)
+                return new GuideXosResult(GuideXosStatus.InvalidArgument);
+
+            GuideXosClipboardSetRequestWire request = default;
+            request.StructureVersion = AbiVersion;
+            request.ServiceId = ClipboardService;
+            request.OperationId = ClipboardSetTextOperation;
+            request.RequestLength = (uint)sizeof(
+                GuideXosClipboardSetRequestWire);
+            request.TextLength = (uint)text.Length;
+            request.Reserved = 0;
+#if GUIDEXOS_PHASE30_MALFORMED_LENGTH
+            // Internal diagnostic only: the public API has already accepted a
+            // bounded value, then deliberately sends an inconsistent length.
+            request.TextLength = (uint)GuideXosClipboard.MaxTextLength + 1U;
+#endif
+            byte* textBytes = request.Text;
+            for (int i = 0; i < text.Length; i++)
+            {
+                char value = text[i];
+                textBytes[(i * 2) + 0] = (byte)value;
+                textBytes[(i * 2) + 1] = (byte)(value >> 8);
+            }
+
+            GuideXosClipboardSetRequestWire* requestPointer = &request;
+            ulong result = InvokeServiceRequest(
+                (ulong)(nuint)requestPointer,
+                (ulong)sizeof(GuideXosClipboardSetRequestWire));
+            return MapStatus(result);
+        }
+
+        internal static GuideXosResult TryGetClipboardText(
+            out GuideXosClipboardResponseWire response)
+        {
+            GuideXosClipboardResponseWire local = default;
+            GuideXosServiceRequestWire request = default;
+            request.StructureVersion = AbiVersion;
+            request.ServiceId = ClipboardService;
+            request.OperationId = ClipboardGetTextOperation;
+            request.RequestLength = (uint)sizeof(GuideXosServiceRequestWire);
+            request.ResponseCapacity = (uint)sizeof(
+                GuideXosClipboardResponseWire);
+            GuideXosServiceRequestWire* requestPointer = &request;
+            GuideXosClipboardResponseWire* responsePointer = &local;
+            request.ResponseBuffer = (ulong)(nuint)responsePointer;
+            ulong result = InvokeServiceRequest(
+                (ulong)(nuint)requestPointer,
+                (ulong)sizeof(GuideXosServiceRequestWire));
+            response = local;
+            return MapStatus(result);
+        }
+
+        internal static GuideXosResult TryClearClipboard()
+        {
+            GuideXosClipboardClearRequestWire request = default;
+            request.StructureVersion = AbiVersion;
+            request.ServiceId = ClipboardService;
+            request.OperationId = ClipboardClearOperation;
+            request.RequestLength = (uint)sizeof(
+                GuideXosClipboardClearRequestWire);
+            request.Reserved = 0;
+            GuideXosClipboardClearRequestWire* requestPointer = &request;
+            ulong result = InvokeServiceRequest(
+                (ulong)(nuint)requestPointer,
+                (ulong)sizeof(GuideXosClipboardClearRequestWire));
             return MapStatus(result);
         }
 

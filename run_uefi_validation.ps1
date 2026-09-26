@@ -88,6 +88,9 @@
 .PARAMETER Ring3Phase29
     Run the managed Notifications proof through the existing app model.
 
+.PARAMETER Ring3Phase30
+    Run the managed Clipboard proof through the existing app model.
+
 .PARAMETER Ring3Direct
     Run the retained synchronous Phase 13 CPL3 regression selector.
 
@@ -126,6 +129,7 @@ param(
     [switch]$Ring3Phase27,
     [switch]$Ring3Phase28,
     [switch]$Ring3Phase29,
+    [switch]$Ring3Phase30,
     [switch]$Ring3Direct,
     [Alias('Input')]
     [switch]$NativeInput,
@@ -163,6 +167,7 @@ $selectorCount = @(
     $(if ($Ring3Phase27) { 1 } else { 0 }),
     $(if ($Ring3Phase28) { 1 } else { 0 }),
     $(if ($Ring3Phase29) { 1 } else { 0 }),
+    $(if ($Ring3Phase30) { 1 } else { 0 }),
     $(if ($Ring3Direct) { 1 } else { 0 }),
     $(if ($NativeInput) { 1 } else { 0 }),
     $(if ($NativeInputStress) { 1 } else { 0 }),
@@ -187,7 +192,7 @@ if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Font -and
     -not $Background -and -not $BackgroundRotation -and
     -not $AppModel -and -not $AppRuntime -and -not $Ring3 -and
-    -not $Ring3Phase15 -and -not $Ring3Phase25 -and -not $Ring3Phase26 -and -not $Ring3Phase27 -and -not $Ring3Phase28 -and -not $Ring3Phase29 -and
+    -not $Ring3Phase15 -and -not $Ring3Phase25 -and -not $Ring3Phase26 -and -not $Ring3Phase27 -and -not $Ring3Phase28 -and -not $Ring3Phase29 -and -not $Ring3Phase30 -and
     -not $Ring3Direct -and
     -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
     -not $ContextMenuSoak -and -not $Widget -and -not $WidgetStress -and
@@ -227,6 +232,8 @@ if ($Tiny) {
     $diagnosticMode = 'Ring3Phase28'
 } elseif ($Ring3Phase29) {
     $diagnosticMode = 'Ring3Phase29'
+} elseif ($Ring3Phase30) {
+    $diagnosticMode = 'Ring3Phase30'
 } elseif ($Ring3Direct) {
     $diagnosticMode = 'Ring3Direct'
 } elseif ($Frames -gt 0) {
@@ -246,7 +253,7 @@ if ($Tiny) {
 }
 $isWidgetValidation = $diagnosticMode -in @('Widget', 'WidgetStress', 'WidgetSoak')
 $isAppModelValidation = $diagnosticMode -eq 'AppModel'
-$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Ring3', 'Ring3Phase15', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Direct', 'Widget', 'WidgetStress')
+$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Ring3', 'Ring3Phase15', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Direct', 'Widget', 'WidgetStress')
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu')
 $isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress')
 $isAppRuntimeValidation = $diagnosticMode -eq 'AppRuntime'
@@ -269,6 +276,7 @@ $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'Ring3Phase27' { 'RING3_PHASE27_COMPLETE=1'; break }
     'Ring3Phase28' { 'RING3_PHASE28_COMPLETE=1'; break }
     'Ring3Phase29' { 'RING3_PHASE29_COMPLETE=1'; break }
+    'Ring3Phase30' { 'RING3_PHASE30_COMPLETE=1'; break }
     'Ring3Direct' { 'RING3_PROOF_RETURNED_TO_ENTRYPOINT=1'; break }
     'Widget' { 'WIDGET_COMPLETE'; break }
     'WidgetStress' { 'WIDGET_STRESS_COMPLETE'; break }
@@ -2325,7 +2333,7 @@ Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '   Validation Summary' -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
-Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'APP_RUNTIME_COMPLETE', 'RING3_PROOF_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
+Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'APP_RUNTIME_COMPLETE', 'RING3_PROOF_COMPLETE', 'RING3_PHASE30_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
 Write-Host "Dispatch selected: $dispatchSelected" -ForegroundColor Gray
 Write-Host "Continuous entered: $continuousEntered" -ForegroundColor Gray
 Write-Host "Heartbeats: $heartbeatCount (last frame $lastHeartbeatFrame)" -ForegroundColor Gray

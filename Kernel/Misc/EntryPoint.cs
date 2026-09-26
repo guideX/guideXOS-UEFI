@@ -329,6 +329,12 @@ namespace guideXOS.Misc {
                 BootConsole.WriteLine("PHASE29_QUEUED_FOR_SCHEDULER=1");
             }
 #endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE30
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                Ring3Proof.SchedulePhase30();
+                BootConsole.WriteLine("PHASE30_QUEUED_FOR_SCHEDULER=1");
+            }
+#endif
 
 #if !UseAPIC
             // Enable only timer IRQ (IRQ0 -> vector 0x20 with PIC remap) for scheduling.

@@ -16,6 +16,7 @@ namespace guideXOS.Misc {
         private static bool _phase27Scheduled;
         private static bool _phase28Scheduled;
         private static bool _phase29Scheduled;
+        private static bool _phase30Scheduled;
 
         private sealed class Phase15Lifetime {
             internal Ring3Process Process;
@@ -699,6 +700,269 @@ namespace guideXOS.Misc {
             Native.Sti();
         }
 
+        internal static void SchedulePhase30() {
+            if (_phase30Scheduled) return;
+            _phase30Scheduled = true;
+            Marker("PHASE30_SCHEDULED=1");
+            new Thread(&RunPhase30, 131072).Start(0);
+        }
+
+        private static bool RunOnePhase30Lifetime(int payloadKind,
+                                                   out Ring3Process process) {
+            process = null;
+            if (_owner == null) return false;
+            Native.Cli();
+            string failure;
+            if (!Ring3Process.TryCreateManagedClipboardEntry(
+                    _owner.Handle.Value, payloadKind, out process, out failure) ||
+                process == null) {
+                Native.Sti();
+                Marker("PHASE30_PROCESS_CREATE_FAILED=1");
+                if (failure != null)
+                    Marker("PHASE30_PROCESS_CREATE_REJECTED=" + failure);
+                return false;
+            }
+            Ring3ProcessHandle oldHandle = process.Handle;
+            bool scaffold = process.ManagedImage != null &&
+                process.ManagedImage.ValidateRuntimeScaffold();
+            bool authorized = process.ManagedImage != null &&
+                process.ManagedImage.TryEnterManagedEntry();
+            bool started = process.StartManagedBootstrap();
+            if (started) Native.Sti();
+            int spins = 0;
+            while (started && !process.IsTerminal && spins++ < 6000000)
+                Native.Hlt();
+
+            bool completed = process.IsTerminal;
+            bool dispatched = process.SchedulerDispatches >= 1 &&
+                process.SchedulerCr3Valid && process.SchedulerRsp0Valid;
+            bool resumed = payloadKind != 9 && process.TimerPreemptions > 0 &&
+                process.SchedulerDispatches >= 2 && process.UserRspPreserved;
+            bool service = process.ServiceRequestsSucceeded > 0;
+            bool managedResult = payloadKind != 9 &&
+                process.BootstrapResultSucceeded &&
+                process.BootstrapReturnCode == 30 && process.ExitCode == 30;
+            bool terminalResult = payloadKind == 9
+                ? process.ExitCode == -1 : managedResult;
+            bool state = process.State == Ring3ProcessState.Exiting ||
+                process.State == Ring3ProcessState.Exited;
+            bool clean = process.Cleanup();
+            bool staleHandle = !process.TryResolveHandle(oldHandle);
+            Marker(scaffold ? "PHASE30_SCAFFOLD_PASS=1" :
+                "PHASE30_SCAFFOLD_PASS=0");
+            Marker(authorized ? "PHASE30_ENTRY_AUTHORIZED=1" :
+                "PHASE30_ENTRY_AUTHORIZED=0");
+            Marker(dispatched ? "PHASE30_DISPATCH_PASS=1" :
+                "PHASE30_DISPATCH_PASS=0");
+            Marker(resumed ? "PHASE30_RESUME_PASS=1" :
+                (payloadKind == 9 ? "PHASE30_RESUME_PASS=NA" :
+                    "PHASE30_RESUME_PASS=0"));
+            Marker(service ? "PHASE30_SERVICE_PASS=1" :
+                "PHASE30_SERVICE_PASS=0");
+            Marker(terminalResult && state ? "PHASE30_MAIN_RESULT_PASS=1" :
+                "PHASE30_MAIN_RESULT_PASS=0");
+            Marker(clean && staleHandle ? "PHASE30_LIFETIME_CLEAN=1" :
+                "PHASE30_LIFETIME_CLEAN=0");
+            return started && completed && scaffold && authorized &&
+                dispatched && service && terminalResult && state && clean &&
+                staleHandle && (payloadKind == 9 || resumed);
+        }
+
+        private static bool ReadPhase30ClipboardState(
+                string expectedText, string expectedSource,
+                ulong expectedGeneration, bool expectedHasValue) {
+            if (_owner == null) return false;
+            ApplicationServiceContext context;
+            ApplicationServiceAccess access;
+            ApplicationServiceResult contextResult;
+            if (!ApplicationServiceRegistry.TryCreateContext(_owner.Handle,
+                    out context, out contextResult) ||
+                !ApplicationServiceRegistry.TryGetAccess(context, out access,
+                    out contextResult) || access == null ||
+                access.Clipboard == null) return false;
+            ApplicationServiceResult<ApplicationClipboardSnapshot> read =
+                access.Clipboard.GetText(context);
+            bool pass = read.Succeeded && read.Value != null &&
+                read.Value.HasValue == expectedHasValue &&
+                read.Value.Text == (expectedHasValue ? expectedText : string.Empty) &&
+                read.Value.SourceAppId ==
+                    (expectedHasValue ? expectedSource : string.Empty) &&
+                read.Value.Generation == expectedGeneration;
+            Marker(pass ? "PHASE30_BACKEND_STATE_MATCHED=1" :
+                "PHASE30_BACKEND_STATE_MATCHED=0");
+            if (read.Succeeded && read.Value != null) {
+                HexMarker("PHASE30_BACKEND_GENERATION=0x",
+                    read.Value.Generation);
+                HexMarker("PHASE30_BACKEND_TEXT_LENGTH=0x",
+                    (ulong)read.Value.Text.Length);
+                HexMarker("PHASE30_BACKEND_SOURCE_LENGTH=0x",
+                    (ulong)read.Value.SourceAppId.Length);
+            }
+            return pass;
+        }
+
+        private static void RunPhase30() {
+            Native.Cli();
+            Marker("PHASE30_BEGIN=1");
+            ApplicationServiceRegistry.ResetForAppModel();
+            bool ownerA = TryCreateOwner("gxos.builtin.taskmanager");
+            ApplicationServiceContext contextA = null;
+            ApplicationServiceAccess accessA = null;
+            ApplicationServiceResult contextResult;
+            if (ownerA) {
+                ApplicationServiceRegistry.TryCreateContext(_owner.Handle,
+                    out contextA, out contextResult);
+                ApplicationServiceRegistry.TryGetAccess(contextA, out accessA,
+                    out contextResult);
+            }
+            string sourceA = contextA == null ? string.Empty :
+                contextA.ApplicationId;
+            bool first = ownerA && RunOnePhase30Lifetime(1, out _);
+            bool second = ownerA && RunOnePhase30Lifetime(1, out _);
+            bool third = ownerA && RunOnePhase30Lifetime(1, out _);
+            bool fourth = ownerA && RunOnePhase30Lifetime(1, out _);
+            bool writer = ownerA && RunOnePhase30Lifetime(3, out _);
+            bool writerState = ownerA && ReadPhase30ClipboardState(
+                "Phase 30 cross-process clipboard", sourceA, 5UL, true);
+            bool failFast = ownerA && RunOnePhase30Lifetime(9, out _);
+            bool failFastState = ownerA && ReadPhase30ClipboardState(
+                "Phase 30 cross-process clipboard", sourceA, 6UL, true);
+
+            ulong staleOwnerHandle = ownerA ? _owner.Handle.Value : 0UL;
+            CleanupOwner();
+            ApplicationInstance ignored;
+            bool staleApplication = staleOwnerHandle != 0 &&
+                !ApplicationInstanceRegistry.TryGet(
+                    ApplicationInstanceHandle.FromValue(staleOwnerHandle),
+                    out ignored);
+            ApplicationServiceResult staleMutationResult = null;
+            bool staleMutation = contextA != null && accessA != null &&
+                !(accessA.Clipboard.SetText(contextA,
+                    ApplicationClipboardWriteRequest.Create(
+                        "stale clipboard mutation")).Succeeded);
+            if (staleMutation)
+                Marker("PHASE30_STALE_AUTHORITY_MUTATION_REJECTED=1");
+            else
+                Marker("PHASE30_STALE_AUTHORITY_MUTATION_REJECTED=0");
+            ApplicationInstance staleContextOwner;
+            bool staleContext = contextA != null &&
+                !ApplicationServiceRegistry.TryValidateContext(
+                    contextA, ApplicationServiceId.Clipboard,
+                    out staleContextOwner, out staleMutationResult) &&
+                staleContextOwner == null;
+
+            bool ownerB = TryCreateOwner("gxos.builtin.calculator");
+            ApplicationServiceContext contextB = null;
+            if (ownerB) ApplicationServiceRegistry.TryCreateContext(
+                _owner.Handle, out contextB, out contextResult);
+            string sourceB = contextB == null ? string.Empty :
+                contextB.ApplicationId;
+            bool replacement = ownerB && RunOnePhase30Lifetime(2, out _);
+            bool crossPersistence = ownerB && replacement &&
+                ReadPhase30ClipboardState(
+                    "Phase 30 cross-process clipboard", sourceA, 6UL, true);
+            bool crossSource = crossPersistence && sourceA.Length > 0 &&
+                sourceA != sourceB;
+            bool malformed = ownerB && RunOnePhase30Lifetime(8, out _);
+            bool malformedState = ownerB && malformed &&
+                ReadPhase30ClipboardState(
+                    "Phase 30 cross-process clipboard", sourceA, 6UL, true);
+            bool overwrite = ownerB && RunOnePhase30Lifetime(4, out _);
+            bool overwriteState = ownerB && overwrite &&
+                ReadPhase30ClipboardState(
+                    "Phase 30 overwrite value 2", sourceB, 7UL, true);
+            bool oversize = ownerB && RunOnePhase30Lifetime(7, out _);
+            bool oversizeState = ownerB && oversize &&
+                ReadPhase30ClipboardState(
+                    "Phase 30 oversize baseline", sourceB, 8UL, true);
+            bool empty = ownerB && RunOnePhase30Lifetime(5, out _);
+            bool emptyState = ownerB && empty &&
+                ReadPhase30ClipboardState(string.Empty, sourceB, 9UL, true);
+            bool clear = ownerB && RunOnePhase30Lifetime(6, out _);
+            bool clearState = ownerB && clear &&
+                ReadPhase30ClipboardState(string.Empty, string.Empty,
+                    11UL, false);
+            CleanupOwner();
+
+            bool resetOwner = TryCreateOwner("gxos.builtin.console");
+            ApplicationServiceContext resetContext = null;
+            ApplicationServiceAccess resetAccess = null;
+            bool reset = false;
+            if (resetOwner && ApplicationServiceRegistry.TryCreateContext(
+                    _owner.Handle, out resetContext, out contextResult) &&
+                ApplicationServiceRegistry.TryGetAccess(resetContext,
+                    out resetAccess, out contextResult)) {
+                ApplicationServiceRegistry.ResetForAppModel();
+                ApplicationServiceResult<ApplicationClipboardSnapshot> resetRead =
+                    resetAccess.Clipboard.GetText(resetContext);
+                reset = resetRead.Succeeded && resetRead.Value != null &&
+                    !resetRead.Value.HasValue && resetRead.Value.Text.Length == 0 &&
+                    resetRead.Value.SourceAppId.Length == 0 &&
+                    resetRead.Value.Generation == 0UL;
+            }
+            Marker(reset ? "PHASE30_RESET_PASS=1" :
+                "PHASE30_RESET_PASS=0");
+            CleanupOwner();
+
+            Marker(first && second && third && fourth ?
+                "PHASE30_REPEATED_LIFETIMES=4" :
+                "PHASE30_REPEATED_LIFETIMES=0");
+            Marker(writerState ? "PHASE30_SET_PROOF=1" :
+                "PHASE30_SET_PROOF=0");
+            Marker(crossPersistence ? "PHASE30_CROSS_PROCESS_PERSISTENCE=1" :
+                "PHASE30_CROSS_PROCESS_PERSISTENCE=0");
+            Marker(crossSource ? "PHASE30_CROSS_PROCESS_SOURCE=1" :
+                "PHASE30_CROSS_PROCESS_SOURCE=0");
+            Marker(malformed && malformedState ?
+                "PHASE30_MALFORMED_LENGTH_REJECTED=1" :
+                "PHASE30_MALFORMED_LENGTH_REJECTED=0");
+            Marker(overwrite && overwriteState ?
+                "PHASE30_OVERWRITE_GENERATION=1" :
+                "PHASE30_OVERWRITE_GENERATION=0");
+            Marker(oversize && oversizeState ?
+                "PHASE30_OVERSIZE_REJECTED=1" :
+                "PHASE30_OVERSIZE_REJECTED=0");
+            Marker(empty && emptyState ? "PHASE30_EMPTY_TEXT=1" :
+                "PHASE30_EMPTY_TEXT=0");
+            Marker(clear && clearState ? "PHASE30_CLEAR_PASS=1" :
+                "PHASE30_CLEAR_PASS=0");
+            Marker(failFast && failFastState ? "PHASE30_FAILFAST_PASS=1" :
+                "PHASE30_FAILFAST_PASS=0");
+            Marker(replacement ? "PHASE30_REPLACEMENT_PASS=1" :
+                "PHASE30_REPLACEMENT_PASS=0");
+            Marker(staleApplication ?
+                "PHASE30_STALE_OWNER_REJECTED=1" :
+                "PHASE30_STALE_OWNER_REJECTED=0");
+            Marker(staleContext ?
+                "PHASE30_STALE_SERVICE_CONTEXT_REJECTED=1" :
+                "PHASE30_STALE_SERVICE_CONTEXT_REJECTED=0");
+            Marker(ManagedImageDiagnostics.IsBalanced ?
+                "PHASE30_MANAGED_CLEANUP_BALANCED=1" :
+                "PHASE30_MANAGED_CLEANUP_BALANCED=0");
+            Marker(NativeBootstrapDiagnostics.IsBalanced ?
+                "PHASE30_BOOTSTRAP_CLEANUP_BALANCED=1" :
+                "PHASE30_BOOTSTRAP_CLEANUP_BALANCED=0");
+            Marker(Ring3ProcessTable.LiveCount == 0 &&
+                   ThreadPool.LiveUserThreadCount == 0 &&
+                   Ring3ProcessDiagnostics.IsBalanced && staleMutation ?
+                "PHASE30_PROCESS_CLEANUP_BALANCED=1" :
+                "PHASE30_PROCESS_CLEANUP_BALANCED=0");
+            bool complete = first && second && third && fourth && writer &&
+                writerState && failFast && failFastState && replacement &&
+                crossPersistence && crossSource && malformed && malformedState &&
+                overwrite && overwriteState && oversize && oversizeState &&
+                empty && emptyState && clear && clearState && reset &&
+                staleApplication && staleContext && staleMutation &&
+                ManagedImageDiagnostics.IsBalanced &&
+                NativeBootstrapDiagnostics.IsBalanced &&
+                Ring3ProcessTable.LiveCount == 0 &&
+                ThreadPool.LiveUserThreadCount == 0 &&
+                Ring3ProcessDiagnostics.IsBalanced;
+            Marker(complete ? "RING3_PHASE30_COMPLETE=1" :
+                "RING3_PHASE30_COMPLETE=0");
+            Native.Sti();
+        }
+
         private static void RunPhase24() {
             Native.Cli();
             Marker("PHASE24_BEGIN=1");
@@ -968,11 +1232,15 @@ namespace guideXOS.Misc {
         }
 
         private static bool TryCreateOwner() {
-            if (_owner != null) return true;
+            return TryCreateOwner("gxos.builtin.taskmanager");
+        }
+
+        private static bool TryCreateOwner(string appId) {
+            if (_owner != null)
+                return _owner.DescriptorId == appId;
             AppLaunchResolver.InitializeDefaultDescriptors();
             ApplicationDescriptorRegistry.Initialize();
             ApplicationDescriptor descriptor;
-            const string appId = "gxos.builtin.taskmanager";
             if (!ApplicationDescriptorRegistry.TryGetById(appId,
                                                            out descriptor)) {
                 Marker("RING3_APP_MODEL_OWNER_CREATED=0");

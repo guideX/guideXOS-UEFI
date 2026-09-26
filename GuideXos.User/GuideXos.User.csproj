@@ -15,4 +15,7 @@
   <PropertyGroup Condition="'$(Phase29Mode)' == 'InvalidType'">
     <DefineConstants>$(DefineConstants);GUIDEXOS_PHASE29_INVALID_TYPE</DefineConstants>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Phase30Mode)' == 'MalformedLength'">
+    <DefineConstants>$(DefineConstants);GUIDEXOS_PHASE30_MALFORMED_LENGTH</DefineConstants>
+  </PropertyGroup>
 </Project>

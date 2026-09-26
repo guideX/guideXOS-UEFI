@@ -201,6 +201,88 @@ namespace GuideXos
         }
     }
 
+    public readonly struct GuideXosClipboardText
+    {
+        private readonly bool _hasValue;
+        private readonly string _text;
+        private readonly string _sourceApplicationId;
+        private readonly ulong _generation;
+
+        internal GuideXosClipboardText(bool hasValue, string text,
+                                        string sourceApplicationId,
+                                        ulong generation)
+        {
+            _hasValue = hasValue;
+            _text = text ?? string.Empty;
+            _sourceApplicationId = sourceApplicationId ?? string.Empty;
+            _generation = generation;
+        }
+
+        public bool HasValue => _hasValue;
+        public string Text => _text ?? string.Empty;
+        public string SourceApplicationId => _sourceApplicationId ?? string.Empty;
+        public ulong Generation => _generation;
+    }
+
+    public static unsafe class GuideXosClipboard
+    {
+        // Phase 11 defines the bound in UTF-16 code units, not encoded bytes.
+        public const int MaxTextLength = 64 * 1024;
+        public const int MaxApplicationIdLength = 96;
+
+        public static GuideXosResult TrySetText(string text) =>
+            GuideXosInternalAbi.TrySetClipboardText(text);
+
+        public static GuideXosResult TryGetText(
+            out GuideXosClipboardText clipboard)
+        {
+            clipboard = default;
+            GuideXosResult compatible = GuideXosInternalAbi.RequireCompatible();
+            if (compatible.Failed)
+                return compatible;
+
+            GuideXosClipboardResponseWire wire;
+            GuideXosResult result = GuideXosInternalAbi.TryGetClipboardText(
+                out wire);
+            if (result.Failed)
+                return result;
+            if (wire.StructureVersion != GuideXosInternalAbi.AbiVersion ||
+                wire.Size != (uint)sizeof(GuideXosClipboardResponseWire) ||
+                (wire.HasValue != 0 && wire.HasValue != 1) ||
+                wire.TextLength > MaxTextLength ||
+                wire.SourceApplicationIdLength > MaxApplicationIdLength ||
+                wire.Reserved != 0 ||
+                (wire.HasValue == 0 &&
+                 (wire.TextLength != 0 ||
+                  wire.SourceApplicationIdLength != 0)))
+                return new GuideXosResult(GuideXosStatus.ValidationFailed);
+
+            string text = DecodeUtf16(wire.Text, wire.TextLength);
+            string sourceApplicationId = DecodeUtf16(
+                wire.SourceApplicationId, wire.SourceApplicationIdLength);
+            clipboard = new GuideXosClipboardText(
+                wire.HasValue != 0, text, sourceApplicationId,
+                wire.Generation);
+            return new GuideXosResult(GuideXosStatus.Success);
+        }
+
+        public static GuideXosResult TryClear() =>
+            GuideXosInternalAbi.TryClearClipboard();
+
+        private static string DecodeUtf16(byte* source, uint length)
+        {
+            if (source == null || length == 0)
+                return string.Empty;
+            char* text = stackalloc char[(int)length];
+            for (int i = 0; i < (int)length; i++)
+            {
+                text[i] = (char)(source[i * 2] |
+                    ((uint)source[(i * 2) + 1] << 8));
+            }
+            return new string(text, 0, (int)length);
+        }
+    }
+
     public static unsafe class GuideXosNotifications
     {
         public const int MaxTitleLength = 64;

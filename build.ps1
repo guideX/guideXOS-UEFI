@@ -36,7 +36,7 @@
 .PARAMETER UefiDiagnosticMode
     Optional UEFI regression build variant: Tiny, FirstFrame, Frames, Input,
     InputStress, ContextMenu, Png, Font, Background, BackgroundRotation,
-    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Phase27, Ring3Phase28, Ring3Phase29, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
+    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Phase27, Ring3Phase28, Ring3Phase29, Ring3Phase30, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
     WidgetOnlyClock, WidgetOnlyMonitor, or WidgetOnlyUptime
 
 .EXAMPLE
@@ -60,7 +60,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
+  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
     [string]$UefiDiagnosticMode = ''
 )
 
@@ -649,6 +649,18 @@ if (-not $SkipRamdisk) {
         if ($LASTEXITCODE -ne 0) { throw "Phase 29 managed notification build failed: $LASTEXITCODE" }
         & $phase29Stage -BuildRoot $phase29BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
         if ($LASTEXITCODE -ne 0) { throw "Phase 29 image staging failed: $LASTEXITCODE" }
+    }
+
+    $phase30Build = Join-Path $RootDir "Tools\Phase30\build_phase30_managed_clipboard.ps1"
+    $phase30Stage = Join-Path $RootDir "Tools\Phase30\stage_phase30_image.ps1"
+    $phase30BuildRoot = Join-Path $RootDir "out\dotnet\phase30-managed-clipboard"
+    if ((Test-Path -LiteralPath $phase30Build) -and
+        (Test-Path -LiteralPath $phase30Stage)) {
+        Write-Info "Building the Phase 30 managed Clipboard proof..."
+        & $phase30Build
+        if ($LASTEXITCODE -ne 0) { throw "Phase 30 managed clipboard build failed: $LASTEXITCODE" }
+        & $phase30Stage -BuildRoot $phase30BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) { throw "Phase 30 image staging failed: $LASTEXITCODE" }
     }
     
     $ramdiskBuilder = (Resolve-Path "$ToolsDir\ramdisk_builder.py").Path

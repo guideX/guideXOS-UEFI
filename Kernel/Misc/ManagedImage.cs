@@ -24,6 +24,15 @@ namespace guideXOS.Misc {
         internal const uint FlagPhase29BodyFailure = 8192;
         internal const uint FlagPhase29FailFast = 16384;
         internal const uint FlagPhase29InvalidType = 32768;
+        internal const uint FlagPhase30Clipboard = 65536;
+        internal const uint FlagPhase30Reader = 131072;
+        internal const uint FlagPhase30CrossWriter = 262144;
+        internal const uint FlagPhase30Overwrite = 524288;
+        internal const uint FlagPhase30Empty = 1048576;
+        internal const uint FlagPhase30Clear = 2097152;
+        internal const uint FlagPhase30Oversize = 4194304;
+        internal const uint FlagPhase30MalformedLength = 8388608;
+        internal const uint FlagPhase30FailFast = 16777216;
         internal const byte Read = 1;
         internal const byte Write = 2;
         internal const byte Execute = 4;
@@ -208,6 +217,96 @@ namespace guideXOS.Misc {
                     U32(hash, 20) == 0xC1832476U &&
                     U32(hash, 24) == 0x3E4C3391U &&
                     U32(hash, 28) == 0x845255D3U;
+            }
+            if ((flags & ManagedImageContract.FlagPhase30FailFast) != 0) {
+                return U32(hash, 0) == 0xE89AB5FEU &&
+                    U32(hash, 4) == 0xC542859EU &&
+                    U32(hash, 8) == 0x4EC3118BU &&
+                    U32(hash, 12) == 0xB40D97B6U &&
+                    U32(hash, 16) == 0x79157592U &&
+                    U32(hash, 20) == 0x9533296FU &&
+                    U32(hash, 24) == 0x60107068U &&
+                    U32(hash, 28) == 0xD9851C45U;
+            }
+            if ((flags & ManagedImageContract.FlagPhase30Oversize) != 0) {
+                return U32(hash, 0) == 0x52EE5DF7U &&
+                    U32(hash, 4) == 0xA155C33FU &&
+                    U32(hash, 8) == 0x96E4DEC1U &&
+                    U32(hash, 12) == 0x9BB0950FU &&
+                    U32(hash, 16) == 0xDE5C6C90U &&
+                    U32(hash, 20) == 0xACA9D15DU &&
+                    U32(hash, 24) == 0xAA592F43U &&
+                    U32(hash, 28) == 0x5B592055U;
+            }
+            if ((flags & ManagedImageContract.FlagPhase30Empty) != 0) {
+                return U32(hash, 0) == 0xC0C47291U &&
+                    U32(hash, 4) == 0xFD0BDB5BU &&
+                    U32(hash, 8) == 0x4D2C03BDU &&
+                    U32(hash, 12) == 0xDC15061BU &&
+                    U32(hash, 16) == 0x9F9E7C41U &&
+                    U32(hash, 20) == 0x3C197C40U &&
+                    U32(hash, 24) == 0xCAFAFAA8U &&
+                    U32(hash, 28) == 0xC7E54BC6U;
+            }
+            if ((flags & ManagedImageContract.FlagPhase30Clipboard) != 0) {
+                return U32(hash, 0) == 0x777F8510U &&
+                    U32(hash, 4) == 0x916CDA4AU &&
+                    U32(hash, 8) == 0x81B2D043U &&
+                    U32(hash, 12) == 0x6ACE4CFFU &&
+                    U32(hash, 16) == 0x4E954354U &&
+                    U32(hash, 20) == 0xAE267641U &&
+                    U32(hash, 24) == 0x0F8BD477U &&
+                    U32(hash, 28) == 0x4EAB46D8U;
+            }
+            if ((flags & ManagedImageContract.FlagPhase30Clear) != 0) {
+                return U32(hash, 0) == 0x88EF3A07U &&
+                    U32(hash, 4) == 0x4708FB53U &&
+                    U32(hash, 8) == 0x945CCF7CU &&
+                    U32(hash, 12) == 0x003D1EEBU &&
+                    U32(hash, 16) == 0x9ABCE391U &&
+                    U32(hash, 20) == 0x2EC8F5DAU &&
+                    U32(hash, 24) == 0xDBE608FFU &&
+                    U32(hash, 28) == 0xAC23BAAAU;
+            }
+            if ((flags & ManagedImageContract.FlagPhase30Overwrite) != 0) {
+                return U32(hash, 0) == 0xC4DE7B1DU &&
+                    U32(hash, 4) == 0x0D2848E5U &&
+                    U32(hash, 8) == 0xE8FED131U &&
+                    U32(hash, 12) == 0xC209D380U &&
+                    U32(hash, 16) == 0xB613DBACU &&
+                    U32(hash, 20) == 0xFB6542BAU &&
+                    U32(hash, 24) == 0x97110566U &&
+                    U32(hash, 28) == 0x4CD12ADCU;
+            }
+            if ((flags & ManagedImageContract.FlagPhase30Reader) != 0) {
+                return U32(hash, 0) == 0x558B6C42U &&
+                    U32(hash, 4) == 0x9ABA5A83U &&
+                    U32(hash, 8) == 0xAA6951DFU &&
+                    U32(hash, 12) == 0x90B3B444U &&
+                    U32(hash, 16) == 0xF12D0849U &&
+                    U32(hash, 20) == 0x56A7975FU &&
+                    U32(hash, 24) == 0xC6C33F10U &&
+                    U32(hash, 28) == 0x616AA988U;
+            }
+            if ((flags & ManagedImageContract.FlagPhase30MalformedLength) != 0) {
+                return U32(hash, 0) == 0xE6CC28CBU &&
+                    U32(hash, 4) == 0x00DF00ACU &&
+                    U32(hash, 8) == 0xC92CBB8CU &&
+                    U32(hash, 12) == 0x0E4BE04AU &&
+                    U32(hash, 16) == 0x064712C2U &&
+                    U32(hash, 20) == 0xA8550426U &&
+                    U32(hash, 24) == 0xC4554BCEU &&
+                    U32(hash, 28) == 0x04E1F63EU;
+            }
+            if ((flags & ManagedImageContract.FlagPhase30CrossWriter) != 0) {
+                return U32(hash, 0) == 0x0D79CAF1U &&
+                    U32(hash, 4) == 0xE5DF31FDU &&
+                    U32(hash, 8) == 0x28EFA8F2U &&
+                    U32(hash, 12) == 0x16E473A7U &&
+                    U32(hash, 16) == 0x0AEF85D0U &&
+                    U32(hash, 20) == 0x47EA6266U &&
+                    U32(hash, 24) == 0x9D243763U &&
+                    U32(hash, 28) == 0x72EDAE76U;
             }
             if ((flags & ManagedImageContract.FlagPhase29FailFast) != 0) {
                 return U32(hash, 0) == 0xF9410FB6U && U32(hash, 4) == 0xA72A0B0EU &&
@@ -1039,7 +1138,7 @@ namespace guideXOS.Misc {
                                                     out string failure) {
             return TryCreateFromRamdisk(ownerApplication, generation,
                 sharedSpace, nativeBootstrapAddress, phase26, phase27,
-                phase27Failure, 0, 0, out process, out failure);
+                phase27Failure, 0, 0, 0, out process, out failure);
         }
 
         internal static bool TryCreateFromRamdisk(ulong ownerApplication,
@@ -1054,7 +1153,7 @@ namespace guideXOS.Misc {
                                                     out string failure) {
             return TryCreateFromRamdisk(ownerApplication, generation,
                 sharedSpace, nativeBootstrapAddress, phase26, phase27,
-                phase27Failure, phase28Kind, 0, out process, out failure);
+                phase27Failure, phase28Kind, 0, 0, out process, out failure);
         }
 
         internal static bool TryCreateFromRamdisk(ulong ownerApplication,
@@ -1066,6 +1165,7 @@ namespace guideXOS.Misc {
                                                     bool phase27Failure,
                                                     int phase28Kind,
                                                     int phase29Kind,
+                                                    int phase30Kind,
                                                     out ManagedImageProcess process,
                                                     out string failure) {
             process = null;
@@ -1088,14 +1188,24 @@ namespace guideXOS.Misc {
             if (phase29Kind == 3) prefix = "Native/guideXOS.Phase29NotificationBodyFailureProof";
             if (phase29Kind == 5) prefix = "Native/guideXOS.Phase29NotificationInvalidTypeProof";
             if (phase29Kind == 4) prefix = "Native/guideXOS.Phase29NotificationFailFastProof";
+            if (phase30Kind == 1) prefix = "Native/guideXOS.Phase30ManagedClipboardProof";
+            if (phase30Kind == 2) prefix = "Native/guideXOS.Phase30ClipboardReaderProof";
+            if (phase30Kind == 3) prefix = "Native/guideXOS.Phase30ClipboardCrossWriterProof";
+            if (phase30Kind == 4) prefix = "Native/guideXOS.Phase30ClipboardOverwriteProof";
+            if (phase30Kind == 5) prefix = "Native/guideXOS.Phase30ClipboardEmptyProof";
+            if (phase30Kind == 6) prefix = "Native/guideXOS.Phase30ClipboardClearProof";
+            if (phase30Kind == 7) prefix = "Native/guideXOS.Phase30ClipboardOversizeProof";
+            if (phase30Kind == 8) prefix = "Native/guideXOS.Phase30ClipboardMalformedLengthProof";
+            if (phase30Kind == 9) prefix = "Native/guideXOS.Phase30ClipboardFailFastProof";
             byte[] image = File.ReadAllBytes(prefix + ".exe");
             byte[] descriptor = File.ReadAllBytes(prefix + ".gxmi");
             if (image == null || descriptor == null) {
-                failure = phase29Kind != 0 ? "PHASE29_IMAGE_NOT_STAGED" :
+                failure = phase30Kind != 0 ? "PHASE30_IMAGE_NOT_STAGED" :
+                    (phase29Kind != 0 ? "PHASE29_IMAGE_NOT_STAGED" :
                     (phase28Kind != 0 ? "PHASE28_IMAGE_NOT_STAGED" :
                     (phase27 ? "PHASE27_IMAGE_NOT_STAGED" :
                     (phase26 ? "PHASE26_IMAGE_NOT_STAGED" :
-                        "PHASE24_IMAGE_NOT_STAGED")));
+                        "PHASE24_IMAGE_NOT_STAGED"))));
                 return false;
             }
             return TryCreate(image, descriptor, ownerApplication, generation,
@@ -1148,6 +1258,20 @@ namespace guideXOS.Misc {
 
         internal bool IsPhase29InvalidType => Descriptor != null &&
             (Descriptor.Flags & ManagedImageContract.FlagPhase29InvalidType) != 0;
+
+        internal bool IsPhase30 => Descriptor != null &&
+            (Descriptor.Flags & (ManagedImageContract.FlagPhase30Clipboard |
+                ManagedImageContract.FlagPhase30Reader |
+                ManagedImageContract.FlagPhase30CrossWriter |
+                ManagedImageContract.FlagPhase30Overwrite |
+                ManagedImageContract.FlagPhase30Empty |
+                ManagedImageContract.FlagPhase30Clear |
+                ManagedImageContract.FlagPhase30Oversize |
+                ManagedImageContract.FlagPhase30MalformedLength |
+                ManagedImageContract.FlagPhase30FailFast)) != 0;
+
+        internal bool IsPhase30FailFast => Descriptor != null &&
+            (Descriptor.Flags & ManagedImageContract.FlagPhase30FailFast) != 0;
 
         internal bool TryAuthorizeEntry(ulong rip,
                                         bool allowManagedEntryResume = false) {
