@@ -132,7 +132,11 @@ namespace Internal.Runtime.CompilerHelpers {
             }
         }
 
-        public static void InitializeModules(IntPtr Modules) {
+        // The NativeAOT wmain bootstrapper consumes this helper's AL as its
+        // module-initialization success result.  Keep the managed implementation
+        // ABI-compatible with that native caller; the old void signature left
+        // AL undefined and could make wmain reject an otherwise initialized image.
+        public static bool InitializeModules(IntPtr Modules) {
             for (int i = 0; ; i++) {
                 if (((IntPtr*)Modules)[i].Equals(IntPtr.Zero))
                     break;
@@ -157,6 +161,7 @@ namespace Internal.Runtime.CompilerHelpers {
                 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365 };
             DateTime.s_daysToMonth366 = new int[]{
                 0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366 };
+            return true;
         }
 
         private static unsafe void RunEagerClassConstructors(IntPtr cctorTableStart, IntPtr cctorTableEnd) {

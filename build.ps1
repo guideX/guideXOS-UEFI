@@ -36,7 +36,7 @@
 .PARAMETER UefiDiagnosticMode
     Optional UEFI regression build variant: Tiny, FirstFrame, Frames, Input,
     InputStress, ContextMenu, Png, Font, Background, BackgroundRotation,
-    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
+    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
     WidgetOnlyClock, WidgetOnlyMonitor, or WidgetOnlyUptime
 
 .EXAMPLE
@@ -60,7 +60,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
+  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
     [string]$UefiDiagnosticMode = ''
 )
 
@@ -579,6 +579,32 @@ if (-not $SkipRamdisk) {
         & $phase25Stage -RamdiskSource (Join-Path $RamdiskSrc "Native")
         if ($LASTEXITCODE -ne 0) {
             Write-Error "Phase 25 bootstrap staging failed"
+            exit 1
+        }
+    }
+
+    $phase26Stage = Join-Path $RootDir "Tools\Phase26\stage_phase26_image.ps1"
+    $phase26Artifact = Join-Path $RootDir "out\dotnet\phase26-user-managed-proof\publish\guideXOS.UserManagedProof.exe"
+    $phase26Map = Join-Path $RootDir "out\dotnet\phase26-user-managed-proof\guidexos.map"
+    if ((Test-Path -LiteralPath $phase26Stage) -and
+        (Test-Path -LiteralPath $phase26Artifact) -and
+        (Test-Path -LiteralPath $phase26Map)) {
+        Write-Info "Staging the separately reviewed Phase 26 managed-entry image..."
+        & $phase26Stage -Artifact $phase26Artifact -Map $phase26Map -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Phase 26 image staging failed"
+            exit 1
+        }
+    } else {
+        Write-Info "Phase 26 image not staged (accepted Phase 26 artifact/map unavailable)"
+    }
+
+    $phase26BootstrapStage = Join-Path $RootDir "Tools\Phase26\stage_phase26_bootstrap.ps1"
+    if (Test-Path -LiteralPath $phase26BootstrapStage) {
+        Write-Info "Staging the independently reviewed Phase 26 managed-entry bootstrap..."
+        & $phase26BootstrapStage -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Phase 26 bootstrap staging failed"
             exit 1
         }
     }

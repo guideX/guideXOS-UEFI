@@ -368,8 +368,8 @@ public static class IDT {
 
             if (irs != null && (irs->cs & 3UL) == 3UL) {
                 if (Ring3Process.HandleUserFault(irq, actualErrorCode, irs->rip,
-                                                 irq == 14 ? Native.ReadCR2() : 0,
-                                                 stack)) {
+                                                 irs->rsp,
+                                                 irq == 14 ? Native.ReadCR2() : 0)) {
                     Ring3Process currentProcess;
                     if (Ring3Process.TryGetCurrent(out currentProcess)) {
                         if (ThreadPool.IsDirectUser) {

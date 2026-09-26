@@ -40,7 +40,10 @@ namespace guideXOS.Misc {
         internal const uint Exit = 0x00000100;
         internal const uint SetupFlags = Environment | GsTls | TlsVector | Fls;
         internal const uint SuccessFlags = 0x000001FF;
+        internal const uint Phase26Version = 2;
+        internal const uint Phase26SuccessFlags = 0x00000600;
         internal const ulong ResultOffset = 0x300UL;
+        internal const ulong ReturnCodeOffset = 0x30CUL;
     }
 
     internal sealed class NativeBootstrapDescriptor {
@@ -61,8 +64,36 @@ namespace guideXOS.Misc {
     }
 
     internal static unsafe class NativeBootstrapDescriptorReader {
-        private static bool MatchesExpectedSha256(byte[] hash) {
+        private static void HexMarker(string label, ulong value) {
+            for (int i = 0; i < label.Length; i++) Native.Out8(0x3F8, (byte)label[i]);
+            for (int shift = 60; shift >= 0; shift -= 4) {
+                int nibble = (int)((value >> shift) & 0xFUL);
+                Native.Out8(0x3F8, (byte)(nibble < 10 ? '0' + nibble :
+                    'A' + nibble - 10));
+            }
+            Native.Out8(0x3F8, (byte)'\n');
+        }
+
+        private static bool MatchesExpectedSha256(byte[] hash, bool phase26) {
             if (hash == null || hash.Length != 32) return false;
+            if (phase26) {
+                return hash[0] == 0xDA && hash[1] == 0x8C &&
+                    hash[2] == 0x20 && hash[3] == 0x68 &&
+                    hash[4] == 0x6A && hash[5] == 0x8F &&
+                    hash[6] == 0xAF && hash[7] == 0x02 &&
+                    hash[8] == 0x71 && hash[9] == 0x4C &&
+                    hash[10] == 0xDD && hash[11] == 0x26 &&
+                    hash[12] == 0x07 && hash[13] == 0xBE &&
+                    hash[14] == 0xE2 && hash[15] == 0x08 &&
+                    hash[16] == 0x12 && hash[17] == 0xE4 &&
+                    hash[18] == 0xC6 && hash[19] == 0x08 &&
+                    hash[20] == 0x36 && hash[21] == 0x99 &&
+                    hash[22] == 0xB5 && hash[23] == 0x10 &&
+                    hash[24] == 0x65 && hash[25] == 0x9E &&
+                    hash[26] == 0x9F && hash[27] == 0xC9 &&
+                    hash[28] == 0xE6 && hash[29] == 0x3B &&
+                    hash[30] == 0x11 && hash[31] == 0x4F;
+            }
             return hash[0] == 0xFA && hash[1] == 0xE4 &&
                 hash[2] == 0x25 && hash[3] == 0x24 &&
                 hash[4] == 0x50 && hash[5] == 0x5D &&
@@ -124,7 +155,8 @@ namespace guideXOS.Misc {
         }
 
         internal static bool TryValidate(NativeBootstrapDescriptor descriptor,
-                                         byte[] image, out string failure) {
+                                         byte[] image, bool phase26,
+                                         out string failure) {
             failure = null;
             if (descriptor == null || image == null) {
                 failure = "NULL_INPUT";
@@ -148,7 +180,10 @@ namespace guideXOS.Misc {
                 failure = "DESCRIPTOR_CONTRACT";
                 return false;
             }
-            bool hashMatches = MatchesExpectedSha256(descriptor.Sha256);
+            if (phase26) {
+                HexMarker("PHASE26_BOOTSTRAP_HASH0=0x", U64(descriptor.Sha256, 0));
+            }
+            bool hashMatches = MatchesExpectedSha256(descriptor.Sha256, phase26);
             if (!hashMatches) {
                 failure = "ARTIFACT_HASH";
                 return false;
@@ -197,6 +232,16 @@ namespace guideXOS.Misc {
             Native.Out8(0x3F8, (byte)'\n');
         }
 
+        private static void HexMarker(string label, ulong value) {
+            Marker(label);
+            for (int shift = 60; shift >= 0; shift -= 4) {
+                int nibble = (int)((value >> shift) & 0xFUL);
+                Native.Out8(0x3F8, (byte)(nibble < 10 ? '0' + nibble :
+                    'A' + nibble - 10));
+            }
+            Native.Out8(0x3F8, (byte)'\n');
+        }
+
         private static void Free(ref ulong page) {
             if (page != 0) {
                 Allocator.Free((IntPtr)page);
@@ -208,23 +253,42 @@ namespace guideXOS.Misc {
         internal static bool TryCreateFromRamdisk(AddressSpace space,
                                                    out NativeBootstrapImage bootstrap,
                                                    out string failure) {
+            return TryCreateFromRamdisk(space, false, out bootstrap, out failure);
+        }
+
+        internal static bool TryCreateFromRamdisk(AddressSpace space,
+                                                   bool phase26,
+                                                   out NativeBootstrapImage bootstrap,
+                                                   out string failure) {
             bootstrap = null;
             failure = null;
             if (space == null || File.Instance == null) {
                 failure = "NO_ADDRESS_SPACE_OR_FILESYSTEM";
                 return false;
             }
-            byte[] image = File.ReadAllBytes("Native/guideXOS.Phase25Bootstrap.bin");
-            byte[] descriptor = File.ReadAllBytes("Native/guideXOS.Phase25Bootstrap.gxbi");
+            string prefix = phase26 ? "Native/guideXOS.Phase26Bootstrap" :
+                "Native/guideXOS.Phase25Bootstrap";
+            byte[] image = File.ReadAllBytes(prefix + ".bin");
+            byte[] descriptor = File.ReadAllBytes(prefix + ".gxbi");
             if (image == null || descriptor == null) {
-                failure = "PHASE25_BOOTSTRAP_NOT_STAGED";
+                failure = phase26 ? "PHASE26_BOOTSTRAP_NOT_STAGED" :
+                    "PHASE25_BOOTSTRAP_NOT_STAGED";
                 return false;
             }
-            return TryCreate(space, image, descriptor, out bootstrap, out failure);
+            return TryCreate(space, image, descriptor, phase26,
+                             out bootstrap, out failure);
         }
 
         internal static bool TryCreate(AddressSpace space, byte[] image,
                                        byte[] descriptorBytes,
+                                       out NativeBootstrapImage bootstrap,
+                                       out string failure) {
+            return TryCreate(space, image, descriptorBytes, false,
+                             out bootstrap, out failure);
+        }
+
+        internal static bool TryCreate(AddressSpace space, byte[] image,
+                                       byte[] descriptorBytes, bool phase26,
                                        out NativeBootstrapImage bootstrap,
                                        out string failure) {
             bootstrap = null;
@@ -233,7 +297,7 @@ namespace guideXOS.Misc {
             if (!NativeBootstrapDescriptorReader.TryRead(descriptorBytes,
                     out descriptor, out failure) ||
                 !NativeBootstrapDescriptorReader.TryValidate(descriptor, image,
-                    out failure)) return false;
+                    phase26, out failure)) return false;
 
             bootstrap = new NativeBootstrapImage {
                 Space = space,

@@ -12,6 +12,7 @@ namespace guideXOS.Misc {
         internal const uint FlagNoRelocations = 2;
         internal const uint FlagX3Gs = 4;
         internal const uint FlagManagedEntryBlocked = 8;
+        internal const uint FlagPhase26ManagedEntry = 16;
         internal const byte Read = 1;
         internal const byte Write = 2;
         internal const byte Execute = 4;
@@ -24,7 +25,16 @@ namespace guideXOS.Misc {
         internal const ulong GsBlockAddress = 0x0000401100020000UL;
         internal const ulong TlsVectorAddress = 0x0000401100030000UL;
         internal const ulong FlsStateAddress = 0x0000401100040000UL;
+        // NativeAOT's Windows TLS model addresses tls_CurrentThread through
+        // the TLS vector plus its section-relative offset (0x22120 in the
+        // reviewed Phase 26 image).  Keep that writable per-process block
+        // separate from the loader-owned runtime-state record.
+        internal const ulong TlsBlockAddress = 0x0000401100060000UL;
+        internal const ulong TlsBlockSize = 0x0000000000024000UL;
+        internal const int TlsBlockPageCount = 36;
         internal const ulong TlsVectorOffset = 0x58UL;
+        internal const ulong HeapReservationBase = 0x0000401300000000UL;
+        internal const ulong HeapReservationSize = 0x0000001000000000UL;
         internal const int MaxSections = 32;
         internal const int MaxImagePages = 512;
         internal const int MaxFlsSlots = 64;
@@ -126,8 +136,18 @@ namespace guideXOS.Misc {
     }
 
     internal static unsafe class ManagedImageDescriptorReader {
-        private static bool MatchesExpectedSha256(byte[] hash) {
+        private static bool MatchesExpectedSha256(byte[] hash, bool phase26) {
             if (hash == null || hash.Length != 32) return false;
+            if (phase26) {
+                return U32(hash, 0) == 0x57D8F2C8U &&
+                    U32(hash, 4) == 0xF2014C3FU &&
+                    U32(hash, 8) == 0xD3815D2FU &&
+                    U32(hash, 12) == 0x7753AF86U &&
+                    U32(hash, 16) == 0xACC6D5D9U &&
+                    U32(hash, 20) == 0x0F429917U &&
+                    U32(hash, 24) == 0x6D5A9D5DU &&
+                    U32(hash, 28) == 0x04D076C6U;
+            }
             return hash[0] == 0xC8 && hash[1] == 0xD6 &&
                 hash[2] == 0x0A && hash[3] == 0xBE &&
                 hash[4] == 0x6D && hash[5] == 0x91 &&
@@ -150,6 +170,16 @@ namespace guideXOS.Misc {
             if (text == null) return;
             for (int i = 0; i < text.Length; i++) Native.Out8(0x3F8, (byte)text[i]);
             Native.Out8(0x3F8, (byte)'\n');
+        }
+
+        private static void HexMarker(string prefix, ulong value) {
+            const string digits = "0123456789ABCDEF";
+            char[] text = new char[16];
+            for (int i = 15; i >= 0; i--) {
+                text[i] = digits[(int)(value & 0xFUL)];
+                value >>= 4;
+            }
+            Marker(prefix + new string(text));
         }
 
         private static ushort U16(byte[] data, int offset) {
@@ -407,7 +437,21 @@ namespace guideXOS.Misc {
                 failure = "DESCRIPTOR_CONTRACT";
                 return false;
             }
-            bool hashMatches = MatchesExpectedSha256(descriptor.Sha256);
+            bool hashMatches = MatchesExpectedSha256(descriptor.Sha256,
+                (descriptor.Flags & ManagedImageContract.FlagPhase26ManagedEntry) != 0);
+            if ((descriptor.Flags & ManagedImageContract.FlagPhase26ManagedEntry) != 0) {
+                HexMarker("PHASE26_HASH_MATCH=0x", hashMatches ? 1UL : 0UL);
+                HexMarker("PHASE26_DESCRIPTOR_FLAGS=0x", descriptor.Flags);
+                HexMarker("PHASE26_DESCRIPTOR_HASH0=0x", descriptor.Sha256[0]);
+                HexMarker("PHASE26_DESCRIPTOR_HASH1=0x", U32(descriptor.Sha256, 0));
+                HexMarker("PHASE26_DESCRIPTOR_HASH2=0x", U32(descriptor.Sha256, 4));
+                HexMarker("PHASE26_DESCRIPTOR_HASH3=0x", U32(descriptor.Sha256, 8));
+                HexMarker("PHASE26_DESCRIPTOR_HASH4=0x", U32(descriptor.Sha256, 12));
+                HexMarker("PHASE26_DESCRIPTOR_HASH5=0x", U32(descriptor.Sha256, 16));
+                HexMarker("PHASE26_DESCRIPTOR_HASH6=0x", U32(descriptor.Sha256, 20));
+                HexMarker("PHASE26_DESCRIPTOR_HASH7=0x", U32(descriptor.Sha256, 24));
+                HexMarker("PHASE26_DESCRIPTOR_HASH8=0x", U32(descriptor.Sha256, 28));
+            }
             if (!hashMatches) {
                 failure = "ARTIFACT_HASH";
                 return false;
@@ -498,6 +542,12 @@ namespace guideXOS.Misc {
         internal static int GsContextsCreated;
         internal static int GsContextsReclaimed;
         internal static int ManagedEntryAttemptsRejected;
+        internal static int VmReservationsCreated;
+        internal static int VmReservationsReclaimed;
+        internal static int VmPagesCreated;
+        internal static int VmPagesReclaimed;
+        internal static int RuntimeTlsPagesAllocated;
+        internal static int RuntimeTlsPagesReclaimed;
 
         internal static bool IsBalanced {
             get {
@@ -506,7 +556,10 @@ namespace guideXOS.Misc {
                        StartupBlocksCreated == StartupBlocksReclaimed &&
                        TlsBlocksCreated == TlsBlocksReclaimed &&
                        FlsTablesCreated == FlsTablesReclaimed &&
-                       GsContextsCreated == GsContextsReclaimed;
+                       GsContextsCreated == GsContextsReclaimed &&
+                       VmReservationsCreated == VmReservationsReclaimed &&
+                       VmPagesCreated == VmPagesReclaimed &&
+                       RuntimeTlsPagesAllocated == RuntimeTlsPagesReclaimed;
             }
         }
     }
@@ -522,6 +575,8 @@ namespace guideXOS.Misc {
         internal ulong GsPhysical;
         internal ulong TlsVectorPhysical;
         internal ulong FlsPhysical;
+        private ulong[] TlsBlockPhysicalPages =
+            new ulong[ManagedImageContract.TlsBlockPageCount];
         internal ulong OwnerApplication;
         internal uint Generation;
         internal ulong UserGsBase;
@@ -531,6 +586,27 @@ namespace guideXOS.Misc {
         internal bool IsMapped;
         internal int BssBytesZeroed;
         private bool OwnsAddressSpace;
+        private ulong _nextHeapAddress;
+        // NativeAOT's workstation GC keeps several small process-private
+        // records alive during startup in addition to its large heap ranges.
+        // Keep the reservation table bounded, but large enough that those
+        // independent PAL allocations cannot be confused with heap exhaustion.
+        private VmReservation[] _vmReservations = new VmReservation[256];
+        private VmPage[] _vmPages = new VmPage[16384];
+
+        private struct VmReservation {
+            internal bool Active;
+            internal ulong Base;
+            internal ulong Size;
+        }
+
+        private struct VmPage {
+            internal bool Active;
+            internal ulong Address;
+            internal ulong Physical;
+            internal bool Writable;
+            internal bool Executable;
+        }
 
         private static ulong AlignUp(ulong value) {
             return (value + ManagedImageContract.PageSize - 1) &
@@ -571,7 +647,74 @@ namespace guideXOS.Misc {
             return true;
         }
 
+        private bool MapTlsBlock() {
+            if (!IsPhase26) return true;
+            if (Space == null) return false;
+            for (int i = 0; i < TlsBlockPhysicalPages.Length; i++) {
+                ulong physical = (ulong)Allocator.Allocate(
+                    ManagedImageContract.PageSize);
+                if (physical == 0) return false;
+                Native.Stosb((void*)physical, 0,
+                             ManagedImageContract.PageSize);
+                ulong virtualAddress = ManagedImageContract.TlsBlockAddress +
+                    (ulong)i * ManagedImageContract.PageSize;
+                if (!Space.MapUser(virtualAddress, physical, true, false)) {
+                    Free(ref physical);
+                    return false;
+                }
+                TlsBlockPhysicalPages[i] = physical;
+                ManagedImageDiagnostics.RuntimeTlsPagesAllocated++;
+            }
+            return true;
+        }
+
+        private void FreeTlsBlock() {
+            for (int i = 0; i < TlsBlockPhysicalPages.Length; i++) {
+                if (TlsBlockPhysicalPages[i] != 0) {
+                    Allocator.Free((IntPtr)TlsBlockPhysicalPages[i]);
+                    TlsBlockPhysicalPages[i] = 0;
+                    ManagedImageDiagnostics.RuntimeTlsPagesReclaimed++;
+                }
+            }
+        }
+
         private bool MapImage(byte[] image) {
+            // NativeAOT's COFF code manager receives the image base and parses
+            // the DOS/NT headers before it consumes the mapped sections.  The
+            // descriptor deliberately describes sections only, so map the
+            // PE header region as a read-only image page before the first
+            // section (normally RVA 0x0000..0x0FFF).
+            if (Sections == null || Sections.Length == 0 ||
+                Sections[0].VirtualAddress == 0 ||
+                (Sections[0].VirtualAddress & (ManagedImageContract.PageSize - 1)) != 0)
+                return false;
+            int headerPages = (int)(Sections[0].VirtualAddress /
+                                    ManagedImageContract.PageSize);
+            for (int page = 0; page < headerPages; page++) {
+                if (ImagePageCount >= ImagePhysicalPages.Length) return false;
+                ulong physical = (ulong)Allocator.Allocate(ManagedImageContract.PageSize);
+                if (physical == 0) return false;
+                ManagedImageDiagnostics.ImagePagesAllocated++;
+                Native.Stosb((void*)physical, 0, ManagedImageContract.PageSize);
+                ulong source = (ulong)page * ManagedImageContract.PageSize;
+                ulong bytesFromImage = source < (ulong)image.Length
+                    ? (ulong)image.Length - source : 0;
+                if (bytesFromImage > ManagedImageContract.PageSize)
+                    bytesFromImage = ManagedImageContract.PageSize;
+                if (bytesFromImage != 0) {
+                    fixed (byte* sourceBytes = image) {
+                        Native.Movsb((void*)physical, sourceBytes + source,
+                                     bytesFromImage);
+                    }
+                }
+                if (!Space.MapUser(Descriptor.ImageBase + source, physical,
+                                   false, false)) {
+                    Free(ref physical);
+                    ManagedImageDiagnostics.ImagePagesReclaimed++;
+                    return false;
+                }
+                ImagePhysicalPages[ImagePageCount++] = physical;
+            }
             for (int i = 0; i < Sections.Length; i++) {
                 ManagedImageSection section = Sections[i];
                 int pages = (int)(section.MemorySize / ManagedImageContract.PageSize);
@@ -631,6 +774,8 @@ namespace guideXOS.Misc {
             startup.FlsStateAddress = ManagedImageContract.FlsStateAddress;
             startup.UserRuntimeStateAddress = ManagedImageContract.RuntimeStateAddress;
             startup.PalVeneerAddress = 0;
+            startup.HeapReservationBase = ManagedImageContract.HeapReservationBase;
+            startup.HeapReservationSize = ManagedImageContract.HeapReservationSize;
             startup.Flags = ManagedImageContract.FlagManagedEntryBlocked;
             *(ManagedImageStartupBlock*)StartupPhysical = startup;
 
@@ -658,7 +803,8 @@ namespace guideXOS.Misc {
             *(ManagedImageFlsState*)FlsPhysical = fls;
 
             ulong* tlsVector = (ulong*)TlsVectorPhysical;
-            tlsVector[0] = ManagedImageContract.RuntimeStateAddress;
+            tlsVector[0] = IsPhase26 ? ManagedImageContract.TlsBlockAddress :
+                ManagedImageContract.RuntimeStateAddress;
             for (int i = 1; i < 8; i++) tlsVector[i] = 0;
             return true;
         }
@@ -701,6 +847,7 @@ namespace guideXOS.Misc {
                 NativeBootstrapAddress = nativeBootstrapAddress,
                 ManagedEntryReady = false
             };
+            process._nextHeapAddress = ManagedImageContract.HeapReservationBase;
             process.Space = sharedSpace ?? new AddressSpace();
             process.OwnsAddressSpace = sharedSpace == null;
             if (process.Space.Pml4 == null || !process.MapImage(image) ||
@@ -714,6 +861,7 @@ namespace guideXOS.Misc {
                                         ref process.TlsVectorPhysical, true) ||
                 !process.MapRuntimePage(ManagedImageContract.FlsStateAddress,
                                         ref process.FlsPhysical, true) ||
+                !process.MapTlsBlock() ||
                 !process.WriteTlsIndex() ||
                 !process.WriteRuntimeState()) {
                 process.Cleanup();
@@ -734,6 +882,12 @@ namespace guideXOS.Misc {
             HexMarker("PHASE24_IMAGE_SIZE=0x", descriptor.ImageSize);
             HexMarker("PHASE24_PROCESS_CR3=0x", process.Space.RootPhysical);
             HexMarker("PHASE24_USER_GS_BASE=0x", process.UserGsBase);
+            if (process.IsPhase26) {
+                HexMarker("PHASE26_TLS_BLOCK_BASE=0x",
+                          ManagedImageContract.TlsBlockAddress);
+                HexMarker("PHASE26_TLS_BLOCK_SIZE=0x",
+                          ManagedImageContract.TlsBlockSize);
+            }
             Marker("PHASE24_DESCRIPTOR_VALIDATED=1");
             Marker("PHASE24_BSS_ZERO_FILLED=1");
             Marker("PHASE24_CRT_MAPPED_READ_ONLY=1");
@@ -747,7 +901,7 @@ namespace guideXOS.Misc {
                                                    out ManagedImageProcess process,
                                                    out string failure) {
             return TryCreateFromRamdisk(ownerApplication, generation, null, 0,
-                                        out process, out failure);
+                                        false, out process, out failure);
         }
 
         internal static bool TryCreateFromRamdisk(ulong ownerApplication,
@@ -756,16 +910,31 @@ namespace guideXOS.Misc {
                                                    ulong nativeBootstrapAddress,
                                                    out ManagedImageProcess process,
                                                    out string failure) {
+            return TryCreateFromRamdisk(ownerApplication, generation,
+                sharedSpace, nativeBootstrapAddress, false,
+                out process, out failure);
+        }
+
+        internal static bool TryCreateFromRamdisk(ulong ownerApplication,
+                                                   uint generation,
+                                                   AddressSpace sharedSpace,
+                                                   ulong nativeBootstrapAddress,
+                                                   bool phase26,
+                                                   out ManagedImageProcess process,
+                                                   out string failure) {
             process = null;
             failure = null;
             if (File.Instance == null) {
                 failure = "NO_FILESYSTEM";
                 return false;
             }
-            byte[] image = File.ReadAllBytes("Native/guideXOS.UserManagedProof.exe");
-            byte[] descriptor = File.ReadAllBytes("Native/guideXOS.UserManagedProof.gxmi");
+            string prefix = phase26 ? "Native/guideXOS.Phase26ManagedProof" :
+                "Native/guideXOS.UserManagedProof";
+            byte[] image = File.ReadAllBytes(prefix + ".exe");
+            byte[] descriptor = File.ReadAllBytes(prefix + ".gxmi");
             if (image == null || descriptor == null) {
-                failure = "PHASE24_IMAGE_NOT_STAGED";
+                failure = phase26 ? "PHASE26_IMAGE_NOT_STAGED" :
+                    "PHASE24_IMAGE_NOT_STAGED";
                 return false;
             }
             return TryCreate(image, descriptor, ownerApplication, generation,
@@ -776,18 +945,63 @@ namespace guideXOS.Misc {
         internal ulong ManagedEntryAddress => Descriptor == null ? 0UL :
             Descriptor.ImageBase + Descriptor.ManagedEntryRva;
 
+        internal bool IsPhase26 => Descriptor != null &&
+            (Descriptor.Flags & ManagedImageContract.FlagPhase26ManagedEntry) != 0;
+
         internal bool TryAuthorizeEntry(ulong rip) {
-            if (!IsMapped || Descriptor == null || ManagedEntryReady) return false;
+            if (!IsMapped || Descriptor == null ||
+                ((!IsPhase26) && ManagedEntryReady)) return false;
+            if (IsPhase26 && rip == ManagedEntryAddress) return false;
             if (rip == ManagedEntryAddress) {
                 ManagedImageDiagnostics.ManagedEntryAttemptsRejected++;
                 Marker("PHASE25_MANAGED_ENTRY_DISPATCH_REJECTED=1");
                 return false;
             }
+            if (IsPhase26 && ManagedEntryReady && IsExecutableAddress(rip))
+                return ValidateRuntimeScaffold();
             return NativeBootstrapAddress != 0 &&
                 NativeBootstrapEndAddress > NativeBootstrapAddress &&
                 rip >= NativeBootstrapAddress &&
                 rip < NativeBootstrapEndAddress &&
                 ValidateRuntimeScaffold();
+        }
+
+        private bool IsExecutableAddress(ulong address) {
+            if (Descriptor == null || address < Descriptor.ImageBase) return false;
+            ulong rva = address - Descriptor.ImageBase;
+            for (int i = 0; i < Descriptor.Sections.Length; i++) {
+                ManagedImageSection section = Descriptor.Sections[i];
+                if (!section.IsExecutable || section.MemorySize == 0) continue;
+                ulong start = section.VirtualAddress;
+                ulong end = start + section.MemorySize;
+                if (end > start && rva >= start && rva < end) return true;
+            }
+            return false;
+        }
+
+        internal bool TryAuthorizeManagedEntry() {
+            if (!IsMapped || !IsPhase26 || ManagedEntryReady ||
+                Descriptor == null || NativeBootstrapAddress == 0 ||
+                NativeBootstrapEndAddress <= NativeBootstrapAddress)
+                return false;
+            if (!ValidateRuntimeScaffold() ||
+                Descriptor.RuntimeMetadataSize == 0 ||
+                Descriptor.RuntimeMetadataRva >= Descriptor.ImageSize ||
+                ManagedEntryAddress < Descriptor.ImageBase ||
+                ManagedEntryAddress >= Descriptor.ImageBase + Descriptor.ImageSize ||
+                ManagedImageContract.HeapReservationBase <
+                    Descriptor.ImageBase + Descriptor.ImageSize ||
+                ManagedImageContract.HeapReservationBase +
+                    ManagedImageContract.HeapReservationSize >=
+                    ManagedImageContract.StackGuardStart)
+                return false;
+            ulong ignored;
+            if (PageTable.TryTranslateUser(Space.Pml4,
+                    ManagedImageContract.HeapReservationBase, false, out ignored))
+                return false;
+            ManagedEntryReady = true;
+            Marker("PHASE26_MANAGED_ENTRY_AUTHORIZED=1");
+            return ValidateRuntimeScaffold();
         }
 
         internal void SetNativeBootstrapRange(ulong address, uint size) {
@@ -815,18 +1029,30 @@ namespace guideXOS.Misc {
         }
 
         internal bool TryReadBootstrapResult(out uint flags) {
+            int ignored;
+            return TryReadBootstrapResult(out flags, out ignored);
+        }
+
+        internal bool TryReadBootstrapResult(out uint flags, out int returnCode) {
             flags = 0;
+            returnCode = 0;
             if (!IsMapped || StartupPhysical == 0 || NativeBootstrapAddress == 0)
                 return false;
             uint magic = *(uint*)(StartupPhysical + ManagedBootstrapResultContract.ResultOffset);
             uint version = *(uint*)(StartupPhysical + ManagedBootstrapResultContract.ResultOffset + 8);
             if (magic != ManagedBootstrapResultContract.Magic ||
-                version != ManagedBootstrapResultContract.Version) return false;
+                version != (IsPhase26 ? ManagedBootstrapResultContract.Phase26Version :
+                    ManagedBootstrapResultContract.Version)) return false;
             flags = *(uint*)(StartupPhysical + ManagedBootstrapResultContract.ResultOffset + 4);
+            returnCode = *(int*)(StartupPhysical + ManagedBootstrapResultContract.ReturnCodeOffset);
             return true;
         }
 
         internal bool TryEnterManagedEntry() {
+            if (IsPhase26) {
+                return IsMapped && ManagedEntryReady &&
+                    Descriptor != null && ValidateRuntimeScaffold();
+            }
             ManagedImageDiagnostics.ManagedEntryAttemptsRejected++;
             Marker("PHASE24_MANAGED_ENTRY_ATTEMPT_REJECTED=1");
             return IsMapped && ManagedEntryReady &&
@@ -836,7 +1062,8 @@ namespace guideXOS.Misc {
 
         internal bool ValidateRuntimeScaffold() {
             if (!IsMapped || Space == null || Descriptor == null ||
-                ManagedEntryReady || Descriptor.NativeBootstrapRva != 0 ||
+                ((!IsPhase26) && ManagedEntryReady) ||
+                ((!IsPhase26) && Descriptor.NativeBootstrapRva != 0) ||
                 UserGsBase != ManagedImageContract.GsBlockAddress ||
                 StartupPhysical == 0 || RuntimePhysical == 0 ||
                 GsPhysical == 0 || TlsVectorPhysical == 0 || FlsPhysical == 0)
@@ -853,15 +1080,221 @@ namespace guideXOS.Misc {
             if (NativeBootstrapAddress != 0 &&
                 *(ulong*)(StartupPhysical + 24) != NativeBootstrapAddress)
                 return false;
+            ulong expectedTlsBlock = IsPhase26 ? ManagedImageContract.TlsBlockAddress :
+                ManagedImageContract.RuntimeStateAddress;
             if (*(ulong*)(GsPhysical + ManagedImageContract.TlsVectorOffset) !=
                 ManagedImageContract.TlsVectorAddress ||
-                *(ulong*)TlsVectorPhysical != ManagedImageContract.RuntimeStateAddress)
+                *(ulong*)TlsVectorPhysical != expectedTlsBlock)
                 return false;
             ulong ignored;
-            return PageTable.TryTranslateUser(
-                Space.Pml4, ManagedImageContract.GsBlockAddress, false, out ignored) &&
-                PageTable.TryTranslateUser(
-                Space.Pml4, ManagedImageContract.TlsVectorAddress, false, out ignored);
+            if (!PageTable.TryTranslateUser(
+                    Space.Pml4, ManagedImageContract.GsBlockAddress, false,
+                    out ignored) || !PageTable.TryTranslateUser(
+                    Space.Pml4, ManagedImageContract.TlsVectorAddress, false,
+                    out ignored)) return false;
+            return !IsPhase26 || PageTable.TryTranslateUser(
+                Space.Pml4, ManagedImageContract.TlsBlockAddress, true,
+                out ignored);
+        }
+
+        private static ulong AlignVm(ulong value, ulong alignment) {
+            ulong mask = alignment - 1;
+            return (value + mask) & ~mask;
+        }
+
+        private int FindReservation(ulong address, ulong size) {
+            if (size == 0) return -1;
+            ulong end = address + size;
+            if (end <= address) return -1;
+            for (int i = 0; i < _vmReservations.Length; i++) {
+                VmReservation reservation = _vmReservations[i];
+                if (reservation.Active && address >= reservation.Base &&
+                    end <= reservation.Base + reservation.Size)
+                    return i;
+            }
+            return -1;
+        }
+
+        private int FindVmPage(ulong address) {
+            for (int i = 0; i < _vmPages.Length; i++)
+                if (_vmPages[i].Active && _vmPages[i].Address == address) return i;
+            return -1;
+        }
+
+        private bool ValidVmProtection(uint protection, out bool writable,
+                                       out bool executable) {
+            writable = false;
+            executable = false;
+            // PAL schema values are R=1, RW=3, RX=5. The legacy veneer also
+            // passes PAGE_READWRITE (4) for operator new and PAGE_EXECUTE_READ
+            // (32) for code-like allocations.
+            if (protection == 1) return true;
+            if (protection == 3 || protection == 4) { writable = true; return true; }
+            if (protection == 5 || protection == 32) { executable = true; return true; }
+            return false;
+        }
+
+        internal ulong TryVmReserve(ulong size, ulong alignment) {
+            if (!IsPhase26 || !IsMapped || size == 0) return 0;
+            size = AlignUp(size);
+            if (alignment < ManagedImageContract.PageSize) alignment =
+                ManagedImageContract.PageSize;
+            if ((alignment & (alignment - 1)) != 0 || alignment > 0x10000000UL)
+                return 0;
+            for (int i = 0; i < _vmReservations.Length; i++) {
+                if (_vmReservations[i].Active) continue;
+                ulong address = AlignVm(_nextHeapAddress, alignment);
+                ulong end = address + size;
+                ulong heapEnd = ManagedImageContract.HeapReservationBase +
+                    ManagedImageContract.HeapReservationSize;
+                if (end <= address || end > heapEnd ||
+                    end >= ManagedImageContract.StackGuardStart) return 0;
+                _vmReservations[i].Active = true;
+                _vmReservations[i].Base = address;
+                _vmReservations[i].Size = size;
+                _nextHeapAddress = end;
+                ManagedImageDiagnostics.VmReservationsCreated++;
+                return address;
+            }
+            return 0;
+        }
+
+        internal int TryVmCommit(ulong address, ulong size, uint protection) {
+            bool writable, executable;
+            if (!IsPhase26 || !ValidVmProtection(protection, out writable,
+                                                   out executable) ||
+                (address & (ManagedImageContract.PageSize - 1)) != 0 ||
+                size == 0) return -1;
+            size = AlignUp(size);
+            if (FindReservation(address, size) < 0) return -1;
+            ulong end = address + size;
+            int[] added = new int[_vmPages.Length];
+            int addedCount = 0;
+            for (ulong pageAddress = address; pageAddress < end;
+                 pageAddress += ManagedImageContract.PageSize) {
+                int existing = FindVmPage(pageAddress);
+                if (existing >= 0) {
+                    if (!_vmPages[existing].Writable && writable ||
+                        _vmPages[existing].Executable && !executable)
+                        return -1;
+                    continue;
+                }
+                int slot = -1;
+                for (int i = 0; i < _vmPages.Length; i++) {
+                    if (!_vmPages[i].Active) { slot = i; break; }
+                }
+                if (slot < 0) break;
+                ulong physical = (ulong)Allocator.Allocate(ManagedImageContract.PageSize);
+                if (physical == 0) break;
+                Native.Stosb((void*)physical, 0, ManagedImageContract.PageSize);
+                if (!Space.MapUser(pageAddress, physical, writable, executable)) {
+                    Allocator.Free((IntPtr)physical);
+                    break;
+                }
+                _vmPages[slot].Active = true;
+                _vmPages[slot].Address = pageAddress;
+                _vmPages[slot].Physical = physical;
+                _vmPages[slot].Writable = writable;
+                _vmPages[slot].Executable = executable;
+                added[addedCount++] = slot;
+            }
+            ulong committedEnd = address + (ulong)addedCount *
+                ManagedImageContract.PageSize;
+            // Existing pages may make the count test above ambiguous; verify
+            // every requested page and roll back only pages added by this call.
+            bool complete = true;
+            for (ulong pageAddress = address; pageAddress < end;
+                 pageAddress += ManagedImageContract.PageSize) {
+                if (FindVmPage(pageAddress) < 0) { complete = false; break; }
+            }
+            if (!complete) {
+                for (int i = 0; i < addedCount; i++) {
+                    int slot = added[i];
+                    ulong physical;
+                    Space.UnmapUser(_vmPages[slot].Address, out physical);
+                    if (physical != 0) Allocator.Free((IntPtr)physical);
+                    _vmPages[slot] = default(VmPage);
+                    ManagedImageDiagnostics.VmPagesReclaimed++;
+                }
+                return -1;
+            }
+            for (int i = 0; i < addedCount; i++)
+                ManagedImageDiagnostics.VmPagesCreated++;
+            return 0;
+        }
+
+        internal int TryVmProtect(ulong address, ulong size, uint protection) {
+            bool writable, executable;
+            if (!IsPhase26 || !ValidVmProtection(protection, out writable,
+                                                   out executable) ||
+                (address & (ManagedImageContract.PageSize - 1)) != 0 ||
+                size == 0) return -1;
+            size = AlignUp(size);
+            if (FindReservation(address, size) < 0) return -1;
+            ulong end = address + size;
+            for (ulong pageAddress = address; pageAddress < end;
+                 pageAddress += ManagedImageContract.PageSize) {
+                int slot = FindVmPage(pageAddress);
+                if (slot < 0 || !Space.ProtectUser(pageAddress, writable,
+                                                   executable)) return -1;
+            }
+            for (ulong pageAddress = address; pageAddress < end;
+                 pageAddress += ManagedImageContract.PageSize) {
+                int slot = FindVmPage(pageAddress);
+                _vmPages[slot].Writable = writable;
+                _vmPages[slot].Executable = executable;
+            }
+            return 0;
+        }
+
+        internal int TryVmQuery(ulong address, ulong* baseAddress, ulong* size,
+                                uint* protection) {
+            if (!IsPhase26 || address == 0 || baseAddress == null ||
+                size == null || protection == null) return -1;
+            for (int i = 0; i < _vmReservations.Length; i++) {
+                VmReservation reservation = _vmReservations[i];
+                if (!reservation.Active || address < reservation.Base ||
+                    address >= reservation.Base + reservation.Size) continue;
+                *baseAddress = reservation.Base;
+                *size = reservation.Size;
+                int page = FindVmPage(address & ~(ManagedImageContract.PageSize - 1));
+                if (page < 0) *protection = 0;
+                else *protection = _vmPages[page].Executable ? 5U :
+                    (_vmPages[page].Writable ? 3U : 1U);
+                return 0;
+            }
+            return -1;
+        }
+
+        internal int TryVmRelease(ulong address, ulong size) {
+            if (!IsPhase26 || address == 0) return -1;
+            for (int i = 0; i < _vmReservations.Length; i++) {
+                VmReservation reservation = _vmReservations[i];
+                if (!reservation.Active || reservation.Base != address ||
+                    (size != 0 && AlignUp(size) != reservation.Size)) continue;
+                ulong end = reservation.Base + reservation.Size;
+                for (int p = 0; p < _vmPages.Length; p++) {
+                    if (!_vmPages[p].Active || _vmPages[p].Address < reservation.Base ||
+                        _vmPages[p].Address >= end) continue;
+                    ulong physical;
+                    Space.UnmapUser(_vmPages[p].Address, out physical);
+                    if (physical != 0) Allocator.Free((IntPtr)physical);
+                    _vmPages[p] = default(VmPage);
+                    ManagedImageDiagnostics.VmPagesReclaimed++;
+                }
+                _vmReservations[i] = default(VmReservation);
+                ManagedImageDiagnostics.VmReservationsReclaimed++;
+                return 0;
+            }
+            return -1;
+        }
+
+        internal void CleanupVm() {
+            if (!IsPhase26) return;
+            for (int i = 0; i < _vmReservations.Length; i++) {
+                if (_vmReservations[i].Active)
+                    TryVmRelease(_vmReservations[i].Base, 0);
+            }
         }
 
         private static bool ValidFlsSlot(int slot) {
@@ -920,6 +1353,7 @@ namespace guideXOS.Misc {
 
         internal bool Cleanup() {
             if (!IsMapped && Space == null) return true;
+            CleanupVm();
             for (int i = 0; i < ImagePageCount; i++) {
                 ulong page = ImagePhysicalPages[i];
                 if (page != 0) {
@@ -934,6 +1368,7 @@ namespace guideXOS.Misc {
             Free(ref GsPhysical);
             Free(ref TlsVectorPhysical);
             Free(ref FlsPhysical);
+            FreeTlsBlock();
             if (Space != null && OwnsAddressSpace) {
                 Space.Release();
             }

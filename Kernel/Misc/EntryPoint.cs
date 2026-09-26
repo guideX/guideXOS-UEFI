@@ -305,6 +305,13 @@ namespace guideXOS.Misc {
             }
 #endif
 
+#if UEFI_DIAGNOSTIC_RING3_PHASE26
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                Ring3Proof.SchedulePhase26();
+                BootConsole.WriteLine("PHASE26_QUEUED_FOR_SCHEDULER=1");
+            }
+#endif
+
 #if !UseAPIC
             // Enable only timer IRQ (IRQ0 -> vector 0x20 with PIC remap) for scheduling.
             BootConsole.WriteLine("[PIC] Enabling IRQ0 (timer) only");
@@ -341,7 +348,7 @@ namespace guideXOS.Misc {
 #endif
 
             BootConsole.WriteLine("[BOOT] Post-STI continue");
-#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_DIRECT
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_DIRECT || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI)
                 BootConsole.WriteLine("RING3_DESKTOP_CONTINUED=1");
 #endif
@@ -400,7 +407,7 @@ namespace guideXOS.Misc {
             //BootConsole.WriteLine("[CALLING_KERNEL_MAIN]");
             KernelMain();
 
-#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_DIRECT
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_DIRECT || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI)
                 LocalAPICTimer.StartTimer(1000, 0x20);
 #endif

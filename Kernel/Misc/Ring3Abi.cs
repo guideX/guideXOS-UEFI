@@ -41,6 +41,27 @@ namespace guideXOS.Misc {
         internal const ulong ValidateRead = 3;
         internal const ulong ValidateWrite = 4;
         internal const ulong ServiceRequest = 5;
+        internal const ulong VmReserve = 0x20;
+        internal const ulong VmCommit = 0x21;
+        internal const ulong VmProtect = 0x22;
+        internal const ulong VmRelease = 0x23;
+        internal const ulong VmQuery = 0x24;
+        internal const ulong TlsInitialize = 0x30;
+        internal const ulong TlsCurrentBlock = 0x31;
+        internal const ulong FlsAlloc = 0x32;
+        internal const ulong FlsGet = 0x33;
+        internal const ulong FlsSet = 0x34;
+        internal const ulong FlsCleanup = 0x35;
+        internal const ulong ThreadId = 0x40;
+        internal const ulong ThreadStackBounds = 0x41;
+        internal const ulong ThreadRuntimeState = 0x42;
+        internal const ulong MonotonicTicks = 0x50;
+        internal const ulong MonotonicFrequency = 0x51;
+        internal const ulong SystemTimeNs = 0x52;
+        internal const ulong RandomBytes = 0x60;
+        internal const ulong ProcessExit = 0x70;
+        internal const ulong FailFast = 0x71;
+        internal const ulong RuntimeDiagnostic = 0x72;
         internal const ulong Success = 0;
         internal const ulong InvalidOperation = unchecked((ulong)-38L);
         internal const ulong InvalidPointer = unchecked((ulong)-14L);
@@ -56,6 +77,16 @@ namespace guideXOS.Misc {
             if (text == null) return;
             for (int i = 0; i < text.Length; i++)
                 Native.Out8(0x3F8, (byte)text[i]);
+            Native.Out8(0x3F8, (byte)'\n');
+        }
+
+        private static void HexMarker(string label, ulong value) {
+            Marker(label);
+            for (int shift = 60; shift >= 0; shift -= 4) {
+                int nibble = (int)((value >> shift) & 0xFUL);
+                Native.Out8(0x3F8, (byte)(nibble < 10 ? '0' + nibble :
+                    'A' + nibble - 10));
+            }
             Native.Out8(0x3F8, (byte)'\n');
         }
 
@@ -76,6 +107,7 @@ namespace guideXOS.Misc {
             Marker("RING3_CALLER_VALID=1");
             process.MarkRunning();
             ulong operation = stack->rs.rax;
+            HexMarker("RING3_OPERATION=0x", operation);
             switch (operation) {
                 case Ping:
                     stack->rs.rax = AbiVersion;
@@ -111,7 +143,123 @@ namespace guideXOS.Misc {
                         stack->rs.rdi, stack->rs.rsi);
                     break;
 
+                case VmReserve:
+                    stack->rs.rax = process.ManagedImage == null ? 0UL :
+                        process.ManagedImage.TryVmReserve(stack->rs.rdi,
+                                                          stack->rs.rsi);
+                    break;
+
+                case VmCommit:
+                    stack->rs.rax = process.ManagedImage == null ?
+                        unchecked((ulong)-1L) : (ulong)process.ManagedImage.TryVmCommit(
+                            stack->rs.rdi, stack->rs.rsi, (uint)stack->rs.rdx);
+                    break;
+
+                case VmProtect:
+                    stack->rs.rax = process.ManagedImage == null ?
+                        unchecked((ulong)-1L) : (ulong)process.ManagedImage.TryVmProtect(
+                            stack->rs.rdi, stack->rs.rsi, (uint)stack->rs.rdx);
+                    break;
+
+                case VmRelease:
+                    stack->rs.rax = process.ManagedImage == null ?
+                        unchecked((ulong)-1L) : (ulong)process.ManagedImage.TryVmRelease(
+                            stack->rs.rdi, stack->rs.rsi);
+                    break;
+
+                case VmQuery:
+                    stack->rs.rax = DispatchVmQuery(process, stack->rs.rdi,
+                        stack->rs.rsi, stack->rs.rdx, stack->rs.r8);
+                    break;
+
+                case TlsInitialize:
+                    stack->rs.rax = DispatchTlsInitialize(process,
+                        stack->rs.rdi, stack->rs.rsi, stack->rs.rdx);
+                    break;
+
+                case TlsCurrentBlock:
+                    stack->rs.rax = process.ManagedImage == null ? 0UL :
+                        (process.ManagedImage.IsPhase26 ?
+                            ManagedImageContract.TlsBlockAddress :
+                            ManagedImageContract.RuntimeStateAddress);
+                    break;
+
+                case ThreadRuntimeState:
+                    stack->rs.rax = process.ManagedImage == null ? 0UL :
+                        ManagedImageContract.RuntimeStateAddress;
+                    break;
+
+                case FlsAlloc:
+                    int flsSlot;
+                    stack->rs.rax = process.ManagedImage != null &&
+                        process.ManagedImage.TryFlsAllocate(out flsSlot) ?
+                        (ulong)flsSlot : unchecked((ulong)-1L);
+                    break;
+
+                case FlsGet:
+                    ulong flsValue;
+                    stack->rs.rax = process.ManagedImage != null &&
+                        process.ManagedImage.TryFlsGet((int)stack->rs.rdi,
+                                                       out flsValue) ?
+                        flsValue : 0UL;
+                    break;
+
+                case FlsSet:
+                    stack->rs.rax = process.ManagedImage != null &&
+                        process.ManagedImage.TryFlsSet((int)stack->rs.rdi,
+                                                       stack->rs.rsi) ?
+                        Success : unchecked((ulong)-1L);
+                    break;
+
+                case FlsCleanup:
+                    stack->rs.rax = Success;
+                    break;
+
+                case ThreadId:
+                    stack->rs.rax = process.Handle.Value;
+                    break;
+
+                case ThreadStackBounds:
+                    stack->rs.rax = DispatchThreadStackBounds(process,
+                        stack->rs.rdi, stack->rs.rsi);
+                    break;
+
+                case MonotonicTicks:
+                    stack->rs.rax = Native.Rdtsc();
+                    break;
+
+                case MonotonicFrequency:
+                    stack->rs.rax = 1000000000UL;
+                    break;
+
+                case SystemTimeNs:
+                    stack->rs.rax = Native.Rdtsc();
+                    break;
+
+                case RandomBytes:
+                    stack->rs.rax = DispatchRandomBytes(process,
+                        stack->rs.rdi, stack->rs.rsi);
+                    break;
+
+                case ProcessExit:
+                    stack->rs.rax = Success;
+                    process.Exit((int)stack->rs.rdi);
+                    break;
+
+                case FailFast:
+                    HexMarker("PHASE26_FAILFAST_REASON=0x", stack->rs.rdi);
+                    HexMarker("PHASE26_FAILFAST_CONTEXT=0x", stack->rs.rsi);
+                    stack->rs.rax = Success;
+                    process.Exit(-1);
+                    break;
+
+                case RuntimeDiagnostic:
+                    HexMarker("PHASE26_RUNTIME_GATE=0x", stack->rs.rdi);
+                    stack->rs.rax = Success;
+                    break;
+
                 case Exit:
+                    HexMarker("RING3_EXIT_CODE=0x", stack->rs.rdi);
                     stack->rs.rax = Success;
                     process.Exit((int)stack->rs.rdi);
                     break;
@@ -121,6 +269,7 @@ namespace guideXOS.Misc {
                     Marker("RING3_INVALID_OPERATION_REJECTED=1");
                     break;
             }
+            HexMarker("RING3_OPERATION_RESULT=0x", stack->rs.rax);
         }
 
         private static ulong DispatchServiceRequest(Ring3Process process,
@@ -240,6 +389,62 @@ namespace guideXOS.Misc {
             process.RecordServiceRequestSuccess();
             Marker("RING3_SERVICE_RESPONSE_SERIALIZED=1");
             Marker("RING3_SERVICE_RESPONSE_COPIED_OUT=1");
+            return Success;
+        }
+
+        private static ulong DispatchVmQuery(Ring3Process process, ulong address,
+                                             ulong basePointer, ulong sizePointer,
+                                             ulong protectionPointer) {
+            if (process.ManagedImage == null || basePointer == 0 ||
+                sizePointer == 0 || protectionPointer == 0 ||
+                !PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                    basePointer, 8) ||
+                !PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                    sizePointer, 8) ||
+                !PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                    protectionPointer, 4)) return unchecked((ulong)-14L);
+            return (ulong)process.ManagedImage.TryVmQuery(address,
+                (ulong*)basePointer, (ulong*)sizePointer, (uint*)protectionPointer);
+        }
+
+        private static ulong DispatchTlsInitialize(Ring3Process process,
+                                                    ulong statePointer,
+                                                    ulong templateSize,
+                                                    ulong zeroSize) {
+            if (process.ManagedImage == null ||
+                (statePointer != 0 && statePointer !=
+                    ManagedImageContract.RuntimeStateAddress) ||
+                templateSize > 0x10000UL || zeroSize > 0x10000UL)
+                return unchecked((ulong)-22L);
+            return Success;
+        }
+
+        private static ulong DispatchThreadStackBounds(Ring3Process process,
+                                                        ulong lowPointer,
+                                                        ulong highPointer) {
+            if (lowPointer == 0 || highPointer == 0 ||
+                !PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                    lowPointer, 8) ||
+                !PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                    highPointer, 8)) return unchecked((ulong)-14L);
+            *(ulong*)lowPointer = Ring3Process.UserStackStart;
+            *(ulong*)highPointer = process.UserStackEnd;
+            return Success;
+        }
+
+        private static ulong DispatchRandomBytes(Ring3Process process,
+                                                  ulong buffer, ulong length) {
+            if (length == 0 || length > PageTable.MaxUserTransfer ||
+                !PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                    buffer, length)) return unchecked((ulong)-14L);
+            byte* output = (byte*)buffer;
+            ulong state = Native.Rdtsc() ^ process.Handle.Value;
+            for (ulong i = 0; i < length; i++) {
+                state ^= state << 7;
+                state ^= state >> 9;
+                state ^= state << 8;
+                output[i] = (byte)state;
+            }
             return Success;
         }
 

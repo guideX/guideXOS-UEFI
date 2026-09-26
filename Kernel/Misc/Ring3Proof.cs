@@ -12,6 +12,7 @@ namespace guideXOS.Misc {
         private static bool _desktopHeartbeatObserved;
         private static bool _phase24Scheduled;
         private static bool _phase25Scheduled;
+        private static bool _phase26Scheduled;
 
         private sealed class Phase15Lifetime {
             internal Ring3Process Process;
@@ -98,6 +99,87 @@ namespace guideXOS.Misc {
             _phase25Scheduled = true;
             Marker("PHASE25_SCHEDULED=1");
             new Thread(&RunPhase25, 131072).Start(0);
+        }
+
+        internal static void SchedulePhase26() {
+            if (_phase26Scheduled) return;
+            _phase26Scheduled = true;
+            Marker("PHASE26_SCHEDULED=1");
+            new Thread(&RunPhase26, 131072).Start(0);
+        }
+
+        private static bool RunOnePhase26Lifetime(out Ring3Process process) {
+            process = null;
+            Native.Cli();
+            string failure;
+            if (!Ring3Process.TryCreateManagedEntry(0, out process, out failure) ||
+                process == null) {
+                Marker("PHASE26_PROCESS_CREATE_FAILED=1");
+                if (failure != null) Marker("PHASE26_PROCESS_CREATE_REJECTED=" + failure);
+                return false;
+            }
+            bool scaffold = process.ManagedImage != null &&
+                process.ManagedImage.ValidateRuntimeScaffold();
+            bool authorized = process.ManagedImage != null &&
+                process.ManagedImage.TryEnterManagedEntry();
+            bool started = process.StartManagedBootstrap();
+            if (started) Native.Sti();
+            int spins = 0;
+            while (started && !process.IsTerminal && spins++ < 4000000)
+                Native.Hlt();
+            bool completed = process.IsTerminal;
+            bool dispatched = process.SchedulerDispatches >= 1 &&
+                process.SchedulerCr3Valid && process.SchedulerRsp0Valid;
+            bool result = process.BootstrapResultSucceeded;
+            bool mainReturned = process.BootstrapReturnCode == 42 &&
+                process.ExitCode == 42;
+            HexMarker("PHASE26_BOOTSTRAP_FLAGS=0x",
+                (ulong)process.BootstrapResultFlags);
+            HexMarker("PHASE26_BOOTSTRAP_RETURN=0x",
+                (ulong)(uint)process.BootstrapReturnCode);
+            HexMarker("PHASE26_EXIT_CODE=0x",
+                (ulong)(uint)process.ExitCode);
+            bool clean = process.Cleanup();
+            bool staleHandle = !process.TryResolveHandle(process.Handle);
+            Marker(scaffold ? "PHASE26_SCAFFOLD_PASS=1" :
+                "PHASE26_SCAFFOLD_PASS=0");
+            Marker(authorized ? "PHASE26_ENTRY_AUTHORIZED=1" :
+                "PHASE26_ENTRY_AUTHORIZED=0");
+            Marker(dispatched ? "PHASE26_DISPATCH_PASS=1" :
+                "PHASE26_DISPATCH_PASS=0");
+            Marker(completed && result ? "PHASE26_BOOTSTRAP_RESULT_PASS=1" :
+                "PHASE26_BOOTSTRAP_RESULT_PASS=0");
+            Marker(mainReturned ? "PHASE26_MAIN_RETURN_42=1" :
+                "PHASE26_MAIN_RETURN_42=0");
+            Marker(clean && staleHandle ? "PHASE26_LIFETIME_CLEAN=1" :
+                "PHASE26_LIFETIME_CLEAN=0");
+            return started && completed && scaffold && authorized && dispatched &&
+                result && mainReturned && clean && staleHandle;
+        }
+
+        private static void RunPhase26() {
+            Native.Cli();
+            Marker("PHASE26_BEGIN=1");
+            Marker("PHASE26_MANAGED_ENTRY_READY=0");
+            bool first = RunOnePhase26Lifetime(out _);
+            bool second = RunOnePhase26Lifetime(out _);
+            bool third = RunOnePhase26Lifetime(out _);
+            bool fourth = RunOnePhase26Lifetime(out _);
+            Marker(first && second && third && fourth ?
+                "PHASE26_REPEATED_LIFETIMES=4" :
+                "PHASE26_REPEATED_LIFETIMES=0");
+            Marker(ManagedImageDiagnostics.IsBalanced ?
+                "PHASE26_MANAGED_CLEANUP_BALANCED=1" :
+                "PHASE26_MANAGED_CLEANUP_BALANCED=0");
+            Marker(NativeBootstrapDiagnostics.IsBalanced ?
+                "PHASE26_BOOTSTRAP_CLEANUP_BALANCED=1" :
+                "PHASE26_BOOTSTRAP_CLEANUP_BALANCED=0");
+            Marker(Ring3ProcessTable.LiveCount == 0 &&
+                   ThreadPool.LiveUserThreadCount == 0 &&
+                   Ring3ProcessDiagnostics.IsBalanced ?
+                "PHASE26_PROCESS_CLEANUP_BALANCED=1" :
+                "PHASE26_PROCESS_CLEANUP_BALANCED=0");
+            Native.Sti();
         }
 
         private static void RunPhase24() {

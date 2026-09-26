@@ -176,6 +176,56 @@ namespace guideXOS {
             return true;
         }
 
+        internal static bool TryGetUserPageEntry(ulong* rootPml4,
+                                                   ulong virtualAddress,
+                                                   out ulong* entry) {
+            entry = null;
+            if (!IsCanonicalUser(virtualAddress) ||
+                (virtualAddress & 0xFFFUL) != 0 || rootPml4 == null)
+                return false;
+            ulong pml4e = rootPml4[(virtualAddress >> 39) & 0x1FFUL];
+            if ((pml4e & 0x5UL) != 0x5UL) return false;
+            ulong* pdpt = (ulong*)(pml4e & PageMask);
+            ulong pdpte = pdpt[(virtualAddress >> 30) & 0x1FFUL];
+            if ((pdpte & 0x5UL) != 0x5UL || (pdpte & (1UL << 7)) != 0)
+                return false;
+            ulong* pd = (ulong*)(pdpte & PageMask);
+            ulong pde = pd[(virtualAddress >> 21) & 0x1FFUL];
+            if ((pde & 0x5UL) != 0x5UL || (pde & (1UL << 7)) != 0)
+                return false;
+            ulong* pt = (ulong*)(pde & PageMask);
+            ulong* pte = &pt[(virtualAddress >> 12) & 0x1FFUL];
+            if ((*pte & 0x5UL) != 0x5UL) return false;
+            entry = pte;
+            return true;
+        }
+
+        internal static bool SetUserPagePermissions(ulong* rootPml4,
+                                                      ulong virtualAddress,
+                                                      bool writable,
+                                                      bool executable) {
+            ulong* entry;
+            if (!TryGetUserPageEntry(rootPml4, virtualAddress, out entry))
+                return false;
+            ulong physical = *entry & PageMask;
+            *entry = physical | 0x5UL | (writable ? 0x2UL : 0) |
+                     (executable ? 0UL : (1UL << 63));
+            Native.Invlpg(virtualAddress);
+            return true;
+        }
+
+        internal static bool UnmapUserPage(ulong* rootPml4, ulong virtualAddress,
+                                           out ulong physicalAddress) {
+            physicalAddress = 0;
+            ulong* entry;
+            if (!TryGetUserPageEntry(rootPml4, virtualAddress, out entry))
+                return false;
+            physicalAddress = *entry & PageMask;
+            *entry = 0;
+            Native.Invlpg(virtualAddress);
+            return true;
+        }
+
         public static bool ValidateUserRange(ulong* rootPml4, ulong address,
                                               ulong length, bool writable) {
             if (length == 0 || length > MaxUserTransfer ||

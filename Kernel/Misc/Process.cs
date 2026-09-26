@@ -84,6 +84,17 @@ namespace guideXOS.Misc {
                    (physicalAddress & PageTable.PageMask);
         }
 
+        internal bool ProtectUser(ulong virtualAddress, bool writable,
+                                  bool executable) {
+            return PageTable.SetUserPagePermissions(Pml4, virtualAddress,
+                                                     writable, executable);
+        }
+
+        internal bool UnmapUser(ulong virtualAddress, out ulong physicalAddress) {
+            return PageTable.UnmapUserPage(Pml4, virtualAddress,
+                                            out physicalAddress);
+        }
+
         public void Release() {
             if (_released) return;
             _released = true;
@@ -200,6 +211,11 @@ namespace guideXOS.Misc {
         public const ulong UserDataStart = UserCodeStart + 0x2000UL;
         public const ulong UserStackStart = 0x00007FFF00000000UL;
         public const ulong UserStackSize = 0x10000UL;
+        // NativeAOT startup performs GC/runtime registration before entering
+        // managed Main.  Keep a bounded, process-private stack large enough
+        // for that first native lifetime while retaining explicit low/high
+        // bounds for the PAL and cleanup proofs.
+        private const ulong Phase26UserStackSize = 0x800000UL;
         private const ulong PageSize = 0x1000UL;
         private const ulong KernelStackSize = 0x10000UL;
 
@@ -209,7 +225,7 @@ namespace guideXOS.Misc {
         public AddressSpace Space { get; private set; }
         public Thread UserThread { get; private set; }
         public ulong UserCodeEnd => UserCodeStart + PageSize;
-        public ulong UserStackEnd => UserStackStart + UserStackSize;
+        public ulong UserStackEnd => UserStackStart + _userStackSize;
         public int ExitCode { get; private set; }
         public Ring3FaultRecord Fault;
         public ulong OwningApplicationInstance { get; private set; }
@@ -222,6 +238,7 @@ namespace guideXOS.Misc {
         internal ManagedImageProcess ManagedImage { get; private set; }
         internal NativeBootstrapImage NativeBootstrap { get; private set; }
         public uint BootstrapResultFlags { get; private set; }
+        public int BootstrapReturnCode { get; private set; }
         internal ulong UserCodePhysical => _userCodePhysical;
         internal ulong UserDataPhysical => _userDataPhysical;
         internal ulong UserStackPhysical => _userStackPhysical;
@@ -231,6 +248,7 @@ namespace guideXOS.Misc {
         private ulong _userCodePhysical;
         private ulong _userDataPhysical;
         private ulong _userStackPhysical;
+        private ulong _userStackSize;
         private bool _cleaned;
 
         private Ring3Process(int slot, uint generation, Ring3PayloadKind kind) {
@@ -239,6 +257,7 @@ namespace guideXOS.Misc {
             PayloadKind = kind;
             State = Ring3ProcessState.Created;
             OwningApplicationInstance = 0;
+            _userStackSize = UserStackSize;
         }
 
         public bool IsTerminal => State == Ring3ProcessState.Exiting ||
@@ -274,6 +293,20 @@ namespace guideXOS.Misc {
         internal static bool TryCreateManagedBootstrap(
             ulong owningApplicationInstance, bool deliberateFault,
             out Ring3Process process, out string failure) {
+            return TryCreateManagedBootstrap(owningApplicationInstance,
+                deliberateFault, false, out process, out failure);
+        }
+
+        internal static bool TryCreateManagedEntry(
+            ulong owningApplicationInstance, out Ring3Process process,
+            out string failure) {
+            return TryCreateManagedBootstrap(owningApplicationInstance, false,
+                true, out process, out failure);
+        }
+
+        private static bool TryCreateManagedBootstrap(
+            ulong owningApplicationInstance, bool deliberateFault, bool phase26,
+            out Ring3Process process, out string failure) {
             process = null;
             failure = null;
             int slot;
@@ -299,35 +332,47 @@ namespace guideXOS.Misc {
             ManagedImageProcess managedImage;
             if (!ManagedImageProcess.TryCreateFromRamdisk(
                     owningApplicationInstance, generation, candidate.Space,
-                    NativeBootstrapContract.ImageBase,
+                    NativeBootstrapContract.ImageBase, phase26,
                     out managedImage, out failure) || managedImage == null) {
+                if (failure != null) Marker(phase26 ?
+                    "PHASE26_IMAGE_CREATE_REJECTED=" + failure :
+                    "PHASE25_IMAGE_CREATE_REJECTED=" + failure);
                 candidate.Cleanup();
                 return false;
             }
             candidate.ManagedImage = managedImage;
             NativeBootstrapImage nativeBootstrap;
             if (!NativeBootstrapImage.TryCreateFromRamdisk(
-                    candidate.Space, out nativeBootstrap, out failure) ||
+                    candidate.Space, phase26, out nativeBootstrap, out failure) ||
                 nativeBootstrap == null ||
                 nativeBootstrap.EntryAddress !=
                     candidate.ManagedImage.NativeBootstrapAddress) {
+                if (failure != null) Marker(phase26 ?
+                    "PHASE26_BOOTSTRAP_CREATE_REJECTED=" + failure :
+                    "PHASE25_BOOTSTRAP_CREATE_REJECTED=" + failure);
                 candidate.Cleanup();
                 return false;
             }
             candidate.NativeBootstrap = nativeBootstrap;
             candidate.ManagedImage.SetNativeBootstrapRange(
                 nativeBootstrap.ImageBase, nativeBootstrap.ImageSize);
+            if (phase26 && !candidate.ManagedImage.TryAuthorizeManagedEntry()) {
+                failure = "MANAGED_ENTRY_PREREQUISITES_FAILED";
+                candidate.Cleanup();
+                return false;
+            }
 
-            candidate._userStackPhysical = (ulong)Allocator.Allocate(UserStackSize);
+            candidate._userStackSize = phase26 ? Phase26UserStackSize : UserStackSize;
+            candidate._userStackPhysical = (ulong)Allocator.Allocate(candidate._userStackSize);
             if (candidate._userStackPhysical == 0) {
                 failure = "USER_STACK_FAILED";
                 candidate.Cleanup();
                 return false;
             }
             Ring3ProcessDiagnostics.UserStackPagesCreated +=
-                (int)(UserStackSize / PageSize);
-            Native.Stosb((void*)candidate._userStackPhysical, 0, UserStackSize);
-            for (ulong offset = 0; offset < UserStackSize; offset += PageSize) {
+                (int)(candidate._userStackSize / PageSize);
+            Native.Stosb((void*)candidate._userStackPhysical, 0, candidate._userStackSize);
+            for (ulong offset = 0; offset < candidate._userStackSize; offset += PageSize) {
                 if (!candidate.Space.MapUser(UserStackStart + offset,
                                              candidate._userStackPhysical + offset,
                                              writable: true, executable: false)) {
@@ -338,12 +383,15 @@ namespace guideXOS.Misc {
             }
             candidate.UserThread = Thread.CreateUser(candidate,
                 candidate.NativeBootstrap.EntryAddress,
-                UserStackStart + UserStackSize - 16, KernelStackSize);
+                UserStackStart + candidate._userStackSize - 16, KernelStackSize);
             if (candidate.UserThread == null) {
                 failure = "KERNEL_STACK_FAILED";
                 candidate.Cleanup();
                 return false;
             }
+            if (phase26)
+                HexMarker("PHASE26_INITIAL_USER_RSP=0x",
+                    candidate.UserThread.Stack->irs.rsp);
             candidate.UserThread.UserGsBase = candidate.ManagedImage.UserGsBase;
             Native.Stosb(&candidate.UserThread.Stack->rs, 0,
                 (ulong)sizeof(IDT.RegistersStack));
@@ -361,7 +409,8 @@ namespace guideXOS.Misc {
                 candidate.Cleanup();
                 return false;
             }
-            Marker("PHASE25_PROCESS_CREATED=1");
+            Marker(phase26 ? "PHASE26_PROCESS_CREATED=1" :
+                "PHASE25_PROCESS_CREATED=1");
             HexMarker("PHASE25_PROCESS_HANDLE=0x", candidate.Handle.Value);
             HexMarker("PHASE25_PROCESS_SLOT=0x", (ulong)slot);
             HexMarker("PHASE25_PROCESS_GENERATION=0x", generation);
@@ -387,7 +436,9 @@ namespace guideXOS.Misc {
             if (!TryAuthorizeUserEntry(NativeBootstrap.EntryAddress)) return false;
             UserThread.Start(0);
             State = Ring3ProcessState.Ready;
-            Marker("PHASE25_BOOTSTRAP_SCHEDULED=1");
+            Marker(ManagedImage != null && ManagedImage.IsPhase26 ?
+                "PHASE26_BOOTSTRAP_SCHEDULED=1" :
+                "PHASE25_BOOTSTRAP_SCHEDULED=1");
             return true;
         }
 
@@ -531,8 +582,11 @@ namespace guideXOS.Misc {
         internal bool TryReadBootstrapResult() {
             if (ManagedImage == null) return false;
             uint flags;
-            bool valid = ManagedImage.TryReadBootstrapResult(out flags);
+            int returnCode;
+            bool valid = ManagedImage.TryReadBootstrapResult(out flags,
+                                                              out returnCode);
             BootstrapResultFlags = flags;
+            BootstrapReturnCode = returnCode;
             return valid;
         }
 
@@ -549,7 +603,10 @@ namespace guideXOS.Misc {
         internal bool BootstrapResultSucceeded {
             get {
                 return TryReadBootstrapResult() &&
-                    BootstrapResultFlags == ManagedBootstrapResultContract.SuccessFlags;
+                    (ManagedImage != null && ManagedImage.IsPhase26 ?
+                        BootstrapResultFlags == ManagedBootstrapResultContract.Phase26SuccessFlags &&
+                        BootstrapReturnCode == 42 :
+                        BootstrapResultFlags == ManagedBootstrapResultContract.SuccessFlags);
             }
         }
 
@@ -557,6 +614,9 @@ namespace guideXOS.Misc {
             if (State == Ring3ProcessState.Exited ||
                 State == Ring3ProcessState.Failed) return;
             TimerPreemptions++;
+            if (ManagedImage != null && ManagedImage.IsPhase26 &&
+                TimerPreemptions <= 12 && stack != null)
+                HexMarker("PHASE26_PREEMPT_RSP=0x", stack->irs.rsp);
             if (TimerPreemptions == 1) {
                 Marker("RING3_TIMER_PREEMPTED_CPL3=1");
             }
@@ -575,7 +635,15 @@ namespace guideXOS.Misc {
             SchedulerCr3Valid = Space != null && activeCr3 == Space.RootPhysical;
             SchedulerRsp0Valid = UserThread != null &&
                                  GDT.KernelStackTop == UserThread.KernelStackTop;
+            if (ManagedImage != null && ManagedImage.IsPhase26 &&
+                SchedulerDispatches <= 12 && UserThread != null &&
+                UserThread.Stack != null)
+                HexMarker("PHASE26_DISPATCH_USER_RSP=0x",
+                    UserThread.Stack->irs.rsp);
             if (SchedulerDispatches == 1) {
+                if (UserThread != null && UserThread.Stack != null)
+                    HexMarker("PHASE26_SELECTED_USER_RSP=0x",
+                        UserThread.Stack->irs.rsp);
                 Marker("RING3_USER_THREAD_SCHEDULED=1");
                 Marker(SchedulerCr3Valid ?
                     "RING3_PROCESS_CR3_ACTIVATED=1" :
@@ -597,7 +665,7 @@ namespace guideXOS.Misc {
         }
 
         internal static bool HandleUserFault(int vector, ulong errorCode, ulong rip,
-                                              ulong cr2, IDT.IDTStackGeneric* stack) {
+                                              ulong userRsp, ulong cr2) {
             Ring3Process process;
             if (!TryGetCurrent(out process)) return false;
             process.State = Ring3ProcessState.Failed;
@@ -615,6 +683,7 @@ namespace guideXOS.Misc {
             HexMarker("RING3_FAULT_VECTOR=0x", (ulong)vector);
             HexMarker("RING3_FAULT_RIP=0x", rip);
             HexMarker("RING3_FAULT_CR2=0x", cr2);
+            HexMarker("RING3_FAULT_RSP=0x", userRsp);
             Marker("RING3_FAULT_RECORD_CREATED=1");
             Marker("RING3_FAULT_CONTAINED=1");
             return true;
@@ -725,7 +794,7 @@ namespace guideXOS.Misc {
             if (_userStackPhysical != 0) {
                 FreePage(ref _userStackPhysical);
                 Ring3ProcessDiagnostics.UserStackPagesReclaimed +=
-                    (int)(UserStackSize / PageSize);
+                    (int)(_userStackSize / PageSize);
             }
             OwningApplicationInstance = 0;
             ExitCode = 0;
