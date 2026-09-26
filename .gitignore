@@ -9,6 +9,8 @@
 /guideXOS/obj
 /UserManagedProof/bin
 /UserManagedProof/obj
+/GuideXos.User/bin
+/GuideXos.User/obj
 /Tools/__pycache__
 /Tools/Phase19/__pycache__
 /Tools/MediaCreator.Windows/obj

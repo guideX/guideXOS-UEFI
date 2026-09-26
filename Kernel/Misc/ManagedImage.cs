@@ -15,6 +15,10 @@ namespace guideXOS.Misc {
         internal const uint FlagPhase26ManagedEntry = 16;
         internal const uint FlagPhase27ManagedService = 32;
         internal const uint FlagPhase27ManagedFailure = 64;
+        internal const uint FlagPhase28ManagedSdk = 128;
+        internal const uint FlagPhase28TypedFailure = 256;
+        internal const uint FlagPhase28Exit = 512;
+        internal const uint FlagPhase28FailFast = 1024;
         internal const byte Read = 1;
         internal const byte Write = 2;
         internal const byte Execute = 4;
@@ -159,6 +163,46 @@ namespace guideXOS.Misc {
                     U32(hash, 20) == 0xA0AF967EU &&
                     U32(hash, 24) == 0xE1C323D2U &&
                     U32(hash, 28) == 0xB4881034U;
+            }
+            if ((flags & ManagedImageContract.FlagPhase28FailFast) != 0) {
+                return U32(hash, 0) == 0x75211513U &&
+                    U32(hash, 4) == 0xE87F0EBCU &&
+                    U32(hash, 8) == 0xE3737E51U &&
+                    U32(hash, 12) == 0x94189573U &&
+                    U32(hash, 16) == 0xE94B71D8U &&
+                    U32(hash, 20) == 0x10FDF1BDU &&
+                    U32(hash, 24) == 0x3DCE425EU &&
+                    U32(hash, 28) == 0x96EC92D7U;
+            }
+            if ((flags & ManagedImageContract.FlagPhase28Exit) != 0) {
+                return U32(hash, 0) == 0x1110E0CBU &&
+                    U32(hash, 4) == 0xB86E113BU &&
+                    U32(hash, 8) == 0xD6146922U &&
+                    U32(hash, 12) == 0x68815504U &&
+                    U32(hash, 16) == 0x96217CDBU &&
+                    U32(hash, 20) == 0xD68FDDD0U &&
+                    U32(hash, 24) == 0x79EE835DU &&
+                    U32(hash, 28) == 0x790C67A8U;
+            }
+            if ((flags & ManagedImageContract.FlagPhase28TypedFailure) != 0) {
+                return U32(hash, 0) == 0xBAAA95CCU &&
+                    U32(hash, 4) == 0xE22C5146U &&
+                    U32(hash, 8) == 0x670157EEU &&
+                    U32(hash, 12) == 0x564CDC9DU &&
+                    U32(hash, 16) == 0xCF35CB0DU &&
+                    U32(hash, 20) == 0x654FFE49U &&
+                    U32(hash, 24) == 0xBE180D41U &&
+                    U32(hash, 28) == 0xD3DDF79BU;
+            }
+            if ((flags & ManagedImageContract.FlagPhase28ManagedSdk) != 0) {
+                return U32(hash, 0) == 0x8A05FFFAU &&
+                    U32(hash, 4) == 0x2B6A5EC9U &&
+                    U32(hash, 8) == 0x20A0BB24U &&
+                    U32(hash, 12) == 0x284C6446U &&
+                    U32(hash, 16) == 0x6C887771U &&
+                    U32(hash, 20) == 0xC1832476U &&
+                    U32(hash, 24) == 0x3E4C3391U &&
+                    U32(hash, 28) == 0x845255D3U;
             }
             if ((flags & ManagedImageContract.FlagPhase26ManagedEntry) != 0) {
                 return U32(hash, 0) == 0x22183B30U &&
@@ -958,23 +1002,47 @@ namespace guideXOS.Misc {
                                                     bool phase27Failure,
                                                     out ManagedImageProcess process,
                                                     out string failure) {
+            return TryCreateFromRamdisk(ownerApplication, generation,
+                sharedSpace, nativeBootstrapAddress, phase26, phase27,
+                phase27Failure, 0, out process, out failure);
+        }
+
+        internal static bool TryCreateFromRamdisk(ulong ownerApplication,
+                                                    uint generation,
+                                                    AddressSpace sharedSpace,
+                                                    ulong nativeBootstrapAddress,
+                                                    bool phase26,
+                                                    bool phase27,
+                                                    bool phase27Failure,
+                                                    int phase28Kind,
+                                                    out ManagedImageProcess process,
+                                                    out string failure) {
             process = null;
             failure = null;
             if (File.Instance == null) {
                 failure = "NO_FILESYSTEM";
                 return false;
             }
-            string prefix = phase27 ?
+            string prefix = phase28Kind == 1 ?
+                "Native/guideXOS.Phase28ManagedSdkProof" :
+                (phase28Kind == 2 ?
+                    "Native/guideXOS.Phase28TypedFailureProof" :
+                (phase28Kind == 3 ?
+                    "Native/guideXOS.Phase28ExitProof" :
+                (phase28Kind == 4 ?
+                    "Native/guideXOS.Phase28FailFastProof" :
+            (phase27 ?
                 (phase27Failure ? "Native/guideXOS.Phase27ManagedFailureProof" :
                     "Native/guideXOS.Phase27ManagedServiceProof") :
                 (phase26 ? "Native/guideXOS.Phase26ManagedProof" :
-                    "Native/guideXOS.UserManagedProof");
+                    "Native/guideXOS.UserManagedProof")))));
             byte[] image = File.ReadAllBytes(prefix + ".exe");
             byte[] descriptor = File.ReadAllBytes(prefix + ".gxmi");
             if (image == null || descriptor == null) {
-                failure = phase27 ? "PHASE27_IMAGE_NOT_STAGED" :
+                failure = phase28Kind != 0 ? "PHASE28_IMAGE_NOT_STAGED" :
+                    (phase27 ? "PHASE27_IMAGE_NOT_STAGED" :
                     (phase26 ? "PHASE26_IMAGE_NOT_STAGED" :
-                        "PHASE24_IMAGE_NOT_STAGED");
+                        "PHASE24_IMAGE_NOT_STAGED"));
                 return false;
             }
             return TryCreate(image, descriptor, ownerApplication, generation,
@@ -993,6 +1061,21 @@ namespace guideXOS.Misc {
 
         internal bool IsPhase27Failure => Descriptor != null &&
             (Descriptor.Flags & ManagedImageContract.FlagPhase27ManagedFailure) != 0;
+
+        internal bool IsPhase28 => Descriptor != null &&
+            (Descriptor.Flags & (ManagedImageContract.FlagPhase28ManagedSdk |
+                ManagedImageContract.FlagPhase28TypedFailure |
+                ManagedImageContract.FlagPhase28Exit |
+                ManagedImageContract.FlagPhase28FailFast)) != 0;
+
+        internal bool IsPhase28TypedFailure => Descriptor != null &&
+            (Descriptor.Flags & ManagedImageContract.FlagPhase28TypedFailure) != 0;
+
+        internal bool IsPhase28Exit => Descriptor != null &&
+            (Descriptor.Flags & ManagedImageContract.FlagPhase28Exit) != 0;
+
+        internal bool IsPhase28FailFast => Descriptor != null &&
+            (Descriptor.Flags & ManagedImageContract.FlagPhase28FailFast) != 0;
 
         internal bool TryAuthorizeEntry(ulong rip,
                                         bool allowManagedEntryResume = false) {

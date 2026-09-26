@@ -8,6 +8,7 @@ BITS 64
 %define ABI_VERSION                 1
 %define STARTUP_VERSION             1
 %define MANAGED_IMAGE_BASE          0x0000401000000000
+%define STARTUP_BLOCK               0x0000401100000000
 %define BOOTSTRAP_BASE              0x0000401200000000
 %define MANAGED_ENTRY               (MANAGED_IMAGE_BASE + 0x1420)
 %define RUNTIME_STATE               0x0000401100010000
@@ -187,15 +188,18 @@ phase25_bootstrap_start:
     test rax, rax
     jnz .fail
 
-    lea r8, [rdi - 0x100]
-    mov r9, [rdi + 16]
+    ; The startup block is a fixed process-private mapping in the contract;
+    ; recover it explicitly because the syscall transport owns argument regs.
+    mov rdi, STARTUP_BLOCK
+    mov r8, rdi
+    lea r9, [rdi + 0x200]
     cmp dword [r9 + 0], 1
     jne .fail
     cmp dword [r9 + 4], SYSTEM_INFORMATION_SIZE
     jne .fail
     mov rax, [r9 + 16]
     cmp rax, [r9 + 24]
-    jb .memory_ok
+    jae .memory_ok
     jne .fail
 .memory_ok:
     cmp word [r9 + 40], 32

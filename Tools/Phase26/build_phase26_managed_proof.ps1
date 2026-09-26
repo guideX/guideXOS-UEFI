@@ -6,7 +6,8 @@ param(
     [string]$ProjectPath = '',
     [string]$PalSource = '',
     [string]$ShimSource = '',
-    [string]$SyscallSource = ''
+    [string]$SyscallSource = '',
+    [string[]]$ProjectProperties = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -529,7 +530,13 @@ Compress-Archive -Path (Join-Path $compilerExpanded '*') -DestinationPath $compi
 Move-Item -LiteralPath $compilerZip -Destination $compilerPackage.FullName -Force
 
 $buildScript = Join-Path $root 'Tools\Phase23\build_user_managed_proof.ps1'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript -PackRoot $PackRoot -OutputRoot $OutputRoot -ProjectPath $ProjectPath
+$buildArgs = @('-PackRoot', $PackRoot, '-OutputRoot', $OutputRoot,
+    '-ProjectPath', $ProjectPath)
+if ($ProjectProperties.Count -gt 0) {
+    $buildArgs += '-ProjectProperties'
+    $buildArgs += $ProjectProperties
+}
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript @buildArgs
 if ($LASTEXITCODE -ne 0) { throw "Phase 26 managed proof build failed with exit code $LASTEXITCODE." }
 
 $artifact = Get-ChildItem -LiteralPath (Join-Path $OutputRoot 'publish') -Filter '*.exe' -File | Select-Object -First 1

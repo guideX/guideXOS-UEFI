@@ -33,6 +33,18 @@ namespace guideXOS.Misc {
         public fixed byte Architecture[SystemInformationSnapshot.MaxArchitectureLength];
     }
 
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct Ring3ApplicationIdentityResponse {
+        public uint StructureVersion;
+        public uint Size;
+        public ulong StableApplicationId;
+        public ulong LifetimeToken;
+        public uint ApplicationGeneration;
+        public uint ProcessGeneration;
+        public uint Architecture;
+        public uint Reserved;
+    }
+
     internal static unsafe class Ring3Abi {
         private static bool _enteredMarker;
         internal const ulong AbiVersion = 1;
@@ -41,6 +53,7 @@ namespace guideXOS.Misc {
         internal const ulong ValidateRead = 3;
         internal const ulong ValidateWrite = 4;
         internal const ulong ServiceRequest = 5;
+        internal const ulong ApplicationIdentity = 6;
         internal const ulong VmReserve = 0x20;
         internal const ulong VmCommit = 0x21;
         internal const ulong VmProtect = 0x22;
@@ -139,6 +152,11 @@ namespace guideXOS.Misc {
 
                 case ServiceRequest:
                     stack->rs.rax = DispatchServiceRequest(process,
+                        stack->rs.rdi, stack->rs.rsi);
+                    break;
+
+                case ApplicationIdentity:
+                    stack->rs.rax = DispatchApplicationIdentity(process,
                         stack->rs.rdi, stack->rs.rsi);
                     break;
 
@@ -425,6 +443,87 @@ namespace guideXOS.Misc {
             Marker("RING3_SERVICE_RESPONSE_SERIALIZED=1");
             Marker("RING3_SERVICE_RESPONSE_COPIED_OUT=1");
             return Success;
+        }
+
+        private static ulong DispatchApplicationIdentity(Ring3Process process,
+                                                          ulong responsePointer,
+                                                          ulong responseCapacity) {
+            Marker("RING3_IDENTITY_ABI_ENTERED=1");
+            if (responsePointer == 0 ||
+                responseCapacity < (ulong)sizeof(Ring3ApplicationIdentityResponse) ||
+                responseCapacity > 4096 ||
+                !PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                    responsePointer, responseCapacity)) {
+                Marker("RING3_IDENTITY_INVALID_RESPONSE_REJECTED=1");
+                return InvalidPointer;
+            }
+
+            // The payload supplies only a writable destination. The scheduled
+            // process record is the sole source of application identity.
+            ApplicationInstanceHandle owner =
+                ApplicationInstanceHandle.FromValue(
+                    process.OwningApplicationInstance);
+            ApplicationInstance instance;
+            if (!owner.IsValid ||
+                !ApplicationInstanceRegistry.TryGet(owner, out instance) ||
+                instance == null || string.IsNullOrEmpty(instance.ApplicationId)) {
+                Marker("RING3_IDENTITY_KERNEL_OWNER_REJECTED=1");
+                return InvalidContext;
+            }
+
+            Ring3ApplicationIdentityResponse response =
+                default(Ring3ApplicationIdentityResponse);
+            response.StructureVersion = (uint)AbiVersion;
+            response.Size = (uint)sizeof(Ring3ApplicationIdentityResponse);
+            response.StableApplicationId = StableApplicationFingerprint(
+                instance.ApplicationId);
+            response.LifetimeToken = LifetimeFingerprint(owner.Value,
+                                                        process.Handle.Value);
+            response.ApplicationGeneration = owner.Generation;
+            response.ProcessGeneration = process.Handle.Generation;
+            response.Architecture = 0x8664;
+            if (response.StableApplicationId == 0 ||
+                response.LifetimeToken == 0 ||
+                response.ApplicationGeneration == 0 ||
+                response.ProcessGeneration == 0) {
+                Marker("RING3_IDENTITY_KERNEL_OWNER_REJECTED=1");
+                return InvalidContext;
+            }
+            Native.Movsb((void*)responsePointer, &response,
+                (ulong)sizeof(Ring3ApplicationIdentityResponse));
+            process.RecordApplicationIdentitySuccess(
+                response.StableApplicationId, response.LifetimeToken,
+                response.ApplicationGeneration, response.ProcessGeneration);
+            Marker("RING3_IDENTITY_KERNEL_DERIVED=1");
+            Marker("RING3_IDENTITY_RESPONSE_COPIED_OUT=1");
+            return Success;
+        }
+
+        private static ulong StableApplicationFingerprint(string value) {
+            ulong hash = 1469598103934665603UL;
+            if (value == null) return 0;
+            for (int i = 0; i < value.Length; i++) {
+                char character = value[i];
+                hash ^= (byte)(character & 0xFF);
+                hash *= 1099511628211UL;
+                hash ^= (byte)(character >> 8);
+                hash *= 1099511628211UL;
+            }
+            return hash == 0 ? 1UL : hash;
+        }
+
+        private static ulong LifetimeFingerprint(ulong applicationHandle,
+                                                 ulong processHandle) {
+            ulong hash = 1469598103934665603UL;
+            for (int shift = 0; shift < 64; shift += 8) {
+                hash ^= (byte)(applicationHandle >> shift);
+                hash *= 1099511628211UL;
+            }
+            for (int shift = 0; shift < 64; shift += 8) {
+                hash ^= (byte)(processHandle >> shift);
+                hash *= 1099511628211UL;
+            }
+            return hash == 0 ? 1UL : hash;
         }
 
         private static ulong DispatchVmQuery(Ring3Process process, ulong address,

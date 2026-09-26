@@ -2,7 +2,8 @@
 param(
     [string]$PackRoot = '',
     [string]$OutputRoot = '',
-    [string]$ProjectPath = ''
+    [string]$ProjectPath = '',
+    [string[]]$ProjectProperties = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,6 +63,10 @@ $common = @(
     "-p:RestorePackagesPath=$packagesPath",
     '-v:minimal'
 )
+foreach ($property in $ProjectProperties) {
+    if ([string]::IsNullOrWhiteSpace($property)) { continue }
+    $common += if ($property.StartsWith('-p:')) { $property } else { '-p:' + $property }
+}
 
 $restoreArgs = @('restore', $project, '--configfile', $nugetConfig, '--force-evaluate', '--no-cache') + $common
 & dotnet @restoreArgs 2>&1 | Tee-Object -FilePath (Join-Path $OutputRoot 'restore.log')

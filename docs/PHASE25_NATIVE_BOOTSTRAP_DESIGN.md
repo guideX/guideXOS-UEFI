@@ -9,7 +9,7 @@ remains false.
 ## Two-image contract
 
 `Tools/Phase25/bootstrap.asm` builds a raw x86-64 `guideXOS.Phase25Bootstrap.bin`
-and the sidecar `GXBI v1` descriptor.  The bootstrap is 840 bytes in the
+and the sidecar `GXBI v1` descriptor.  The bootstrap is 845 bytes in the
 current deterministic build, has no imports or relocations, and is mapped as
 private user RX pages.  The descriptor records the SHA-256, fixed address,
 entry offset, executable range, startup-block version, and ABI version.

@@ -113,22 +113,22 @@ namespace guideXOS.Misc {
                     hash[28] == 0xA8 && hash[29] == 0x7D &&
                     hash[30] == 0x83 && hash[31] == 0xA2;
             }
-            return hash[0] == 0xFA && hash[1] == 0xE4 &&
-                hash[2] == 0x25 && hash[3] == 0x24 &&
-                hash[4] == 0x50 && hash[5] == 0x5D &&
-                hash[6] == 0x18 && hash[7] == 0xF3 &&
-                hash[8] == 0x1A && hash[9] == 0x59 &&
-                hash[10] == 0xF6 && hash[11] == 0x2F &&
-                hash[12] == 0x2B && hash[13] == 0xE3 &&
-                hash[14] == 0x5C && hash[15] == 0x2B &&
-                hash[16] == 0x3E && hash[17] == 0x85 &&
-                hash[18] == 0xD6 && hash[19] == 0x11 &&
-                hash[20] == 0xA5 && hash[21] == 0x20 &&
-                hash[22] == 0x98 && hash[23] == 0xC0 &&
-                hash[24] == 0x75 && hash[25] == 0xD3 &&
-                hash[26] == 0x34 && hash[27] == 0xEC &&
-                hash[28] == 0x2A && hash[29] == 0x9D &&
-                hash[30] == 0x89 && hash[31] == 0xF3;
+            return hash[0] == 0x0D && hash[1] == 0xC3 &&
+                hash[2] == 0x1E && hash[3] == 0x47 &&
+                hash[4] == 0x2F && hash[5] == 0x4C &&
+                hash[6] == 0x3D && hash[7] == 0xA2 &&
+                hash[8] == 0x58 && hash[9] == 0x1B &&
+                hash[10] == 0x1D && hash[11] == 0x87 &&
+                hash[12] == 0x31 && hash[13] == 0xCF &&
+                hash[14] == 0xEE && hash[15] == 0xCC &&
+                hash[16] == 0xB9 && hash[17] == 0xE6 &&
+                hash[18] == 0x46 && hash[19] == 0x49 &&
+                hash[20] == 0xA4 && hash[21] == 0xF3 &&
+                hash[22] == 0x68 && hash[23] == 0x03 &&
+                hash[24] == 0x6F && hash[25] == 0x2D &&
+                hash[26] == 0x38 && hash[27] == 0x19 &&
+                hash[28] == 0x91 && hash[29] == 0x36 &&
+                hash[30] == 0xE6 && hash[31] == 0x18;
         }
 
         private static uint U32(byte[] data, int offset) {

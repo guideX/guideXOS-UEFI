@@ -232,6 +232,11 @@ namespace guideXOS.Misc {
         public int TimerPreemptions { get; private set; }
         public int SchedulerDispatches { get; private set; }
         public int ServiceRequestsSucceeded { get; private set; }
+        public int ApplicationIdentityRequestsSucceeded { get; private set; }
+        internal ulong LastIdentityStableApplicationId { get; private set; }
+        internal ulong LastIdentityLifetimeToken { get; private set; }
+        internal uint LastIdentityApplicationGeneration { get; private set; }
+        internal uint LastIdentityProcessGeneration { get; private set; }
         public bool SchedulerCr3Valid { get; private set; }
         public bool SchedulerRsp0Valid { get; private set; }
         public bool UserRspPreserved { get; private set; }
@@ -311,16 +316,33 @@ namespace guideXOS.Misc {
                 true, true, failureMode, out process, out failure);
         }
 
+        internal static bool TryCreateManagedSdkEntry(
+            ulong owningApplicationInstance, int payloadKind,
+            out Ring3Process process, out string failure) {
+            return TryCreateManagedBootstrap(owningApplicationInstance, false,
+                true, false, false, payloadKind, out process, out failure);
+        }
+
         private static bool TryCreateManagedBootstrap(
             ulong owningApplicationInstance, bool deliberateFault, bool phase26,
             out Ring3Process process, out string failure) {
             return TryCreateManagedBootstrap(owningApplicationInstance,
-                deliberateFault, phase26, false, false, out process, out failure);
+                deliberateFault, phase26, false, false, 0,
+                out process, out failure);
         }
 
         private static bool TryCreateManagedBootstrap(
             ulong owningApplicationInstance, bool deliberateFault, bool phase26,
             bool phase27, bool phase27Failure,
+            out Ring3Process process, out string failure) {
+            return TryCreateManagedBootstrap(owningApplicationInstance,
+                deliberateFault, phase26, phase27, phase27Failure, 0,
+                out process, out failure);
+        }
+
+        private static bool TryCreateManagedBootstrap(
+            ulong owningApplicationInstance, bool deliberateFault, bool phase26,
+            bool phase27, bool phase27Failure, int phase28Kind,
             out Ring3Process process, out string failure) {
             process = null;
             failure = null;
@@ -346,29 +368,33 @@ namespace guideXOS.Misc {
 
             ManagedImageProcess managedImage;
             if (!ManagedImageProcess.TryCreateFromRamdisk(
-                    owningApplicationInstance, generation, candidate.Space,
-                    NativeBootstrapContract.ImageBase, phase26, phase27,
-                    phase27Failure,
-                    out managedImage, out failure) || managedImage == null) {
-                if (failure != null) Marker(phase27 ?
+                     owningApplicationInstance, generation, candidate.Space,
+                     NativeBootstrapContract.ImageBase, phase26, phase27,
+                     phase27Failure, phase28Kind,
+                     out managedImage, out failure) || managedImage == null) {
+                if (failure != null) Marker(phase28Kind != 0 ?
+                    "PHASE28_IMAGE_CREATE_REJECTED=" + failure :
+                    (phase27 ?
                     "PHASE27_IMAGE_CREATE_REJECTED=" + failure :
                     (phase26 ? "PHASE26_IMAGE_CREATE_REJECTED=" + failure :
-                        "PHASE25_IMAGE_CREATE_REJECTED=" + failure));
+                        "PHASE25_IMAGE_CREATE_REJECTED=" + failure)));
                 candidate.Cleanup();
                 return false;
             }
             candidate.ManagedImage = managedImage;
             NativeBootstrapImage nativeBootstrap;
             if (!NativeBootstrapImage.TryCreateFromRamdisk(
-                    candidate.Space, phase26, phase27,
+                    candidate.Space, phase26, phase27 || phase28Kind != 0,
                     out nativeBootstrap, out failure) ||
                 nativeBootstrap == null ||
                 nativeBootstrap.EntryAddress !=
                     candidate.ManagedImage.NativeBootstrapAddress) {
-                if (failure != null) Marker(phase27 ?
+                if (failure != null) Marker(phase28Kind != 0 ?
+                    "PHASE28_BOOTSTRAP_CREATE_REJECTED=" + failure :
+                    (phase27 ?
                     "PHASE27_BOOTSTRAP_CREATE_REJECTED=" + failure :
                     (phase26 ? "PHASE26_BOOTSTRAP_CREATE_REJECTED=" + failure :
-                        "PHASE25_BOOTSTRAP_CREATE_REJECTED=" + failure));
+                        "PHASE25_BOOTSTRAP_CREATE_REJECTED=" + failure)));
                 candidate.Cleanup();
                 return false;
             }
@@ -625,8 +651,10 @@ namespace guideXOS.Misc {
         internal bool BootstrapResultSucceeded {
             get {
                 int expectedReturn = ManagedImage != null &&
-                    ManagedImage.IsPhase27Failure ? 21 :
-                    (ManagedImage != null && ManagedImage.IsPhase27 ? 27 : 42);
+                    ManagedImage.IsPhase28TypedFailure ? 23 :
+                    (ManagedImage != null && ManagedImage.IsPhase28 ? 28 :
+                    (ManagedImage != null && ManagedImage.IsPhase27Failure ? 21 :
+                    (ManagedImage != null && ManagedImage.IsPhase27 ? 27 : 42)));
                 return TryReadBootstrapResult() &&
                     (ManagedImage != null && ManagedImage.IsPhase26 ?
                         BootstrapResultFlags == ManagedBootstrapResultContract.Phase26SuccessFlags &&
@@ -745,6 +773,17 @@ namespace guideXOS.Misc {
             ServiceRequestsSucceeded++;
         }
 
+        internal void RecordApplicationIdentitySuccess(ulong stableApplicationId,
+                                                       ulong lifetimeToken,
+                                                       uint applicationGeneration,
+                                                       uint processGeneration) {
+            ApplicationIdentityRequestsSucceeded++;
+            LastIdentityStableApplicationId = stableApplicationId;
+            LastIdentityLifetimeToken = lifetimeToken;
+            LastIdentityApplicationGeneration = applicationGeneration;
+            LastIdentityProcessGeneration = processGeneration;
+        }
+
         public bool TryResolveHandle(Ring3ProcessHandle handle) =>
             Ring3ProcessTable.Resolve(handle) != null;
 
@@ -827,6 +866,7 @@ namespace guideXOS.Misc {
             TimerPreemptions = 0;
             SchedulerDispatches = 0;
             ServiceRequestsSucceeded = 0;
+            ApplicationIdentityRequestsSucceeded = 0;
             SchedulerCr3Valid = false;
             SchedulerRsp0Valid = false;
             UserRspPreserved = false;
