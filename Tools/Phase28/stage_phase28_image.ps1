@@ -33,7 +33,9 @@ foreach ($payload in $record.payloads) {
     $exeTarget = Join-Path $RamdiskSource ($base + '.exe')
     $descriptorTarget = Join-Path $RamdiskSource ($base + '.gxmi')
     Copy-Item -LiteralPath $artifact -Destination $exeTarget -Force
-    & python @($descriptorBuilder, $artifact, $map, $descriptorTarget, $mode)
+    $pythonCommand = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+    if (-not (Test-Path -LiteralPath $pythonCommand)) { $pythonCommand = 'python' }
+    & $pythonCommand @($descriptorBuilder, $artifact, $map, $descriptorTarget, $mode)
     if ($LASTEXITCODE -ne 0) {
         throw "Phase 28 $mode descriptor generation failed: $LASTEXITCODE"
     }

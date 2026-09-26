@@ -36,7 +36,7 @@
 .PARAMETER UefiDiagnosticMode
     Optional UEFI regression build variant: Tiny, FirstFrame, Frames, Input,
     InputStress, ContextMenu, Png, Font, Background, BackgroundRotation,
-    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Phase27, Ring3Phase28, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
+    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Phase27, Ring3Phase28, Ring3Phase29, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
     WidgetOnlyClock, WidgetOnlyMonitor, or WidgetOnlyUptime
 
 .EXAMPLE
@@ -60,7 +60,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
+  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
     [string]$UefiDiagnosticMode = ''
 )
 
@@ -637,6 +637,18 @@ if (-not $SkipRamdisk) {
         if ($LASTEXITCODE -ne 0) { throw "Phase 28 managed SDK build failed: $LASTEXITCODE" }
         & $phase28Stage -BuildRoot $phase28BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
         if ($LASTEXITCODE -ne 0) { throw "Phase 28 image staging failed: $LASTEXITCODE" }
+    }
+
+    $phase29Build = Join-Path $RootDir "Tools\Phase29\build_phase29_managed_notification.ps1"
+    $phase29Stage = Join-Path $RootDir "Tools\Phase29\stage_phase29_image.ps1"
+    $phase29BuildRoot = Join-Path $RootDir "out\dotnet\phase29-managed-notification"
+    if ((Test-Path -LiteralPath $phase29Build) -and
+        (Test-Path -LiteralPath $phase29Stage)) {
+        Write-Info "Building the Phase 29 managed Notifications proof..."
+        & $phase29Build
+        if ($LASTEXITCODE -ne 0) { throw "Phase 29 managed notification build failed: $LASTEXITCODE" }
+        & $phase29Stage -BuildRoot $phase29BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) { throw "Phase 29 image staging failed: $LASTEXITCODE" }
     }
     
     $ramdiskBuilder = (Resolve-Path "$ToolsDir\ramdisk_builder.py").Path

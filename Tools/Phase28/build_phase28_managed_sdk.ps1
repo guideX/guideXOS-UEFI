@@ -113,7 +113,7 @@ foreach ($mode in $modes) {
     $pack = Join-Path $OutputRoot ($mode.Name + '-runtime-pack')
     $output = Join-Path $OutputRoot $mode.Name
     $projectProperties = @('Phase28Mode=' + $mode.Mode)
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $phase26Builder `
+    & (Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -ExecutionPolicy Bypass -File $phase26Builder `
         -Phase23Pack $Phase23Pack -PackRoot $pack -OutputRoot $output `
         -ProjectPath $project -PalSource $palSource -ShimSource $shimSource `
         -ProjectProperties $projectProperties

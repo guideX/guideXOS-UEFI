@@ -15,6 +15,7 @@ namespace guideXOS.Misc {
         private static bool _phase26Scheduled;
         private static bool _phase27Scheduled;
         private static bool _phase28Scheduled;
+        private static bool _phase29Scheduled;
 
         private sealed class Phase15Lifetime {
             internal Ring3Process Process;
@@ -548,6 +549,153 @@ namespace guideXOS.Misc {
                 Ring3ProcessDiagnostics.IsBalanced;
             Marker(complete ? "RING3_PHASE28_COMPLETE=1" :
                 "RING3_PHASE28_COMPLETE=0");
+            Native.Sti();
+        }
+
+        internal static void SchedulePhase29() {
+            if (_phase29Scheduled) return;
+            _phase29Scheduled = true;
+            Marker("PHASE29_SCHEDULED=1");
+            new Thread(&RunPhase29, 131072).Start(0);
+        }
+
+        private static bool RunOnePhase29Lifetime(int payloadKind,
+                                                   out Ring3Process process) {
+            process = null;
+            if (_owner == null) return false;
+            Native.Cli();
+            string failure;
+            if (!Ring3Process.TryCreateManagedNotificationEntry(
+                    _owner.Handle.Value, payloadKind, out process, out failure) ||
+                process == null) {
+                Native.Sti();
+                Marker("PHASE29_PROCESS_CREATE_FAILED=1");
+                if (failure != null) Marker("PHASE29_PROCESS_CREATE_REJECTED=" + failure);
+                return false;
+            }
+            Ring3ProcessHandle oldHandle = process.Handle;
+            bool scaffold = process.ManagedImage != null &&
+                process.ManagedImage.ValidateRuntimeScaffold();
+            bool authorized = process.ManagedImage != null &&
+                process.ManagedImage.TryEnterManagedEntry();
+            bool started = process.StartManagedBootstrap();
+            if (started) Native.Sti();
+            int spins = 0;
+            while (started && !process.IsTerminal && spins++ < 6000000)
+                Native.Hlt();
+
+            bool completed = process.IsTerminal;
+            bool dispatched = process.SchedulerDispatches >= 1 &&
+                process.SchedulerCr3Valid && process.SchedulerRsp0Valid;
+            bool resumed = payloadKind != 4 && process.TimerPreemptions > 0 &&
+                process.SchedulerDispatches >= 2 && process.UserRspPreserved;
+            bool service = payloadKind == 1 || payloadKind == 4
+                ? process.ServiceRequestsSucceeded > 0
+                : process.ServiceRequestsSucceeded == 0;
+            int expected = payloadKind == 1 ? 29 :
+                (payloadKind == 2 ? 31 :
+                (payloadKind == 3 ? 32 :
+                (payloadKind == 5 ? 35 : -1)));
+            bool managedResult = (payloadKind <= 3 || payloadKind == 5) &&
+                process.BootstrapResultSucceeded &&
+                process.BootstrapReturnCode == expected &&
+                process.ExitCode == expected;
+            bool terminalResult = payloadKind == 4 ? process.ExitCode == expected :
+                managedResult;
+            bool state = process.State == Ring3ProcessState.Exiting ||
+                process.State == Ring3ProcessState.Exited;
+            bool clean = process.Cleanup();
+            bool staleHandle = !process.TryResolveHandle(oldHandle);
+            Marker(scaffold ? "PHASE29_SCAFFOLD_PASS=1" : "PHASE29_SCAFFOLD_PASS=0");
+            Marker(authorized ? "PHASE29_ENTRY_AUTHORIZED=1" : "PHASE29_ENTRY_AUTHORIZED=0");
+            Marker(dispatched ? "PHASE29_DISPATCH_PASS=1" : "PHASE29_DISPATCH_PASS=0");
+            Marker(resumed ? "PHASE29_RESUME_PASS=1" :
+                (payloadKind == 4 ? "PHASE29_RESUME_PASS=NA" : "PHASE29_RESUME_PASS=0"));
+            Marker(service ? "PHASE29_SERVICE_PASS=1" : "PHASE29_SERVICE_PASS=0");
+            Marker(terminalResult && state ? "PHASE29_MAIN_RESULT_PASS=1" :
+                "PHASE29_MAIN_RESULT_PASS=0");
+            Marker(clean && staleHandle ? "PHASE29_LIFETIME_CLEAN=1" :
+                "PHASE29_LIFETIME_CLEAN=0");
+            return started && completed && scaffold && authorized && dispatched &&
+                service && terminalResult && state && clean && staleHandle &&
+                (payloadKind == 4 || payloadKind > 1 || resumed);
+        }
+
+        private static void RunPhase29() {
+            Native.Cli();
+            Marker("PHASE29_BEGIN=1");
+            bool owner = TryCreateOwner();
+            ApplicationServiceContext context = null;
+            ApplicationServiceResult contextResult;
+            if (owner) ApplicationServiceRegistry.TryCreateContext(
+                _owner.Handle, out context, out contextResult);
+
+            bool first = owner && RunOnePhase29Lifetime(1, out _);
+            bool second = owner && RunOnePhase29Lifetime(1, out _);
+            bool third = owner && RunOnePhase29Lifetime(1, out _);
+            bool fourth = owner && RunOnePhase29Lifetime(1, out _);
+            bool titleFailure = owner && RunOnePhase29Lifetime(2, out _);
+            bool bodyFailure = owner && RunOnePhase29Lifetime(3, out _);
+            bool invalidType = owner && RunOnePhase29Lifetime(5, out _);
+            bool failFast = owner && RunOnePhase29Lifetime(4, out _);
+
+            ulong staleOwnerHandle = owner ? _owner.Handle.Value : 0UL;
+            CleanupOwner();
+            ApplicationInstance ignored;
+            ApplicationInstance staleContextOwner;
+            ApplicationServiceResult staleResult;
+            bool staleApplication = staleOwnerHandle != 0 &&
+                !ApplicationInstanceRegistry.TryGet(
+                    ApplicationInstanceHandle.FromValue(staleOwnerHandle),
+                    out ignored);
+            bool staleContext = context != null &&
+                !ApplicationServiceRegistry.TryValidateContext(
+                    context, ApplicationServiceId.Notifications,
+                    out staleContextOwner, out staleResult) &&
+                staleContextOwner == null;
+
+            bool newOwner = TryCreateOwner();
+            bool replacement = newOwner && RunOnePhase29Lifetime(1, out _);
+            CleanupOwner();
+
+            Marker(first && second && third && fourth ?
+                "PHASE29_REPEATED_LIFETIMES=4" :
+                "PHASE29_REPEATED_LIFETIMES=0");
+            Marker(titleFailure ? "PHASE29_TITLE_BOUND_FAILURE=1" :
+                "PHASE29_TITLE_BOUND_FAILURE=0");
+            Marker(bodyFailure ? "PHASE29_BODY_BOUND_FAILURE=1" :
+                "PHASE29_BODY_BOUND_FAILURE=0");
+            Marker(invalidType ? "PHASE29_INVALID_TYPE_REJECTED=1" :
+                "PHASE29_INVALID_TYPE_REJECTED=0");
+            Marker(failFast ? "PHASE29_FAILFAST_PASS=1" :
+                "PHASE29_FAILFAST_PASS=0");
+            Marker(replacement ? "PHASE29_REPLACEMENT_PASS=1" :
+                "PHASE29_REPLACEMENT_PASS=0");
+            Marker(staleApplication ? "PHASE29_STALE_APPLICATION_REJECTED=1" :
+                "PHASE29_STALE_APPLICATION_REJECTED=0");
+            Marker(staleContext ? "PHASE29_STALE_SERVICE_CONTEXT_REJECTED=1" :
+                "PHASE29_STALE_SERVICE_CONTEXT_REJECTED=0");
+            Marker(ManagedImageDiagnostics.IsBalanced ?
+                "PHASE29_MANAGED_CLEANUP_BALANCED=1" :
+                "PHASE29_MANAGED_CLEANUP_BALANCED=0");
+            Marker(NativeBootstrapDiagnostics.IsBalanced ?
+                "PHASE29_BOOTSTRAP_CLEANUP_BALANCED=1" :
+                "PHASE29_BOOTSTRAP_CLEANUP_BALANCED=0");
+            Marker(Ring3ProcessTable.LiveCount == 0 &&
+                   ThreadPool.LiveUserThreadCount == 0 &&
+                   Ring3ProcessDiagnostics.IsBalanced ?
+                "PHASE29_PROCESS_CLEANUP_BALANCED=1" :
+                "PHASE29_PROCESS_CLEANUP_BALANCED=0");
+            bool complete = first && second && third && fourth &&
+                titleFailure && bodyFailure && invalidType && failFast && replacement &&
+                staleApplication && staleContext &&
+                ManagedImageDiagnostics.IsBalanced &&
+                NativeBootstrapDiagnostics.IsBalanced &&
+                Ring3ProcessTable.LiveCount == 0 &&
+                ThreadPool.LiveUserThreadCount == 0 &&
+                Ring3ProcessDiagnostics.IsBalanced;
+            Marker(complete ? "RING3_PHASE29_COMPLETE=1" :
+                "RING3_PHASE29_COMPLETE=0");
             Native.Sti();
         }
 

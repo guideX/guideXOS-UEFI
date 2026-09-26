@@ -59,14 +59,14 @@ New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 
 $successPack = Join-Path $OutputRoot 'success-runtime-pack'
 $successOutput = Join-Path $OutputRoot 'success'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $phase26Builder `
+& (Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -ExecutionPolicy Bypass -File $phase26Builder `
     -Phase23Pack $Phase23Pack -PackRoot $successPack -OutputRoot $successOutput `
     -ProjectPath $successProject -PalSource $palSource -ShimSource $shimSource
 if ($LASTEXITCODE -ne 0) { throw "Phase 27 success payload build failed: $LASTEXITCODE" }
 
 $failurePack = Join-Path $OutputRoot 'failure-runtime-pack'
 $failureOutput = Join-Path $OutputRoot 'failure'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $phase26Builder `
+& (Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -ExecutionPolicy Bypass -File $phase26Builder `
     -Phase23Pack $Phase23Pack -PackRoot $failurePack -OutputRoot $failureOutput `
     -ProjectPath $failureProject -PalSource $palSource -ShimSource $shimSource
 if ($LASTEXITCODE -ne 0) { throw "Phase 27 failure payload build failed: $LASTEXITCODE" }

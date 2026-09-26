@@ -14,7 +14,9 @@ if (-not $nasm) { $command = Get-Command nasm -ErrorAction SilentlyContinue; if 
 if (-not $nasm) { throw 'NASM is required for the Phase 26 bootstrap.' }
 & $nasm -f bin (Join-Path $PSScriptRoot 'bootstrap.asm') -o $output
 if ($LASTEXITCODE -ne 0) { throw "Phase 26 bootstrap assembly failed: $LASTEXITCODE" }
-& python (Join-Path $PSScriptRoot 'build_phase26_bootstrap_descriptor.py') $output $descriptor
+$pythonCommand = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+if (-not (Test-Path -LiteralPath $pythonCommand)) { $pythonCommand = 'python' }
+& $pythonCommand (Join-Path $PSScriptRoot 'build_phase26_bootstrap_descriptor.py') $output $descriptor
 if ($LASTEXITCODE -ne 0) { throw "Phase 26 bootstrap descriptor failed: $LASTEXITCODE" }
 New-Item -ItemType Directory -Force -Path $RamdiskSource | Out-Null
 Copy-Item -LiteralPath $output -Destination (Join-Path $RamdiskSource 'guideXOS.Phase26Bootstrap.bin') -Force

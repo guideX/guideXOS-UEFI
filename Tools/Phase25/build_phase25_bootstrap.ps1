@@ -27,7 +27,9 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Output) | Out-Nul
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Descriptor) | Out-Null
 & $nasm -f bin $Source -o $Output
 if ($LASTEXITCODE -ne 0) { throw "NASM failed: $LASTEXITCODE" }
-& python (Join-Path $PSScriptRoot 'build_phase25_descriptor.py') $Output $Descriptor
+$pythonCommand = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+if (-not (Test-Path -LiteralPath $pythonCommand)) { $pythonCommand = 'python' }
+& $pythonCommand (Join-Path $PSScriptRoot 'build_phase25_descriptor.py') $Output $Descriptor
 if ($LASTEXITCODE -ne 0) { throw "GXBI descriptor generation failed: $LASTEXITCODE" }
 Get-FileHash -Algorithm SHA256 -LiteralPath $Output
 Get-Item -LiteralPath $Output, $Descriptor | Select-Object FullName, Length

@@ -31,7 +31,11 @@ New-Item -ItemType Directory -Force -Path $RamdiskSource | Out-Null
 $exeTarget = Join-Path $RamdiskSource 'guideXOS.UserManagedProof.exe'
 $descriptorTarget = Join-Path $RamdiskSource 'guideXOS.UserManagedProof.gxmi'
 Copy-Item -LiteralPath $artifactPath -Destination $exeTarget -Force
-& python (Join-Path $PSScriptRoot 'build_phase24_descriptor.py') $artifactPath $mapPath $descriptorTarget
+$pythonCommand = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+if (-not (Test-Path -LiteralPath $pythonCommand)) {
+    $pythonCommand = 'python'
+}
+& $pythonCommand (Join-Path $PSScriptRoot 'build_phase24_descriptor.py') $artifactPath $mapPath $descriptorTarget
 if ($LASTEXITCODE -ne 0) { throw "Phase 24 descriptor generation failed: $LASTEXITCODE" }
 
 Get-FileHash -Algorithm SHA256 -LiteralPath $exeTarget

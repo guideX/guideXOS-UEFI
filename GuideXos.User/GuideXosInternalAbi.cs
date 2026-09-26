@@ -35,6 +35,21 @@ namespace GuideXos
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct GuideXosNotificationRequestWire
+    {
+        internal uint StructureVersion;
+        internal uint ServiceId;
+        internal uint OperationId;
+        internal uint RequestLength;
+        internal ushort TitleLength;
+        internal ushort BodyLength;
+        internal uint Severity;
+        internal uint Reserved;
+        internal fixed byte Title[GuideXosNotifications.MaxTitleLength * 2];
+        internal fixed byte Body[GuideXosNotifications.MaxBodyLength * 2];
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct GuideXosIdentityWire
     {
         internal uint StructureVersion;
@@ -57,6 +72,8 @@ namespace GuideXos
         private const ulong InvalidContext = unchecked((ulong)-13L);
         private const uint SystemInformationService = 3;
         private const uint SystemInformationSnapshotOperation = 1;
+        private const uint NotificationsService = 1;
+        private const uint NotificationsPublishOperation = 1;
 
         [DllImport("*", EntryPoint = "guidexos_pal_abi_version",
             CallingConvention = CallingConvention.Cdecl)]
@@ -136,6 +153,56 @@ namespace GuideXos
                 (ulong)(nuint)requestPointer,
                 (ulong)sizeof(GuideXosServiceRequestWire));
             response = local;
+            return MapStatus(result);
+        }
+
+        internal static GuideXosResult TryShowNotification(
+            string title, string body,
+            GuideXosNotificationSeverity severity)
+        {
+            body = body ?? string.Empty;
+            if (title == null || title.Length == 0 ||
+                title.Length > GuideXosNotifications.MaxTitleLength ||
+                body.Length > GuideXosNotifications.MaxBodyLength ||
+                (severity != GuideXosNotificationSeverity.Information &&
+                 severity != GuideXosNotificationSeverity.Error))
+                return new GuideXosResult(GuideXosStatus.InvalidArgument);
+
+            GuideXosNotificationRequestWire request = default;
+            request.StructureVersion = AbiVersion;
+            request.ServiceId = NotificationsService;
+            request.OperationId = NotificationsPublishOperation;
+            request.RequestLength = (uint)sizeof(GuideXosNotificationRequestWire);
+            request.TitleLength = (ushort)title.Length;
+            request.BodyLength = (ushort)body.Length;
+            request.Severity = (uint)severity;
+#if GUIDEXOS_PHASE29_INVALID_TYPE
+            // Internal diagnostic only: exercise the kernel's independent
+            // enum validation without exposing an invalid public value.
+            request.Severity = 99;
+#endif
+            request.Reserved = 0;
+
+            byte* titleBytes = request.Title;
+            for (int i = 0; i < title.Length; i++)
+            {
+                char value = title[i];
+                titleBytes[(i * 2) + 0] = (byte)value;
+                titleBytes[(i * 2) + 1] = (byte)(value >> 8);
+            }
+
+            byte* bodyBytes = request.Body;
+            for (int i = 0; i < body.Length; i++)
+            {
+                char value = body[i];
+                bodyBytes[(i * 2) + 0] = (byte)value;
+                bodyBytes[(i * 2) + 1] = (byte)(value >> 8);
+            }
+
+            GuideXosNotificationRequestWire* requestPointer = &request;
+            ulong result = InvokeServiceRequest(
+                (ulong)(nuint)requestPointer,
+                (ulong)sizeof(GuideXosNotificationRequestWire));
             return MapStatus(result);
         }
 

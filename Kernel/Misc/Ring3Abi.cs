@@ -1,5 +1,5 @@
-using guideXOS.OS;
 using System.Runtime.InteropServices;
+using guideXOS.OS;
 
 namespace guideXOS.Misc {
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -31,6 +31,23 @@ namespace guideXOS.Misc {
         public fixed byte OsName[SystemInformationSnapshot.MaxOsNameLength];
         public fixed byte OsVersion[SystemInformationSnapshot.MaxOsVersionLength];
         public fixed byte Architecture[SystemInformationSnapshot.MaxArchitectureLength];
+    }
+
+    // The notification payload is copied in synchronously.  Text is explicit
+    // UTF-16LE code-unit data with character counts; no user pointer is passed
+    // into the App Model backend and no terminator is authoritative.
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct Ring3NotificationRequest {
+        public uint StructureVersion;
+        public uint ServiceId;
+        public uint OperationId;
+        public uint RequestLength;
+        public ushort TitleLength;
+        public ushort BodyLength;
+        public uint Severity;
+        public uint Reserved;
+        public fixed byte Title[ApplicationNotificationRequest.MaxTitleLength * 2];
+        public fixed byte Body[ApplicationNotificationRequest.MaxBodyLength * 2];
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -84,6 +101,9 @@ namespace guideXOS.Misc {
         internal const uint SystemInformationService =
             (uint)ApplicationServiceId.SystemInformation;
         internal const uint SystemInformationSnapshotOperation = 1;
+        internal const uint NotificationsService =
+            (uint)ApplicationServiceId.Notifications;
+        internal const uint NotificationsPublishOperation = 1;
 
         private static void Marker(string text) {
             if (text == null) return;
@@ -292,8 +312,14 @@ namespace guideXOS.Misc {
                 Marker("RING3_SERVICE_INVALID_REQUEST_REJECTED=1");
                 return InvalidPointer;
             }
-            if (requestLength != (ulong)sizeof(Ring3ServiceRequest) ||
-                requestLength > 4096) {
+            if (requestLength > 4096) {
+                Marker("RING3_SERVICE_INVALID_REQUEST_REJECTED=1");
+                return InvalidRequest;
+            }
+            if (requestLength == (ulong)sizeof(Ring3NotificationRequest))
+                return DispatchNotificationRequest(process, requestPointer,
+                    requestLength);
+            if (requestLength != (ulong)sizeof(Ring3ServiceRequest)) {
                 Marker("RING3_SERVICE_INVALID_REQUEST_REJECTED=1");
                 return InvalidRequest;
             }
@@ -443,6 +469,127 @@ namespace guideXOS.Misc {
             Marker("RING3_SERVICE_RESPONSE_SERIALIZED=1");
             Marker("RING3_SERVICE_RESPONSE_COPIED_OUT=1");
             return Success;
+        }
+
+        private static ulong DispatchNotificationRequest(
+                Ring3Process process, ulong requestPointer,
+                ulong requestLength) {
+            Marker("RING3_NOTIFICATION_ABI_ENTERED=1");
+            if (requestLength != (ulong)sizeof(Ring3NotificationRequest) ||
+                !PageTable.ValidateReadableUserRange(process.Space.Pml4,
+                    requestPointer, requestLength)) {
+                Marker("RING3_NOTIFICATION_INVALID_REQUEST_REJECTED=1");
+                return InvalidPointer;
+            }
+
+            Ring3NotificationRequest request = default(Ring3NotificationRequest);
+            Native.Movsb(&request, (void*)requestPointer,
+                (ulong)sizeof(Ring3NotificationRequest));
+            Marker("RING3_NOTIFICATION_REQUEST_COPIED_IN=1");
+            if (request.StructureVersion != AbiVersion ||
+                request.ServiceId != NotificationsService ||
+                request.OperationId != NotificationsPublishOperation ||
+                request.RequestLength != sizeof(Ring3NotificationRequest) ||
+                request.Reserved != 0 ||
+                request.TitleLength == 0 ||
+                request.TitleLength > ApplicationNotificationRequest.MaxTitleLength ||
+                request.BodyLength > ApplicationNotificationRequest.MaxBodyLength ||
+                (request.Severity != (uint)ApplicationNotificationSeverity.Info &&
+                 request.Severity != (uint)ApplicationNotificationSeverity.Error)) {
+                Marker("RING3_NOTIFICATION_INVALID_REQUEST_REJECTED=1");
+                return InvalidRequest;
+            }
+
+            string title;
+            string body;
+            byte* titleBytes = request.Title;
+            byte* bodyBytes = request.Body;
+            title = DecodeNotificationText(titleBytes, request.TitleLength);
+            body = DecodeNotificationText(bodyBytes, request.BodyLength);
+            ApplicationNotificationRequest notification =
+                ApplicationNotificationRequest.Create(title, body,
+                    request.Severity == (uint)ApplicationNotificationSeverity.Error
+                        ? ApplicationNotificationSeverity.Error
+                        : ApplicationNotificationSeverity.Info);
+            if (notification == null || !notification.IsValid) {
+                Marker("RING3_NOTIFICATION_INVALID_REQUEST_REJECTED=1");
+                return InvalidRequest;
+            }
+
+            // The payload contains no AppId, ApplicationInstance, process, or
+            // service-context authority.  All ownership is derived from the
+            // scheduled process record below.
+            Marker("RING3_NOTIFICATION_PROCESS_IDENTITY_DERIVED=1");
+            ApplicationInstanceHandle owner =
+                ApplicationInstanceHandle.FromValue(
+                    process.OwningApplicationInstance);
+            ApplicationInstance instance;
+            if (!owner.IsValid ||
+                !ApplicationInstanceRegistry.TryGet(owner, out instance) ||
+                instance == null) {
+                Marker("RING3_NOTIFICATION_PROCESS_IDENTITY_DERIVED=0");
+                return InvalidContext;
+            }
+            Marker("RING3_NOTIFICATION_APP_MODEL_OWNER_DERIVED=1");
+
+            ApplicationServiceContext context;
+            ApplicationServiceResult contextResult;
+            if (!ApplicationServiceRegistry.TryCreateContext(owner,
+                    out context, out contextResult)) {
+                Marker("RING3_NOTIFICATION_SERVICE_CONTEXT_DERIVED=0");
+                return InvalidContext;
+            }
+            ApplicationInstance resolved;
+            ApplicationServiceResult validationResult;
+            if (!ApplicationServiceRegistry.TryValidateContext(context,
+                    ApplicationServiceId.Notifications, out resolved,
+                    out validationResult) || resolved != instance) {
+                Marker("RING3_NOTIFICATION_SERVICE_CONTEXT_DERIVED=0");
+                return InvalidContext;
+            }
+            Marker("RING3_NOTIFICATION_SERVICE_CONTEXT_DERIVED=1");
+
+            ApplicationServiceAccess access;
+            if (!ApplicationServiceRegistry.TryGetAccess(context,
+                    out access, out contextResult) || access == null ||
+                access.Notifications == null) {
+                Marker("RING3_NOTIFICATION_SERVICE_CONTEXT_DERIVED=0");
+                return InvalidContext;
+            }
+
+            ApplicationServiceResult result = access.Notifications.Publish(
+                context, notification);
+            if (!result.Succeeded) {
+                Marker("RING3_NOTIFICATION_BACKEND_ACCEPTED=0");
+                return MapServiceResult(result);
+            }
+            process.RecordServiceRequestSuccess();
+            Marker("RING3_NOTIFICATION_BACKEND_ACCEPTED=1");
+            Marker("RING3_NOTIFICATION_RESPONSE_COPIED_OUT=1");
+            return Success;
+        }
+
+        private static string DecodeNotificationText(byte* source, int length) {
+            if (source == null || length <= 0) return string.Empty;
+            char* text = stackalloc char[length];
+            for (int i = 0; i < length; i++) {
+                text[i] = (char)(source[i * 2] |
+                    ((uint)source[(i * 2) + 1] << 8));
+            }
+            return new string(text, 0, length);
+        }
+
+        private static ulong MapServiceResult(ApplicationServiceResult result) {
+            if (result == null) return InvalidOperation;
+            switch (result.Code) {
+                case ApplicationServiceResultCode.InvalidRequest:
+                    return InvalidRequest;
+                case ApplicationServiceResultCode.InvalidContext:
+                case ApplicationServiceResultCode.InvalidState:
+                    return InvalidContext;
+                default:
+                    return InvalidOperation;
+            }
         }
 
         private static ulong DispatchApplicationIdentity(Ring3Process process,

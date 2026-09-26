@@ -9,6 +9,10 @@
 /guideXOS/obj
 /UserManagedProof/bin
 /UserManagedProof/obj
+/UserManagedSdkProof/bin
+/UserManagedSdkProof/obj
+/UserManagedNotificationProof/bin
+/UserManagedNotificationProof/obj
 /GuideXos.User/bin
 /GuideXos.User/obj
 /Tools/__pycache__

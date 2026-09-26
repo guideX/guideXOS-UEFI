@@ -36,6 +36,12 @@ namespace GuideXos
         X64 = 1,
     }
 
+    public enum GuideXosNotificationSeverity : uint
+    {
+        Information = 0,
+        Error = 1,
+    }
+
     public static class GuideXosRuntime
     {
         public static uint AbiVersion => GuideXosInternalAbi.GetAbiVersion();
@@ -192,6 +198,20 @@ namespace GuideXos
                 wire.MemoryInUseBytes, wire.ThreadCount,
                 wire.CpuUsagePercent, GuideXosArchitecture.X64);
             return new GuideXosResult(GuideXosStatus.Success);
+        }
+    }
+
+    public static unsafe class GuideXosNotifications
+    {
+        public const int MaxTitleLength = 64;
+        public const int MaxBodyLength = 256;
+
+        public static GuideXosResult TryShow(
+            string title, string body,
+            GuideXosNotificationSeverity severity)
+        {
+            return GuideXosInternalAbi.TryShowNotification(
+                title, body, severity);
         }
     }
 

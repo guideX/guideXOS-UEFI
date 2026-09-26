@@ -29,6 +29,7 @@ $compiler = Get-ChildItem -LiteralPath $vsRoot -Filter cl.exe -File -Recurse |
 if ($null -eq $compiler) { throw 'The VS 18 x64 C++ compiler was not found.' }
 $vcvars = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat'
 if (-not (Test-Path -LiteralPath $vcvars -PathType Leaf)) { throw 'The VS 18 x64 compiler environment was not found.' }
+$cmdExe = Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\cmd.exe'
 $nasm = $null
 if ($env:NASM -and (Test-Path -LiteralPath $env:NASM)) { $nasm = $env:NASM }
 if (-not $nasm) { $candidate = Join-Path $root 'Tools\nasm.exe'; if (Test-Path -LiteralPath $candidate) { $nasm = $candidate } }
@@ -51,6 +52,10 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 # source-derived and auditable.
 $runtimeSourceRoot = Join-Path $root 'out\rt'
 $runtimeDotnet = Join-Path $runtimeSourceRoot '.dotnet\dotnet.exe'
+$bundledPythonDirectory = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python'
+if (Test-Path -LiteralPath (Join-Path $bundledPythonDirectory 'python.exe')) {
+    $env:Path = "$bundledPythonDirectory;$env:Path"
+}
 $coreLibProject = Join-Path $runtimeSourceRoot 'src\coreclr\nativeaot\System.Private.CoreLib\src\System.Private.CoreLib.csproj'
 $coreLibSource = Join-Path $runtimeSourceRoot 'src\coreclr\nativeaot\System.Private.CoreLib\src\Internal\Runtime\CompilerHelpers\InteropHelpers.cs'
 $startupCodeExtensionsSource = Join-Path $runtimeSourceRoot 'src\coreclr\nativeaot\System.Private.CoreLib\src\Internal\Runtime\CompilerHelpers\StartupCode\StartupCodeHelpers.Extensions.cs'
@@ -224,7 +229,7 @@ $gcEnvironmentPdb = Join-Path $work 'gcenv.guidexos.phase26.pdb'
 $gcCompileCommand = [regex]::Replace($gcCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $gcEnvironmentObject + '"')
 $gcCompileCommand = [regex]::Replace($gcCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $gcEnvironmentPdb + '"')
 $gcBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $gcCompileCommand
-& cmd.exe /d /s /c $gcBuildCommand 2>&1
+& $cmdExe /d /s /c $gcBuildCommand 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gcEnvironmentObject -PathType Leaf)) {
     throw 'The Phase 26 GUIDEXOS GC environment overlay failed to compile.'
 }
@@ -254,7 +259,7 @@ $startupPdb = Join-Path $work 'startup.phase26.pdb'
 $startupCompileCommand = [regex]::Replace($startupCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $startupObject + '"')
 $startupCompileCommand = [regex]::Replace($startupCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $startupPdb + '"')
 $startupBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $startupCompileCommand
-& cmd.exe /d /s /c $startupBuildCommand 2>&1
+& $cmdExe /d /s /c $startupBuildCommand 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $startupObject -PathType Leaf)) {
     throw 'The Phase 26 NativeAOT startup overlay failed to compile.'
 }
@@ -280,7 +285,7 @@ $gcHelpersPdb = Join-Path $work 'GCHelpers.phase26.pdb'
 $gcHelpersCompileCommand = [regex]::Replace($gcHelpersCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $gcHelpersObject + '"')
 $gcHelpersCompileCommand = [regex]::Replace($gcHelpersCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $gcHelpersPdb + '"')
 $gcHelpersBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $gcHelpersCompileCommand
-& cmd.exe /d /s /c $gcHelpersBuildCommand 2>&1
+& $cmdExe /d /s /c $gcHelpersBuildCommand 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gcHelpersObject -PathType Leaf)) {
     throw 'The Phase 26 NativeAOT GC helper overlay failed to compile.'
 }
@@ -308,7 +313,7 @@ $stackIteratorPdb = Join-Path $work 'StackFrameIterator.phase26.pdb'
 $stackIteratorCompileCommand = [regex]::Replace($stackIteratorCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $stackIteratorObject + '"')
 $stackIteratorCompileCommand = [regex]::Replace($stackIteratorCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $stackIteratorPdb + '"')
 $stackIteratorBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $stackIteratorCompileCommand
-& cmd.exe /d /s /c $stackIteratorBuildCommand 2>&1
+& $cmdExe /d /s /c $stackIteratorBuildCommand 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $stackIteratorObject -PathType Leaf)) {
     throw 'The Phase 26 NativeAOT stack-frame iterator overlay failed to compile.'
 }
@@ -336,7 +341,7 @@ $runtimeInstancePdb = Join-Path $work 'RuntimeInstance.phase26.pdb'
 $runtimeInstanceCompileCommand = [regex]::Replace($runtimeInstanceCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $runtimeInstanceObject + '"')
 $runtimeInstanceCompileCommand = [regex]::Replace($runtimeInstanceCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $runtimeInstancePdb + '"')
 $runtimeInstanceBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $runtimeInstanceCompileCommand
-& cmd.exe /d /s /c $runtimeInstanceBuildCommand 2>&1
+& $cmdExe /d /s /c $runtimeInstanceBuildCommand 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $runtimeInstanceObject -PathType Leaf)) {
     throw 'The Phase 26 NativeAOT runtime-instance overlay failed to compile.'
 }
@@ -364,7 +369,7 @@ $coffNativeCodeManagerPdb = Join-Path $work 'CoffNativeCodeManager.phase26.pdb'
 $coffNativeCodeManagerCompileCommand = [regex]::Replace($coffNativeCodeManagerCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $coffNativeCodeManagerObject + '"')
 $coffNativeCodeManagerCompileCommand = [regex]::Replace($coffNativeCodeManagerCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $coffNativeCodeManagerPdb + '"')
 $coffNativeCodeManagerBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $coffNativeCodeManagerCompileCommand
-& cmd.exe /d /s /c $coffNativeCodeManagerBuildCommand 2>&1
+& $cmdExe /d /s /c $coffNativeCodeManagerBuildCommand 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $coffNativeCodeManagerObject -PathType Leaf)) {
     throw 'The Phase 26 NativeAOT COFF code-manager overlay failed to compile.'
 }
@@ -536,7 +541,7 @@ if ($ProjectProperties.Count -gt 0) {
     $buildArgs += '-ProjectProperties'
     $buildArgs += $ProjectProperties
 }
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $buildScript @buildArgs
+& (Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -ExecutionPolicy Bypass -File $buildScript @buildArgs
 if ($LASTEXITCODE -ne 0) { throw "Phase 26 managed proof build failed with exit code $LASTEXITCODE." }
 
 $artifact = Get-ChildItem -LiteralPath (Join-Path $OutputRoot 'publish') -Filter '*.exe' -File | Select-Object -First 1

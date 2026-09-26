@@ -29,7 +29,9 @@ foreach ($entry in $stage) {
     Copy-Item -LiteralPath $artifact -Destination $exeTarget -Force
     $descriptorArgs = @($descriptorBuilder, $artifact, $map, $descriptorTarget)
     if ($entry.failure) { $descriptorArgs += '--failure' }
-    & python @descriptorArgs
+    $pythonCommand = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+    if (-not (Test-Path -LiteralPath $pythonCommand)) { $pythonCommand = 'python' }
+    & $pythonCommand @descriptorArgs
     if ($LASTEXITCODE -ne 0) { throw "Phase 27 $($entry.kind) descriptor generation failed: $LASTEXITCODE" }
     Get-FileHash -Algorithm SHA256 -LiteralPath $exeTarget
     Get-Item -LiteralPath $descriptorTarget | Select-Object FullName, Length

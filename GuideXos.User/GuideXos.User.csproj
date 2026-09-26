@@ -12,4 +12,7 @@
     <RuntimeIdentifier Condition="'$(OutputType)' == 'Exe' and ('$(Phase22Guidexos)' == 'true' or '$(Phase23Guidexos)' == 'true')">guidexos-x64</RuntimeIdentifier>
     <DefineConstants>$(DefineConstants);GUIDEXOS_USER_SDK</DefineConstants>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Phase29Mode)' == 'InvalidType'">
+    <DefineConstants>$(DefineConstants);GUIDEXOS_PHASE29_INVALID_TYPE</DefineConstants>
+  </PropertyGroup>
 </Project>

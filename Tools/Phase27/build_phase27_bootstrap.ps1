@@ -26,7 +26,9 @@ $descriptor = Join-Path $OutputRoot 'guideXOS.Phase27Bootstrap.gxbi'
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 & $nasm -f bin (Join-Path $PSScriptRoot 'bootstrap.asm') -o $output
 if ($LASTEXITCODE -ne 0) { throw "Phase 27 bootstrap assembly failed: $LASTEXITCODE" }
-& python (Join-Path $PSScriptRoot 'build_phase27_bootstrap_descriptor.py') $output $descriptor
+$pythonCommand = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+if (-not (Test-Path -LiteralPath $pythonCommand)) { $pythonCommand = 'python' }
+& $pythonCommand (Join-Path $PSScriptRoot 'build_phase27_bootstrap_descriptor.py') $output $descriptor
 if ($LASTEXITCODE -ne 0) { throw "Phase 27 bootstrap descriptor failed: $LASTEXITCODE" }
 New-Item -ItemType Directory -Force -Path $RamdiskSource | Out-Null
 Copy-Item -LiteralPath $output -Destination (Join-Path $RamdiskSource 'guideXOS.Phase27Bootstrap.bin') -Force
