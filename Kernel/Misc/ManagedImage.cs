@@ -349,34 +349,34 @@ namespace guideXOS.Misc {
             }
             if ((flags & ManagedImageContract.FlagPhase32StaleOwner) ==
                     ManagedImageContract.FlagPhase32StaleOwner) {
-                return U32(hash, 0) == 0x8B5EF288U &&
-                    U32(hash, 4) == 0xD08A458DU &&
-                    U32(hash, 8) == 0x45D48B53U &&
-                    U32(hash, 12) == 0xD56271E1U &&
-                    U32(hash, 16) == 0x14A301A4U &&
-                    U32(hash, 20) == 0xFD6AE883U &&
-                    U32(hash, 24) == 0x6108AF8DU &&
-                    U32(hash, 28) == 0xF5927ECDU;
+                return U32(hash, 0) == 0xED4FD7F5U &&
+                    U32(hash, 4) == 0x29FC87B2U &&
+                    U32(hash, 8) == 0x7EFD4AD3U &&
+                    U32(hash, 12) == 0xE445166EU &&
+                    U32(hash, 16) == 0x6DF8D81EU &&
+                    U32(hash, 20) == 0xCD419367U &&
+                    U32(hash, 24) == 0xCF8FB8ACU &&
+                    U32(hash, 28) == 0x53351062U;
             }
             if ((flags & ManagedImageContract.FlagPhase32FailFast) != 0) {
-                return U32(hash, 0) == 0x15E2EE74U &&
-                    U32(hash, 4) == 0x808467ECU &&
-                    U32(hash, 8) == 0xE2CBE152U &&
-                    U32(hash, 12) == 0x2787275EU &&
-                    U32(hash, 16) == 0x7BF36732U &&
-                    U32(hash, 20) == 0x448F2A23U &&
-                    U32(hash, 24) == 0x1CF88B27U &&
-                    U32(hash, 28) == 0x850212D7U;
+                return U32(hash, 0) == 0xBF6679D6U &&
+                    U32(hash, 4) == 0xF8F9C4E7U &&
+                    U32(hash, 8) == 0xC6FB6AB9U &&
+                    U32(hash, 12) == 0xA775F4FAU &&
+                    U32(hash, 16) == 0xBEEEDE8EU &&
+                    U32(hash, 20) == 0x0D95735EU &&
+                    U32(hash, 24) == 0x6D90C8EBU &&
+                    U32(hash, 28) == 0xB2328DEEU;
             }
             if ((flags & ManagedImageContract.FlagPhase32OpenDocument) != 0) {
-                return U32(hash, 0) == 0xF9048141U &&
-                    U32(hash, 4) == 0x0BCFFFD6U &&
-                    U32(hash, 8) == 0x490E3F48U &&
-                    U32(hash, 12) == 0x5A222AC1U &&
-                    U32(hash, 16) == 0x696822A9U &&
-                    U32(hash, 20) == 0x5A6D5C2EU &&
-                    U32(hash, 24) == 0xF8A756DCU &&
-                    U32(hash, 28) == 0xBD490775U;
+                return U32(hash, 0) == 0xB8774C79U &&
+                    U32(hash, 4) == 0x6351B83DU &&
+                    U32(hash, 8) == 0x35A648E9U &&
+                    U32(hash, 12) == 0xF0B85074U &&
+                    U32(hash, 16) == 0x031CA34BU &&
+                    U32(hash, 20) == 0xD4028CCCU &&
+                    U32(hash, 24) == 0x7CC0A565U &&
+                    U32(hash, 28) == 0x42512AC3U;
             }
             if ((flags & ManagedImageContract.FlagPhase29FailFast) != 0) {
                 return U32(hash, 0) == 0xF9410FB6U && U32(hash, 4) == 0xA72A0B0EU &&

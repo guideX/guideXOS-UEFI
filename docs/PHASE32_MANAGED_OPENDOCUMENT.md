@@ -1,8 +1,8 @@
 # Phase 32 — Managed OpenDocument through the Phase 9 Shell service
 
-**Outcome A — managed OpenDocument is proven through the existing Phase 9 Shell service.**
+**Earlier run: Outcome A. Current-checkout revalidation: OpenDocument gates pass, but window cleanup faults (Outcome G for this run).**
 
-The primary NativeAOT application used only the public `GuideXos.User` SDK, passed a bounded document path, received a copied typed success result, and returned `32`. The App Model resolved the association, constructed the file launch request, selected the Notepad factory, created and activated the target, and delivered the document value. Five successful OpenDocument requester lifetimes returned `32` (four primary requesters and one replacement). Empty, oversized, unsupported-association, missing-document, stale-owner, and FailFast cases were also exercised.
+In the earlier completed run, the primary NativeAOT application used only the public `GuideXos.User` SDK, passed a bounded document path, received a copied typed success result, and returned `32`. The App Model resolved the association, constructed the file launch request, selected the Notepad factory, created and activated the target, and delivered the document value. Five successful OpenDocument requester lifetimes returned `32` (four primary requesters and one replacement). Empty, oversized, unsupported-association, missing-document, stale-owner, and FailFast cases were also exercised. The 2026-09-27 revalidation below repeats those gates, but cannot claim final window/resource balance because the shared window-cleanup path faults afterward.
 
 The Phase 32 guest run and Phase 9 regression completed. The fresh Phase 31 launch control returned `31` and activated Calculator, but its diagnostic run faulted later during old Calculator target cleanup. The AppRuntime workload also ended with a host harness marker mismatch described below.
 
@@ -281,4 +281,20 @@ No source or configuration change was made under `out\rt`; the nested checkout�
 
 `git diff --check` and `git diff --cached --check` passed after the final report edit (Git emitted only its configured LF-to-CRLF normalization notices for modified source files). Phase 32 remains uncommitted on `main`, ahead/behind `origin/main` `0/0`. No branch, stash, worktree, detached root HEAD, push, rebase, reset, or history rewrite was created.
 
-The public managed SDK now has bounded Shell application launch and OpenDocument, typed transport and Shell outcomes, and no async shell request handles, GUI/window API, file picker, Save dialog, or general file-reading API. A small Phase 33 candidate is a managed typed shell-action call through the existing Shell service, with action identity still resolved by the App Model’s fixed registry. That keeps authority expansion inside the current Shell boundary before considering a managed window host.
+The public managed SDK now has bounded Shell application launch and OpenDocument, typed transport and Shell outcomes, and no async shell request handles, GUI/window API, file picker, Save dialog, or general file-reading API. Resolve the current target-window cleanup fault and rerun the complete balance checks before expanding the SDK. After that, a small Phase 33 candidate is a managed typed shell-action call through the existing Shell service, with action identity still resolved by the App Model’s fixed registry.
+
+## Follow-up revalidation at the current checkout
+
+On 2026-09-27, the current checkout was revalidated from `main` at starting HEAD `4b0576cda6acf7c5daa5c3468b6fe437d2fffdf4`. The branch remained at the same HEAD and `origin/main` ahead/behind remained `0/0`. The Phase 31 checkpoint `a1173c100002e49aaf451b5d1eabe98085c18001` is already in its ancestry. The root worktree initially contained 18 modified tracked Phase 30 EXE/GXMI artifacts; their original bytes were backed up before the full build and restored afterward. `out\rt` remained at `9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3`, detached, with exactly its preflight tracked and untracked status; no runtime source was changed.
+
+The full `Ring3Phase32` build and static artifact gates passed. This machine’s current NativeAOT build emitted different SHA-256 values from the older committed Phase 32 payloads, so its first guest attempt correctly rejected them against the fixed kernel allowlist. The Phase 32 allowlist was updated to those freshly built payload hashes, the kernel was rebuilt, and a second QEMU run reached the complete OpenDocument proof sequence. The three current payloads are 706,560 bytes each:
+
+| Payload | SHA-256 |
+|---|---|
+| OpenDocument success | `794C77B83DB85163E948A6357450B8F04BA31C03CC8C02D465A5C07CC32A5142` |
+| FailFast | `D67966BFE7C4F9F8B96AFBC6FAF475A78EDEEEBE5E73950DEBC8906DEE8D32B2` |
+| Stale owner | `F5D74FEDB287FC29D34AFD7E6E1645E41ED8F86D679341CDACB88FCF62103553` |
+
+The fresh guest log recorded five successful `Main` returns of `32`, unsupported-association and missing-document typed failures, independent kernel rejection of empty and oversized targets, requester FailFast with target persistence, successful replacement, stale-owner rejection, and all six target termination checks. The overall QEMU run did **not** complete cleanly: immediately after `PHASE32_WINDOW_CLEANUP_BEGIN=1`, frame 2 faulted with `#UD` (`RIP=0x00000000000A02C6`, stage `WINDOWS`, last boundary 400). The saved caller address `0x000000001008D808` falls within `WindowManager.CleanupClosedWindows` in the current kernel map. The cleanup-end and final resource-balance markers were not reached. Therefore the current rerun confirms the managed OpenDocument gates, but has a shared target-window cleanup defect and cannot establish the no-orphan/final-balance gate. The earlier completed run and regression evidence above remain historical evidence from the previous checkout.
+
+This follow-up leaves `Kernel/Misc/ManagedImage.cs` updated for the new payload hashes and retains the rebuilt Phase 32 proof pairs. The pre-existing Phase 30 artifact modifications were restored byte-for-byte. Rebuilt Phase 29/31 outputs and `ramdisk.img` were returned to their clean starting versions. `.gitignore` now ignores the Phase 24/27 `__pycache__` directories, and the generated Phase 24 builder bytecode present in the starting checkout was removed. No branch, stash, worktree, commit, push, reset, rebase, or history rewrite was made during this revalidation. No files in Server or Legacy were touched.
