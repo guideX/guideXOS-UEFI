@@ -22,13 +22,19 @@ if ([string]::IsNullOrWhiteSpace($PalSource)) { $PalSource = Join-Path $PSScript
 if ([string]::IsNullOrWhiteSpace($ShimSource)) { $ShimSource = Join-Path $PSScriptRoot 'guidexos_link_shim.cpp' }
 if ([string]::IsNullOrWhiteSpace($SyscallSource)) { $SyscallSource = Join-Path $PSScriptRoot 'guidexos_phase26_syscall.asm' }
 
-$vsRoot = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC'
+$findVcVarsHelper = Join-Path $root 'Tools\Find-VcVars64.ps1'
+if (-not (Test-Path -LiteralPath $findVcVarsHelper -PathType Leaf)) {
+    throw 'The shared Visual Studio x64 environment discovery helper is absent.'
+}
+. $findVcVarsHelper
+$vcvars = Find-VcVars64 $null
+if (-not $vcvars) { throw 'The shared Visual Studio x64 environment discovery found no vcvars64.bat.' }
+$vsInstallRoot = (Resolve-Path -LiteralPath (Join-Path (Split-Path -Parent $vcvars) '..\..\..')).Path
+$vsRoot = Join-Path $vsInstallRoot 'VC\Tools\MSVC'
 $compiler = Get-ChildItem -LiteralPath $vsRoot -Filter cl.exe -File -Recurse |
     Where-Object { $_.FullName -match '\\Hostx64\\x64\\cl\.exe$' } |
     Sort-Object FullName -Descending | Select-Object -First 1
-if ($null -eq $compiler) { throw 'The VS 18 x64 C++ compiler was not found.' }
-$vcvars = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat'
-if (-not (Test-Path -LiteralPath $vcvars -PathType Leaf)) { throw 'The VS 18 x64 compiler environment was not found.' }
+if ($null -eq $compiler) { throw "The selected Visual Studio x64 C++ compiler was not found under $vsRoot." }
 # Pin the discovered SDK version when initializing vcvars so a caller's inherited
 # VSCMD_ARG_WINSDK state cannot leave the VC headers configured without UCRT.
 $windowsSdkIncludeRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include'

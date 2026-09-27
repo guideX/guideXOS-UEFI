@@ -134,28 +134,7 @@ function Test-Command($cmdname) {
     return [bool](Get-Command -Name $cmdname -ErrorAction SilentlyContinue)
 }
 
-function Find-VcVars64($msbuildPath) {
-    $candidateVcVars = @()
-    if ($msbuildPath -and $msbuildPath -ne "msbuild") {
-        $msbuildExe = Get-Item $msbuildPath
-        $vsInstallDir = Split-Path (Split-Path (Split-Path (Split-Path $msbuildExe.FullName -Parent) -Parent) -Parent) -Parent
-        $candidateVcVars += (Join-Path $vsInstallDir "VC\Auxiliary\Build\vcvars64.bat")
-    }
-    $candidateVcVars += @(
-        "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat",
-        "C:\Program Files\Microsoft Visual Studio\18\Professional\VC\Auxiliary\Build\vcvars64.bat",
-        "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Auxiliary\Build\vcvars64.bat",
-        "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat",
-        "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat",
-        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-    )
-    foreach ($path in $candidateVcVars) {
-        if ($path -and (Test-Path $path)) {
-            return $path
-        }
-    }
-    return $null
-}
+. (Join-Path $RootDir 'Tools\Find-VcVars64.ps1')
 
 Write-Header "Checking Build Tools"
 
