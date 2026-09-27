@@ -99,6 +99,9 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3Phase31'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE31</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3Phase32'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE32</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Widget'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET</DefineConstants>
 	</PropertyGroup>

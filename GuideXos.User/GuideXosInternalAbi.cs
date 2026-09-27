@@ -146,6 +146,7 @@ namespace GuideXos
         private const uint ClipboardClearOperation = 3;
         private const uint ShellService = 7;
         private const uint ShellLaunchApplicationOperation = 1;
+        private const uint ShellOpenDocumentOperation = 2;
 
         [DllImport("*", EntryPoint = "guidexos_pal_abi_version",
             CallingConvention = CallingConvention.Cdecl)]
@@ -352,10 +353,27 @@ namespace GuideXos
             string applicationId,
             out GuideXosLaunchResult launchResult)
         {
+            return TryShellTarget(applicationId,
+                GuideXosShell.MaxApplicationIdLength,
+                ShellLaunchApplicationOperation, out launchResult);
+        }
+
+        internal static GuideXosResult TryOpenDocument(
+            string document,
+            out GuideXosLaunchResult launchResult)
+        {
+            return TryShellTarget(document, GuideXosShell.MaxDocumentLength,
+                ShellOpenDocumentOperation, out launchResult);
+        }
+
+        private static GuideXosResult TryShellTarget(
+            string targetText, int maximumLength, uint operationId,
+            out GuideXosLaunchResult launchResult)
+        {
             launchResult = new GuideXosLaunchResult(
                 GuideXosLaunchResultCode.InvalidRequest);
-            if (string.IsNullOrEmpty(applicationId) ||
-                applicationId.Length > GuideXosShell.MaxApplicationIdLength)
+            if (string.IsNullOrEmpty(targetText) ||
+                targetText.Length > maximumLength)
                 return new GuideXosResult(GuideXosStatus.InvalidArgument);
 
             GuideXosResult compatible = RequireCompatible();
@@ -366,17 +384,17 @@ namespace GuideXos
             GuideXosShellLaunchRequestWire request = default;
             request.StructureVersion = AbiVersion;
             request.ServiceId = ShellService;
-            request.OperationId = ShellLaunchApplicationOperation;
+            request.OperationId = operationId;
             request.RequestLength = (uint)sizeof(
                 GuideXosShellLaunchRequestWire);
-            request.TargetLength = (uint)applicationId.Length;
+            request.TargetLength = (uint)targetText.Length;
             request.ResponseCapacity = (uint)sizeof(
                 GuideXosShellLaunchResponseWire);
 
             byte* target = request.Target;
-            for (int i = 0; i < applicationId.Length; i++)
+            for (int i = 0; i < targetText.Length; i++)
             {
-                char value = applicationId[i];
+                char value = targetText[i];
                 target[(i * 2) + 0] = (byte)value;
                 target[(i * 2) + 1] = (byte)(value >> 8);
             }

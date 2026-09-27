@@ -172,6 +172,7 @@ namespace guideXOS.Misc {
         internal const uint ShellService =
             (uint)ApplicationServiceId.Shell;
         internal const uint ShellLaunchApplicationOperation = 1;
+        internal const uint ShellOpenDocumentOperation = 2;
 
         private static void Marker(string text) {
             if (text == null) return;
@@ -757,7 +758,7 @@ namespace guideXOS.Misc {
         private static ulong DispatchShellLaunchRequest(
                 Ring3Process process, ulong requestPointer,
                 ulong requestLength) {
-            Marker("RING3_SHELL_LAUNCH_ABI_ENTERED=1");
+            bool openDocument = false;
             if (requestLength != (ulong)sizeof(Ring3ShellLaunchRequest) ||
                 !PageTable.ValidateReadableUserRange(process.Space.Pml4,
                     requestPointer, requestLength)) {
@@ -773,17 +774,12 @@ namespace guideXOS.Misc {
                 Native.Movsb(storage, (void*)requestPointer,
                     (ulong)sizeof(Ring3ShellLaunchRequest));
                 Marker("RING3_SHELL_REQUEST_COPIED_IN=1");
-                if (storage->StructureVersion != AbiVersion ||
-                    storage->ServiceId != ShellService ||
-                    storage->OperationId !=
-                        ShellLaunchApplicationOperation ||
-                    storage->RequestLength !=
-                        sizeof(Ring3ShellLaunchRequest) ||
-                    storage->TargetLength == 0 ||
-                    storage->TargetLength > LaunchRequest.MaxTextLength ||
-                    storage->ResponseCapacity !=
-                        (uint)sizeof(Ring3ShellLaunchResponse) ||
-                    storage->Reserved != 0) {
+                openDocument = storage->OperationId ==
+                    ShellOpenDocumentOperation;
+                Marker(openDocument ?
+                    "RING3_SHELL_OPEN_DOCUMENT_ABI_ENTERED=1" :
+                    "RING3_SHELL_LAUNCH_ABI_ENTERED=1");
+                if (!IsValidShellLaunchRequest(storage, openDocument)) {
                     Marker("RING3_SHELL_INVALID_REQUEST_REJECTED=1");
                     return InvalidRequest;
                 }
@@ -822,9 +818,12 @@ namespace guideXOS.Misc {
                     int fallbackBefore =
                         ApplicationFactoryRegistry.CompatibilityFallbackLaunches;
                     int legacyBefore = AppModelCompatibilityDiagnostics.LegacyBackendCalls;
+                    ApplicationShellOpenRequest shellRequest = openDocument
+                        ? ApplicationShellOpenRequest.ForDocument(target)
+                        : ApplicationShellOpenRequest.ForApplicationId(target);
                     ApplicationServiceResult<ApplicationServiceRequestHandle>
                         begun = access.Shell.Begin(context,
-                            ApplicationShellOpenRequest.ForApplicationId(target));
+                            shellRequest);
                     if (!begun.Succeeded || !begun.Value.IsValid) {
                         response.ResultCode = (uint)(begun.Succeeded ?
                             ApplicationServiceResultCode.BackendFailure :
@@ -874,7 +873,8 @@ namespace guideXOS.Misc {
                                         launch.InstanceHandle,
                                         out targetInstance) &&
                                     targetInstance != null &&
-                                    targetInstance.DescriptorId == target;
+                                    targetInstance.DescriptorId ==
+                                        (openDocument ? launch.AppId : target);
                                 Marker(targetResolved ?
                                     "RING3_SHELL_TARGET_INSTANCE_CREATED=1" :
                                     "RING3_SHELL_TARGET_INSTANCE_CREATED=0");
@@ -887,6 +887,35 @@ namespace guideXOS.Misc {
                                         "RING3_SHELL_TARGET_LIFECYCLE_RUNNING=0");
                                     Marker("RING3_SHELL_TARGET_ID=" +
                                         targetInstance.DescriptorId);
+                                    if (openDocument) {
+                                        ApplicationFactory factory;
+                                        bool notepadFactory =
+                                            ApplicationFactoryRegistry.TryGet(
+                                                targetInstance.DescriptorId,
+                                                out factory) &&
+                                            factory is NotepadApplicationFactory;
+                                        LaunchRequest targetRequest =
+                                            targetInstance.LaunchRequestContext;
+                                        bool documentDelivered =
+                                            targetRequest != null &&
+                                            targetRequest.TargetKind ==
+                                                LaunchRequestTargetKind.FileOpen &&
+                                            targetInstance.Document == target &&
+                                            targetRequest.Document == target;
+                                        Marker(notepadFactory ?
+                                            "RING3_SHELL_DOCUMENT_FACTORY=NotepadApplicationFactory" :
+                                            "RING3_SHELL_DOCUMENT_FACTORY=FAIL");
+                                        Marker(documentDelivered ?
+                                            "RING3_SHELL_DOCUMENT_PAYLOAD_DELIVERED=1" :
+                                            "RING3_SHELL_DOCUMENT_PAYLOAD_DELIVERED=0");
+                                        Marker("RING3_SHELL_DOCUMENT_PATH=" +
+                                            targetInstance.Document);
+                                        Marker("RING3_SHELL_DOCUMENT_EXTENSION=" +
+                                            FileAssociationRegistry.ResolvePath(
+                                                target).Extension);
+                                        Marker("RING3_SHELL_DOCUMENT_APP=" +
+                                            targetInstance.DescriptorId);
+                                    }
                                 }
                             }
                         }
@@ -905,6 +934,37 @@ namespace guideXOS.Misc {
             } finally {
                 Allocator.Free((System.IntPtr)storage);
             }
+        }
+
+        private static bool IsValidShellLaunchRequest(
+                Ring3ShellLaunchRequest* request, bool openDocument) {
+            return request != null &&
+                request->StructureVersion == AbiVersion &&
+                request->ServiceId == ShellService &&
+                (request->OperationId == ShellLaunchApplicationOperation ||
+                    (openDocument && request->OperationId ==
+                        ShellOpenDocumentOperation)) &&
+                request->RequestLength ==
+                    sizeof(Ring3ShellLaunchRequest) &&
+                request->TargetLength != 0 &&
+                request->TargetLength <= LaunchRequest.MaxTextLength &&
+                request->ResponseCapacity ==
+                    (uint)sizeof(Ring3ShellLaunchResponse) &&
+                request->Reserved == 0;
+        }
+
+        // Kernel-side Phase 32 negative gate: feed a copied record from the
+        // same field validator used by the dispatcher. Running the proof
+        // thread under the kernel address space means it must not dereference
+        // the process's user virtual addresses directly.
+        internal static ulong ValidateShellLaunchRequestForPhase32Proof(
+                Ring3ShellLaunchRequest* request) {
+            if (request == null) return InvalidRequest;
+            bool openDocument = request->OperationId ==
+                ShellOpenDocumentOperation;
+            return IsValidShellLaunchRequest(request, openDocument)
+                ? Success
+                : InvalidRequest;
         }
 
         private static bool TryResolveShellAccess(

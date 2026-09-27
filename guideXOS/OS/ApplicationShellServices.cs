@@ -223,6 +223,14 @@ namespace guideXOS.OS {
             LaunchResult failure;
             if (!ModernFileAssociationAdapter.TryCreateLaunchRequest(document,
                     null, out association, out request, out failure)) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+                FileAssociationResolution rejectedAssociation =
+                    FileAssociationRegistry.ResolvePath(document);
+                Program.MarkUefiRing3Phase32("ASSOCIATION=path=" + document +
+                    ";ext=" + (rejectedAssociation.Extension ?? "") +
+                    ";app=" + (rejectedAssociation.AppId ?? "") +
+                    ";success=0");
+#endif
                 return failure ?? LaunchResult.Failed(
                     LaunchErrorCode.UnsupportedTarget,
                     "No file association was found", null);
@@ -230,6 +238,15 @@ namespace guideXOS.OS {
             string documentName = LeafName(document);
             FileAssociationResolution resolution =
                 FileAssociationRegistry.ResolvePath(documentName);
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+            Program.MarkUefiRing3Phase32("ASSOCIATION=path=" + document +
+                ";ext=" + (resolution.Extension ?? "") + ";app=" +
+                (resolution.AppId ?? "") + ";handler=" +
+                (association.HandlerAppId ?? "") + ";content=" +
+                (association.ContentType ?? "") + ";launchKind=" +
+                request.TargetKindName + ";document=" +
+                (request.Document ?? "") + ";verb=" + request.Verb);
+#endif
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
             Program.MarkUefiAppRuntime("ASSOC_RESOLVE=name=" +
                 (documentName ?? "") + ";ext=" +
@@ -295,6 +312,15 @@ namespace guideXOS.OS {
                             opened.ErrorCodeName));
                 }
             }
+#endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+            Program.MarkUefiRing3Phase32("OPEN_RESULT=path=" + document +
+                ";app=" + (opened == null ? "" : opened.AppId) +
+                ";success=" + (opened != null && opened.Success ? "1" : "0") +
+                ";instance=" + (opened == null ? "" :
+                    opened.InstanceHandle.ToString()) + ";state=" +
+                (opened == null ? "" : opened.ActivationStateName) +
+                ";payload=" + (request.Document ?? ""));
 #endif
             return opened;
         }

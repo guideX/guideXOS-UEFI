@@ -294,6 +294,13 @@ unsafe class Program {
 #endif
     }
 
+    internal static void MarkUefiRing3Phase32(string breadcrumb) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+        if (!IsUefiMode || breadcrumb == null) return;
+        SerialBreadcrumb("RING3_PHASE32_" + breadcrumb);
+#endif
+    }
+
     internal static void MarkUefiAppModelDiagnostic(string breadcrumb) {
 #if UEFI_DIAGNOSTIC_APP_MODEL
         if (!IsUefiMode || breadcrumb == null) return;
@@ -1480,7 +1487,7 @@ unsafe class Program {
                 _uefiMultiFrameStartTicks.ToString());
 
             int uefiFrame = 0;
-#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26 || UEFI_DIAGNOSTIC_RING3_PHASE27 || UEFI_DIAGNOSTIC_RING3_PHASE28 || UEFI_DIAGNOSTIC_RING3_PHASE29 || UEFI_DIAGNOSTIC_RING3_PHASE30 || UEFI_DIAGNOSTIC_RING3_PHASE31
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26 || UEFI_DIAGNOSTIC_RING3_PHASE27 || UEFI_DIAGNOSTIC_RING3_PHASE28 || UEFI_DIAGNOSTIC_RING3_PHASE29 || UEFI_DIAGNOSTIC_RING3_PHASE30 || UEFI_DIAGNOSTIC_RING3_PHASE31 || UEFI_DIAGNOSTIC_RING3_PHASE32
             bool ring3SchedulingEnabled = false;
 #endif
             for (;;) {
@@ -1502,7 +1509,7 @@ unsafe class Program {
                         HaltAfterUefiContinuous();
                         return;
                     }
-#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26 || UEFI_DIAGNOSTIC_RING3_PHASE27 || UEFI_DIAGNOSTIC_RING3_PHASE28 || UEFI_DIAGNOSTIC_RING3_PHASE29 || UEFI_DIAGNOSTIC_RING3_PHASE30 || UEFI_DIAGNOSTIC_RING3_PHASE31
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26 || UEFI_DIAGNOSTIC_RING3_PHASE27 || UEFI_DIAGNOSTIC_RING3_PHASE28 || UEFI_DIAGNOSTIC_RING3_PHASE29 || UEFI_DIAGNOSTIC_RING3_PHASE30 || UEFI_DIAGNOSTIC_RING3_PHASE31 || UEFI_DIAGNOSTIC_RING3_PHASE32
                     if (!ring3SchedulingEnabled && uefiFrame == 1) {
                         // Establish one real desktop frame first so the
                         // scheduler's bootstrap context contains the normal

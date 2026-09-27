@@ -38,6 +38,10 @@ namespace guideXOS.Misc {
         internal const uint FlagPhase31Oversize = 134217728;
         internal const uint FlagPhase31FailFast = 268435456;
         internal const uint FlagPhase31StaleOwner = 536870912;
+        internal const uint FlagPhase32OpenDocument = 1073741824;
+        internal const uint FlagPhase32FailFast = 2147483648U;
+        internal const uint FlagPhase32StaleOwner =
+            FlagPhase32OpenDocument | FlagPhase32FailFast;
         internal const byte Read = 1;
         internal const byte Write = 2;
         internal const byte Execute = 4;
@@ -342,6 +346,37 @@ namespace guideXOS.Misc {
                     U32(hash, 8) == 0x1553D66EU && U32(hash, 12) == 0xBAF07C9AU &&
                     U32(hash, 16) == 0x69EE23DCU && U32(hash, 20) == 0xFFEC6E42U &&
                     U32(hash, 24) == 0x88D11C6CU && U32(hash, 28) == 0x0F0E9EEEU;
+            }
+            if ((flags & ManagedImageContract.FlagPhase32StaleOwner) ==
+                    ManagedImageContract.FlagPhase32StaleOwner) {
+                return U32(hash, 0) == 0x8B5EF288U &&
+                    U32(hash, 4) == 0xD08A458DU &&
+                    U32(hash, 8) == 0x45D48B53U &&
+                    U32(hash, 12) == 0xD56271E1U &&
+                    U32(hash, 16) == 0x14A301A4U &&
+                    U32(hash, 20) == 0xFD6AE883U &&
+                    U32(hash, 24) == 0x6108AF8DU &&
+                    U32(hash, 28) == 0xF5927ECDU;
+            }
+            if ((flags & ManagedImageContract.FlagPhase32FailFast) != 0) {
+                return U32(hash, 0) == 0x15E2EE74U &&
+                    U32(hash, 4) == 0x808467ECU &&
+                    U32(hash, 8) == 0xE2CBE152U &&
+                    U32(hash, 12) == 0x2787275EU &&
+                    U32(hash, 16) == 0x7BF36732U &&
+                    U32(hash, 20) == 0x448F2A23U &&
+                    U32(hash, 24) == 0x1CF88B27U &&
+                    U32(hash, 28) == 0x850212D7U;
+            }
+            if ((flags & ManagedImageContract.FlagPhase32OpenDocument) != 0) {
+                return U32(hash, 0) == 0xF9048141U &&
+                    U32(hash, 4) == 0x0BCFFFD6U &&
+                    U32(hash, 8) == 0x490E3F48U &&
+                    U32(hash, 12) == 0x5A222AC1U &&
+                    U32(hash, 16) == 0x696822A9U &&
+                    U32(hash, 20) == 0x5A6D5C2EU &&
+                    U32(hash, 24) == 0xF8A756DCU &&
+                    U32(hash, 28) == 0xBD490775U;
             }
             if ((flags & ManagedImageContract.FlagPhase29FailFast) != 0) {
                 return U32(hash, 0) == 0xF9410FB6U && U32(hash, 4) == 0xA72A0B0EU &&
@@ -1210,18 +1245,38 @@ namespace guideXOS.Misc {
         }
 
         internal static bool TryCreateFromRamdisk(ulong ownerApplication,
-                                                    uint generation,
-                                                    AddressSpace sharedSpace,
-                                                    ulong nativeBootstrapAddress,
-                                                    bool phase26,
-                                                    bool phase27,
-                                                    bool phase27Failure,
-                                                    int phase28Kind,
-                                                    int phase29Kind,
-                                                    int phase30Kind,
-                                                    int phase31Kind,
-                                                    out ManagedImageProcess process,
-                                                    out string failure) {
+                                                     uint generation,
+                                                     AddressSpace sharedSpace,
+                                                     ulong nativeBootstrapAddress,
+                                                     bool phase26,
+                                                     bool phase27,
+                                                     bool phase27Failure,
+                                                     int phase28Kind,
+                                                     int phase29Kind,
+                                                     int phase30Kind,
+                                                     int phase31Kind,
+                                                     out ManagedImageProcess process,
+                                                     out string failure) {
+            return TryCreateFromRamdisk(ownerApplication, generation,
+                sharedSpace, nativeBootstrapAddress, phase26, phase27,
+                phase27Failure, phase28Kind, phase29Kind, phase30Kind,
+                phase31Kind, 0, out process, out failure);
+        }
+
+        internal static bool TryCreateFromRamdisk(ulong ownerApplication,
+                                                     uint generation,
+                                                     AddressSpace sharedSpace,
+                                                     ulong nativeBootstrapAddress,
+                                                     bool phase26,
+                                                     bool phase27,
+                                                     bool phase27Failure,
+                                                     int phase28Kind,
+                                                     int phase29Kind,
+                                                     int phase30Kind,
+                                                     int phase31Kind,
+                                                     int phase32Kind,
+                                                     out ManagedImageProcess process,
+                                                     out string failure) {
             process = null;
             failure = null;
             if (File.Instance == null) {
@@ -1256,16 +1311,20 @@ namespace guideXOS.Misc {
             if (phase31Kind == 3) prefix = "Native/guideXOS.Phase31OversizeTargetProof";
             if (phase31Kind == 4) prefix = "Native/guideXOS.Phase31FailFastProof";
             if (phase31Kind == 5) prefix = "Native/guideXOS.Phase31StaleOwnerProof";
+            if (phase32Kind == 1) prefix = "Native/guideXOS.Phase32ManagedOpenDocumentProof";
+            if (phase32Kind == 2) prefix = "Native/guideXOS.Phase32OpenDocumentFailFastProof";
+            if (phase32Kind == 3) prefix = "Native/guideXOS.Phase32OpenDocumentStaleOwnerProof";
             byte[] image = File.ReadAllBytes(prefix + ".exe");
             byte[] descriptor = File.ReadAllBytes(prefix + ".gxmi");
             if (image == null || descriptor == null) {
-                failure = phase31Kind != 0 ? "PHASE31_IMAGE_NOT_STAGED" :
+                failure = phase32Kind != 0 ? "PHASE32_IMAGE_NOT_STAGED" :
+                    (phase31Kind != 0 ? "PHASE31_IMAGE_NOT_STAGED" :
                     (phase30Kind != 0 ? "PHASE30_IMAGE_NOT_STAGED" :
                     (phase29Kind != 0 ? "PHASE29_IMAGE_NOT_STAGED" :
                     (phase28Kind != 0 ? "PHASE28_IMAGE_NOT_STAGED" :
                     (phase27 ? "PHASE27_IMAGE_NOT_STAGED" :
                     (phase26 ? "PHASE26_IMAGE_NOT_STAGED" :
-                        "PHASE24_IMAGE_NOT_STAGED")))));
+                        "PHASE24_IMAGE_NOT_STAGED"))))));
                 return false;
             }
             return TryCreate(image, descriptor, ownerApplication, generation,
@@ -1351,6 +1410,19 @@ namespace guideXOS.Misc {
 
         internal bool IsPhase31StaleOwner => Descriptor != null &&
             (Descriptor.Flags & ManagedImageContract.FlagPhase31StaleOwner) != 0;
+
+        internal bool IsPhase32 => Descriptor != null &&
+            (Descriptor.Flags & (ManagedImageContract.FlagPhase32OpenDocument |
+                ManagedImageContract.FlagPhase32FailFast)) != 0;
+
+        internal bool IsPhase32FailFast => Descriptor != null &&
+            (Descriptor.Flags & (ManagedImageContract.FlagPhase32OpenDocument |
+                ManagedImageContract.FlagPhase32FailFast)) ==
+                ManagedImageContract.FlagPhase32FailFast;
+
+        internal bool IsPhase32StaleOwner => Descriptor != null &&
+            (Descriptor.Flags & ManagedImageContract.FlagPhase32StaleOwner) ==
+                ManagedImageContract.FlagPhase32StaleOwner;
 
         internal bool TryAuthorizeEntry(ulong rip,
                                         bool allowManagedEntryResume = false) {

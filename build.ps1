@@ -36,7 +36,7 @@
 .PARAMETER UefiDiagnosticMode
     Optional UEFI regression build variant: Tiny, FirstFrame, Frames, Input,
     InputStress, ContextMenu, Png, Font, Background, BackgroundRotation,
-    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Phase27, Ring3Phase28, Ring3Phase29, Ring3Phase30, Ring3Phase31, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
+    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Phase27, Ring3Phase28, Ring3Phase29, Ring3Phase30, Ring3Phase31, Ring3Phase32, Ring3Direct, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
     WidgetOnlyClock, WidgetOnlyMonitor, or WidgetOnlyUptime
 
 .EXAMPLE
@@ -60,7 +60,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
+  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
     [string]$UefiDiagnosticMode = ''
 )
 
@@ -673,6 +673,18 @@ if (-not $SkipRamdisk) {
         if ($LASTEXITCODE -ne 0) { throw "Phase 31 managed Shell build failed: $LASTEXITCODE" }
         & $phase31Stage -BuildRoot $phase31BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
         if ($LASTEXITCODE -ne 0) { throw "Phase 31 image staging failed: $LASTEXITCODE" }
+    }
+
+    $phase32Build = Join-Path $RootDir "Tools\Phase32\build_phase32_managed_open_document.ps1"
+    $phase32Stage = Join-Path $RootDir "Tools\Phase32\stage_phase32_image.ps1"
+    $phase32BuildRoot = Join-Path $RootDir "out\dotnet\phase32-managed-open-document"
+    if ((Test-Path -LiteralPath $phase32Build) -and
+        (Test-Path -LiteralPath $phase32Stage)) {
+        Write-Info "Building the Phase 32 managed OpenDocument proof..."
+        & $phase32Build
+        if ($LASTEXITCODE -ne 0) { throw "Phase 32 managed OpenDocument build failed: $LASTEXITCODE" }
+        & $phase32Stage -BuildRoot $phase32BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) { throw "Phase 32 image staging failed: $LASTEXITCODE" }
     }
     
     $ramdiskBuilder = (Resolve-Path "$ToolsDir\ramdisk_builder.py").Path

@@ -337,6 +337,9 @@ namespace GuideXos
         // This mirrors LaunchRequest.MaxTextLength (the existing Phase 9
         // stable-target bound) as a public wire contract value.
         public const int MaxApplicationIdLength = 1024;
+        // Phase 9 uses this same bound for ApplicationShellOpenRequest and
+        // LaunchRequest document values.
+        public const int MaxDocumentLength = MaxApplicationIdLength;
 
         public static GuideXosResult TryLaunchApplication(
             string applicationId, out GuideXosLaunchResult launchResult)
@@ -345,6 +348,19 @@ namespace GuideXos
                 GuideXosLaunchResultCode.InvalidRequest);
             return GuideXosInternalAbi.TryLaunchApplication(
                 applicationId, out launchResult);
+        }
+
+        /// <summary>
+        /// Requests that the existing Phase 9 Shell service open a document.
+        /// The App Model resolves the association, target factory, and launch.
+        /// </summary>
+        public static GuideXosResult TryOpenDocument(
+            string document, out GuideXosLaunchResult launchResult)
+        {
+            launchResult = new GuideXosLaunchResult(
+                GuideXosLaunchResultCode.InvalidRequest);
+            return GuideXosInternalAbi.TryOpenDocument(
+                document, out launchResult);
         }
     }
 
