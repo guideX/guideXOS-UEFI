@@ -381,6 +381,8 @@ namespace guideXOS.GUI {
         /// Input All
         /// </summary>
         public static void InputAll() {
+            if (MouseHandled) return;
+
             // First pass: Handle "always on top" windows like Task Manager
             // Task Manager should get input priority even if not at the end of the list
             for (int i = Windows.Count - 1; i >= 0; i--) {

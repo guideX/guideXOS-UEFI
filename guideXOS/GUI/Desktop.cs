@@ -600,7 +600,6 @@ namespace guideXOS.GUI {
             }
             _prevLeftDown = leftDown;
 
-            if (Taskbar != null) Taskbar.Draw();
         }
 
         private static void DrawUefiImageIcon(guideXOS.Graph.Graphics graphics, Image icon, string label, int x, int y, uint accent) {

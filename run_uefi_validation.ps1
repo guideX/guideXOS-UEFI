@@ -67,6 +67,10 @@
     Run real UEFI Start-menu application launches, close/return cycles, shell
     routes, and file-association opens through QMP input.
 
+.PARAMETER TaskbarSoak
+    Run the production Continuous desktop with Calculator, Notepad, and
+    Computer Files open on the UEFI taskbar during the soak interval.
+
 .PARAMETER Ring3
     Run the bounded first native CPL3/process-boundary proof.
 
@@ -145,6 +149,7 @@ param(
     [switch]$NativeInputStress,
     [switch]$ContextMenu,
     [switch]$ContextMenuSoak,
+    [switch]$TaskbarSoak,
     [switch]$Widget,
     [switch]$WidgetStress,
     [switch]$WidgetSoak,
@@ -183,6 +188,7 @@ $selectorCount = @(
     $(if ($NativeInputStress) { 1 } else { 0 }),
     $(if ($ContextMenu) { 1 } else { 0 }),
     $(if ($ContextMenuSoak) { 1 } else { 0 }),
+    $(if ($TaskbarSoak) { 1 } else { 0 }),
     $(if ($Widget) { 1 } else { 0 }),
     $(if ($WidgetStress) { 1 } else { 0 }),
     $(if ($WidgetSoak) { 1 } else { 0 }),
@@ -205,8 +211,8 @@ if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Ring3Phase15 -and -not $Ring3Phase25 -and -not $Ring3Phase26 -and -not $Ring3Phase27 -and -not $Ring3Phase28 -and -not $Ring3Phase29 -and -not $Ring3Phase30 -and -not $Ring3Phase31 -and -not $Ring3Phase32 -and
     -not $Ring3Direct -and
     -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
-    -not $ContextMenuSoak -and -not $Widget -and -not $WidgetStress -and
-    -not $WidgetSoak -and
+    -not $ContextMenuSoak -and -not $TaskbarSoak -and -not $Widget -and
+    -not $WidgetStress -and -not $WidgetSoak -and
     -not $Continuous) {
     $Continuous = $true
 }
@@ -271,7 +277,9 @@ $isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Pn
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu')
 $isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress')
 $isAppRuntimeValidation = $diagnosticMode -eq 'AppRuntime'
-$isInteractiveValidation = $isInputValidation -or $isWidgetValidation -or $isAppRuntimeValidation
+$isTaskbarSoakValidation = $TaskbarSoak
+$isInteractiveValidation = $isInputValidation -or $isWidgetValidation -or
+    $isAppRuntimeValidation -or $isTaskbarSoakValidation
 $isContinuousValidation = -not $isBoundedDiagnostic
 $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'Tiny' { 'UTINY_COMPLETE'; break }
@@ -302,6 +310,10 @@ $diagnosticCompletionMarker = switch ($diagnosticMode) {
 
 if ($WidgetSoak -and $TimeoutSeconds -lt 720) {
     $TimeoutSeconds = 720
+}
+if ($TaskbarSoak) {
+    $Continuous = $true
+    if ($TimeoutSeconds -lt 125) { $TimeoutSeconds = 125 }
 }
 
 $qemuPath = 'C:\Program Files\qemu\qemu-system-x86_64.exe'
@@ -552,12 +564,137 @@ function Send-QmpWorkload {
     Start-Sleep -Milliseconds 120
 }
 
+function Open-QmpProductionStartApplication {
+    param(
+        $Qmp,
+        [string]$Name,
+        [int]$Index,
+        [int]$ExpectedGroups
+    )
+
+    $pattern = '(?m)^\[TASKBAR_VISUAL\] groups=' + $ExpectedGroups.ToString() +
+        ';buttons=\d+;icons=\d+;fallback=0;active=1;activations=\d+;' +
+        'active-handle=\d+;hidden=\d+;invalid=0\r?$'
+    $before = Get-ContextMarkerCount $pattern
+
+    # These are the same native Start and all-programs hit targets used by the
+    # AppRuntime workload. Only the diagnostic serial waits are omitted here.
+    Set-QmpPointer $Qmp 30 780
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 1300
+    Set-QmpPointer $Qmp 80 694
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 1800
+
+    $rowY = 63 + ($Index * 58) + 16
+    Set-QmpPointer $Qmp 80 $rowY
+    Send-QmpMouseClick $Qmp 'left'
+    Wait-ForContextMarkerCount $pattern ($before + 1) 10000
+}
+
+function Save-QmpTaskbarFrame {
+    param($Qmp, [string]$Name)
+
+    $path = Join-Path $PSScriptRoot (Join-Path 'out' $Name)
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    $request = @{
+        execute = 'human-monitor-command'
+        arguments = @{ 'command-line' = 'screendump ' + $path }
+    } | ConvertTo-Json -Compress
+    $Qmp.Writer.WriteLine($request)
+    $response = Read-QmpMessage $Qmp.Reader
+    if ($null -eq $response -or $response.error) {
+        throw "Production taskbar screenshot capture failed: $Name"
+    }
+}
+
+function Send-QmpTaskbarSoak {
+    param(
+        $Qmp,
+        [int]$DurationSeconds = 120
+    )
+
+    $apps = @(
+        @{ Name = 'Calculator'; Index = 0 },
+        @{ Name = 'Notepad'; Index = 8 },
+        @{ Name = 'Computer Files'; Index = 1 }
+    )
+    for ($i = 0; $i -lt $apps.Count; $i++) {
+        Open-QmpProductionStartApplication $Qmp $apps[$i].Name $apps[$i].Index ($i + 1)
+    }
+
+    $visualPattern = '(?m)^\[TASKBAR_VISUAL\] groups=3;buttons=(\d+);icons=(\d+);fallback=0;active=1;activations=(\d+);active-handle=(\d+);hidden=(\d+);invalid=0\r?$'
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    $visualMatches = [regex]::Matches($content, $visualPattern)
+    if ($visualMatches.Count -eq 0) { throw 'Production taskbar soak has no three-app visual state.' }
+    $visual = $visualMatches[$visualMatches.Count - 1]
+    $visibleButtons = [int]$visual.Groups[1].Value
+    $visibleIcons = [int]$visual.Groups[2].Value
+    if ($visibleButtons -lt 1 -or $visibleIcons -ne $visibleButtons) {
+        throw "Production taskbar soak has invalid button/icon counts ($visibleButtons/$visibleIcons)."
+    }
+
+    $activationBefore = [int]$visual.Groups[3].Value
+    $activeHandleBefore = $visual.Groups[4].Value
+    $hidden = [int]$visual.Groups[5].Value
+    Set-QmpPointer $Qmp 120 780
+    Send-QmpMouseClick $Qmp 'left'
+    $activationPattern = '(?m)^\[TASKBAR_VISUAL\] groups=3;buttons=' +
+        $visibleButtons.ToString() + ';icons=' + $visibleIcons.ToString() +
+        ';fallback=0;active=1;activations=(\d+);active-handle=(\d+);hidden=' +
+        $hidden.ToString() + ';invalid=0\r?$'
+    $activationDeadline = (Get-Date).AddSeconds(6)
+    $activated = $false
+    do {
+        $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+        $activationMatches = [regex]::Matches($content, $activationPattern)
+        if ($activationMatches.Count -gt 0) {
+            $latest = $activationMatches[$activationMatches.Count - 1]
+            if ([int]$latest.Groups[1].Value -gt $activationBefore -and
+                $latest.Groups[2].Value -ne $activeHandleBefore) {
+                $activated = $true
+                break
+            }
+        }
+        Start-Sleep -Milliseconds 20
+    } while ((Get-Date) -lt $activationDeadline)
+    if (-not $activated) { throw 'Production taskbar soak click did not switch the active existing app.' }
+
+    # Capture a static production frame while all three cached taskbar icons
+    # are present. This gives the visual soak a reviewable artifact alongside
+    # the serial geometry and graphics-invariant checks.
+    Set-QmpPointer $Qmp 640 400
+    Save-QmpTaskbarFrame $Qmp 'uefi-taskbar-apps.ppm'
+
+    Set-QmpPointer $Qmp 280 780
+    Start-Sleep -Milliseconds 250
+    Save-QmpTaskbarFrame $Qmp 'uefi-taskbar-hover.ppm'
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $true))
+    Start-Sleep -Milliseconds 1000
+    Save-QmpTaskbarFrame $Qmp 'uefi-taskbar-pressed.ppm'
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $false))
+    Start-Sleep -Milliseconds 250
+    Save-QmpTaskbarFrame $Qmp 'uefi-taskbar-selected.ppm'
+    Write-Host '  taskbar screenshots: active, hover, pressed, selected' -ForegroundColor Gray
+
+    Write-Host "  production taskbar soak: $DurationSeconds seconds with $visibleButtons visible buttons and $hidden hidden groups" -ForegroundColor Green
+    Start-Sleep -Seconds $DurationSeconds
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $false))
+    Start-Sleep -Milliseconds 250
+}
+
 function Open-QmpStartApplication {
     param(
         $Qmp,
         [string]$Name,
-        [int]$Index
+        [int]$Index,
+        [switch]$KeepOpen
     )
+
+    $taskbarButtonPattern = '(?m)^\[TASKBAR_VISUAL\] groups=1;buttons=1;icons=1;fallback=0;active=1;activations=\d+;active-handle=\d+;hidden=0;invalid=0\r?$'
+    $taskbarButtonBefore = Get-ContextMarkerCount $taskbarButtonPattern
+    $taskbarEmptyPattern = '(?m)^\[TASKBAR_VISUAL\] groups=0;buttons=0;icons=0;fallback=0;active=0;activations=\d+;active-handle=(?:none|\d+);hidden=0;invalid=0\r?$'
+    $taskbarEmptyBefore = Get-ContextMarkerCount $taskbarEmptyPattern
 
     # Let the previous close cleanup finish its render pass before routing a
     # new taskbar click.  The guest is deliberately single-threaded at this
@@ -684,6 +821,44 @@ function Open-QmpStartApplication {
     Wait-ForContextMarkerCount (
         '(?m)^APP_RUNTIME_LAUNCH_OK=.*;name=' + [regex]::Escape($Name) + ';') ($launchBefore + 1) 8000
 
+    # Every Start launch must project through the production UEFI renderer as
+    # one bounded semantic taskbar item with its cached 32px icon and no
+    # fallback. Calculator also exercises the real taskbar-button activation
+    # route while its original ApplicationInstance remains alive.
+    if (-not $KeepOpen) {
+        Wait-ForContextMarkerCount $taskbarButtonPattern ($taskbarButtonBefore + 1) 6000
+    }
+    if (-not $KeepOpen -and $Index -eq 0) {
+        $taskbarContent = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+        $taskbarVisualMatches = [regex]::Matches($taskbarContent,
+            '(?m)^\[TASKBAR_VISUAL\] groups=1;buttons=1;icons=1;fallback=0;active=1;activations=(\d+);active-handle=(\d+);hidden=0;invalid=0\r?$')
+        if ($taskbarVisualMatches.Count -eq 0) {
+            throw 'Calculator taskbar item marker is missing before activation.'
+        }
+        $taskbarVisual = $taskbarVisualMatches[$taskbarVisualMatches.Count - 1]
+        $activationBefore = [int]$taskbarVisual.Groups[1].Value
+        $activeHandle = $taskbarVisual.Groups[2].Value
+        Set-QmpPointer $Qmp 120 780
+        Send-QmpMouseClick $Qmp 'left'
+        $activationPattern = '(?m)^\[TASKBAR_VISUAL\] groups=1;buttons=1;icons=1;fallback=0;active=1;activations=(\d+);active-handle=' + [regex]::Escape($activeHandle) + ';hidden=0;invalid=0\r?$'
+        $activationDeadline = (Get-Date).AddSeconds(6)
+        $activatedThroughTaskbar = $false
+        do {
+            $taskbarContent = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+            $activationMatches = [regex]::Matches($taskbarContent, $activationPattern)
+            if ($activationMatches.Count -gt 0 -and
+                [int]$activationMatches[$activationMatches.Count - 1].Groups[1].Value -gt $activationBefore) {
+                $activatedThroughTaskbar = $true
+                break
+            }
+            Start-Sleep -Milliseconds 20
+        } while ((Get-Date) -lt $activationDeadline)
+        if (-not $activatedThroughTaskbar) {
+            throw 'Clicking Calculator taskbar button did not activate its existing ApplicationInstance.'
+        }
+    }
+    if ($KeepOpen) { return }
+
     # Escape is the normal global-key close route.  The cleanup breadcrumb is
     # the point at which the window is removed and its owner memory reclaimed.
     # StartMenu hides immediately after dispatch, but its cleanup is performed
@@ -696,7 +871,163 @@ function Open-QmpStartApplication {
     Close-QmpLastLaunchedWindow $Qmp `
         -AllowNotepadConfirmation:($Name -eq 'Notepad')
     Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+    Wait-ForContextMarkerCount $taskbarEmptyPattern ($taskbarEmptyBefore + 1) 6000
     Start-Sleep -Milliseconds 160
+}
+
+function Get-QmpLatestTaskbarLaunch {
+    param([string]$Name)
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    $pattern = '(?m)^APP_RUNTIME_LAUNCH_OK=.*;name=' + [regex]::Escape($Name) +
+        ';type=WINDOW;bounds=(\d+),(\d+),(\d+),(\d+);.*;instance=(instance-[^;]+);'
+    $matches = [regex]::Matches($content, $pattern)
+    if ($matches.Count -eq 0) {
+        throw "No live launch bounds were emitted for taskbar overflow app '$Name'."
+    }
+    $match = $matches[$matches.Count - 1]
+    $identity = $match.Groups[5].Value
+    $identityParts = $identity.Substring('instance-'.Length).Split('-')
+    if ($identityParts.Count -ne 2) {
+        throw "Unexpected ApplicationInstance identity '$identity'."
+    }
+    $slot = [UInt64]::Parse($identityParts[0])
+    $generation = [UInt64]::Parse($identityParts[1])
+    $activeHandle = ($slot * [UInt64]4294967296) + $generation
+    return @{
+        Name = $Name
+        X = [int]$match.Groups[1].Value
+        Y = [int]$match.Groups[2].Value
+        Width = [int]$match.Groups[3].Value
+        Height = [int]$match.Groups[4].Value
+        Handle = $activeHandle.ToString()
+    }
+}
+
+function Activate-QmpTaskbarItem {
+    param(
+        $Qmp,
+        [int]$X,
+        [string]$Handle,
+        [int]$Groups,
+        [int]$VisibleLimit
+    )
+    $visible = [Math]::Min($Groups, $VisibleLimit)
+    $hidden = [Math]::Max(0, $Groups - $VisibleLimit)
+    $shapePattern = '(?m)^\[TASKBAR_VISUAL\] groups=' + $Groups.ToString() +
+        ';buttons=' + $visible.ToString() + ';icons=' + $visible.ToString() +
+        ';fallback=0;active=1;activations=(\d+);active-handle=(\d+);hidden=' +
+        $hidden.ToString() + ';invalid=0\r?$'
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    $visualMatches = [regex]::Matches($content, $shapePattern)
+    if ($visualMatches.Count -eq 0) { throw "Taskbar visual state for $Groups groups is missing." }
+    $activationBefore = [int]$visualMatches[$visualMatches.Count - 1].Groups[1].Value
+
+    Set-QmpPointer $Qmp $X 780
+    Send-QmpMouseClick $Qmp 'left'
+    $targetPattern = '(?m)^\[TASKBAR_VISUAL\] groups=' + $Groups.ToString() +
+        ';buttons=' + $visible.ToString() + ';icons=' + $visible.ToString() +
+        ';fallback=0;active=1;activations=(\d+);active-handle=' +
+        [regex]::Escape($Handle) + ';hidden=' + $hidden.ToString() + ';invalid=0\r?$'
+    $deadline = (Get-Date).AddSeconds(6)
+    do {
+        $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+        $targetMatches = [regex]::Matches($content, $targetPattern)
+        if ($targetMatches.Count -gt 0 -and
+            [int]$targetMatches[$targetMatches.Count - 1].Groups[1].Value -gt $activationBefore) {
+            return
+        }
+        Start-Sleep -Milliseconds 20
+    } while ((Get-Date) -lt $deadline)
+    throw "Taskbar item at x=$X did not activate existing instance $Handle."
+}
+
+function Open-QmpTaskbarOverflow {
+    param($Qmp)
+
+    # The live framebuffer width is larger than the 800px AppRuntime self-test
+    # target, so launch eight groups to cross its measured right-side bound.
+    $apps = @(
+        @{ Name = 'Calculator'; Index = 0 },
+        @{ Name = 'Notepad'; Index = 8 },
+        @{ Name = 'Computer Files'; Index = 1 },
+        @{ Name = 'Firewall'; Index = 6 },
+        @{ Name = 'Calculator'; Index = 0 },
+        @{ Name = 'Console'; Index = 2 },
+        @{ Name = 'Devices'; Index = 3 },
+        @{ Name = 'Disk Manager'; Index = 4 }
+    )
+    $groupCount = $apps.Count
+    $expectedVisual = '(?m)^\[TASKBAR_VISUAL\] groups=' + $groupCount.ToString() +
+        ';.*;invalid=0\r?$'
+    $visualBefore = Get-ContextMarkerCount $expectedVisual
+    $launched = @()
+    foreach ($app in $apps) {
+        Open-QmpStartApplication $Qmp $app.Name $app.Index -KeepOpen
+        $launched += Get-QmpLatestTaskbarLaunch $app.Name
+    }
+    Wait-ForContextMarkerCount $expectedVisual ($visualBefore + 1) 6000
+
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    $visualPattern = '(?m)^\[TASKBAR_VISUAL\] groups=' + $groupCount.ToString() +
+        ';buttons=(\d+);icons=(\d+);fallback=0;active=1;activations=(\d+);active-handle=\d+;hidden=(\d+);invalid=0\r?$'
+    $visualMatches = [regex]::Matches($content, $visualPattern)
+    if ($visualMatches.Count -eq 0) { throw 'Taskbar overflow diagnostic marker is missing.' }
+    $initialVisual = $visualMatches[$visualMatches.Count - 1]
+    $visibleLimit = [int]$initialVisual.Groups[1].Value
+    $iconCount = [int]$initialVisual.Groups[2].Value
+    $hiddenCount = [int]$initialVisual.Groups[4].Value
+    if ($visibleLimit -lt 2 -or $iconCount -ne $visibleLimit -or
+        $hiddenCount -lt 1 -or $visibleLimit + $hiddenCount -ne $groupCount) {
+        throw "$groupCount live apps did not overflow the bounded taskbar as expected (visible=$visibleLimit;icons=$iconCount;hidden=$hiddenCount)."
+    }
+
+    # The active instance is initially the eighth registry entry, so the
+    # renderer temporarily places it in the last visible slot. Selecting the
+    # first item moves the active instance into the regular visible range;
+    # layout then returns to the first seven registry entries and hides the
+    # eighth. Validate both the first item and that regular rightmost item.
+    $lastVisibleX = 133 + (148 * ($visibleLimit - 1))
+    Activate-QmpTaskbarItem $Qmp 120 $launched[0].Handle $groupCount $visibleLimit
+    Activate-QmpTaskbarItem $Qmp $lastVisibleX $launched[$visibleLimit - 1].Handle $groupCount $visibleLimit
+
+    # Close each live window through its current titlebar. Reconciliation must
+    # remove each corresponding group and expose the formerly hidden slot.
+    $remainingGroups = $groupCount
+    $closeLaunchIndexes = @()
+    if ($groupCount -gt $visibleLimit) {
+        $closeLaunchIndexes += ($groupCount - 1)
+    }
+    for ($launchIndex = $visibleLimit - 1; $launchIndex -lt ($groupCount - 1); $launchIndex++) {
+        $closeLaunchIndexes += $launchIndex
+    }
+    for ($launchIndex = $visibleLimit - 2; $launchIndex -ge 0; $launchIndex--) {
+        $closeLaunchIndexes += $launchIndex
+    }
+    foreach ($launchIndex in $closeLaunchIndexes) {
+        $window = $launched[$launchIndex]
+        $visibleIndex = [Math]::Min($launchIndex,
+            [Math]::Min($remainingGroups, $visibleLimit) - 1)
+        $buttonCenterX = 133 + (148 * $visibleIndex)
+        if ($launchIndex -lt [Math]::Min($remainingGroups, $visibleLimit)) {
+            Activate-QmpTaskbarItem $Qmp $buttonCenterX $window.Handle $remainingGroups $visibleLimit
+        }
+        $expectedGroups = $remainingGroups - 1
+        $expectedVisible = [Math]::Min($expectedGroups, $visibleLimit)
+        $expectedHidden = [Math]::Max(0, $expectedGroups - $visibleLimit)
+        $remainingPattern = '(?m)^\[TASKBAR_VISUAL\] groups=' + $expectedGroups.ToString() +
+            ';buttons=' + $expectedVisible.ToString() +
+            ';icons=' + $expectedVisible.ToString() +
+            ';fallback=0;active=\d+;activations=\d+;active-handle=(?:none|\d+);hidden=' +
+            $expectedHidden.ToString() + ';invalid=0\r?$'
+        $remainingBefore = Get-ContextMarkerCount $remainingPattern
+        $closedBefore = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED='
+        Set-QmpPointer $Qmp ($window.X + $window.Width - 22) ($window.Y - 26)
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLOSED=' ($closedBefore + 1) 6000
+        Wait-ForContextMarkerCount $remainingPattern ($remainingBefore + 1) 6000
+        $remainingGroups--
+    }
+    Start-Sleep -Milliseconds 250
 }
 
 function Close-QmpLastLaunchedWindow {
@@ -1030,6 +1361,8 @@ function Send-QmpAppRuntimeWorkload {
     for ($i = 0; $i -lt $apps.Count; $i++) {
         Open-QmpStartApplication $Qmp $apps[$i] $i
     }
+
+    Open-QmpTaskbarOverflow $Qmp
 
     # Repeated launches of a light and a text application expose duplicate
     # registrations, stale state, and owner-memory cleanup defects.
@@ -1559,6 +1892,8 @@ try {
                     Write-Host '  injecting bounded native keyboard/mouse workload' -ForegroundColor Green
                     if ($diagnosticMode -eq 'ContextMenu') {
                         Send-QmpContextMenuWorkload $qmp
+                    } elseif ($isTaskbarSoakValidation) {
+                        Send-QmpTaskbarSoak $qmp 120
                     } elseif ($isAppRuntimeValidation) {
                         Send-QmpAppRuntimeWorkload $qmp
                         $status = 'APP_RUNTIME_COMPLETE'

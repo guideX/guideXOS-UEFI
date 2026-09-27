@@ -64,6 +64,23 @@ namespace guideXOS.GUI {
         // On-Screen Keyboard button latch
         private bool _oskClickLatch = false;
         private bool _uefiStartGraphicsReported = false;
+        private bool _taskbarAppClickLatch = false;
+        private int _lastTaskbarVisualGroups = -1;
+        private int _lastTaskbarVisualButtons = -1;
+        private int _lastTaskbarVisualIcons = -1;
+        private int _lastTaskbarVisualFallbacks = -1;
+        private int _lastTaskbarVisualActive = -1;
+        private int _lastTaskbarVisualActivations = -1;
+        private int _lastTaskbarVisualHidden = -1;
+        private int _lastTaskbarVisualInvalid = -1;
+        private ulong _lastTaskbarVisualActiveHandle;
+        private int _taskbarVisualActivations;
+
+        private const int UefiTaskbarAppButtonWidth = 140;
+        private const int UefiTaskbarAppButtonGap = 8;
+        private const int UefiTaskbarStartAppGap = 8;
+        private const int UefiTaskbarIconSize = 32;
+        private const int UefiTaskbarClockGap = 16;
 
         // FIXED: Cache time/date strings to prevent per-frame allocations
         private string _cachedTime = null;
@@ -231,22 +248,231 @@ namespace guideXOS.GUI {
                 }
             }
 
-            // Keep the recovered taskbar popup on the same WindowManager path
-            // as the desktop popup. This is intentionally a small secondary
-            // route: it only exposes the existing Task Manager command.
-            int mx = Control.MousePosition.X;
-            int my = Control.MousePosition.Y;
-            bool rightDown = (Control.MouseButtons & MouseButtons.Right) == MouseButtons.Right;
-            bool rightPressed = guideXOS.Kernel.Drivers.Input.MouseEventDispatcher.WasPressedThisFrame(MouseButtons.Right);
-            bool onBar = my >= yTop && my < Framebuffer.Height;
-            if ((rightDown || rightPressed) && onBar) {
+            int clockTextWidth = GetUefiTaskbarClockTextWidth();
+            int taskbarContentRight = Framebuffer.Width - 12 - clockTextWidth;
+            DrawUefiApplicationButtons(graphics, yTop, startX + startWidth,
+                                       taskbarContentRight);
+        }
+
+        private void DrawUefiApplicationButtons(guideXOS.Graph.Graphics graphics,
+                                                int yTop, int startRight,
+                                                int contentRight) {
+            int buttonHeight = _barHeight - 4;
+            int buttonY = yTop + 2;
+            int firstButtonX = startRight + UefiTaskbarStartAppGap;
+            int rightLimit = contentRight - UefiTaskbarClockGap;
+            int groups = TaskbarApplicationEntryRegistry.EntryCount;
+            int buttons = 0;
+            int icons = 0;
+            int fallbacks = 0;
+            int activeCount = 0;
+            int hidden = 0;
+            int invalid = 0;
+            bool leftDown = (Control.MouseButtons & MouseButtons.Left) ==
+                MouseButtons.Left;
+            ApplicationInstanceHandle activeHandle =
+                ApplicationInstanceRegistry.ActiveApplicationHandle;
+            int visibleSlots = GetUefiTaskbarVisibleSlots(firstButtonX,
+                rightLimit, buttonHeight);
+            int activeOrdinal = GetUefiTaskbarActiveOrdinal(activeHandle);
+            int entryOrdinal = 0;
+
+            for (int i = 0; i < TaskbarApplicationEntryRegistry.Capacity; i++) {
+                TaskbarApplicationEntry entry =
+                    TaskbarApplicationEntryRegistry.GetAt(i);
+                if (entry == null) continue;
+
+                Window target = entry.GetFocusTarget();
+                if (target == null || !entry.InstanceHandle.IsValid) {
+                    invalid++;
+                    continue;
+                }
+
+                int buttonOrdinal = GetUefiTaskbarButtonOrdinal(entryOrdinal,
+                    activeOrdinal, visibleSlots);
+                entryOrdinal++;
+                if (buttonOrdinal < 0) {
+                    hidden++;
+                    continue;
+                }
+
+                int buttonX = firstButtonX +
+                    buttonOrdinal * (UefiTaskbarAppButtonWidth +
+                        UefiTaskbarAppButtonGap);
+                int buttonRight = buttonX + UefiTaskbarAppButtonWidth;
+                int buttonBottom = buttonY + buttonHeight;
+                int mouseX = Control.MousePosition.X;
+                int mouseY = Control.MousePosition.Y;
+                bool hovered = mouseX >= buttonX && mouseX < buttonRight &&
+                    mouseY >= buttonY && mouseY < buttonBottom;
+                bool active = entry.InstanceHandle == activeHandle;
+                if (active) activeCount++;
+
+                uint fill = leftDown && hovered ? 0xFF262626 :
+                    (active || hovered ? 0xFF3A3A3A : 0xFF303030);
+                uint border = active ? 0xFF606060 :
+                    (hovered ? 0xFF555555 : 0xFF454545);
+                graphics.FillRectangle(buttonX, buttonY,
+                    UefiTaskbarAppButtonWidth, buttonHeight, fill);
+                graphics.DrawRectangle(buttonX, buttonY,
+                    UefiTaskbarAppButtonWidth, buttonHeight, border, 1);
+
+                Image icon = target.TaskbarIcon;
+                if (!IsUefiTaskbarIconUsable(icon)) {
+                    icon = Icons.DocumentIcon(UefiTaskbarIconSize);
+                    fallbacks++;
+                }
+
+                int textX = buttonX + 6;
+                if (IsUefiTaskbarIconUsable(icon)) {
+                    int iconY = buttonY + (buttonHeight - icon.Height) / 2;
+                    graphics.DrawImage(buttonX + 6, iconY, icon);
+                    icons++;
+                    textX += icon.Width + 6;
+                }
+
+                int textWidth = buttonRight - textX - 6;
+                if (textWidth > 0 && WindowManager.font != null &&
+                        WindowManager.font.FontSize > 0) {
+                    int textY = buttonY + (buttonHeight -
+                        WindowManager.font.FontSize) / 2;
+                    WindowManager.font.DrawString(textX, textY,
+                        entry.DisplayName ?? "", textWidth,
+                        WindowManager.font.FontSize);
+                }
+                buttons++;
+            }
+
+            ReportUefiTaskbarVisual(groups, buttons, icons, fallbacks,
+                activeCount, _taskbarVisualActivations, activeHandle.Value,
+                hidden, invalid);
+        }
+
+        private int GetUefiTaskbarClockTextWidth() {
+            int clockTextWidth = 0;
+            if (WindowManager.font != null && _cachedTime != null) {
+                clockTextWidth = WindowManager.font.MeasureString(_cachedTime);
+                if (_cachedDate != null) {
+                    int dateWidth = WindowManager.font.MeasureString(_cachedDate);
+                    if (dateWidth > clockTextWidth) clockTextWidth = dateWidth;
+                }
+            }
+            return clockTextWidth;
+        }
+
+        private int GetUefiTaskbarVisibleSlots(int firstButtonX, int rightLimit,
+                                               int buttonHeight) {
+            int visibleSlots = 0;
+            int slotX = firstButtonX;
+            while (buttonHeight > 0 && visibleSlots <
+                    TaskbarApplicationEntryRegistry.Capacity &&
+                    slotX + UefiTaskbarAppButtonWidth <= rightLimit) {
+                visibleSlots++;
+                slotX += UefiTaskbarAppButtonWidth + UefiTaskbarAppButtonGap;
+            }
+            return visibleSlots;
+        }
+
+        private static int GetUefiTaskbarActiveOrdinal(
+                ApplicationInstanceHandle activeHandle) {
+            int entryOrdinal = 0;
+            for (int i = 0; i < TaskbarApplicationEntryRegistry.Capacity; i++) {
+                TaskbarApplicationEntry entry =
+                    TaskbarApplicationEntryRegistry.GetAt(i);
+                if (entry == null || !entry.InstanceHandle.IsValid ||
+                        entry.GetFocusTarget() == null) continue;
+                if (entry.InstanceHandle == activeHandle) return entryOrdinal;
+                entryOrdinal++;
+            }
+            return -1;
+        }
+
+        private static int GetUefiTaskbarButtonOrdinal(int entryOrdinal,
+                                                       int activeOrdinal,
+                                                       int visibleSlots) {
+            if (visibleSlots <= 0) return -1;
+            bool reserveLastSlotForActive = activeOrdinal >= visibleSlots;
+            if (reserveLastSlotForActive &&
+                    entryOrdinal == visibleSlots - 1) return -1;
+            if (entryOrdinal >= visibleSlots &&
+                    (!reserveLastSlotForActive || entryOrdinal != activeOrdinal)) {
+                return -1;
+            }
+            if (reserveLastSlotForActive && entryOrdinal == activeOrdinal) {
+                return visibleSlots - 1;
+            }
+            return entryOrdinal;
+        }
+
+        private static bool IsUefiTaskbarIconUsable(Image icon) {
+            if (icon == null || icon.RawData == null || icon.Width <= 0 ||
+                    icon.Height <= 0 || icon.Width > UefiTaskbarIconSize ||
+                    icon.Height > UefiTaskbarIconSize) return false;
+            return icon.RawData.Length >= icon.Width * icon.Height;
+        }
+
+        private void ReportUefiTaskbarVisual(int groups, int buttons, int icons,
+                                             int fallbacks, int active,
+                                             int activations, ulong activeHandle,
+                                             int hidden, int invalid) {
+            if (groups == _lastTaskbarVisualGroups &&
+                    buttons == _lastTaskbarVisualButtons &&
+                    icons == _lastTaskbarVisualIcons &&
+                    fallbacks == _lastTaskbarVisualFallbacks &&
+                    active == _lastTaskbarVisualActive &&
+                    activations == _lastTaskbarVisualActivations &&
+                    activeHandle == _lastTaskbarVisualActiveHandle &&
+                    hidden == _lastTaskbarVisualHidden &&
+                    invalid == _lastTaskbarVisualInvalid) return;
+
+            _lastTaskbarVisualGroups = groups;
+            _lastTaskbarVisualButtons = buttons;
+            _lastTaskbarVisualIcons = icons;
+            _lastTaskbarVisualFallbacks = fallbacks;
+            _lastTaskbarVisualActive = active;
+            _lastTaskbarVisualActivations = activations;
+            _lastTaskbarVisualActiveHandle = activeHandle;
+            _lastTaskbarVisualHidden = hidden;
+            _lastTaskbarVisualInvalid = invalid;
+            BootConsole.WriteLine("[TASKBAR_VISUAL] groups=" +
+                groups.ToString() + ";buttons=" + buttons.ToString() +
+                ";icons=" + icons.ToString() + ";fallback=" +
+                fallbacks.ToString() + ";active=" + active.ToString() +
+                ";activations=" + activations.ToString() +
+                ";active-handle=" + activeHandle.ToString() + ";hidden=" +
+                hidden.ToString() + ";invalid=" + invalid.ToString());
+        }
+
+        public void Draw() {
+            DrawLegacy();
+        }
+
+        public void HandleUefiInput() {
+            if (BootConsole.CurrentMode != BootMode.UEFI) return;
+
+            bool leftDown = (Control.MouseButtons & MouseButtons.Left) ==
+                MouseButtons.Left;
+            bool rightDown = (Control.MouseButtons & MouseButtons.Right) ==
+                MouseButtons.Right;
+            if (!leftDown) {
+                _oskClickLatch = false;
+                _taskbarAppClickLatch = false;
+            }
+
+            int yTop = Framebuffer.Height - _barHeight;
+            int mouseX = Control.MousePosition.X;
+            int mouseY = Control.MousePosition.Y;
+            bool rightPressed = guideXOS.Kernel.Drivers.Input.MouseEventDispatcher
+                .WasPressedThisFrame(MouseButtons.Right);
+            if ((rightDown || rightPressed) && mouseY >= yTop &&
+                    mouseY < Framebuffer.Height) {
                 if (!_rightClickLatch) {
                     Program.CloseWidgetContextMenu();
                     if (Program.RightMenu != null && Program.RightMenu.Visible) {
                         Program.RightMenu.Visible = false;
                     }
                     if (_menu == null) {
-                        _menu = new TaskbarMenu(mx, my);
+                        _menu = new TaskbarMenu(mouseX, mouseY);
                     } else {
                         _menu.Visible = true;
                         _menu.OnSetVisible(true);
@@ -259,45 +485,91 @@ namespace guideXOS.GUI {
                     Program.MarkUefiWidgetTaskbarMenuOpened(_menu.X, _menu.Y,
                                                            _menu.Width, _menu.Height);
                 }
-            } else if (!rightDown) {
-                _rightClickLatch = false;
+                return;
             }
+            if (!rightDown) _rightClickLatch = false;
 
-            // Reuse the existing UEFI tile for the mature shell route.  Keep
-            // the keyboard fallback only if app-model initialization failed.
-            bool leftDown = (Control.MouseButtons & MouseButtons.Left) == MouseButtons.Left;
-            if (!leftDown) {
-                _oskClickLatch = false;
-            } else if (!_oskClickLatch &&
-                       Control.MousePosition.X >= startX &&
-                       Control.MousePosition.X < startX + startWidth &&
-                       Control.MousePosition.Y >= startY &&
-                       Control.MousePosition.Y < startY + startHeight) {
-                if (Desktop.Apps != null) {
-                    // CleanupClosedWindows disposes hidden transient Start
-                    // menus.  Do not reactivate a disposed object that is no
-                    // longer registered with WindowManager.
-                    if (StartMenu == null || WindowManager.Windows.IndexOf(StartMenu) < 0) {
-                        StartMenu = new StartMenu();
-                    }
-#if UEFI_DIAGNOSTIC_APP_RUNTIME
-                    Program.MarkUefiAppRuntime("START_TOGGLE;registered=" +
-                        (WindowManager.Windows.IndexOf(StartMenu) >= 0 ? "1" : "0") +
-                        ";before=" + (StartMenu.Visible ? "1" : "0"));
-#endif
-                    StartMenu.Visible = !StartMenu.Visible;
-                    if (StartMenu.Visible) Program.MarkUefiStartMenuOpened();
-                } else {
-                    OpenOnScreenKeyboard();
-                }
+            if (!leftDown) return;
+
+            int startX = 12;
+            int startY = yTop + 4;
+            Image startIcon = Icons.TaskbarIcon(32);
+            int startWidth = startIcon != null && startIcon.Width > 0
+                ? startIcon.Width : _barHeight - 8;
+            int startHeight = startIcon != null && startIcon.Height > 0
+                ? startIcon.Height : _barHeight - 8;
+            if (!_oskClickLatch && mouseX >= startX &&
+                    mouseX < startX + startWidth && mouseY >= startY &&
+                    mouseY < startY + startHeight) {
+                ToggleUefiStartMenu();
                 _oskClickLatch = true;
                 WindowManager.MouseHandled = true;
                 Program.MarkUefiGuiMouseRouted();
+                return;
+            }
+
+            if (_taskbarAppClickLatch) return;
+
+            int clockTextWidth = GetUefiTaskbarClockTextWidth();
+            int contentRight = Framebuffer.Width - 12 - clockTextWidth;
+            int firstButtonX = startX + startWidth + UefiTaskbarStartAppGap;
+            int buttonY = yTop + 2;
+            int buttonHeight = _barHeight - 4;
+            int rightLimit = contentRight - UefiTaskbarClockGap;
+            int visibleSlots = GetUefiTaskbarVisibleSlots(firstButtonX,
+                rightLimit, buttonHeight);
+            ApplicationInstanceHandle activeHandle =
+                ApplicationInstanceRegistry.ActiveApplicationHandle;
+            int activeOrdinal = GetUefiTaskbarActiveOrdinal(activeHandle);
+            int entryOrdinal = 0;
+            for (int i = 0; i < TaskbarApplicationEntryRegistry.Capacity; i++) {
+                TaskbarApplicationEntry entry =
+                    TaskbarApplicationEntryRegistry.GetAt(i);
+                if (entry == null) continue;
+                Window target = entry.GetFocusTarget();
+                if (target == null || !entry.InstanceHandle.IsValid) continue;
+
+                int buttonOrdinal = GetUefiTaskbarButtonOrdinal(entryOrdinal,
+                    activeOrdinal, visibleSlots);
+                entryOrdinal++;
+                if (buttonOrdinal < 0) continue;
+
+                int buttonX = firstButtonX + buttonOrdinal *
+                    (UefiTaskbarAppButtonWidth + UefiTaskbarAppButtonGap);
+                if (mouseX < buttonX || mouseX >= buttonX +
+                        UefiTaskbarAppButtonWidth || mouseY < buttonY ||
+                        mouseY >= buttonY + buttonHeight) continue;
+
+                ApplicationLifecycleResult lifecycle = null;
+                _taskbarAppClickLatch = true;
+                if (TaskbarApplicationEntryRegistry.TryFocusWindow(
+                        entry.InstanceHandle, null, out lifecycle)) {
+                    if (_taskbarVisualActivations < int.MaxValue) {
+                        _taskbarVisualActivations++;
+                    }
+                    WindowManager.MouseHandled = true;
+                    Program.MarkUefiGuiMouseRouted();
+                }
+                return;
             }
         }
 
-        public void Draw() {
-            DrawLegacy();
+        private void ToggleUefiStartMenu() {
+            if (Desktop.Apps != null) {
+                if (StartMenu == null ||
+                        WindowManager.Windows.IndexOf(StartMenu) < 0) {
+                    StartMenu = new StartMenu();
+                }
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("START_TOGGLE;registered=" +
+                    (WindowManager.Windows.IndexOf(StartMenu) >= 0 ? "1" : "0") +
+                    ";before=" + (StartMenu.Visible ? "1" : "0"));
+#endif
+                StartMenu.Visible = !StartMenu.Visible;
+                if (StartMenu.Visible) Program.MarkUefiStartMenuOpened();
+            } else {
+                OpenOnScreenKeyboard();
+            }
         }
 
         private void DrawLegacy() {

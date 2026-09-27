@@ -1562,6 +1562,7 @@ unsafe class Program {
                 MouseEventDispatcher.BeginFrame();
                 try { MouseEventDispatcher.Update(); } catch { }
                 WindowManager.MouseHandled = false;
+                if (Desktop.Taskbar != null) Desktop.Taskbar.HandleUefiInput();
                 try { WindowManager.InputAll(); } catch { }
                 try { WindowManager.FlushPendingCreates(); } catch { }
                 try { WAVPlayer.DoPlay(); } catch { }
@@ -1588,6 +1589,9 @@ unsafe class Program {
                 } catch { }
                 try { WindowManager.DrawTaskManager(); } catch { }
                 try { WindowManager.CleanupClosedWindows(); } catch { }
+                try {
+                    if (Desktop.Taskbar != null) Desktop.Taskbar.Draw();
+                } catch { }
 
                 try {
                     Image cursor = (Control.MouseButtons & MouseButtons.Left) == MouseButtons.Left
@@ -1635,6 +1639,7 @@ unsafe class Program {
         MouseEventDispatcher.BeginFrame();
         PS2Mouse.ProcessPendingInput(256);
         WindowManager.MouseHandled = false;
+        if (Desktop.Taskbar != null) Desktop.Taskbar.HandleUefiInput();
         WindowManager.InputAll();
         WindowManager.FlushPendingCreates();
 
@@ -1667,6 +1672,7 @@ unsafe class Program {
         WindowManager.DrawAllExceptTaskManager();
         WindowManager.DrawTaskManager();
         WindowManager.CleanupClosedWindows();
+        if (Desktop.Taskbar != null) Desktop.Taskbar.Draw();
 
         SetUefiFrameBreadcrumb(4, 1, 401);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
