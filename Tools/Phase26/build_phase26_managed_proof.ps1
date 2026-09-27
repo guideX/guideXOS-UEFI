@@ -29,6 +29,18 @@ $compiler = Get-ChildItem -LiteralPath $vsRoot -Filter cl.exe -File -Recurse |
 if ($null -eq $compiler) { throw 'The VS 18 x64 C++ compiler was not found.' }
 $vcvars = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat'
 if (-not (Test-Path -LiteralPath $vcvars -PathType Leaf)) { throw 'The VS 18 x64 compiler environment was not found.' }
+# Pin the discovered SDK version when initializing vcvars so a caller's inherited
+# VSCMD_ARG_WINSDK state cannot leave the VC headers configured without UCRT.
+$windowsSdkIncludeRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Include'
+$windowsSdk = Get-ChildItem -LiteralPath $windowsSdkIncludeRoot -Directory |
+    Where-Object {
+        (Test-Path -LiteralPath (Join-Path $_.FullName 'ucrt\crtdbg.h')) -and
+        (Test-Path -LiteralPath (Join-Path $_.FullName 'um\windows.h'))
+    } |
+    Sort-Object { [version]$_.Name } -Descending |
+    Select-Object -First 1
+if ($null -eq $windowsSdk) { throw "A complete Windows SDK with UCRT headers was not found under $windowsSdkIncludeRoot." }
+$windowsSdkVersion = $windowsSdk.Name
 $cmdExe = Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\cmd.exe'
 $nasm = $null
 if ($env:NASM -and (Test-Path -LiteralPath $env:NASM)) { $nasm = $env:NASM }
@@ -43,6 +55,58 @@ $runtimePackage = Get-ChildItem -LiteralPath (Join-Path $PackRoot 'packages') -F
 if ($null -eq $runtimePackage) { throw 'The Phase 23 GUIDEXOS runtime package is absent.' }
 $work = Join-Path $PackRoot '_phase26-build'
 New-Item -ItemType Directory -Force -Path $work | Out-Null
+$inheritedToolchainEnvironment = [ordered]@{}
+foreach ($name in @('INCLUDE', 'WindowsSdkDir', 'UCRTVersion', 'VCToolsInstallDir',
+        'VCToolsVersion', 'VSCMD_VER', 'VSCMD_ARG_WINSDK', 'VSCMD_ARG_TGT_ARCH',
+        'VSCMD_ARG_HOST_ARCH', 'VisualStudioVersion', 'SkipVCEnvInit')) {
+    $inheritedToolchainEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
+}
+$inheritedToolchainEnvironment['powershellVersion'] = $PSVersionTable.PSVersion.ToString()
+$inheritedToolchainEnvironment['windowsSdkVersionSelected'] = $windowsSdkVersion
+$inheritedPath = [Environment]::GetEnvironmentVariable('Path')
+$inheritedToolchainEnvironment['pathLength'] = if ($null -eq $inheritedPath) { 0 } else { $inheritedPath.Length }
+$inheritedToolchainEnvironment['pathHasSystem32'] = $inheritedPath -like "*$env:SystemRoot\System32*"
+$inheritedToolchainEnvironment['pathHasWindowsPowerShell'] = $inheritedPath -like "*$env:SystemRoot\System32\WindowsPowerShell\v1.0*"
+[IO.File]::WriteAllText((Join-Path $work 'phase26-inherited-toolchain.json'),
+    ($inheritedToolchainEnvironment | ConvertTo-Json -Depth 3),
+    [Text.UTF8Encoding]::new($false))
+
+function New-Phase26CompilerBatch([string]$Name, [string]$CompileCommand, [switch]$RecordEnvironment) {
+    $batchPath = Join-Path $work ($Name + '.phase26.cmd')
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add('@echo off')
+    if ($RecordEnvironment) {
+        $vcvarsLog = Join-Path $work 'phase26-vcvars-debug.log'
+        $inheritedCmdEnvironment = Join-Path $work 'phase26-cmd-inherited-env.txt'
+        $lines.Add('set "VSCMD_DEBUG=1"')
+        $lines.Add('set VSCMD > "' + $inheritedCmdEnvironment + '"')
+        $lines.Add('if defined INCLUDE echo INCLUDE=%INCLUDE% >> "' + $inheritedCmdEnvironment + '"')
+        $lines.Add('if defined WindowsSdkDir echo WindowsSdkDir=%WindowsSdkDir% >> "' + $inheritedCmdEnvironment + '"')
+        $lines.Add('if defined UCRTVersion echo UCRTVersion=%UCRTVersion% >> "' + $inheritedCmdEnvironment + '"')
+        $lines.Add('call "' + $vcvars + '" ' + $windowsSdkVersion + ' > "' + $vcvarsLog + '" 2>&1')
+    }
+    else {
+        $lines.Add('call "' + $vcvars + '" ' + $windowsSdkVersion + ' >nul')
+    }
+    $lines.Add('if errorlevel 1 exit /b %errorlevel%')
+    $lines.Add('set "VisualStudioVersion=17.0"')
+    $lines.Add('set "SkipVCEnvInit=1"')
+    if ($RecordEnvironment) {
+        $lines.Add('echo compiler=' + $compiler.FullName)
+        $lines.Add('echo compilerVersion=' + $compiler.VersionInfo.ProductVersion)
+        $lines.Add('echo vcvars=' + $vcvars)
+        $lines.Add('echo windowsSdkVersion=' + $windowsSdkVersion)
+        $lines.Add('set INCLUDE')
+        $lines.Add('set WindowsSdkDir')
+        $lines.Add('set UCRTVersion')
+        $lines.Add('where cl')
+    }
+    $lines.Add($CompileCommand)
+    $lines.Add('exit /b %errorlevel%')
+    [IO.File]::WriteAllText($batchPath, ($lines -join "`r`n") + "`r`n",
+        [Text.UTF8Encoding]::new($false))
+    return $batchPath
+}
 
 # Phase 23 intentionally carried the stock NativeAOT CoreLib.  GUIDEXOS has no
 # Windows TEB/system-error slot, so the first P/Invoke-cell fixup would call
@@ -53,9 +117,29 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 $runtimeSourceRoot = Join-Path $root 'out\rt'
 $runtimeDotnet = Join-Path $runtimeSourceRoot '.dotnet\dotnet.exe'
 $bundledPythonDirectory = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python'
-if (Test-Path -LiteralPath (Join-Path $bundledPythonDirectory 'python.exe')) {
-    $env:Path = "$bundledPythonDirectory;$env:Path"
+$nativePathEntries = @([Environment]::GetEnvironmentVariable('Path') -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+$requiredNativePathEntries = @(
+    (Join-Path $env:SystemRoot 'System32'),
+    (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0')
+)
+$dotnetInstallDirectory = Join-Path $env:ProgramFiles 'dotnet'
+if (Test-Path -LiteralPath (Join-Path $dotnetInstallDirectory 'dotnet.exe') -PathType Leaf) {
+    $requiredNativePathEntries += $dotnetInstallDirectory
 }
+foreach ($requiredPath in $requiredNativePathEntries) {
+    $normalizedRequiredPath = $requiredPath.TrimEnd('\')
+    $pathEntryExists = @($nativePathEntries | Where-Object {
+        $_.TrimEnd('\') -ieq $normalizedRequiredPath
+    }).Count -gt 0
+    if (-not $pathEntryExists) { $nativePathEntries = @($requiredPath) + $nativePathEntries }
+}
+if (Test-Path -LiteralPath (Join-Path $bundledPythonDirectory 'python.exe')) {
+    $pythonPathExists = @($nativePathEntries | Where-Object {
+        $_.TrimEnd('\') -ieq $bundledPythonDirectory.TrimEnd('\')
+    }).Count -gt 0
+    if (-not $pythonPathExists) { $nativePathEntries = @($bundledPythonDirectory) + $nativePathEntries }
+}
+$env:Path = $nativePathEntries -join ';'
 $coreLibProject = Join-Path $runtimeSourceRoot 'src\coreclr\nativeaot\System.Private.CoreLib\src\System.Private.CoreLib.csproj'
 $coreLibSource = Join-Path $runtimeSourceRoot 'src\coreclr\nativeaot\System.Private.CoreLib\src\Internal\Runtime\CompilerHelpers\InteropHelpers.cs'
 $startupCodeExtensionsSource = Join-Path $runtimeSourceRoot 'src\coreclr\nativeaot\System.Private.CoreLib\src\Internal\Runtime\CompilerHelpers\StartupCode\StartupCodeHelpers.Extensions.cs'
@@ -228,8 +312,12 @@ $gcEnvironmentObject = Join-Path $work 'gcenv.guidexos.phase26.obj'
 $gcEnvironmentPdb = Join-Path $work 'gcenv.guidexos.phase26.pdb'
 $gcCompileCommand = [regex]::Replace($gcCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $gcEnvironmentObject + '"')
 $gcCompileCommand = [regex]::Replace($gcCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $gcEnvironmentPdb + '"')
-$gcBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $gcCompileCommand
-& $cmdExe /d /s /c $gcBuildCommand 2>&1
+$gcCommandRecord = Join-Path $work 'phase26-gc-command.txt'
+[IO.File]::WriteAllText($gcCommandRecord, $gcCompileCommand, [Text.UTF8Encoding]::new($false))
+$gcCompileBatch = New-Phase26CompilerBatch 'gcenv' $gcCompileCommand -RecordEnvironment
+[IO.File]::WriteAllText((Join-Path $work 'phase26-gc-invocation.txt'),
+    (Get-Content -LiteralPath $gcCompileBatch -Raw), [Text.UTF8Encoding]::new($false))
+& $cmdExe /d /s /c ('"' + $gcCompileBatch + '"') 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gcEnvironmentObject -PathType Leaf)) {
     throw 'The Phase 26 GUIDEXOS GC environment overlay failed to compile.'
 }
@@ -258,8 +346,8 @@ $startupObject = Join-Path $work 'startup.phase26.obj'
 $startupPdb = Join-Path $work 'startup.phase26.pdb'
 $startupCompileCommand = [regex]::Replace($startupCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $startupObject + '"')
 $startupCompileCommand = [regex]::Replace($startupCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $startupPdb + '"')
-$startupBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $startupCompileCommand
-& $cmdExe /d /s /c $startupBuildCommand 2>&1
+$startupCompileBatch = New-Phase26CompilerBatch 'startup' $startupCompileCommand
+& $cmdExe /d /s /c ('"' + $startupCompileBatch + '"') 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $startupObject -PathType Leaf)) {
     throw 'The Phase 26 NativeAOT startup overlay failed to compile.'
 }
@@ -284,8 +372,8 @@ $gcHelpersObject = Join-Path $work 'GCHelpers.phase26.obj'
 $gcHelpersPdb = Join-Path $work 'GCHelpers.phase26.pdb'
 $gcHelpersCompileCommand = [regex]::Replace($gcHelpersCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $gcHelpersObject + '"')
 $gcHelpersCompileCommand = [regex]::Replace($gcHelpersCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $gcHelpersPdb + '"')
-$gcHelpersBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $gcHelpersCompileCommand
-& $cmdExe /d /s /c $gcHelpersBuildCommand 2>&1
+$gcHelpersCompileBatch = New-Phase26CompilerBatch 'GCHelpers' $gcHelpersCompileCommand
+& $cmdExe /d /s /c ('"' + $gcHelpersCompileBatch + '"') 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $gcHelpersObject -PathType Leaf)) {
     throw 'The Phase 26 NativeAOT GC helper overlay failed to compile.'
 }
@@ -312,8 +400,8 @@ $stackIteratorObject = Join-Path $work 'StackFrameIterator.phase26.obj'
 $stackIteratorPdb = Join-Path $work 'StackFrameIterator.phase26.pdb'
 $stackIteratorCompileCommand = [regex]::Replace($stackIteratorCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $stackIteratorObject + '"')
 $stackIteratorCompileCommand = [regex]::Replace($stackIteratorCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $stackIteratorPdb + '"')
-$stackIteratorBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $stackIteratorCompileCommand
-& $cmdExe /d /s /c $stackIteratorBuildCommand 2>&1
+$stackIteratorCompileBatch = New-Phase26CompilerBatch 'StackFrameIterator' $stackIteratorCompileCommand
+& $cmdExe /d /s /c ('"' + $stackIteratorCompileBatch + '"') 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $stackIteratorObject -PathType Leaf)) {
     throw 'The Phase 26 NativeAOT stack-frame iterator overlay failed to compile.'
 }
@@ -340,8 +428,8 @@ $runtimeInstanceObject = Join-Path $work 'RuntimeInstance.phase26.obj'
 $runtimeInstancePdb = Join-Path $work 'RuntimeInstance.phase26.pdb'
 $runtimeInstanceCompileCommand = [regex]::Replace($runtimeInstanceCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $runtimeInstanceObject + '"')
 $runtimeInstanceCompileCommand = [regex]::Replace($runtimeInstanceCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $runtimeInstancePdb + '"')
-$runtimeInstanceBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $runtimeInstanceCompileCommand
-& $cmdExe /d /s /c $runtimeInstanceBuildCommand 2>&1
+$runtimeInstanceCompileBatch = New-Phase26CompilerBatch 'RuntimeInstance' $runtimeInstanceCompileCommand
+& $cmdExe /d /s /c ('"' + $runtimeInstanceCompileBatch + '"') 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $runtimeInstanceObject -PathType Leaf)) {
     throw 'The Phase 26 NativeAOT runtime-instance overlay failed to compile.'
 }
@@ -368,8 +456,8 @@ $coffNativeCodeManagerObject = Join-Path $work 'CoffNativeCodeManager.phase26.ob
 $coffNativeCodeManagerPdb = Join-Path $work 'CoffNativeCodeManager.phase26.pdb'
 $coffNativeCodeManagerCompileCommand = [regex]::Replace($coffNativeCodeManagerCompileCommand, '/Fo("[^"]+"|\S+)', '/Fo"' + $coffNativeCodeManagerObject + '"')
 $coffNativeCodeManagerCompileCommand = [regex]::Replace($coffNativeCodeManagerCompileCommand, '/Fd("[^"]+"|\S+)', '/Fd"' + $coffNativeCodeManagerPdb + '"')
-$coffNativeCodeManagerBuildCommand = 'call "' + $vcvars + '" >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && ' + $coffNativeCodeManagerCompileCommand
-& $cmdExe /d /s /c $coffNativeCodeManagerBuildCommand 2>&1
+$coffNativeCodeManagerCompileBatch = New-Phase26CompilerBatch 'CoffNativeCodeManager' $coffNativeCodeManagerCompileCommand
+& $cmdExe /d /s /c ('"' + $coffNativeCodeManagerCompileBatch + '"') 2>&1
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $coffNativeCodeManagerObject -PathType Leaf)) {
     throw 'The Phase 26 NativeAOT COFF code-manager overlay failed to compile.'
 }
