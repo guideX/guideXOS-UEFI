@@ -4,8 +4,10 @@
 Outcome A; Phase 14 scheduler-managed Ring 3 and copied System Information
 IPC remain complete; Phase 17 built and inspected an independent managed
 user artifact, then stopped at the required private TLS/GC/PAL design gate.
-Phase 11 clipboard remains complete and Phase 10 remains accepted Outcome B
-**Date:** 2026-09-20
+Managed SDK phases 28–31 now prove identity, services, notifications,
+clipboard, and stable-ID application launch through the existing App Model.
+Phase 11 clipboard remains complete and Phase 10 remains accepted Outcome B.
+**Date:** 2026-09-26
 **Scope:** guideXOS Server ↔ guideXOS C# UEFI application platform  
 **Outcome:** Outcome B remains the accepted Phase 10 storage result — applications
 request logical packaged resources and application-scoped storage through
@@ -3179,5 +3181,11 @@ instances, process handles, service contexts, and authority are derived anew
 for each process lifetime and do not survive as clipboard state. The public
 SDK exposes only bounded text operations and an immutable copied snapshot.
 This does not add clipboard UI, widgets, input shortcuts, or shared buffers.
-The next managed App Model boundary is launch through the existing Phase 9
-Shell service, not shell implementation or GUI work in the clipboard phase.
+Phase 31 now proves stable-application-ID launch through the existing Phase 9
+Shell service. Requester identity, resolution, factory selection, lifecycle,
+and launch authority remain inside the kernel/App Model. The managed caller
+receives only a copied typed result code. See
+[`Docs/PHASE31_MANAGED_SHELL_LAUNCH.md`](Docs/PHASE31_MANAGED_SHELL_LAUNCH.md)
+for the bounded wire contract and runtime evidence. This still adds no managed
+GUI API; `OpenDocument` and shell-object/action requests remain later service
+extensions.

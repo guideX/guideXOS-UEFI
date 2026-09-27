@@ -297,6 +297,57 @@ namespace GuideXos
         }
     }
 
+    // Phase 9 Shell result values. Keep these numeric values aligned with
+    // ApplicationServiceResultCode; callers receive no instance handle or
+    // other kernel/App Model object.
+    public enum GuideXosLaunchResultCode : uint
+    {
+        Success = 0,
+        InvalidContext = 1,
+        InvalidRequest = 2,
+        NotFound = 3,
+        ResourceUnavailable = 4,
+        PermissionDenied = 5,
+        Unsupported = 6,
+        Conflict = 7,
+        Cancelled = 8,
+        InvalidState = 9,
+        UnsupportedTarget = 10,
+        BackendFailure = 11,
+    }
+
+    public readonly struct GuideXosLaunchResult
+    {
+        internal GuideXosLaunchResult(GuideXosLaunchResultCode code)
+        {
+            Code = code;
+        }
+
+        public GuideXosLaunchResultCode Code { get; }
+        public bool Succeeded => Code == GuideXosLaunchResultCode.Success;
+    }
+
+    /// <summary>
+    /// Typed wrapper over the existing Phase 9 Shell application-ID launch.
+    /// The application ID is bounded in UTF-16 code units and copied before
+    /// the synchronous service call. Launch authority stays in the App Model.
+    /// </summary>
+    public static class GuideXosShell
+    {
+        // This mirrors LaunchRequest.MaxTextLength (the existing Phase 9
+        // stable-target bound) as a public wire contract value.
+        public const int MaxApplicationIdLength = 1024;
+
+        public static GuideXosResult TryLaunchApplication(
+            string applicationId, out GuideXosLaunchResult launchResult)
+        {
+            launchResult = new GuideXosLaunchResult(
+                GuideXosLaunchResultCode.InvalidRequest);
+            return GuideXosInternalAbi.TryLaunchApplication(
+                applicationId, out launchResult);
+        }
+    }
+
     public static class GuideXosClock
     {
         public static ulong GetTimestamp() =>

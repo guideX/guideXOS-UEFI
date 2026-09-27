@@ -90,6 +90,31 @@ namespace GuideXos
         internal uint Reserved;
     }
 
+    // Phase 9 Shell launch request. UTF-16LE target text is copied inline and
+    // the record contains no caller identity or App Model object authority.
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct GuideXosShellLaunchRequestWire
+    {
+        internal uint StructureVersion;
+        internal uint ServiceId;
+        internal uint OperationId;
+        internal uint RequestLength;
+        internal uint TargetLength;
+        internal uint ResponseCapacity;
+        internal ulong ResponseBuffer;
+        internal uint Reserved;
+        internal fixed byte Target[GuideXosShell.MaxApplicationIdLength * 2];
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct GuideXosShellLaunchResponseWire
+    {
+        internal uint StructureVersion;
+        internal uint Size;
+        internal uint ResultCode;
+        internal uint Reserved;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct GuideXosIdentityWire
     {
@@ -119,6 +144,8 @@ namespace GuideXos
         private const uint ClipboardSetTextOperation = 1;
         private const uint ClipboardGetTextOperation = 2;
         private const uint ClipboardClearOperation = 3;
+        private const uint ShellService = 7;
+        private const uint ShellLaunchApplicationOperation = 1;
 
         [DllImport("*", EntryPoint = "guidexos_pal_abi_version",
             CallingConvention = CallingConvention.Cdecl)]
@@ -319,6 +346,62 @@ namespace GuideXos
                 (ulong)(nuint)requestPointer,
                 (ulong)sizeof(GuideXosClipboardClearRequestWire));
             return MapStatus(result);
+        }
+
+        internal static GuideXosResult TryLaunchApplication(
+            string applicationId,
+            out GuideXosLaunchResult launchResult)
+        {
+            launchResult = new GuideXosLaunchResult(
+                GuideXosLaunchResultCode.InvalidRequest);
+            if (string.IsNullOrEmpty(applicationId) ||
+                applicationId.Length > GuideXosShell.MaxApplicationIdLength)
+                return new GuideXosResult(GuideXosStatus.InvalidArgument);
+
+            GuideXosResult compatible = RequireCompatible();
+            if (compatible.Failed)
+                return compatible;
+
+            GuideXosShellLaunchResponseWire response = default;
+            GuideXosShellLaunchRequestWire request = default;
+            request.StructureVersion = AbiVersion;
+            request.ServiceId = ShellService;
+            request.OperationId = ShellLaunchApplicationOperation;
+            request.RequestLength = (uint)sizeof(
+                GuideXosShellLaunchRequestWire);
+            request.TargetLength = (uint)applicationId.Length;
+            request.ResponseCapacity = (uint)sizeof(
+                GuideXosShellLaunchResponseWire);
+
+            byte* target = request.Target;
+            for (int i = 0; i < applicationId.Length; i++)
+            {
+                char value = applicationId[i];
+                target[(i * 2) + 0] = (byte)value;
+                target[(i * 2) + 1] = (byte)(value >> 8);
+            }
+
+            GuideXosShellLaunchRequestWire* requestPointer = &request;
+            GuideXosShellLaunchResponseWire* responsePointer = &response;
+            request.ResponseBuffer = (ulong)(nuint)responsePointer;
+            ulong rawResult = InvokeServiceRequest(
+                (ulong)(nuint)requestPointer,
+                (ulong)sizeof(GuideXosShellLaunchRequestWire));
+            GuideXosResult transport = MapStatus(rawResult);
+            if (transport.Failed)
+                return transport;
+
+            if (response.StructureVersion != AbiVersion ||
+                response.Size != (uint)sizeof(
+                    GuideXosShellLaunchResponseWire) ||
+                response.Reserved != 0 ||
+                response.ResultCode > (uint)
+                    GuideXosLaunchResultCode.BackendFailure)
+                return new GuideXosResult(GuideXosStatus.ValidationFailed);
+
+            launchResult = new GuideXosLaunchResult(
+                (GuideXosLaunchResultCode)response.ResultCode);
+            return new GuideXosResult(GuideXosStatus.Success);
         }
 
         internal static ulong GetMonotonicTicks() => InvokeMonotonicTicks();

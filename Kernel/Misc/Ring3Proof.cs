@@ -1,4 +1,5 @@
 using guideXOS.OS;
+using guideXOS.GUI;
 using System;
 
 namespace guideXOS.Misc {
@@ -17,6 +18,7 @@ namespace guideXOS.Misc {
         private static bool _phase28Scheduled;
         private static bool _phase29Scheduled;
         private static bool _phase30Scheduled;
+        private static bool _phase31Scheduled;
 
         private sealed class Phase15Lifetime {
             internal Ring3Process Process;
@@ -705,6 +707,415 @@ namespace guideXOS.Misc {
             _phase30Scheduled = true;
             Marker("PHASE30_SCHEDULED=1");
             new Thread(&RunPhase30, 131072).Start(0);
+        }
+
+        internal static void SchedulePhase31() {
+            if (_phase31Scheduled) return;
+            _phase31Scheduled = true;
+            Marker("PHASE31_SCHEDULED=1");
+            new Thread(&RunPhase31, 131072).Start(0);
+        }
+
+        private static bool TryCreatePhase31Owner() {
+            if (_owner != null) return false;
+            const string id = "selftest.phase31.requester";
+            LaunchRequest request = LaunchRequest.ForAppId(id, null, null,
+                LaunchActivationIntent.NewInstance);
+            ApplicationInstance instance;
+            bool reused;
+            LaunchResult failure;
+            if (!ApplicationInstanceRegistry.TryBeginLaunch(id,
+                    ApplicationInstancePolicy.MultiInstance, request,
+                    out instance, out reused, out failure) ||
+                instance == null || reused ||
+                !ApplicationInstanceRegistry.TryCompleteLaunch(instance,
+                    false, out failure)) {
+                Marker("PHASE31_REQUESTER_INSTANCE_CREATED=0");
+                return false;
+            }
+            _owner = instance;
+            _ownerCreated = true;
+            Marker("PHASE31_REQUESTER_INSTANCE_CREATED=1");
+            Marker("PHASE31_REQUESTER_INSTANCE_RUNNING=1");
+            return true;
+        }
+
+        private static bool RunOnePhase31Lifetime(int payloadKind,
+                int expectedReturn, int expectedServiceRequests,
+                out Ring3ProcessHandle oldHandle, out bool resumed,
+                out bool mainResult) {
+            oldHandle = default(Ring3ProcessHandle);
+            resumed = false;
+            mainResult = false;
+            if (_owner == null) return false;
+
+            Native.Cli();
+            string failure;
+            Ring3Process process;
+            if (!Ring3Process.TryCreateManagedShellEntry(
+                    _owner.Handle.Value, payloadKind, out process,
+                    out failure) || process == null) {
+                Native.Sti();
+                Marker("PHASE31_PROCESS_CREATE_FAILED=1");
+                if (failure != null)
+                    Marker("PHASE31_PROCESS_CREATE_REJECTED=" + failure);
+                return false;
+            }
+
+            oldHandle = process.Handle;
+            bool scaffold = process.ManagedImage != null &&
+                process.ManagedImage.ValidateRuntimeScaffold();
+            bool authorized = process.ManagedImage != null &&
+                process.ManagedImage.TryEnterManagedEntry();
+            bool started = process.StartManagedBootstrap();
+            if (started) Native.Sti();
+            int spins = 0;
+            while (started && !process.IsTerminal && spins++ < 6000000)
+                Native.Hlt();
+
+            bool completed = process.IsTerminal;
+            bool dispatched = process.SchedulerDispatches >= 1 &&
+                process.SchedulerCr3Valid && process.SchedulerRsp0Valid;
+            resumed = process.TimerPreemptions > 0 &&
+                process.SchedulerDispatches >= 2 && process.UserRspPreserved;
+            int serviceRequests = process.ServiceRequestsSucceeded;
+            int observedExitCode = process.ExitCode;
+            bool failFast = payloadKind == 4;
+            mainResult = failFast
+                ? observedExitCode == -1
+                : process.BootstrapResultSucceeded &&
+                    process.BootstrapReturnCode == expectedReturn &&
+                    observedExitCode == expectedReturn;
+            bool state = process.State == Ring3ProcessState.Exiting ||
+                process.State == Ring3ProcessState.Exited;
+            bool clean = process.Cleanup();
+            bool stale = !process.TryResolveHandle(oldHandle);
+
+            Marker(scaffold ? "PHASE31_SCAFFOLD_PASS=1" :
+                "PHASE31_SCAFFOLD_PASS=0");
+            Marker(authorized ? "PHASE31_ENTRY_AUTHORIZED=1" :
+                "PHASE31_ENTRY_AUTHORIZED=0");
+            Marker(dispatched ? "PHASE31_DISPATCH_PASS=1" :
+                "PHASE31_DISPATCH_PASS=0");
+            Marker(resumed ? "PHASE31_RESUME_PASS=1" :
+                "PHASE31_RESUME_PASS=0");
+            NumberMarker("PHASE31_SERVICE_REQUESTS=", serviceRequests);
+            if (failFast) {
+                Marker("PHASE31_FAILFAST_EXIT=" + observedExitCode.ToString());
+            } else {
+                NumberMarker("PHASE31_MAIN_RETURN=", expectedReturn);
+            }
+            Marker(serviceRequests == expectedServiceRequests ?
+                "PHASE31_SERVICE_COUNT_PASS=1" :
+                "PHASE31_SERVICE_COUNT_PASS=0");
+            Marker(mainResult && state
+                ? (failFast ? "PHASE31_FAILFAST_REQUESTER_DIED=1" :
+                    "PHASE31_MAIN_RESULT_PASS=1")
+                : (failFast ? "PHASE31_FAILFAST_REQUESTER_DIED=0" :
+                    "PHASE31_MAIN_RESULT_PASS=0"));
+            Marker(clean && stale ? "PHASE31_LIFETIME_CLEAN=1" :
+                "PHASE31_LIFETIME_CLEAN=0");
+            return started && completed && scaffold && authorized &&
+                dispatched && serviceRequests == expectedServiceRequests &&
+                mainResult && state && clean && stale && resumed;
+        }
+
+        private static bool CheckPhase31StaleRequester(
+                ulong oldOwnerHandle, ApplicationServiceContext oldContext,
+                ApplicationServiceAccess oldAccess,
+                Ring3ProcessHandle oldProcessHandle) {
+            CleanupOwner();
+            ApplicationInstance ignored;
+            bool staleOwner = oldOwnerHandle != 0 &&
+                !ApplicationInstanceRegistry.TryGet(
+                    ApplicationInstanceHandle.FromValue(oldOwnerHandle),
+                    out ignored);
+            ApplicationServiceResult validation;
+            bool staleContext = oldContext != null &&
+                !ApplicationServiceRegistry.TryValidateContext(oldContext,
+                    ApplicationServiceId.Shell, out ignored, out validation);
+            ApplicationServiceResult<ApplicationServiceRequestHandle> retry =
+                oldContext != null && oldAccess != null && oldAccess.Shell != null
+                    ? oldAccess.Shell.Begin(oldContext,
+                        ApplicationShellOpenRequest.ForApplicationId(
+                            "gxos.builtin.calculator"))
+                    : null;
+            bool launchRejected = retry != null && !retry.Succeeded &&
+                retry.Code == ApplicationServiceResultCode.InvalidContext;
+            bool staleProcess = !oldProcessHandle.IsValid ||
+                Ring3ProcessTable.Resolve(oldProcessHandle) == null;
+            Marker(staleOwner ? "PHASE31_STALE_APP_INSTANCE_REJECTED=1" :
+                "PHASE31_STALE_APP_INSTANCE_REJECTED=0");
+            Marker(staleProcess ? "PHASE31_STALE_PROCESS_HANDLE_REJECTED=1" :
+                "PHASE31_STALE_PROCESS_HANDLE_REJECTED=0");
+            Marker(staleContext ? "PHASE31_STALE_SERVICE_CONTEXT_REJECTED=1" :
+                "PHASE31_STALE_SERVICE_CONTEXT_REJECTED=0");
+            Marker(launchRejected ? "PHASE31_STALE_LAUNCH_REJECTED=1" :
+                "PHASE31_STALE_LAUNCH_REJECTED=0");
+            return staleOwner && staleProcess && staleContext && launchRejected;
+        }
+
+        private static void RunPhase31() {
+            Native.Cli();
+            Marker("PHASE31_BEGIN=1");
+            ApplicationServiceRegistry.Initialize();
+            ApplicationDescriptorRegistry.Initialize();
+            ApplicationFactoryRegistry.Initialize();
+            const string targetId = "gxos.builtin.calculator";
+            int initialTargets = ApplicationInstanceRegistry.CountByDescriptor(
+                targetId);
+            int factoryStart = ApplicationFactoryRegistry.FactoryLaunches;
+            int fallbackStart =
+                ApplicationFactoryRegistry.CompatibilityFallbackLaunches;
+            int legacyStart = AppModelCompatibilityDiagnostics.LegacyBackendCalls;
+            ApplicationInstance[] launchedTargets = new ApplicationInstance[6];
+            bool all = initialTargets >= 0;
+            int successfulReturns = 0;
+            int targetIndex = 0;
+
+            for (int i = 0; i < 4; i++) {
+                int targetOrdinal = initialTargets + targetIndex;
+                bool ownerCreated = TryCreatePhase31Owner();
+                ApplicationServiceContext context = null;
+                ApplicationServiceAccess access = null;
+                ApplicationServiceResult contextResult;
+                ulong ownerHandle = ownerCreated ? _owner.Handle.Value : 0UL;
+                if (ownerCreated) {
+                    ApplicationServiceRegistry.TryCreateContextAndAccess(
+                        _owner.Handle, out context, out access,
+                        out contextResult);
+                }
+                Ring3ProcessHandle processHandle = default(Ring3ProcessHandle);
+                bool resumed = false;
+                bool mainResult = false;
+                bool ran = ownerCreated && RunOnePhase31Lifetime(1, 31, 1,
+                    out processHandle, out resumed, out mainResult);
+                ApplicationInstance target =
+                    ApplicationInstanceRegistry.GetByDescriptorAt(targetId,
+                        targetOrdinal);
+                bool targetCreated = ran && target != null &&
+                    target.LifecycleState ==
+                        ApplicationInstanceLifecycleState.Activated &&
+                    target.OwnedWindowCount > 0;
+                bool targetPersists = targetCreated &&
+                    ApplicationInstanceRegistry.TryGet(target.Handle,
+                        out ApplicationInstance stillActive) &&
+                    stillActive == target;
+                bool stale = CheckPhase31StaleRequester(ownerHandle, context,
+                    access, processHandle);
+                bool distinct = targetCreated;
+                for (int j = 0; j < targetIndex; j++)
+                    distinct = distinct && launchedTargets[j] != target;
+                if (targetCreated) launchedTargets[targetIndex++] = target;
+                bool pass = ran && resumed && mainResult && targetCreated &&
+                    targetPersists && stale && distinct;
+                Marker(pass ? "PHASE31_SUCCESS_LIFETIME_PASS=1" :
+                    "PHASE31_SUCCESS_LIFETIME_PASS=0");
+                if (pass) successfulReturns++;
+                all = all && pass;
+            }
+
+            bool invalidOwner = TryCreatePhase31Owner();
+            int invalidCount = ApplicationInstanceRegistry.CountByDescriptor(
+                targetId);
+            int invalidFactoryCount = ApplicationFactoryRegistry.FactoryLaunches;
+            ApplicationServiceContext invalidContext = null;
+            ApplicationServiceAccess invalidAccess = null;
+            ApplicationServiceResult invalidContextResult;
+            ulong invalidOwnerHandle = invalidOwner ? _owner.Handle.Value : 0UL;
+            Ring3ProcessHandle invalidProcess = default(Ring3ProcessHandle);
+            bool invalidResumed = false;
+            bool invalidMain = false;
+            if (invalidOwner)
+                ApplicationServiceRegistry.TryCreateContextAndAccess(
+                    _owner.Handle, out invalidContext, out invalidAccess,
+                    out invalidContextResult);
+            bool invalidRan = invalidOwner && RunOnePhase31Lifetime(2, 41, 1,
+                out invalidProcess, out invalidResumed, out invalidMain);
+            bool invalidTyped = invalidRan && invalidMain &&
+                ApplicationInstanceRegistry.CountByDescriptor(targetId) ==
+                    invalidCount &&
+                ApplicationFactoryRegistry.FactoryLaunches == invalidFactoryCount;
+            bool invalidStale = CheckPhase31StaleRequester(invalidOwnerHandle,
+                invalidContext, invalidAccess, invalidProcess);
+            Marker(invalidTyped ? "PHASE31_INVALID_TARGET_NOT_FOUND=1" :
+                "PHASE31_INVALID_TARGET_NOT_FOUND=0");
+            all = all && invalidRan && invalidResumed && invalidTyped &&
+                invalidStale;
+
+            bool oversizeOwner = TryCreatePhase31Owner();
+            int oversizeCount = ApplicationInstanceRegistry.CountByDescriptor(
+                targetId);
+            int oversizeFactoryCount = ApplicationFactoryRegistry.FactoryLaunches;
+            ApplicationServiceContext oversizeContext = null;
+            ApplicationServiceAccess oversizeAccess = null;
+            ApplicationServiceResult oversizeContextResult;
+            ulong oversizeOwnerHandle = oversizeOwner ? _owner.Handle.Value : 0UL;
+            Ring3ProcessHandle oversizeProcess = default(Ring3ProcessHandle);
+            bool oversizeResumed = false;
+            bool oversizeMain = false;
+            if (oversizeOwner)
+                ApplicationServiceRegistry.TryCreateContextAndAccess(
+                    _owner.Handle, out oversizeContext, out oversizeAccess,
+                    out oversizeContextResult);
+            bool oversizeRan = oversizeOwner && RunOnePhase31Lifetime(3, 42,
+                0, out oversizeProcess, out oversizeResumed, out oversizeMain);
+            bool oversizeNoBackend = oversizeRan && oversizeMain &&
+                ApplicationInstanceRegistry.CountByDescriptor(targetId) ==
+                    oversizeCount &&
+                ApplicationFactoryRegistry.FactoryLaunches == oversizeFactoryCount;
+            bool oversizeStale = CheckPhase31StaleRequester(
+                oversizeOwnerHandle, oversizeContext, oversizeAccess,
+                oversizeProcess);
+            Marker(oversizeNoBackend ? "PHASE31_OVERSIZE_SDK_REJECTED=1" :
+                "PHASE31_OVERSIZE_SDK_REJECTED=0");
+            all = all && oversizeRan && oversizeResumed &&
+                oversizeNoBackend && oversizeStale;
+
+            int failFastOrdinal = initialTargets + targetIndex;
+            bool failFastOwner = TryCreatePhase31Owner();
+            ApplicationServiceContext failFastContext = null;
+            ApplicationServiceAccess failFastAccess = null;
+            ApplicationServiceResult failFastContextResult;
+            ulong failFastOwnerHandle = failFastOwner ? _owner.Handle.Value : 0UL;
+            Ring3ProcessHandle failFastProcess = default(Ring3ProcessHandle);
+            bool failFastResumed = false;
+            bool failFastMain = false;
+            if (failFastOwner)
+                ApplicationServiceRegistry.TryCreateContextAndAccess(
+                    _owner.Handle, out failFastContext, out failFastAccess,
+                    out failFastContextResult);
+            bool failFastRan = failFastOwner && RunOnePhase31Lifetime(4, -1, 1,
+                out failFastProcess, out failFastResumed, out failFastMain);
+            ApplicationInstance failFastTarget =
+                ApplicationInstanceRegistry.GetByDescriptorAt(targetId,
+                    failFastOrdinal);
+            bool failFastLaunchPersisted = failFastRan && failFastMain &&
+                failFastTarget != null &&
+                failFastTarget.LifecycleState ==
+                    ApplicationInstanceLifecycleState.Activated;
+            if (failFastLaunchPersisted)
+                launchedTargets[targetIndex++] = failFastTarget;
+            bool failFastStale = CheckPhase31StaleRequester(
+                failFastOwnerHandle, failFastContext, failFastAccess,
+                failFastProcess);
+            Marker(failFastLaunchPersisted ?
+                "PHASE31_FAILFAST_TARGET_PERSISTED=1" :
+                "PHASE31_FAILFAST_TARGET_PERSISTED=0");
+            all = all && failFastRan && failFastResumed && failFastMain &&
+                failFastLaunchPersisted && failFastStale;
+
+            int replacementOrdinal = initialTargets + targetIndex;
+            bool replacementOwner = TryCreatePhase31Owner();
+            ApplicationServiceContext replacementContext = null;
+            ApplicationServiceAccess replacementAccess = null;
+            ApplicationServiceResult replacementContextResult;
+            ulong replacementOwnerHandle = replacementOwner ?
+                _owner.Handle.Value : 0UL;
+            Ring3ProcessHandle replacementProcess =
+                default(Ring3ProcessHandle);
+            bool replacementResumed = false;
+            bool replacementMain = false;
+            if (replacementOwner)
+                ApplicationServiceRegistry.TryCreateContextAndAccess(
+                    _owner.Handle, out replacementContext,
+                    out replacementAccess, out replacementContextResult);
+            bool replacementRan = replacementOwner &&
+                RunOnePhase31Lifetime(1, 31, 1,
+                    out replacementProcess, out replacementResumed,
+                    out replacementMain);
+            ApplicationInstance replacementTarget =
+                ApplicationInstanceRegistry.GetByDescriptorAt(targetId,
+                    replacementOrdinal);
+            bool replacementSuccess = replacementRan && replacementMain &&
+                replacementTarget != null && replacementResumed &&
+                replacementTarget.LifecycleState ==
+                    ApplicationInstanceLifecycleState.Activated;
+            if (replacementSuccess) {
+                launchedTargets[targetIndex++] = replacementTarget;
+                successfulReturns++;
+            }
+            bool replacementStale = CheckPhase31StaleRequester(
+                replacementOwnerHandle, replacementContext,
+                replacementAccess, replacementProcess);
+            Marker(replacementSuccess ? "PHASE31_REPLACEMENT_RETURN_31=1" :
+                "PHASE31_REPLACEMENT_RETURN_31=0");
+            all = all && replacementSuccess && replacementStale;
+
+            // A fresh Ring 3 process carrying a kernel-stale owner handle must
+            // receive InvalidContext and cannot enter the target factory.
+            ulong staleOwnerValue = failFastOwnerHandle;
+            Ring3Process staleProbe = null;
+            string staleFailure;
+            Native.Cli();
+            bool staleProbeCreated = staleOwnerValue != 0 &&
+                Ring3Process.TryCreateManagedShellEntry(staleOwnerValue, 5,
+                    out staleProbe, out staleFailure) &&
+                staleProbe != null;
+            if (staleProbeCreated) Native.Sti();
+            bool staleProbePass = false;
+            if (staleProbeCreated) {
+                Ring3ProcessHandle staleProbeHandle = staleProbe.Handle;
+                bool scaffold = staleProbe.ManagedImage != null &&
+                    staleProbe.ManagedImage.ValidateRuntimeScaffold();
+                bool authorized = staleProbe.ManagedImage != null &&
+                    staleProbe.ManagedImage.TryEnterManagedEntry();
+                bool started = staleProbe.StartManagedBootstrap();
+                if (started) Native.Sti();
+                int spins = 0;
+                while (started && !staleProbe.IsTerminal && spins++ < 6000000)
+                    Native.Hlt();
+                staleProbePass = started && staleProbe.IsTerminal &&
+                    staleProbe.ServiceRequestsSucceeded == 1 &&
+                    staleProbe.BootstrapResultSucceeded &&
+                    staleProbe.BootstrapReturnCode == 32 &&
+                    staleProbe.ExitCode == 32 && scaffold && authorized &&
+                    staleProbe.Cleanup() &&
+                    Ring3ProcessTable.Resolve(staleProbeHandle) == null;
+            }
+            Marker(staleProbePass ? "PHASE31_STALE_OWNER_ABI_REJECTED=1" :
+                "PHASE31_STALE_OWNER_ABI_REJECTED=0");
+            all = all && staleProbePass;
+
+            bool cleanup = true;
+            for (int i = 0; i < targetIndex; i++) {
+                ApplicationInstance target = launchedTargets[i];
+                if (target == null || !ApplicationInstanceRegistry.TryTerminate(
+                        target, "Phase 31 diagnostic target cleanup")) {
+                    cleanup = false;
+                }
+            }
+            WindowManager.CleanupClosedWindows();
+            bool balanced = cleanup &&
+                ApplicationInstanceRegistry.CountByDescriptor(targetId) ==
+                    initialTargets && ApplicationServiceRegistry.ActiveRequestCount == 0 &&
+                _owner == null &&
+                ApplicationFactoryRegistry.FactoryLaunches == factoryStart + 6 &&
+                ApplicationFactoryRegistry.CompatibilityFallbackLaunches ==
+                    fallbackStart &&
+                AppModelCompatibilityDiagnostics.LegacyBackendCalls == legacyStart;
+            Marker("PHASE31_SUCCESSFUL_RETURN_LIFETIMES=" +
+                successfulReturns.ToString());
+            Marker(targetIndex == 6 ? "PHASE31_TARGET_INSTANCE_COUNT=6" :
+                "PHASE31_TARGET_INSTANCE_COUNT=FAIL");
+            Marker(cleanup ? "PHASE31_TARGET_CLEANUP=1" :
+                "PHASE31_TARGET_CLEANUP=0");
+            Marker(balanced ? "PHASE31_APP_MODEL_BALANCED=1" :
+                "PHASE31_APP_MODEL_BALANCED=0");
+            Marker(Ring3ProcessTable.LiveCount == 0 &&
+                   ThreadPool.LiveUserThreadCount == 0 &&
+                   Ring3ProcessDiagnostics.IsBalanced ?
+                "PHASE31_PROCESS_CLEANUP_BALANCED=1" :
+                "PHASE31_PROCESS_CLEANUP_BALANCED=0");
+            bool complete = all && successfulReturns >= 5 && targetIndex == 6 &&
+                balanced && Ring3ProcessTable.LiveCount == 0 &&
+                ThreadPool.LiveUserThreadCount == 0 &&
+                Ring3ProcessDiagnostics.IsBalanced &&
+                ManagedImageDiagnostics.IsBalanced &&
+                NativeBootstrapDiagnostics.IsBalanced;
+            Marker(complete ? "RING3_PHASE31_COMPLETE=1" :
+                "RING3_PHASE31_COMPLETE=0");
+            Native.Sti();
         }
 
         private static bool RunOnePhase30Lifetime(int payloadKind,

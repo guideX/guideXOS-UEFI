@@ -340,6 +340,14 @@ namespace guideXOS.Misc {
                 out process, out failure);
         }
 
+        internal static bool TryCreateManagedShellEntry(
+                ulong owningApplicationInstance, int payloadKind,
+                out Ring3Process process, out string failure) {
+            return TryCreateManagedBootstrap(owningApplicationInstance, false,
+                true, false, false, 0, 0, 0, payloadKind,
+                out process, out failure);
+        }
+
         private static bool TryCreateManagedBootstrap(
             ulong owningApplicationInstance, bool deliberateFault, bool phase26,
             out Ring3Process process, out string failure) {
@@ -363,6 +371,17 @@ namespace guideXOS.Misc {
             ulong owningApplicationInstance, bool deliberateFault, bool phase26,
             bool phase27, bool phase27Failure, int phase28Kind,
             int phase29Kind, int phase30Kind,
+            out Ring3Process process, out string failure) {
+            return TryCreateManagedBootstrap(owningApplicationInstance,
+                deliberateFault, phase26, phase27, phase27Failure,
+                phase28Kind, phase29Kind, phase30Kind, 0,
+                out process, out failure);
+        }
+
+        private static bool TryCreateManagedBootstrap(
+            ulong owningApplicationInstance, bool deliberateFault, bool phase26,
+            bool phase27, bool phase27Failure, int phase28Kind,
+            int phase29Kind, int phase30Kind, int phase31Kind,
             out Ring3Process process, out string failure) {
             process = null;
             failure = null;
@@ -391,8 +410,11 @@ namespace guideXOS.Misc {
                      owningApplicationInstance, generation, candidate.Space,
                      NativeBootstrapContract.ImageBase, phase26, phase27,
                      phase27Failure, phase28Kind, phase29Kind, phase30Kind,
+                     phase31Kind,
                      out managedImage, out failure) || managedImage == null) {
-                if (failure != null) Marker(phase30Kind != 0 ?
+                if (failure != null) Marker(phase31Kind != 0 ?
+                    "PHASE31_IMAGE_CREATE_REJECTED=" + failure :
+                    (phase30Kind != 0 ?
                     "PHASE30_IMAGE_CREATE_REJECTED=" + failure :
                     (phase29Kind != 0 ?
                     "PHASE29_IMAGE_CREATE_REJECTED=" + failure :
@@ -401,7 +423,7 @@ namespace guideXOS.Misc {
                     (phase27 ?
                     "PHASE27_IMAGE_CREATE_REJECTED=" + failure :
                     (phase26 ? "PHASE26_IMAGE_CREATE_REJECTED=" + failure :
-                        "PHASE25_IMAGE_CREATE_REJECTED=" + failure)))));
+                        "PHASE25_IMAGE_CREATE_REJECTED=" + failure))))));
                 candidate.Cleanup();
                 return false;
             }
@@ -410,12 +432,14 @@ namespace guideXOS.Misc {
             if (!NativeBootstrapImage.TryCreateFromRamdisk(
                     candidate.Space, phase26,
                     phase27 || phase28Kind != 0 || phase29Kind != 0 ||
-                        phase30Kind != 0,
+                        phase30Kind != 0 || phase31Kind != 0,
                     out nativeBootstrap, out failure) ||
                 nativeBootstrap == null ||
                 nativeBootstrap.EntryAddress !=
                     candidate.ManagedImage.NativeBootstrapAddress) {
-                if (failure != null) Marker(phase30Kind != 0 ?
+                if (failure != null) Marker(phase31Kind != 0 ?
+                    "PHASE31_BOOTSTRAP_CREATE_REJECTED=" + failure :
+                    (phase30Kind != 0 ?
                     "PHASE30_BOOTSTRAP_CREATE_REJECTED=" + failure :
                     (phase29Kind != 0 ?
                     "PHASE29_BOOTSTRAP_CREATE_REJECTED=" + failure :
@@ -424,7 +448,7 @@ namespace guideXOS.Misc {
                     (phase27 ?
                     "PHASE27_BOOTSTRAP_CREATE_REJECTED=" + failure :
                     (phase26 ? "PHASE26_BOOTSTRAP_CREATE_REJECTED=" + failure :
-                        "PHASE25_BOOTSTRAP_CREATE_REJECTED=" + failure)))));
+                        "PHASE25_BOOTSTRAP_CREATE_REJECTED=" + failure))))));
                 candidate.Cleanup();
                 return false;
             }
@@ -682,7 +706,12 @@ namespace guideXOS.Misc {
             get {
                 int expectedReturn = 42;
                 if (ManagedImage != null) {
-                    if (ManagedImage.IsPhase30FailFast) expectedReturn = -1;
+                    if (ManagedImage.IsPhase31StaleOwner) expectedReturn = 32;
+                    else if (ManagedImage.IsPhase31FailFast ||
+                        ManagedImage.IsPhase30FailFast) expectedReturn = -1;
+                    else if (ManagedImage.IsPhase31InvalidTarget) expectedReturn = 41;
+                    else if (ManagedImage.IsPhase31Oversize) expectedReturn = 42;
+                    else if (ManagedImage.IsPhase31) expectedReturn = 31;
                     else if (ManagedImage.IsPhase30) expectedReturn = 30;
                     else if (ManagedImage.IsPhase29TitleFailure) expectedReturn = 31;
                     else if (ManagedImage.IsPhase29BodyFailure) expectedReturn = 32;

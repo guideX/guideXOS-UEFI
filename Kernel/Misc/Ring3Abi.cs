@@ -86,6 +86,30 @@ namespace guideXOS.Misc {
         public uint Reserved;
     }
 
+    // Phase 9 Shell stable-application-ID launch. Only bounded copied target
+    // data and an output buffer cross the ABI; caller identity is derived from
+    // Ring3Process and no target handle/pointer is returned.
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct Ring3ShellLaunchRequest {
+        public uint StructureVersion;
+        public uint ServiceId;
+        public uint OperationId;
+        public uint RequestLength;
+        public uint TargetLength;
+        public uint ResponseCapacity;
+        public ulong ResponseBuffer;
+        public uint Reserved;
+        public fixed byte Target[LaunchRequest.MaxTextLength * 2];
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct Ring3ShellLaunchResponse {
+        public uint StructureVersion;
+        public uint Size;
+        public uint ResultCode;
+        public uint Reserved;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct Ring3ApplicationIdentityResponse {
         public uint StructureVersion;
@@ -145,6 +169,9 @@ namespace guideXOS.Misc {
         internal const uint ClipboardSetTextOperation = 1;
         internal const uint ClipboardGetTextOperation = 2;
         internal const uint ClipboardClearOperation = 3;
+        internal const uint ShellService =
+            (uint)ApplicationServiceId.Shell;
+        internal const uint ShellLaunchApplicationOperation = 1;
 
         private static void Marker(string text) {
             if (text == null) return;
@@ -365,6 +392,9 @@ namespace guideXOS.Misc {
                     requestLength);
             if (requestLength == (ulong)sizeof(Ring3ClipboardClearRequest))
                 return DispatchClipboardClearRequest(process, requestPointer,
+                    requestLength);
+            if (requestLength == (ulong)sizeof(Ring3ShellLaunchRequest))
+                return DispatchShellLaunchRequest(process, requestPointer,
                     requestLength);
             if (requestLength != (ulong)sizeof(Ring3ServiceRequest)) {
                 Marker("RING3_SERVICE_INVALID_REQUEST_REJECTED=1");
@@ -722,6 +752,218 @@ namespace guideXOS.Misc {
             Marker("RING3_CLIPBOARD_CLEAR_BACKEND_ACCEPTED=1");
             Marker("RING3_CLIPBOARD_RESPONSE_COPIED_OUT=1");
             return Success;
+        }
+
+        private static ulong DispatchShellLaunchRequest(
+                Ring3Process process, ulong requestPointer,
+                ulong requestLength) {
+            Marker("RING3_SHELL_LAUNCH_ABI_ENTERED=1");
+            if (requestLength != (ulong)sizeof(Ring3ShellLaunchRequest) ||
+                !PageTable.ValidateReadableUserRange(process.Space.Pml4,
+                    requestPointer, requestLength)) {
+                Marker("RING3_SHELL_INVALID_REQUEST_REJECTED=1");
+                return InvalidPointer;
+            }
+
+            Ring3ShellLaunchRequest* storage =
+                (Ring3ShellLaunchRequest*)Allocator.Allocate(
+                    (ulong)sizeof(Ring3ShellLaunchRequest));
+            if (storage == null) return InvalidOperation;
+            try {
+                Native.Movsb(storage, (void*)requestPointer,
+                    (ulong)sizeof(Ring3ShellLaunchRequest));
+                Marker("RING3_SHELL_REQUEST_COPIED_IN=1");
+                if (storage->StructureVersion != AbiVersion ||
+                    storage->ServiceId != ShellService ||
+                    storage->OperationId !=
+                        ShellLaunchApplicationOperation ||
+                    storage->RequestLength !=
+                        sizeof(Ring3ShellLaunchRequest) ||
+                    storage->TargetLength == 0 ||
+                    storage->TargetLength > LaunchRequest.MaxTextLength ||
+                    storage->ResponseCapacity !=
+                        (uint)sizeof(Ring3ShellLaunchResponse) ||
+                    storage->Reserved != 0) {
+                    Marker("RING3_SHELL_INVALID_REQUEST_REJECTED=1");
+                    return InvalidRequest;
+                }
+                if (!PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                        storage->ResponseBuffer,
+                        storage->ResponseCapacity)) {
+                    Marker("RING3_SHELL_INVALID_RESPONSE_REJECTED=1");
+                    return InvalidPointer;
+                }
+
+                Ring3ShellLaunchResponse response =
+                    default(Ring3ShellLaunchResponse);
+                response.StructureVersion = (uint)AbiVersion;
+                response.Size = (uint)sizeof(Ring3ShellLaunchResponse);
+                response.ResultCode = (uint)
+                    ApplicationServiceResultCode.BackendFailure;
+
+                string target = DecodeShellTarget(storage->Target,
+                    storage->TargetLength);
+                if (target == null) {
+                    Marker("RING3_SHELL_INVALID_REQUEST_REJECTED=1");
+                    return InvalidRequest;
+                }
+
+                ApplicationServiceContext context;
+                ApplicationServiceAccess access;
+                ApplicationServiceResult contextResult;
+                ApplicationInstance requester;
+                if (!TryResolveShellAccess(process, out context, out access,
+                        out contextResult, out requester)) {
+                    response.ResultCode = (uint)(contextResult == null ?
+                        ApplicationServiceResultCode.InvalidContext :
+                        contextResult.Code);
+                } else {
+                    int factoryBefore = ApplicationFactoryRegistry.FactoryLaunches;
+                    int fallbackBefore =
+                        ApplicationFactoryRegistry.CompatibilityFallbackLaunches;
+                    int legacyBefore = AppModelCompatibilityDiagnostics.LegacyBackendCalls;
+                    ApplicationServiceResult<ApplicationServiceRequestHandle>
+                        begun = access.Shell.Begin(context,
+                            ApplicationShellOpenRequest.ForApplicationId(target));
+                    if (!begun.Succeeded || !begun.Value.IsValid) {
+                        response.ResultCode = (uint)(begun.Succeeded ?
+                            ApplicationServiceResultCode.BackendFailure :
+                            begun.Code);
+                    } else {
+                        ApplicationServiceResult<
+                            ApplicationServiceRequestStatus<ApplicationShellResult>>
+                            observed = access.Shell.Observe(context, begun.Value);
+                        if (!observed.Succeeded || observed.Value == null) {
+                            response.ResultCode = (uint)(observed.Succeeded ?
+                                ApplicationServiceResultCode.BackendFailure :
+                                observed.Code);
+                        } else if (observed.Value.State !=
+                                ApplicationServiceRequestState.Completed ||
+                                observed.Value.Value == null) {
+                            response.ResultCode = (uint)
+                                ApplicationServiceResultCode.BackendFailure;
+                        } else {
+                            ApplicationShellResult launch =
+                                observed.Value.Value;
+                            response.ResultCode = (uint)launch.ResultCode;
+                            Marker(launch.Succeeded ?
+                                "RING3_SHELL_RESOLVER_SUCCESS=1" :
+                                (launch.ResultCode ==
+                                    ApplicationServiceResultCode.NotFound ?
+                                    "RING3_SHELL_RESOLVER_NOT_FOUND=1" :
+                                    "RING3_SHELL_RESOLVER_SUCCESS=0"));
+                            bool factoryInvoked =
+                                ApplicationFactoryRegistry.FactoryLaunches >
+                                    factoryBefore;
+                            Marker(factoryInvoked ?
+                                "RING3_SHELL_TYPED_FACTORY_INVOKED=1" :
+                                "RING3_SHELL_TYPED_FACTORY_INVOKED=0");
+                            Marker(ApplicationFactoryRegistry.CompatibilityFallbackLaunches ==
+                                    fallbackBefore ?
+                                "RING3_SHELL_COMPATIBILITY_FALLBACK_DELTA=0" :
+                                "RING3_SHELL_COMPATIBILITY_FALLBACK_DELTA=1");
+                            Marker(AppModelCompatibilityDiagnostics.LegacyBackendCalls ==
+                                    legacyBefore ?
+                                "RING3_SHELL_LEGACY_BACKEND_DELTA=0" :
+                                "RING3_SHELL_LEGACY_BACKEND_DELTA=1");
+
+                            if (launch.Succeeded) {
+                                ApplicationInstance targetInstance;
+                                bool targetResolved =
+                                    ApplicationInstanceRegistry.TryGet(
+                                        launch.InstanceHandle,
+                                        out targetInstance) &&
+                                    targetInstance != null &&
+                                    targetInstance.DescriptorId == target;
+                                Marker(targetResolved ?
+                                    "RING3_SHELL_TARGET_INSTANCE_CREATED=1" :
+                                    "RING3_SHELL_TARGET_INSTANCE_CREATED=0");
+                                if (targetResolved) {
+                                    Marker(targetInstance.LifecycleState ==
+                                            ApplicationInstanceLifecycleState.Running ||
+                                        targetInstance.LifecycleState ==
+                                            ApplicationInstanceLifecycleState.Activated ?
+                                        "RING3_SHELL_TARGET_LIFECYCLE_RUNNING=1" :
+                                        "RING3_SHELL_TARGET_LIFECYCLE_RUNNING=0");
+                                    Marker("RING3_SHELL_TARGET_ID=" +
+                                        targetInstance.DescriptorId);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Native.Movsb((void*)storage->ResponseBuffer, &response,
+                    (ulong)sizeof(Ring3ShellLaunchResponse));
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_SHELL_RESPONSE_COPIED_OUT=1");
+                Marker("RING3_SHELL_TYPED_RESULT_CODE=" +
+                    response.ResultCode.ToString());
+                HexMarker("RING3_SHELL_TYPED_RESULT=0x",
+                    response.ResultCode);
+                return Success;
+            } finally {
+                Allocator.Free((System.IntPtr)storage);
+            }
+        }
+
+        private static bool TryResolveShellAccess(
+                Ring3Process process, out ApplicationServiceContext context,
+                out ApplicationServiceAccess access,
+                out ApplicationServiceResult result,
+                out ApplicationInstance requester) {
+            context = null;
+            access = null;
+            requester = null;
+            result = ApplicationServiceResult.InvalidContextResult();
+            Marker("RING3_SHELL_PROCESS_IDENTITY_DERIVED=1");
+            ApplicationInstanceHandle owner =
+                ApplicationInstanceHandle.FromValue(
+                    process.OwningApplicationInstance);
+            if (!owner.IsValid ||
+                !ApplicationInstanceRegistry.TryGet(owner, out requester) ||
+                requester == null) {
+                Marker("RING3_SHELL_APP_MODEL_OWNER_DERIVED=0");
+                result = ApplicationServiceResult.InvalidContextResult();
+                return false;
+            }
+            Marker("RING3_SHELL_APP_MODEL_OWNER_DERIVED=1");
+            if (!ApplicationServiceRegistry.TryCreateContext(owner,
+                    out context, out result)) {
+                Marker("RING3_SHELL_SERVICE_CONTEXT_DERIVED=0");
+                return false;
+            }
+            ApplicationInstance resolved;
+            if (!ApplicationServiceRegistry.TryValidateContext(context,
+                    ApplicationServiceId.Shell, out resolved, out result) ||
+                resolved != requester) {
+                Marker("RING3_SHELL_SERVICE_CONTEXT_DERIVED=0");
+                return false;
+            }
+            if (!ApplicationServiceRegistry.TryGetAccess(context, out access,
+                    out result) || access == null || access.Shell == null) {
+                Marker("RING3_SHELL_SERVICE_CONTEXT_DERIVED=0");
+                return false;
+            }
+            Marker("RING3_SHELL_SERVICE_CONTEXT_DERIVED=1");
+            Marker(requester.LifecycleState ==
+                    ApplicationInstanceLifecycleState.Running ||
+                requester.LifecycleState ==
+                    ApplicationInstanceLifecycleState.Activated ?
+                "RING3_SHELL_REQUESTER_LIFECYCLE_ALLOWED=1" :
+                "RING3_SHELL_REQUESTER_LIFECYCLE_ALLOWED=0");
+            return true;
+        }
+
+        private static string DecodeShellTarget(byte* source, uint length) {
+            if (source == null || length == 0 ||
+                    length > LaunchRequest.MaxTextLength) return null;
+            char[] text = new char[(int)length];
+            for (int i = 0; i < (int)length; i++) {
+                text[i] = (char)(source[(i * 2) + 0] |
+                    ((uint)source[(i * 2) + 1] << 8));
+            }
+            return new string(text);
         }
 
         // The general user ABI transfer cap is intentionally 64 KiB. The
