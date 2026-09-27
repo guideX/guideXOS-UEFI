@@ -112,7 +112,7 @@ namespace guideXOS.GUI {
                 FolderIcon = LoadIcon($"{basePath}/system-file-manager.svg", size, format);
                 TaskbarIcon = LoadIcon($"Images/startmenubutton.png", size, IconFormat.PNG); // Keep PNG
                 TaskbarIconOver = LoadIcon($"Images/startmenubutton_over.png", size, IconFormat.PNG);
-                TaskbarIconDown = LoadIcon($"Images/startmenubutton_over.png", size, IconFormat.PNG);
+                TaskbarIconDown = LoadIcon($"Images/startmenubutton_down.png", size, IconFormat.PNG);
                 StartIcon = LoadIcon($"{basePath}/preferences-system.svg", size, format);
                 AudioPauseIcon = LoadIcon($"{basePath}/vlc.svg", size, format);
                 AudioPlayIcon = LoadIcon($"{basePath}/vlc.svg", size, format);
@@ -135,7 +135,7 @@ namespace guideXOS.GUI {
                 FolderIcon = LoadPngImage($"Images/BlueVelvet/{size}/folder.png", size);
                 TaskbarIcon = LoadPngImage("Images/startmenubutton.png", size);
                 TaskbarIconOver = LoadPngImage("Images/startmenubutton_over.png", size);
-                TaskbarIconDown = LoadPngImage("Images/startmenubutton_over.png", size);
+                TaskbarIconDown = LoadPngImage("Images/startmenubutton_down.png", size);
                 StartIcon = LoadPngImage($"Images/BlueVelvet/{size}/play.png", size);
                 AudioPauseIcon = LoadPngImage($"Images/BlueVelvet/{size}/pause.png", size);
                 AudioPlayIcon = LoadPngImage($"Images/BlueVelvet/{size}/play.png", size);

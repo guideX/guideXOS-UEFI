@@ -63,6 +63,7 @@ namespace guideXOS.GUI {
         
         // On-Screen Keyboard button latch
         private bool _oskClickLatch = false;
+        private bool _uefiStartGraphicsReported = false;
 
         // FIXED: Cache time/date strings to prevent per-frame allocations
         private string _cachedTime = null;
@@ -198,9 +199,37 @@ namespace guideXOS.GUI {
 
             int startX = 12;
             int startY = yTop + 4;
-            int startSize = _barHeight - 8;
-            graphics.FillRectangle(startX, startY, startSize, startSize, 0xFF2E2E2E);
-            graphics.DrawRectangle(startX, startY, startSize, startSize, 0xFF3E3E3E, 1);
+            Image normalStartIcon = Icons.TaskbarIcon(32);
+            int startWidth = normalStartIcon != null && normalStartIcon.Width > 0
+                ? normalStartIcon.Width : _barHeight - 8;
+            int startHeight = normalStartIcon != null && normalStartIcon.Height > 0
+                ? normalStartIcon.Height : _barHeight - 8;
+            bool startHovered = Control.MousePosition.X >= startX &&
+                Control.MousePosition.X < startX + startWidth &&
+                Control.MousePosition.Y >= startY &&
+                Control.MousePosition.Y < startY + startHeight;
+            bool startPressed = startHovered &&
+                (Control.MouseButtons & MouseButtons.Left) == MouseButtons.Left;
+
+            graphics.FillRectangle(startX, startY, startWidth, startHeight,
+                                   0xFF2E2E2E);
+            graphics.DrawRectangle(startX, startY, startWidth, startHeight,
+                                   0xFF3E3E3E, 1);
+            Image startIcon = normalStartIcon;
+            if (startPressed) {
+                startIcon = Icons.TaskbarIconDown(32);
+            } else if (startHovered) {
+                startIcon = Icons.TaskbarIconOver(32);
+            }
+            if (startIcon != null && startIcon.RawData != null) {
+                graphics.DrawImage(startX, startY, startIcon);
+                if (!_uefiStartGraphicsReported) {
+                    _uefiStartGraphicsReported = true;
+                    BootConsole.WriteLine("[ICON_GRAPHICS] start-drawn=1;bounds=" +
+                        startX.ToString() + "," + startY.ToString() + "," +
+                        startWidth.ToString() + "x" + startHeight.ToString());
+                }
+            }
 
             // Keep the recovered taskbar popup on the same WindowManager path
             // as the desktop popup. This is intentionally a small secondary
@@ -241,9 +270,9 @@ namespace guideXOS.GUI {
                 _oskClickLatch = false;
             } else if (!_oskClickLatch &&
                        Control.MousePosition.X >= startX &&
-                       Control.MousePosition.X <= startX + startSize &&
+                       Control.MousePosition.X < startX + startWidth &&
                        Control.MousePosition.Y >= startY &&
-                Control.MousePosition.Y <= startY + startSize) {
+                       Control.MousePosition.Y < startY + startHeight) {
                 if (Desktop.Apps != null) {
                     // CleanupClosedWindows disposes hidden transient Start
                     // menus.  Do not reactivate a disposed object that is no

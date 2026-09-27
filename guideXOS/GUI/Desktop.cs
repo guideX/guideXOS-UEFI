@@ -129,6 +129,7 @@ namespace guideXOS.GUI {
         private static List<int> _customPosIds = null;
         private static List<int> _customPosX = null;
         private static List<int> _customPosY = null;
+        private static bool _uefiImageTileDrawReported;
         
         /// <summary>
         /// Initialize
@@ -159,6 +160,7 @@ namespace guideXOS.GUI {
                 _customPosIds = null;
                 _customPosX = null;
                 _customPosY = null;
+                _uefiImageTileDrawReported = false;
                 return;
             }
 
@@ -559,6 +561,15 @@ namespace guideXOS.GUI {
             DrawUefiImageIcon(graphics, documentIcon, "DOCS", 152, 96, 0xFFFFD166u);
             DrawUefiImageIcon(graphics, imageIcon, "IMAGES", 256, 96, 0xFFFF6B6Bu);
             DrawUefiImageIcon(graphics, audioIcon, "AUDIO", 360, 96, 0xFF9B8AFBu);
+            if (!_uefiImageTileDrawReported &&
+                folderIcon != null && folderIcon.RawData != null &&
+                documentIcon != null && documentIcon.RawData != null &&
+                imageIcon != null && imageIcon.RawData != null &&
+                audioIcon != null && audioIcon.RawData != null) {
+                _uefiImageTileDrawReported = true;
+                BootConsole.WriteLine(
+                    "[ICON_GRAPHICS] desktop-drawn=files,docs,images,audio");
+            }
 
             // Keep the recovered UEFI desktop layout, but give its existing
             // FILES tile the same real window route as the legacy desktop.

@@ -1203,11 +1203,34 @@ unsafe class Program {
                 BootConsole.WriteLine("[SMAIN] Initializing managed PNG image assets");
                 bool pngReady = PngLoader.Initialize();
                 if (pngReady) BackgroundRotationManager.Initialize();
-                if (pngReady && RefreshCachedIcons() &&
-                    HasVisiblePixels(_cachedDocumentIcon) &&
+                bool iconTablesLoaded = pngReady && RefreshCachedIcons();
+                if (iconTablesLoaded) {
+                    bool startNormalReady = HasVisiblePixels(Icons.TaskbarIcon(32));
+                    bool startHoverReady = HasVisiblePixels(Icons.TaskbarIconOver(32));
+                    bool startPressedReady = HasVisiblePixels(Icons.TaskbarIconDown(32));
+                    bool filesReady = HasVisiblePixels(Icons.FolderIcon(32));
+                    bool notepadReady = HasVisiblePixels(Icons.NotepadIcon(32));
+                    bool calculatorReady = HasVisiblePixels(Icons.CalculatorIcon(32));
+                    bool taskManagerReady = HasVisiblePixels(Icons.ApplicationsIcon(32));
+                    int fallbackCount = (startNormalReady ? 0 : 1) +
+                        (startHoverReady ? 0 : 1) + (startPressedReady ? 0 : 1) +
+                        (filesReady ? 0 : 1) + (notepadReady ? 0 : 1) +
+                        (calculatorReady ? 0 : 1) + (taskManagerReady ? 0 : 1);
+                    BootConsole.WriteLine("[ICON_GRAPHICS] start=" +
+                        (startNormalReady ? "ok" : "fallback") +
+                        ";hover=" + (startHoverReady ? "ok" : "fallback") +
+                        ";pressed=" + (startPressedReady ? "ok" : "fallback") +
+                        ";files=" + (filesReady ? "ok" : "fallback") +
+                        ";notepad=" + (notepadReady ? "ok" : "fallback") +
+                        ";calculator=" + (calculatorReady ? "ok" : "fallback") +
+                        ";taskmanager=" + (taskManagerReady ? "ok" : "fallback") +
+                        ";fallbacks=" + fallbackCount.ToString());
+                }
+                bool desktopIconsReady = HasVisiblePixels(_cachedDocumentIcon) &&
                     HasVisiblePixels(_cachedFolderIcon) &&
                     HasVisiblePixels(_cachedImageIcon) &&
-                    HasVisiblePixels(_cachedAudioIcon)) {
+                    HasVisiblePixels(_cachedAudioIcon);
+                if (pngReady && iconTablesLoaded && desktopIconsReady) {
                     _lastIconCacheRefresh = Timer.Ticks;
                     BootConsole.WriteLine("[PNG] image assets initialized");
                     BootConsole.WriteLine("[DESKTOP] real icon assets enabled");
