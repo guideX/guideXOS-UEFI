@@ -10,6 +10,10 @@ using static Internal.Runtime.CompilerHelpers.InteropHelpers;
 public static class IDT {
     [DllImport("*")]
     private static extern unsafe void set_idt_entries(void* idt);
+#if UEFI_DIAGNOSTIC_FAULT_BYTES_PROBE
+    [DllImport("*")]
+    private static extern void TriggerFaultBytesProbe();
+#endif
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct IDTEntry {
@@ -48,6 +52,9 @@ public static class IDT {
         Native.Load_IDT(ref idtr);
 
         Initialized = true;
+#if UEFI_DIAGNOSTIC_FAULT_BYTES_PROBE
+        TriggerFaultBytesProbe();
+#endif
         return true;
     }
 
@@ -250,6 +257,40 @@ public static class IDT {
         SerialWriteLineLiteral("STACK_WINDOW_END");
     }
 
+    private static unsafe void SerialWriteFaultFrameChain(ulong rbp) {
+        SerialWriteLineLiteral("FAULT_FRAME_CHAIN_BEGIN");
+        for (int i = 0; i < 8; i++) {
+            if ((rbp & 7UL) != 0 || rbp < 0x1000UL ||
+                    rbp > 0x00007FFFFFFFFFF0UL ||
+                    !IsMapped(rbp) || !IsMapped(rbp + 8UL)) {
+                SerialWriteLiteral("FAULT_FRAME_CHAIN_STOP;frame=");
+                SerialWriteHex64((ulong)i);
+                SerialWriteLiteral(";reason=unmapped-or-unaligned\n");
+                break;
+            }
+
+            ulong* frame = (ulong*)rbp;
+            ulong previous = frame[0];
+            ulong returnAddress = frame[1];
+            SerialWriteLiteral("FAULT_FRAME;index=");
+            SerialWriteHex64((ulong)i);
+            SerialWriteLiteral(";rbp=0x");
+            SerialWriteHex64(rbp);
+            SerialWriteLiteral(";previous=0x");
+            SerialWriteHex64(previous);
+            SerialWriteLiteral(";return=0x");
+            SerialWriteHex64(returnAddress);
+            Native.Out8(0x3F8, (byte)'\n');
+
+            if (previous <= rbp || previous - rbp > 0x10000UL) {
+                SerialWriteLiteral("FAULT_FRAME_CHAIN_STOP;reason=nonmonotonic\n");
+                break;
+            }
+            rbp = previous;
+        }
+        SerialWriteLineLiteral("FAULT_FRAME_CHAIN_END");
+    }
+
     private static unsafe ulong GetInterruptedRsp(InterruptReturnStack* irs) {
         if (irs == null) return 0;
 
@@ -289,7 +330,13 @@ public static class IDT {
             SerialWriteHexLine64("CPU_FRAME_RAW_RSP_SLOT=", irs->rsp);
             SerialWriteHexLine64("CPU_FRAME_RAW_SS_SLOT=", irs->ss);
             SerialWriteStackNeighborhood(GetInterruptedRsp(irs));
-            if (irq == 6) SerialWriteFaultInstructionBytes(irs->rip);
+            // Keep the vector 6 evidence path and also snapshot the interrupted
+            // instruction for kernel page faults. PF CR2/RIP pairs in cleanup
+            // diagnostics have been inconsistent with the preserved image's
+            // instruction boundaries, so the bytes are needed to distinguish
+            // a data fault at RIP from a bad frame or image mismatch.
+            if (irq == 6 || irq == 14)
+                SerialWriteFaultInstructionBytes(irs->rip);
         }
 
         if (regs != null) {
@@ -298,6 +345,7 @@ public static class IDT {
             SerialWriteHexLine64("REG_RDX=", regs->rdx);
             SerialWriteHexLine64("REG_RBX=", regs->rbx);
             SerialWriteHexLine64("RBP=", regs->rbp);
+            SerialWriteFaultFrameChain(regs->rbp);
             SerialWriteHexLine64("REG_RSI=", regs->rsi);
             SerialWriteHexLine64("REG_RDI=", regs->rdi);
             SerialWriteHexLine64("REG_R8=", regs->r8);

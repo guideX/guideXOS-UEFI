@@ -49,6 +49,37 @@ Sti:
     sti
     ret
 
+; Called directly from the RuntimeExport free wrapper. This NativeAOT wrapper
+; saves eight nonvolatile registers and reserves 0x48 bytes before calling us;
+; including our call return address, the external caller return address is at
+; [rsp+0x90]. Keep this offset aligned with the disassembled free wrapper.
+global ReadFreeCallerReturnAddress
+ReadFreeCallerReturnAddress:
+    mov rax, [rsp + 0x90]
+    ret
+
+; This deliberately faults only from the opt-in FaultBytesProbe diagnostic.
+; The reported RIP is the UD2 below, with recognizable register sentinels.
+global TriggerFaultBytesProbe
+TriggerFaultBytesProbe:
+    mov rax, 0x50001ff
+    mov rcx, 0x11111111
+    mov rdx, 0x22222222
+    mov rbx, 0x33333333
+    xor rbp, rbp
+    mov rsi, 0x44444444
+    mov rdi, 0x55555555
+    mov r8,  0x66666666
+    mov r9,  0x77777777
+    mov r10, 0x88888888
+    mov r11, 0x99999999
+    mov r12, 0xAAAAAAAA
+    mov r13, 0xBBBBBBBB
+    mov r14, 0xCCCCCCCC
+    mov r15, 0xDDDDDDDD
+    ud2
+    ret
+
 global Nop
 Nop:
     nop

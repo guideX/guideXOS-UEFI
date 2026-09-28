@@ -370,61 +370,69 @@ namespace guideXOS.GUI {
         /// Draw All
         /// </summary>
         public static void DrawAll() {
-            // Basic draw (no timing unless enabled)
-            for (int i = 0; i < Windows.Count; i++) {
-                var w = Windows[i];
-                if (!w.Visible)
-                    continue;
-                bool isTaskMgr = w is guideXOS.DefaultApps.TaskManager;
-                if (!_perfTrackingEnabled || isTaskMgr) {
+            lock (_cleanupClosedWindowsSync) {
+                // Structural mutations use the same reentrant lock. Keep this
+                // reader inside it so a scheduled launch/close cannot shift a
+                // List entry while its Window virtual is being dispatched.
+                for (int i = 0; i < Windows.Count; i++) {
+                    var w = Windows[i];
+                    if (!w.Visible)
+                        continue;
+                    bool isTaskMgr = w is guideXOS.DefaultApps.TaskManager;
+                    if (!_perfTrackingEnabled || isTaskMgr) {
+                        w.OnDraw();
+                        continue;
+                    }
+                    Allocator.CurrentOwnerId = w.OwnerId;
+                    ulong t0 = Timer.Ticks;
                     w.OnDraw();
-                    continue;
+                    ulong t1 = Timer.Ticks;
+                    ulong dt = t1 >= t0 ? t1 - t0 : 0UL;
+                    //int owner = w.OwnerId; if (owner != 0) { if (_drawMs.ContainsKey(owner)) _drawMs[owner] += dt; else _drawMs.Add(owner, dt); }
+                    Allocator.CurrentOwnerId = 0;
                 }
-                Allocator.CurrentOwnerId = w.OwnerId;
-                ulong t0 = Timer.Ticks;
-                w.OnDraw();
-                ulong t1 = Timer.Ticks;
-                ulong dt = t1 >= t0 ? t1 - t0 : 0UL;
-                //int owner = w.OwnerId; if (owner != 0) { if (_drawMs.ContainsKey(owner)) _drawMs[owner] += dt; else _drawMs.Add(owner, dt); }
-                Allocator.CurrentOwnerId = 0;
+                if (_perfTrackingEnabled)
+                    UpdateCpuPercents();
             }
-            if (_perfTrackingEnabled)
-                UpdateCpuPercents();
         }
 
         /// <summary>
         /// Draw all windows except Task Manager (allows workspace switcher to be drawn on top)
         /// </summary>
         public static void DrawAllExceptTaskManager() {
-            for (int i = 0; i < Windows.Count; i++) {
-                var w = Windows[i];
-                if (!w.Visible || w is guideXOS.DefaultApps.TaskManager) continue;
+            lock (_cleanupClosedWindowsSync) {
+                for (int i = 0; i < Windows.Count; i++) {
+                    var w = Windows[i];
+                    if (!w.Visible || w is guideXOS.DefaultApps.TaskManager) continue;
 
-                if (!_perfTrackingEnabled) {
+                    if (!_perfTrackingEnabled) {
+                        w.OnDraw();
+                        continue;
+                    }
+
+                    Allocator.CurrentOwnerId = w.OwnerId;
+                    ulong t0 = Timer.Ticks;
                     w.OnDraw();
-                    continue;
+                    ulong t1 = Timer.Ticks;
+                    _ = t1 >= t0 ? t1 - t0 : 0UL;
+                    Allocator.CurrentOwnerId = 0;
                 }
 
-                Allocator.CurrentOwnerId = w.OwnerId;
-                ulong t0 = Timer.Ticks;
-                w.OnDraw();
-                ulong t1 = Timer.Ticks;
-                _ = t1 >= t0 ? t1 - t0 : 0UL;
-                Allocator.CurrentOwnerId = 0;
+                if (_perfTrackingEnabled) UpdateCpuPercents();
             }
-
-            if (_perfTrackingEnabled) UpdateCpuPercents();
         }
 
         /// <summary>
         /// Draw only Task Manager (always on top)
         /// </summary>
         public static void DrawTaskManager() {
-            for (int i = 0; i < Windows.Count; i++) {
-                var w = Windows[i];
-                if (w.Visible && w is guideXOS.DefaultApps.TaskManager) {
-                    w.OnDraw();
-                    break;
+            lock (_cleanupClosedWindowsSync) {
+                for (int i = 0; i < Windows.Count; i++) {
+                    var w = Windows[i];
+                    if (w.Visible && w is guideXOS.DefaultApps.TaskManager) {
+                        w.OnDraw();
+                        break;
+                    }
                 }
             }
         }
@@ -450,6 +458,7 @@ namespace guideXOS.GUI {
         public static void InputAll() {
             if (MouseHandled) return;
 
+            lock (_cleanupClosedWindowsSync) {
             // First pass: Handle "always on top" windows like Task Manager
             // Task Manager should get input priority even if not at the end of the list
             for (int i = Windows.Count - 1; i >= 0; i--) {
@@ -512,6 +521,7 @@ namespace guideXOS.GUI {
                     MouseHandled = true;
                     break;
                 }
+            }
             }
         }
         /// <summary>
@@ -607,14 +617,36 @@ namespace guideXOS.GUI {
                 // request into a second pass after the current pass completes.
                 if (_cleanupClosedWindowsRunning) {
                     _cleanupClosedWindowsPending = true;
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+                    Program.MarkUefiRing3Phase32(
+                        "WINDOW_CLEANUP_NESTED_REQUEST;pending=1");
+#elif UEFI_DIAGNOSTIC_APP_RUNTIME
+                    Program.MarkUefiAppRuntime(
+                        "WINDOW_CLEANUP_NESTED_REQUEST;pending=1");
+#endif
                     return;
                 }
 
                 _cleanupClosedWindowsRunning = true;
                 try {
+                    int pass = 0;
                     do {
                         _cleanupClosedWindowsPending = false;
+                        pass++;
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+                        if (pass > 1)
+                            MarkCleanupDiagnostic(
+                                "WINDOW_CLEANUP_SECOND_PASS_BEGIN",
+                                "pass=" + pass.ToString());
+#endif
                         CleanupClosedWindowsCore();
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+                        if (pass > 1)
+                            MarkCleanupDiagnostic(
+                                "WINDOW_CLEANUP_SECOND_PASS_END",
+                                "pass=" + pass.ToString() + ";pending=" +
+                                (_cleanupClosedWindowsPending ? "1" : "0"));
+#endif
                     } while (_cleanupClosedWindowsPending);
                 } finally {
                     _cleanupClosedWindowsRunning = false;
@@ -629,8 +661,20 @@ namespace guideXOS.GUI {
             }
         }
 
+        /// <summary>
+        /// Run the normal serialized cleanup and sample the collection before
+        /// another list writer can interleave. Diagnostic lifecycle controls
+        /// use this to compare their cleanup result with a stable baseline.
+        /// </summary>
+        internal static int CleanupClosedWindowsAndGetCountSnapshot() {
+            lock (_cleanupClosedWindowsSync) {
+                CleanupClosedWindows();
+                return Windows == null ? 0 : Windows.Count;
+            }
+        }
+
         private static void CleanupClosedWindowsCore() {
-#if UEFI_DIAGNOSTIC_RING3_PHASE32
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
             bool diagnosticCleanupStarted = false;
 #endif
             // FIXED: Remove windows that are no longer visible and dispose them properly
@@ -655,25 +699,25 @@ namespace guideXOS.GUI {
                 }
                 // Remove windows that are not visible and not animating (i.e., fully closed)
                 if (!w.Visible && !w.IsMinimized && !w.IsTombstoned) {
-#if UEFI_DIAGNOSTIC_RING3_PHASE32
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
                     string cleanupIdentity = DescribeCleanupWindow(i, w);
                     if (!diagnosticCleanupStarted) {
-                        Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_ENTRY;windows=" +
-                            Windows.Count.ToString());
+                        MarkCleanupDiagnostic("WINDOW_CLEANUP_ENTRY",
+                            "windows=" + Windows.Count.ToString());
                         diagnosticCleanupStarted = true;
                     }
-                    Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_SELECTED;" +
+                    MarkCleanupDiagnostic("WINDOW_CLEANUP_SELECTED",
                         cleanupIdentity);
-                    Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_REMOVE_BEGIN;" +
+                    MarkCleanupDiagnostic("WINDOW_CLEANUP_REMOVE_BEGIN",
                         cleanupIdentity);
 #endif
                     // Check if window has no ongoing animation
                     // A window with _animType == None and not visible is considered disposed
                     Windows.RemoveAt(i);
-#if UEFI_DIAGNOSTIC_RING3_PHASE32
-                    Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_REMOVE_END;" +
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+                    MarkCleanupDiagnostic("WINDOW_CLEANUP_REMOVE_END",
                         cleanupIdentity + ";windows=" + Windows.Count.ToString());
-                    Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_OWNER_DETACH_BEGIN;" +
+                    MarkCleanupDiagnostic("WINDOW_CLEANUP_OWNER_DETACH_BEGIN",
                         cleanupIdentity);
 #endif
                     // FIXED: Dispose the window to free its resources
@@ -684,17 +728,17 @@ namespace guideXOS.GUI {
                         if (!w.IsServiceSessionWindow) {
                             ApplicationInstanceRegistry.OnWindowClosed(w);
                         }
-#if UEFI_DIAGNOSTIC_RING3_PHASE32
-                        Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_OWNER_DETACH_END;" +
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+                        MarkCleanupDiagnostic("WINDOW_CLEANUP_OWNER_DETACH_END",
                             cleanupIdentity + ";ownerAfter=" +
                             w.ApplicationInstanceHandle.Value.ToString());
-                        Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_DISPOSE_BEGIN;" +
+                        MarkCleanupDiagnostic("WINDOW_CLEANUP_DISPOSE_BEGIN",
                             cleanupIdentity + ";disposed=" +
                             (w.IsDisposed ? "1" : "0"));
 #endif
                         w.Dispose();
-#if UEFI_DIAGNOSTIC_RING3_PHASE32
-                        Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_DISPOSE_END;" +
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+                        MarkCleanupDiagnostic("WINDOW_CLEANUP_DISPOSE_END",
                             cleanupIdentity + ";disposed=" +
                             (w.IsDisposed ? "1" : "0"));
 #endif
@@ -704,6 +748,8 @@ namespace guideXOS.GUI {
                             ";windows=" + Windows.Count.ToString() +
                             ";instance=" + closedInstance +
                             ";memory=" + Allocator.MemoryInUse.ToString() +
+                            ";freeInvalid=" + Allocator.FreeFailInvalidPtr.ToString() +
+                            ";freeNoPages=" + Allocator.FreeFailNoPages.ToString() +
                             ";corrupt=" + Allocator.FreeFailCorruptRun.ToString() +
                             ";active=" + ApplicationInstanceRegistry.ActiveCount.ToString() +
                             ";stale=" + ApplicationInstanceRegistry.StaleOwnershipCount.ToString());
@@ -711,29 +757,35 @@ namespace guideXOS.GUI {
                     }
                 }
             }
-#if UEFI_DIAGNOSTIC_RING3_PHASE32
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
             if (diagnosticCleanupStarted) {
-                Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_TASKBAR_RECONCILE_BEGIN;entries=" +
-                    TaskbarApplicationEntryRegistry.EntryCount.ToString());
+                MarkCleanupDiagnostic("WINDOW_CLEANUP_TASKBAR_RECONCILE_BEGIN",
+                    "entries=" + TaskbarApplicationEntryRegistry.EntryCount.ToString());
             }
 #endif
             TaskbarApplicationEntryRegistry.Reconcile();
-#if UEFI_DIAGNOSTIC_RING3_PHASE32
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
             if (diagnosticCleanupStarted) {
-                Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_TASKBAR_RECONCILE_END;entries=" +
-                    TaskbarApplicationEntryRegistry.EntryCount.ToString());
-                Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_EXIT;windows=" +
-                    Windows.Count.ToString());
+                MarkCleanupDiagnostic("WINDOW_CLEANUP_TASKBAR_RECONCILE_END",
+                    "entries=" + TaskbarApplicationEntryRegistry.EntryCount.ToString());
+                MarkCleanupDiagnostic("WINDOW_CLEANUP_EXIT",
+                    "windows=" + Windows.Count.ToString());
             }
 #endif
         }
 
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+        private static void MarkCleanupDiagnostic(string stage, string detail) {
 #if UEFI_DIAGNOSTIC_RING3_PHASE32
+            Program.MarkUefiRing3Phase32(stage + ";" + detail);
+#elif UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime(stage + ";" + detail);
+#endif
+        }
+
         private static unsafe string DescribeCleanupWindow(int index, Window window) {
             ulong objectAddress = Unsafe.As<Window, ulong>(ref window);
             ulong methodTable = objectAddress == 0 ? 0 : *(ulong*)objectAddress;
-            ulong disposeTarget = methodTable == 0 ? 0 :
-                *(ulong*)(methodTable + 0x50);
             ApplicationInstanceHandle ownerHandle = window.ApplicationInstanceHandle;
             ApplicationInstance owner = null;
             bool ownerLive = ownerHandle.IsValid &&
@@ -771,7 +823,7 @@ namespace guideXOS.GUI {
                 ";tombstoned=" + (window.IsTombstoned ? "1" : "0") +
                 ";disposed=" + (window.IsDisposed ? "1" : "0") +
                 ";methodTable=" + methodTable.ToString() +
-                ";disposeTarget=" + disposeTarget.ToString() +
+                ";disposeDispatch=" + CleanupDisposeDispatch(window) +
                 ";activeApp=" + ApplicationInstanceRegistry.ActiveApplicationHandle.Value.ToString() +
                 ";taskbarEntry=" + (taskbarEntry ? "1" : "0") +
                 ";taskbarActive=" + (taskbarEntry && entry.IsActive ? "1" : "0") +
@@ -794,6 +846,21 @@ namespace guideXOS.GUI {
             if (window is TaskManager) return "TaskManager";
             if (window is GXMScriptWindow) return "GXMScriptWindow";
             return "Window";
+        }
+
+        private static string CleanupDisposeDispatch(Window window) {
+            // Keep the H2b cohort explicit and reflection-free. Window.Dispose
+            // is the virtual slot introduced by Window; only these concrete
+            // types replace it with an override in the cleanup cohort.
+            if (window is Notepad) return "Notepad.Dispose->Window.Dispose";
+            if (window is ComputerFiles) return "ComputerFiles.Dispose->Window.Dispose";
+            if (window is Calculator) return "Window.Dispose";
+            if (window is TaskManager) return "TaskManager.Dispose->Window.Dispose";
+            if (window is ImageViewer) return "ImageViewer.Dispose->Window.Dispose";
+            if (window is WAVPlayer) return "WAVPlayer.Dispose->Window.Dispose";
+            if (window is WebBrowser) return "WebBrowser.Dispose->Window.Dispose";
+            if (window is GXMScriptWindow) return "GXMScriptWindow.Dispose->Window.Dispose";
+            return "Window.Dispose-or-unclassified-override";
         }
 #endif
     }

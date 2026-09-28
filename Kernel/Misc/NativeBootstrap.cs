@@ -270,7 +270,7 @@ namespace guideXOS.Misc {
 
         private static void Free(ref ulong page) {
             if (page != 0) {
-                Allocator.Free((IntPtr)page);
+                Allocator.Free((IntPtr)page, "NativeBootstrap");
                 page = 0;
                 NativeBootstrapDiagnostics.PagesReclaimed++;
             }
@@ -371,7 +371,7 @@ namespace guideXOS.Misc {
                 }
                 if (!space.MapUser(descriptor.PreferredBase + sourceOffset,
                                    physical, writable: false, executable: true)) {
-                    Allocator.Free((IntPtr)physical);
+                    Allocator.Free((IntPtr)physical, "NativeBootstrap");
                     NativeBootstrapDiagnostics.PagesReclaimed++;
                     bootstrap.Cleanup();
                     bootstrap = null;

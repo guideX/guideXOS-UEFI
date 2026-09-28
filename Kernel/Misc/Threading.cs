@@ -29,9 +29,9 @@ namespace guideXOS.Misc {
             KernelStackTop = KernelStackBase + stack_size;
 
             if (Stack == null || KernelStackBase == 0) {
-                if (Stack != null) Allocator.Free((IntPtr)Stack);
+                if (Stack != null) Allocator.Free((IntPtr)Stack, "Threading");
                 if (KernelStackBase != 0)
-                    Allocator.Free((IntPtr)KernelStackBase);
+                    Allocator.Free((IntPtr)KernelStackBase, "Threading");
                 Stack = null;
                 KernelStackBase = 0;
                 KernelStackSize = 0;
@@ -121,6 +121,10 @@ namespace guideXOS.Misc {
         public static bool Initialized = false;
         public static bool Locked = false;
         public static long Locker = 0;
+        // The current managed Monitor facade maps every object lock to this
+        // scheduler-wide lock. Track same-CPU nesting so a nested lock's Exit
+        // cannot release an outer critical section prematurely.
+        private static uint _lockDepth;
         
         /// <summary>
         /// When true, timer interrupts will perform context switching.
@@ -417,13 +421,29 @@ namespace guideXOS.Misc {
         public static bool CanLock => Unsafe.As<bool, ulong>(ref Initialized);
 
         public static void Lock() {
-            Locker = SMP.ThisCPU;
-            Locked = true;
+            long cpu = SMP.ThisCPU;
+            if (Locked && Locker == cpu) {
+                if (_lockDepth != 0xFFFFFFFFu) _lockDepth++;
+                return;
+            }
 
+            // Managed execution is serialized by this lock across scheduler
+            // ticks. If another CPU owns it, wait until its outermost Exit.
+            while (Locked) Native.Nop();
+
+            Locker = cpu;
+            _lockDepth = 1;
+            Locked = true;
             LocalAPIC.SendAllInterrupt(0x20);
         }
 
         public static void UnLock() {
+            if (!Locked || Locker != SMP.ThisCPU) return;
+            if (_lockDepth > 1) {
+                _lockDepth--;
+                return;
+            }
+            _lockDepth = 0;
             Locked = false;
         }
 

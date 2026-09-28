@@ -100,14 +100,14 @@ namespace guideXOS.Misc {
             _released = true;
             for (int i = _ownedPageTableCount - 1; i >= 0; i--) {
                 if (_ownedPageTables[i] != 0) {
-                    Allocator.Free((IntPtr)_ownedPageTables[i]);
+                    Allocator.Free((IntPtr)_ownedPageTables[i], "Process");
                     Ring3ProcessDiagnostics.PageTablesReclaimed++;
                 }
                 _ownedPageTables[i] = 0;
             }
             _ownedPageTableCount = 0;
             if (Pml4 != null) {
-                Allocator.Free((IntPtr)Pml4);
+                Allocator.Free((IntPtr)Pml4, "Process");
                 Pml4 = null;
                 Ring3ProcessDiagnostics.AddressSpacesReclaimed++;
             }
@@ -286,7 +286,7 @@ namespace guideXOS.Misc {
 
         private static void FreePage(ref ulong page) {
             if (page != 0) {
-                Allocator.Free((IntPtr)page);
+                Allocator.Free((IntPtr)page, "Process");
                 page = 0;
             }
         }
@@ -918,9 +918,9 @@ namespace guideXOS.Misc {
                     return false;
                 }
                 if (userThread.Stack != null)
-                    Allocator.Free((IntPtr)userThread.Stack);
+                    Allocator.Free((IntPtr)userThread.Stack, "Process");
                 if (userThread.KernelStackBase != 0) {
-                    Allocator.Free((IntPtr)userThread.KernelStackBase);
+                    Allocator.Free((IntPtr)userThread.KernelStackBase, "Process");
                     Ring3ProcessDiagnostics.KernelStacksReclaimed++;
                 }
                 userThread.Stack = null;

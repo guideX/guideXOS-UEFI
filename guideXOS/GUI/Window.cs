@@ -818,7 +818,7 @@ namespace guideXOS.GUI {
                                 long baseAddr = (long)pInfo->Start;
                                 long offset = (long)(i * Allocator.PageSize);
                                 IntPtr ptr = new IntPtr((void*)(baseAddr + offset));
-                                Allocator.Free(ptr);
+                                Allocator.Free(ptr, "Window.FreeOwnerMemory");
                                 // Don't increment i - the Free() cleared the Pages[] entries
                                 continue;
                             }

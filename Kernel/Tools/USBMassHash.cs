@@ -23,7 +23,7 @@ namespace guideXOS.Kernel.Tools {
                 // Read is sector-based. Compute sector/count assuming 512B sectors.
                 ulong sector = offset / 512UL;
                 uint count = (uint)((toRead + 511) / 512);
-                if (!disk.Read(sector, count, buf)) { Allocator.Free((nint)buf); return null; }
+                if (!disk.Read(sector, count, buf)) { Allocator.Free((nint)buf, "USBMassHash"); return null; }
                 // Hash only the valid bytes (not full last sector rounding).
                 int valid = (int)((offset + (ulong)(count * 512)) <= totalBytes ? (count * 512) : (totalBytes - offset));
                 SHA256.Update(&ctx, buf, valid);
@@ -32,7 +32,7 @@ namespace guideXOS.Kernel.Tools {
             byte* out32 = stackalloc byte[32];
             SHA256.Final(&ctx, out32);
             string hex = SHA256.ToHex(out32);
-            Allocator.Free((nint)buf);
+            Allocator.Free((nint)buf, "USBMassHash");
             return hex;
         }
     }

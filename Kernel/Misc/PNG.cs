@@ -186,7 +186,7 @@ namespace guideXOS.Misc {
                 }
                 ulong pc = (ulong)w * (ulong)h;
                 if (pc > (ulong)int.MaxValue || pc * 4UL > Allocator.MemorySize / 2) {
-                    Allocator.Free((System.IntPtr)decoded);
+                    Allocator.Free((System.IntPtr)decoded, "PNG");
                     BuildFallback(out RawData, out int fw2, out int fh2);
                     Width = fw2; Height = fh2; Bpp = 4;
                     return;
@@ -199,7 +199,7 @@ namespace guideXOS.Misc {
                         RawData[(int)(rowOff + x2)] = (int)((px & 0xFF000000) | (NETv4.SwapLeftRight(px & 0x00FFFFFF)) >> 8);
                     }
                 }
-                Allocator.Free((System.IntPtr)decoded);
+                Allocator.Free((System.IntPtr)decoded, "PNG");
                 Width = (int)w; Height = (int)h; Bpp = 4;
             }
         }

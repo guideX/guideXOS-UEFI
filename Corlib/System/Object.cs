@@ -43,15 +43,18 @@ namespace System {
             => "System.Object";
 
         public virtual void Dispose() {
+            // Managed objects are owned and reclaimed by the NativeAOT GC.
+            // Only release this reference when it is itself the start of a live
+            // allocator run. Static/frozen strings and interior GC objects are
+            // ignored; resource-owning types still release resources in overrides.
             var obj = this;
-            free(Unsafe.As<object, IntPtr>(ref obj));
+            Allocator.FreeManagedObjectIfAllocatorRun(
+                Unsafe.As<object, IntPtr>(ref obj));
         }
 
         public static implicit operator bool(object obj) => obj != null;
 
         public static implicit operator IntPtr(object obj) => Unsafe.As<object, IntPtr>(ref obj);
 
-        [DllImport("*")]
-        static extern ulong free(nint ptr);
     }
 }

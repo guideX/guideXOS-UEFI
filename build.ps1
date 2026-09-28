@@ -60,7 +60,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
+  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'FaultBytesProbe', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
     [string]$UefiDiagnosticMode = ''
 )
 

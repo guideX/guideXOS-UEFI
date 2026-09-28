@@ -1,4 +1,5 @@
 using System.Runtime;
+using System.Runtime.InteropServices;
 namespace guideXOS.Kernel.Libraries {
     /// <summary>
     /// The stdlib.h header defines four variable types, several macros, and various functions for performing general functions.
@@ -6,6 +7,11 @@ namespace guideXOS.Kernel.Libraries {
 #pragma warning disable CS8981
     public static unsafe class stdlib {
 #pragma warning restore CS8981
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+        [DllImport("*")]
+        private static extern ulong ReadFreeCallerReturnAddress();
+#endif
+
         /// <summary>
         /// Malloc
         /// </summary>
@@ -21,7 +27,12 @@ namespace guideXOS.Kernel.Libraries {
         /// <param name="ptr"></param>
         [RuntimeExport("free")]
         public static void free(void* ptr) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+            Allocator.Free((System.IntPtr)ptr, "stdlib.free",
+                ReadFreeCallerReturnAddress());
+#else
             Allocator.Free((System.IntPtr)ptr);
+#endif
         }
         /// <summary>
         /// Realloc
@@ -60,7 +71,7 @@ namespace guideXOS.Kernel.Libraries {
         /// <param name="ptr"></param>
         [RuntimeExport("kfree")]
         public static void kfree(void* ptr) {
-            Allocator.Free((System.IntPtr)ptr);
+            Allocator.Free((System.IntPtr)ptr, "stdlib.kfree");
         }
         /// <summary>
         /// KRealloc

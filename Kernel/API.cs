@@ -172,11 +172,7 @@ namespace guideXOS {
 
         [RuntimeExport("Lock")]
         public static void API_Lock() {
-            if (ThreadPool.CanLock) {
-                if (!ThreadPool.Locked) {
-                    ThreadPool.Lock();
-                }
-            }
+            if (ThreadPool.CanLock) ThreadPool.Lock();
         }
 
         [RuntimeExport("Unlock")]
@@ -231,7 +227,7 @@ namespace guideXOS {
 
         public static ulong API_Free(nint ptr) {
             //Debug.WriteLine($"API_Free 0x{((ulong)ptr).ToString("x2")}");
-            return Allocator.Free(ptr);
+            return Allocator.Free(ptr, "API_Free");
         }
 
         public static nint API_Reallocate(nint intPtr, ulong size) {

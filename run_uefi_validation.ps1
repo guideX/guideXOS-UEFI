@@ -67,6 +67,10 @@
     Run real UEFI Start-menu application launches, close/return cycles, shell
     routes, and file-association opens through QMP input.
 
+.PARAMETER CleanupStress
+    Run 50 Notepad closes, 50 Calculator closes, 25 alternating closes, and
+    a Computer Files taskbar open/activate/close control through QMP input.
+
 .PARAMETER TaskbarSoak
     Run the production Continuous desktop with Calculator, Notepad, and
     Computer Files open on the UEFI taskbar during the soak interval.
@@ -132,6 +136,7 @@ param(
     [switch]$BackgroundRotation,
     [switch]$AppModel,
     [switch]$AppRuntime,
+    [switch]$CleanupStress,
     [switch]$Ring3,
     [switch]$Ring3Phase15,
     [switch]$Ring3Phase25,
@@ -173,6 +178,7 @@ $selectorCount = @(
     $(if ($BackgroundRotation) { 1 } else { 0 }),
     $(if ($AppModel) { 1 } else { 0 }),
     $(if ($AppRuntime) { 1 } else { 0 }),
+    $(if ($CleanupStress) { 1 } else { 0 }),
     $(if ($Ring3) { 1 } else { 0 }),
     $(if ($Ring3Phase15) { 1 } else { 0 }),
     $(if ($Ring3Phase25) { 1 } else { 0 }),
@@ -207,7 +213,7 @@ if ($Frames -gt 0 -and $Frames -ne 300) {
 if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Font -and
     -not $Background -and -not $BackgroundRotation -and
-    -not $AppModel -and -not $AppRuntime -and -not $Ring3 -and
+    -not $AppModel -and -not $AppRuntime -and -not $CleanupStress -and -not $Ring3 -and
     -not $Ring3Phase15 -and -not $Ring3Phase25 -and -not $Ring3Phase26 -and -not $Ring3Phase27 -and -not $Ring3Phase28 -and -not $Ring3Phase29 -and -not $Ring3Phase30 -and -not $Ring3Phase31 -and -not $Ring3Phase32 -and
     -not $Ring3Direct -and
     -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
@@ -232,7 +238,7 @@ if ($Tiny) {
     $diagnosticMode = 'BackgroundRotation'
 } elseif ($AppModel) {
     $diagnosticMode = 'AppModel'
-} elseif ($AppRuntime) {
+} elseif ($AppRuntime -or $CleanupStress) {
     $diagnosticMode = 'AppRuntime'
 } elseif ($Ring3) {
     $diagnosticMode = 'Ring3'
@@ -276,10 +282,13 @@ $isAppModelValidation = $diagnosticMode -eq 'AppModel'
 $isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Ring3', 'Ring3Phase15', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Direct', 'Widget', 'WidgetStress')
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu')
 $isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress')
-$isAppRuntimeValidation = $diagnosticMode -eq 'AppRuntime'
+$isCleanupStressValidation = $CleanupStress
+$isAppRuntimeValidation = $diagnosticMode -eq 'AppRuntime' -and
+    -not $isCleanupStressValidation
 $isTaskbarSoakValidation = $TaskbarSoak
 $isInteractiveValidation = $isInputValidation -or $isWidgetValidation -or
-    $isAppRuntimeValidation -or $isTaskbarSoakValidation
+    $isAppRuntimeValidation -or $isTaskbarSoakValidation -or
+    $isCleanupStressValidation
 $isContinuousValidation = -not $isBoundedDiagnostic
 $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'Tiny' { 'UTINY_COMPLETE'; break }
@@ -314,6 +323,9 @@ if ($WidgetSoak -and $TimeoutSeconds -lt 720) {
 if ($TaskbarSoak) {
     $Continuous = $true
     if ($TimeoutSeconds -lt 125) { $TimeoutSeconds = 125 }
+}
+if ($CleanupStress -and $TimeoutSeconds -lt 1800) {
+    $TimeoutSeconds = 1800
 }
 
 $qemuPath = 'C:\Program Files\qemu\qemu-system-x86_64.exe'
@@ -688,7 +700,8 @@ function Open-QmpStartApplication {
         $Qmp,
         [string]$Name,
         [int]$Index,
-        [switch]$KeepOpen
+        [switch]$KeepOpen,
+        [switch]$ActivateTaskbarItem
     )
 
     $taskbarButtonPattern = '(?m)^\[TASKBAR_VISUAL\] groups=1;buttons=1;icons=1;fallback=0;active=1;activations=\d+;active-handle=\d+;hidden=0;invalid=0\r?$'
@@ -828,7 +841,7 @@ function Open-QmpStartApplication {
     if (-not $KeepOpen) {
         Wait-ForContextMarkerCount $taskbarButtonPattern ($taskbarButtonBefore + 1) 6000
     }
-    if (-not $KeepOpen -and $Index -eq 0) {
+    if (-not $KeepOpen -and ($Index -eq 0 -or $ActivateTaskbarItem)) {
         $taskbarContent = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
         $taskbarVisualMatches = [regex]::Matches($taskbarContent,
             '(?m)^\[TASKBAR_VISUAL\] groups=1;buttons=1;icons=1;fallback=0;active=1;activations=(\d+);active-handle=(\d+);hidden=0;invalid=0\r?$')
@@ -1087,6 +1100,123 @@ function Close-QmpLastLaunchedWindow {
             Start-Sleep -Milliseconds 300
         }
     }
+}
+
+function Get-QmpLatestFreeInvalid {
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    if (-not $content) { return $null }
+    $matches = [regex]::Matches($content,
+        '(?m)^APP_RUNTIME_WINDOW_CLOSED=.*;freeInvalid=(\d+)(?:;|$)')
+    if ($matches.Count -gt 0) {
+        return [UInt64]$matches[$matches.Count - 1].Groups[1].Value
+    }
+    $matches = [regex]::Matches($content,
+        '(?m)^CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_INVALID=(\d+)$')
+    if ($matches.Count -eq 0) { return $null }
+    return [UInt64]$matches[$matches.Count - 1].Groups[1].Value
+}
+
+function Invoke-QmpCleanupStressCycle {
+    param($Qmp, [string]$Name, [int]$Index, [string]$CounterName)
+
+    $closedPattern = '(?m)^APP_RUNTIME_WINDOW_CLOSED='
+    $closedBefore = Get-ContextMarkerCount $closedPattern
+    Open-QmpStartApplication $Qmp $Name $Index -ActivateTaskbarItem
+    Wait-ForContextMarkerCount $closedPattern ($closedBefore + 1) 6000
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    if ($content -match '(?im)(#UD|#PF|#GP|CPU_FAULT_[A-Z_]+|PANIC:|UEFI_FRAME_FAULT_CONTEXT)') {
+        throw "Guest fault detected during $Name cleanup cycle."
+    }
+    if ($content -notmatch '(?m)^\[TASKBAR_VISUAL\] groups=0;buttons=0;icons=0;fallback=0;active=0;activations=\d+;active-handle=(?:none|\d+);hidden=0;invalid=0\r?$') {
+        throw "Taskbar projection did not return to empty after $Name cleanup."
+    }
+    $closeLines = [regex]::Matches($content,
+        '(?m)^APP_RUNTIME_WINDOW_CLOSED=.*;windows=(\d+);.*;stale=(\d+)$')
+    if ($closeLines.Count -eq 0 -or
+            $closeLines[$closeLines.Count - 1].Groups[2].Value -ne '0') {
+        throw "ApplicationInstance ownership was stale after $Name cleanup."
+    }
+    $windowCount = [int]$closeLines[$closeLines.Count - 1].Groups[1].Value
+    if ($script:cleanupStressWindowBaselines.ContainsKey($Name)) {
+        if ($script:cleanupStressWindowBaselines[$Name] -ne $windowCount) {
+            throw "$Name cleanup returned $windowCount windows; baseline was $($script:cleanupStressWindowBaselines[$Name])."
+        }
+    } else {
+        $script:cleanupStressWindowBaselines[$Name] = $windowCount
+    }
+    if ($CounterName) { $script:cleanupStressCounts[$CounterName]++ }
+    $script:cleanupStressTelemetry["after_${CounterName}"] = Get-QmpLatestFreeInvalid
+}
+
+function Send-QmpCleanupStressWorkload {
+    param($Qmp)
+
+    $script:cleanupStressCounts = [ordered]@{
+        Notepad = 0
+        Calculator = 0
+        Mixed = 0
+        ComputerFiles = 0
+    }
+    $script:cleanupStressWindowBaselines = @{}
+    $script:cleanupStressTelemetry = [ordered]@{}
+
+    $heartbeatPattern = '(?m)^CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_INVALID=\d+$'
+    $firstHeartbeat = Get-ContextMarkerCount $heartbeatPattern
+    if ($firstHeartbeat -eq 0) {
+        Wait-ForContextMarkerCount $heartbeatPattern 1 5000
+        $firstHeartbeat = 1
+    }
+    $script:cleanupStressTelemetry.boot = Get-QmpLatestFreeInvalid
+    Start-Sleep -Seconds 2
+    $script:cleanupStressTelemetry.idle = Get-QmpLatestFreeInvalid
+
+    Write-Host '  cleanup stress: 50 Notepad cycles' -ForegroundColor Green
+    $script:cleanupStressTelemetry.beforeNotepad = Get-QmpLatestFreeInvalid
+    for ($i = 0; $i -lt 50; $i++) {
+        Invoke-QmpCleanupStressCycle $Qmp 'Notepad' 8 'Notepad'
+        if ($i -eq 0) { $script:cleanupStressTelemetry.oneNotepad = Get-QmpLatestFreeInvalid }
+        if ($i -eq 9) { $script:cleanupStressTelemetry.tenNotepad = Get-QmpLatestFreeInvalid }
+    }
+
+    Write-Host '  cleanup stress: 50 Calculator cycles' -ForegroundColor Green
+    $script:cleanupStressTelemetry.beforeCalculator = Get-QmpLatestFreeInvalid
+    for ($i = 0; $i -lt 50; $i++) {
+        Invoke-QmpCleanupStressCycle $Qmp 'Calculator' 0 'Calculator'
+        if ($i -eq 0) { $script:cleanupStressTelemetry.oneCalculator = Get-QmpLatestFreeInvalid }
+        if ($i -eq 9) { $script:cleanupStressTelemetry.tenCalculator = Get-QmpLatestFreeInvalid }
+    }
+
+    Write-Host '  cleanup stress: 25 alternating Calculator/Notepad cycles' -ForegroundColor Green
+    for ($i = 0; $i -lt 25; $i++) {
+        if (($i % 2) -eq 0) {
+            Invoke-QmpCleanupStressCycle $Qmp 'Calculator' 0 ''
+        } else {
+            Invoke-QmpCleanupStressCycle $Qmp 'Notepad' 8 ''
+        }
+        $script:cleanupStressCounts.Mixed++
+    }
+
+    Write-Host '  desktop control: 10 Computer Files taskbar cycles' -ForegroundColor Green
+    for ($i = 0; $i -lt 10; $i++) {
+        Invoke-QmpCleanupStressCycle $Qmp 'Computer Files' 1 'ComputerFiles'
+    }
+
+    $script:cleanupStressTelemetry.final = Get-QmpLatestFreeInvalid
+    $script:cleanupStressTelemetry.nestedRequests =
+        (Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLEANUP_NESTED_REQUEST;')
+    $script:cleanupStressTelemetry.secondPassBegins =
+        (Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLEANUP_SECOND_PASS_BEGIN;')
+    $expectedEmpty = '(?m)^\[TASKBAR_VISUAL\] groups=0;buttons=0;icons=0;fallback=0;active=0;activations=\d+;active-handle=(?:none|\d+);hidden=0;invalid=0$'
+    if ($script:cleanupStressCounts.Notepad -ne 50 -or
+            $script:cleanupStressCounts.Calculator -ne 50 -or
+            $script:cleanupStressCounts.Mixed -ne 25 -or
+            $script:cleanupStressCounts.ComputerFiles -ne 10 -or
+            (Get-ContextMarkerCount $expectedEmpty) -lt 1) {
+        throw 'Cleanup stress cycle totals or empty taskbar invariant failed.'
+    }
+    Write-Host ("  cleanup stress complete: Notepad=$($script:cleanupStressCounts.Notepad), " +
+        "Calculator=$($script:cleanupStressCounts.Calculator), mixed=$($script:cleanupStressCounts.Mixed), " +
+        "ComputerFiles=$($script:cleanupStressCounts.ComputerFiles)") -ForegroundColor Green
 }
 
 function Open-QmpComputerFilesFromHome {
@@ -1899,6 +2029,9 @@ try {
                     } elseif ($isAppRuntimeValidation) {
                         Send-QmpAppRuntimeWorkload $qmp
                         $status = 'APP_RUNTIME_COMPLETE'
+                    } elseif ($isCleanupStressValidation) {
+                        Send-QmpCleanupStressWorkload $qmp
+                        $status = 'CLEANUP_STRESS_COMPLETE'
                     } elseif ($isWidgetValidation) {
                         if ($WidgetSoak) {
                             Send-QmpWidgetSoak $qmp 600
@@ -1932,8 +2065,23 @@ try {
                     if ($isAppRuntimeValidation) {
                         break
                     }
+                    if ($isCleanupStressValidation) {
+                        break
+                    }
                 } catch {
-                    $inputInjectionError = $_.Exception.Message
+                    $qemuStateAtInputFailure = 'unknown'
+                    $qemuExitCodeAtInputFailure = 'unknown'
+                    try {
+                        $qemu.Refresh()
+                        $qemuStateAtInputFailure = if ($qemu.HasExited) { 'exited' } else { 'running' }
+                        if ($qemu.HasExited) {
+                            $qemuExitCodeAtInputFailure = [string]$qemu.ExitCode
+                        }
+                    } catch {
+                        $qemuStateAtInputFailure = 'refresh-failed'
+                    }
+                    $inputInjectionError = '{0}; qemuAtInputFailure={1}; qemuExitCode={2}' -f `
+                        $_.Exception.Message, $qemuStateAtInputFailure, $qemuExitCodeAtInputFailure
                     $status = 'INPUT_INJECTION_FAILED'
                     break
                 }
@@ -2689,7 +2837,7 @@ Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '   Validation Summary' -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
-Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'TASKBAR_SOAK_COMPLETE', 'APP_RUNTIME_COMPLETE', 'RING3_PROOF_COMPLETE', 'RING3_PHASE30_COMPLETE', 'RING3_PHASE31_COMPLETE', 'RING3_PHASE32_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
+Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'TASKBAR_SOAK_COMPLETE', 'APP_RUNTIME_COMPLETE', 'CLEANUP_STRESS_COMPLETE', 'RING3_PROOF_COMPLETE', 'RING3_PHASE30_COMPLETE', 'RING3_PHASE31_COMPLETE', 'RING3_PHASE32_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
 Write-Host "Dispatch selected: $dispatchSelected" -ForegroundColor Gray
 Write-Host "Continuous entered: $continuousEntered" -ForegroundColor Gray
 Write-Host "Heartbeats: $heartbeatCount (last frame $lastHeartbeatFrame)" -ForegroundColor Gray
@@ -2722,6 +2870,11 @@ if ($appModelValidation) {
     Write-Host "App Model validation: $($appModelValidation.pass)" -ForegroundColor $(if ($appModelValidation.pass) { 'Green' } else { 'Red' })
     Write-Host "Descriptors/factories/fallbacks: $($appModelValidation.descriptors)/$($appModelValidation.factoryRegistrations)/$($appModelValidation.factoryFallbacks)" -ForegroundColor Gray
     Write-Host "Compatibility calls/translations/legacy/failures: $($appModelValidation.compatibilityFacadeCalls)/$($appModelValidation.compatibilityTranslations)/$($appModelValidation.compatibilityLegacyBackendCalls)/$($appModelValidation.compatibilityFailures)" -ForegroundColor Gray
+}
+if ($isCleanupStressValidation -and $script:cleanupStressCounts) {
+    Write-Host "Cleanup stress Notepad/Calculator/mixed/Computer Files: $($script:cleanupStressCounts.Notepad)/$($script:cleanupStressCounts.Calculator)/$($script:cleanupStressCounts.Mixed)/$($script:cleanupStressCounts.ComputerFiles)" -ForegroundColor Gray
+    Write-Host "Cleanup stress freeInvalid samples: $($script:cleanupStressTelemetry | ConvertTo-Json -Compress)" -ForegroundColor Gray
+    Write-Host "Nested cleanup requests/second passes: $($script:cleanupStressTelemetry.nestedRequests)/$($script:cleanupStressTelemetry.secondPassBegins)" -ForegroundColor Gray
 }
 if ($widgetValidation) {
     Write-Host "Widget validation: $($widgetValidation.pass)" -ForegroundColor $(if ($widgetValidation.pass) { 'Green' } else { 'Red' })

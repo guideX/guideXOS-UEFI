@@ -80,6 +80,9 @@ namespace guideXOS.Misc {
             // immediately above, so InitializeModules now has its required
             // object-storage owner before any managed static is used.
             StartupCodeHelpers.InitializeModules(modulesPtr);
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+            Allocator.InitializeInvalidFreeDiagnostics();
+#endif
             BootConsole.WriteLine("[NATIVEAOT] modules initialized");
 
             // Not yet Compatible with UEFI

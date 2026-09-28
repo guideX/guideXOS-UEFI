@@ -1628,9 +1628,8 @@ namespace guideXOS.Misc {
             int cleanupPasses = 0;
             int finalWindows;
             do {
-                WindowManager.CleanupClosedWindows();
+                finalWindows = WindowManager.CleanupClosedWindowsAndGetCountSnapshot();
                 cleanupPasses++;
-                finalWindows = WindowManager.GetWindowCountSnapshot();
             } while (finalWindows != initialWindows && cleanupPasses < 8);
             Marker("PHASE32_WINDOW_CLEANUP_PASSES=" + cleanupPasses.ToString());
             Marker("PHASE32_WINDOW_CLEANUP_END=1");

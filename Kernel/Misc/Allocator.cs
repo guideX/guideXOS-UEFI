@@ -203,6 +203,13 @@ abstract unsafe class Allocator {
     /// Free Fail Corrupt Run
     /// </summary>
     private static ulong _freeFailCorruptRun = 0;
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+    private const int FreeInvalidLogCapacity = 16;
+    private static IntPtr[] _freeInvalidLoggedPointers;
+    private static string[] _freeInvalidLoggedCallers;
+    private static int _freeInvalidLoggedCount;
+    private static bool _freeInvalidLoggerUnavailableReported;
+#endif
     /// <summary>
     /// Free Call Count
     /// </summary>
@@ -223,12 +230,46 @@ abstract unsafe class Allocator {
     /// Free Fail Corrupt Run
     /// </summary>
     public static ulong FreeFailCorruptRun => _freeFailCorruptRun;
+
+    // Object.Dispose is shared by GC-managed references and a few objects that
+    // deliberately occupy one allocator run. Only release the latter; arbitrary
+    // object addresses, frozen strings and interiors of GC segments are not
+    // allocator allocations and must not affect invalid-free telemetry.
+    internal static ulong FreeManagedObjectIfAllocatorRun(IntPtr pointer) {
+        lock (_sync) {
+            long page = GetPageIndexStart(pointer);
+            if (page < 0 || page >= NumPages) return 0;
+            ulong pages = _Info.Pages[page];
+            if (pages == 0 || pages == PageSignature) return 0;
+            return Free(pointer, "Object.Dispose");
+        }
+    }
+
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+    // Called after NativeAOT GC statics have been initialized. Allocator.Initialize
+    // runs earlier during UEFI startup, so managed reference fields assigned there
+    // would be cleared when InitializeModules prepares the GC static bases.
+    internal static void InitializeInvalidFreeDiagnostics() {
+        _freeInvalidLoggedPointers = new IntPtr[FreeInvalidLogCapacity];
+        _freeInvalidLoggedCallers = new string[FreeInvalidLogCapacity];
+        _freeInvalidLoggedCount = 0;
+        _freeInvalidLoggerUnavailableReported = false;
+        SerialWriteFreeInvalidText("ALLOC_INVALID_LOG_READY;capacity=16\n");
+    }
+#endif
+
     /// <summary>
     /// Free
     /// </summary>
     /// <param name="intPtr"></param>
     /// <returns></returns>
-    internal static ulong Free(IntPtr intPtr) {
+    internal static ulong Free(IntPtr intPtr) => Free(intPtr, "unknown");
+
+    internal static ulong Free(IntPtr intPtr, string caller) =>
+        Free(intPtr, caller, 0);
+
+    internal static ulong Free(IntPtr intPtr, string caller,
+                               ulong callerAddress) {
         lock (_sync) {
             _freeCallCount++; // Track every call
             
@@ -236,6 +277,9 @@ abstract unsafe class Allocator {
             
             if (p < 0 || p >= NumPages) { // guard invalid start index
                 _freeFailInvalidPtr++;
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+                LogInvalidFreeOnce(intPtr, caller, callerAddress);
+#endif
                 return 0;
             }
             
@@ -289,6 +333,76 @@ abstract unsafe class Allocator {
             return 0;
         }
     }
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+    private static void LogInvalidFreeOnce(IntPtr pointer, string caller,
+                                          ulong callerAddress) {
+        if (_freeInvalidLoggedPointers == null ||
+                _freeInvalidLoggedCallers == null) {
+            if (!_freeInvalidLoggerUnavailableReported) {
+                _freeInvalidLoggerUnavailableReported = true;
+                SerialWriteFreeInvalidText("ALLOC_INVALID_LOG_UNAVAILABLE\n");
+            }
+            return;
+        }
+        for (int i = 0; i < _freeInvalidLoggedCount; i++) {
+            if (_freeInvalidLoggedPointers[i] == pointer &&
+                    _freeInvalidLoggedCallers[i] == caller) return;
+        }
+        if (_freeInvalidLoggedCount >= FreeInvalidLogCapacity) return;
+        int loggedIndex = _freeInvalidLoggedCount++;
+        _freeInvalidLoggedPointers[loggedIndex] = pointer;
+        _freeInvalidLoggedCallers[loggedIndex] = caller;
+
+        ulong address = (ulong)pointer;
+        ulong start = (ulong)_Info.Start;
+        ulong offset = address >= start ? address - start : 0;
+        string reason = address == 0 ? "null" :
+            address < start ? "below-arena" :
+            (offset % PageSize) != 0 ? "unaligned" :
+            (offset / PageSize) >= (ulong)NumPages ? "past-arena" :
+            "invalid-index";
+
+        SerialWriteFreeInvalidText("ALLOC_FREE_INVALID;ptr=0x");
+        SerialWriteFreeInvalidHex(address);
+        SerialWriteFreeInvalidText(";reason=");
+        SerialWriteFreeInvalidText(reason);
+        SerialWriteFreeInvalidText(";caller=");
+        SerialWriteFreeInvalidText(caller);
+        SerialWriteFreeInvalidText(";callerIp=0x");
+        SerialWriteFreeInvalidHex(callerAddress);
+        SerialWriteFreeInvalidText(";currentOwner=0x");
+        SerialWriteFreeInvalidHex(unchecked((ulong)CurrentOwnerId));
+        SerialWriteFreeInvalidText(";arena=0x");
+        SerialWriteFreeInvalidHex(start);
+        SerialWriteFreeInvalidText(";offset=0x");
+        SerialWriteFreeInvalidHex(offset);
+        if (address >= start && (offset / PageSize) < (ulong)NumPages) {
+            int pageIndex = (int)(offset / PageSize);
+            SerialWriteFreeInvalidText(";pageState=0x");
+            SerialWriteFreeInvalidHex(_Info.Pages[pageIndex]);
+            SerialWriteFreeInvalidText(";allocTag=0x");
+            SerialWriteFreeInvalidHex(_Info.Tags[pageIndex]);
+            SerialWriteFreeInvalidText(";allocOwner=0x");
+            SerialWriteFreeInvalidHex(unchecked((ulong)_Info.Owners[pageIndex]));
+        }
+        Native.Out8(0x3F8, (byte)'\n');
+    }
+
+    private static void SerialWriteFreeInvalidText(string text) {
+        if (text == null) return;
+        for (int i = 0; i < text.Length; i++)
+            Native.Out8(0x3F8, (byte)text[i]);
+    }
+
+    private static void SerialWriteFreeInvalidHex(ulong value) {
+        for (int shift = 60; shift >= 0; shift -= 4) {
+            int nibble = (int)((value >> shift) & 0xFUL);
+            byte c = (byte)(nibble < 10 ? ('0' + nibble) :
+                ('A' + (nibble - 10)));
+            Native.Out8(0x3F8, c);
+        }
+    }
+#endif
     /// <summary>
     /// Allocate
     /// </summary>
@@ -359,14 +473,14 @@ abstract unsafe class Allocator {
     /// <returns></returns>
     public static IntPtr Reallocate(IntPtr intPtr, ulong size) {
         if (intPtr == IntPtr.Zero) return Allocate(size);
-        if (size == 0) { Free(intPtr); return IntPtr.Zero; }
+        if (size == 0) { Free(intPtr, "Allocator.Reallocate"); return IntPtr.Zero; }
         long p = GetPageIndexStart(intPtr); if (p == -1) return intPtr;
         ulong pages = size > PageSize ? (size / PageSize) + ((size % PageSize) != 0 ? 1UL : 0) : 1UL;
         if (_Info.Pages[p] == pages) return intPtr;
         byte tag = _Info.Tags[p]; IntPtr newptr = Allocate(size, (AllocTag)tag);
         if (newptr == IntPtr.Zero) return intPtr; // allocation failed; keep old block
         ulong oldBytes = _Info.Pages[p] * PageSize; ulong copyLen = size < oldBytes ? size : oldBytes;
-        MemoryCopy(newptr, intPtr, copyLen); Free(intPtr); return newptr;
+        MemoryCopy(newptr, intPtr, copyLen); Free(intPtr, "Allocator.Reallocate"); return newptr;
     }
 #pragma warning disable CS8500
     /// <summary>

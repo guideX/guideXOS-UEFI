@@ -642,7 +642,7 @@ namespace guideXOS.Misc {
                 Marker("RING3_CLIPBOARD_RESPONSE_COPIED_OUT=1");
                 return Success;
             } finally {
-                Allocator.Free((System.IntPtr)storage);
+                Allocator.Free((System.IntPtr)storage, "Ring3Abi");
             }
         }
 
@@ -708,7 +708,7 @@ namespace guideXOS.Misc {
                     response->SourceApplicationIdLength);
                 return Success;
             } finally {
-                Allocator.Free((System.IntPtr)storage);
+                Allocator.Free((System.IntPtr)storage, "Ring3Abi");
             }
         }
 
@@ -932,7 +932,7 @@ namespace guideXOS.Misc {
                     response.ResultCode);
                 return Success;
             } finally {
-                Allocator.Free((System.IntPtr)storage);
+                Allocator.Free((System.IntPtr)storage, "Ring3Abi");
             }
         }
 
