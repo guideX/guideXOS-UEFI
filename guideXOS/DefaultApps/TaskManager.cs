@@ -503,11 +503,8 @@ namespace guideXOS.DefaultApps {
                 return;
             var w = GetTombstonedAt(_selectedTombIndex);
             if (w != null) {
-                // Dispose the window properly
-                w.Dispose();
-
-                // Remove from window list
-                WindowManager.Windows.Remove(w);
+                // Dispose and remove atomically with frame cleanup.
+                WindowManager.DisposeAndRemoveWindow(w);
                 _selectedTombIndex = -1;
             }
         }
@@ -1187,20 +1184,14 @@ namespace guideXOS.DefaultApps {
         private void OnEndTask() {
             if (_selectedIndex < 0)
                 return;
-            if (_selectedIndex >= WindowManager.Windows.Count) {
+            if (WindowManager.Windows == null ||
+                    _selectedIndex >= WindowManager.Windows.Count) {
                 _selectedIndex = -1;
                 return;
             }
-
-            Window target = WindowManager.Windows[_selectedIndex];
-            if (target == this)
-                return; // do not end self via button
-
-            // CRITICAL FIX: Dispose window to free all memory
-            target.Dispose();
-
-            // Remove from window list
-            WindowManager.Windows.RemoveAt(_selectedIndex);
+            Window target = WindowManager.DisposeAndRemoveWindowAt(
+                _selectedIndex, this);
+            if (target == null) return;
             if (_selectedIndex >= WindowManager.Windows.Count)
                 _selectedIndex = WindowManager.Windows.Count - 1;
         }

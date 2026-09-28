@@ -23,6 +23,16 @@ namespace System {
         public Object() { }
         ~Object() { }
 
+        /// <summary>
+        /// Compare object references without invoking value equality. This is
+        /// used by generic collections to distinguish object identity even
+        /// when the runtime's generic operator lowering is unavailable.
+        /// </summary>
+        public static bool ReferenceEquals(object left, object right) {
+            return Unsafe.As<object, IntPtr>(ref left) ==
+                   Unsafe.As<object, IntPtr>(ref right);
+        }
+
         public virtual bool Equals(object o)
             => false;
 

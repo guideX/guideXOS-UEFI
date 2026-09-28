@@ -155,6 +155,19 @@ public static class IDT {
         Native.Out8(0x3F8, (byte)'\n');
     }
 
+    private static unsafe void SerialWriteFaultInstructionBytes(ulong rip) {
+        SerialWriteLiteral("FAULT_BYTES=");
+        for (int i = 0; i < 16; i++) {
+            ulong address = rip + (ulong)i;
+            if (!IsMapped(address)) {
+                SerialWriteLiteral("??");
+                continue;
+            }
+            SerialWriteHex8(*(byte*)address);
+        }
+        Native.Out8(0x3F8, (byte)'\n');
+    }
+
     private static unsafe void SerialWritePageTableWalk(ulong virtualAddress) {
         const ulong Present = 1;
         const ulong LargePage = 1UL << 7;
@@ -270,10 +283,13 @@ public static class IDT {
 
         if (irs != null) {
             SerialWriteHexLine64("RIP=", irs->rip);
+            SerialWriteHexLine64("CS=", irs->cs);
+            SerialWriteHexLine64("RFLAGS=", irs->rflags);
             SerialWriteHexLine64("RSP=", GetInterruptedRsp(irs));
             SerialWriteHexLine64("CPU_FRAME_RAW_RSP_SLOT=", irs->rsp);
             SerialWriteHexLine64("CPU_FRAME_RAW_SS_SLOT=", irs->ss);
             SerialWriteStackNeighborhood(GetInterruptedRsp(irs));
+            if (irq == 6) SerialWriteFaultInstructionBytes(irs->rip);
         }
 
         if (regs != null) {

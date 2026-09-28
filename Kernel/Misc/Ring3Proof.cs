@@ -1,5 +1,6 @@
 using guideXOS.OS;
 using guideXOS.GUI;
+using Internal.Runtime.CompilerServices;
 using System;
 
 namespace guideXOS.Misc {
@@ -1337,6 +1338,108 @@ namespace guideXOS.Misc {
                     out factory) && factory is NotepadApplicationFactory;
         }
 
+        private static void MarkPhase32TargetTermination(string stage,
+                int targetIndex, ApplicationInstance target,
+                bool terminated) {
+            if (target == null) {
+                Program.MarkUefiRing3Phase32(
+                    "TARGET_TERMINATE;stage=" + stage +
+                    ";targetIndex=" + targetIndex.ToString() +
+                    ";instance=none;terminated=" + (terminated ? "1" : "0"));
+                return;
+            }
+
+            int ownedCount = target.OwnedWindowCount;
+            if (ownedCount == 0) {
+                Program.MarkUefiRing3Phase32(
+                    "TARGET_TERMINATE;stage=" + stage +
+                    ";targetIndex=" + targetIndex.ToString() +
+                    ";instance=" + target.Handle.Value.ToString() +
+                    ";generation=" + target.Handle.Generation.ToString() +
+                    ";appId=" + target.DescriptorId +
+                    ";lifecycle=" + ApplicationInstanceLifecycle.Name(
+                        target.LifecycleState) +
+                    ";owned=0;terminated=" + (terminated ? "1" : "0") +
+                    ";memory=" + Allocator.MemoryInUse.ToString() +
+                    ";freeInvalid=" + Allocator.FreeFailInvalidPtr.ToString() +
+                    ";freeNoPages=" + Allocator.FreeFailNoPages.ToString() +
+                    ";freeCorrupt=" + Allocator.FreeFailCorruptRun.ToString());
+                return;
+            }
+
+            for (int ownedIndex = 0; ownedIndex < ownedCount; ownedIndex++) {
+                Window window = target.GetOwnedWindowAt(ownedIndex);
+                TaskbarApplicationEntry entry = null;
+                bool taskbarEntry = window != null &&
+                    TaskbarApplicationEntryRegistry.TryGet(target.Handle,
+                        out entry) && entry != null;
+                string title = window == null ? "" : window.Title ?? "";
+                if (title.Length > 64) title = title.Substring(0, 64);
+                int windowIndex = window == null || WindowManager.Windows == null
+                    ? -1 : WindowManager.Windows.IndexOf(window);
+                ulong windowObject = window == null ? 0UL :
+                    Unsafe.As<Window, ulong>(ref window);
+                int referenceWindowIndex = -1;
+                if (windowObject != 0UL && WindowManager.Windows != null) {
+                    for (int listIndex = 0;
+                            listIndex < WindowManager.Windows.Count;
+                            listIndex++) {
+                        Window candidate = WindowManager.Windows[listIndex];
+                        ulong candidateObject = candidate == null ? 0UL :
+                            Unsafe.As<Window, ulong>(ref candidate);
+                        if (candidateObject == windowObject) {
+                            referenceWindowIndex = listIndex;
+                            break;
+                        }
+                    }
+                }
+                bool topmost = window != null && WindowManager.Windows != null &&
+                    WindowManager.Windows.Count > 0 &&
+                    WindowManager.Windows[WindowManager.Windows.Count - 1] ==
+                        window;
+                Program.MarkUefiRing3Phase32(
+                    "TARGET_TERMINATE;stage=" + stage +
+                    ";targetIndex=" + targetIndex.ToString() +
+                    ";instance=" + target.Handle.Value.ToString() +
+                    ";generation=" + target.Handle.Generation.ToString() +
+                    ";appId=" + target.DescriptorId +
+                    ";lifecycle=" + ApplicationInstanceLifecycle.Name(
+                        target.LifecycleState) +
+                    ";ownedIndex=" + ownedIndex.ToString() +
+                    ";windowIndex=" + windowIndex.ToString() +
+                    ";windowReferenceIndex=" + referenceWindowIndex.ToString() +
+                    ";windowObject=" + windowObject.ToString() +
+                    ";windowType=Notepad;title=" + title +
+                    ";ownerId=" + (window == null ? 0 :
+                        window.OwnerId).ToString() +
+                    ";windowOwner=" + (window == null ? 0UL :
+                        window.ApplicationInstanceHandle.Value).ToString() +
+                    ";visible=" + (window != null && window.Visible ? "1" : "0") +
+                    ";minimized=" + (window != null && window.IsMinimized ?
+                        "1" : "0") +
+                    ";tombstoned=" + (window != null && window.IsTombstoned ?
+                        "1" : "0") +
+                    ";disposed=" + (window != null && window.IsDisposed ?
+                        "1" : "0") +
+                    ";topmost=" + (topmost ? "1" : "0") +
+                    ";taskbarEntry=" + (taskbarEntry ? "1" : "0") +
+                    ";taskbarActive=" + (taskbarEntry && entry.IsActive ?
+                        "1" : "0") +
+                    ";taskbarActiveWindow=" + (taskbarEntry &&
+                        entry.ActiveWindow == window ? "1" : "0") +
+                    ";taskbarRecentWindow=" + (taskbarEntry &&
+                        entry.MostRecentWindow == window ? "1" : "0") +
+                    ";activeApp=" +
+                        ApplicationInstanceRegistry.ActiveApplicationHandle.Value.ToString() +
+                    ";ownedCount=" + target.OwnedWindowCount.ToString() +
+                    ";terminated=" + (terminated ? "1" : "0") +
+                    ";memory=" + Allocator.MemoryInUse.ToString() +
+                    ";freeInvalid=" + Allocator.FreeFailInvalidPtr.ToString() +
+                    ";freeNoPages=" + Allocator.FreeFailNoPages.ToString() +
+                    ";freeCorrupt=" + Allocator.FreeFailCorruptRun.ToString());
+            }
+        }
+
         private static void RunPhase32() {
             Native.Cli();
             Marker("PHASE32_BEGIN=1");
@@ -1347,8 +1450,7 @@ namespace guideXOS.Misc {
             const string targetId = "gxos.builtin.notepad";
             int initialTargets = ApplicationInstanceRegistry.CountByDescriptor(
                 targetId);
-            int initialWindows = WindowManager.Windows == null ? 0 :
-                WindowManager.Windows.Count;
+            int initialWindows = WindowManager.GetWindowCountSnapshot();
             int factoryStart = ApplicationFactoryRegistry.FactoryLaunches;
             int fallbackStart =
                 ApplicationFactoryRegistry.CompatibilityFallbackLaunches;
@@ -1510,8 +1612,12 @@ namespace guideXOS.Misc {
             for (int i = 0; i < targetIndex; i++) {
                 ApplicationInstance target = launchedTargets[i];
                 Marker("PHASE32_TARGET_CLEANUP_INDEX=" + i.ToString());
-                if (target == null || !ApplicationInstanceRegistry.TryTerminate(
-                        target, "Phase 32 diagnostic target cleanup")) {
+                MarkPhase32TargetTermination("BEGIN", i, target, false);
+                bool terminated = target != null &&
+                    ApplicationInstanceRegistry.TryTerminate(target,
+                        "Phase 32 diagnostic target cleanup");
+                MarkPhase32TargetTermination("END", i, target, terminated);
+                if (!terminated) {
                     cleanup = false;
                     Marker("PHASE32_TARGET_CLEANUP_ITEM=FAIL");
                 } else {
@@ -1519,19 +1625,52 @@ namespace guideXOS.Misc {
                 }
             }
             Marker("PHASE32_WINDOW_CLEANUP_BEGIN=1");
-            WindowManager.CleanupClosedWindows();
+            int cleanupPasses = 0;
+            int finalWindows;
+            do {
+                WindowManager.CleanupClosedWindows();
+                cleanupPasses++;
+                finalWindows = WindowManager.GetWindowCountSnapshot();
+            } while (finalWindows != initialWindows && cleanupPasses < 8);
+            Marker("PHASE32_WINDOW_CLEANUP_PASSES=" + cleanupPasses.ToString());
             Marker("PHASE32_WINDOW_CLEANUP_END=1");
-            bool balanced = cleanup &&
-                ApplicationInstanceRegistry.CountByDescriptor(targetId) ==
-                    initialTargets &&
-                ApplicationServiceRegistry.ActiveRequestCount == 0 &&
-                _owner == null &&
-                (WindowManager.Windows == null ? 0 :
-                    WindowManager.Windows.Count) == initialWindows &&
-                ApplicationFactoryRegistry.FactoryLaunches == factoryStart + 11 &&
-                ApplicationFactoryRegistry.CompatibilityFallbackLaunches ==
-                    fallbackStart &&
-                AppModelCompatibilityDiagnostics.LegacyBackendCalls == legacyStart;
+            int finalTargets = ApplicationInstanceRegistry.CountByDescriptor(
+                targetId);
+            int finalFactories = ApplicationFactoryRegistry.FactoryLaunches;
+            int finalFallbacks =
+                ApplicationFactoryRegistry.CompatibilityFallbackLaunches;
+            int finalLegacyCalls =
+                AppModelCompatibilityDiagnostics.LegacyBackendCalls;
+            int finalActiveRequests =
+                ApplicationServiceRegistry.ActiveRequestCount;
+            bool ownerReleased = _owner == null;
+            bool targetsBalanced = finalTargets == initialTargets;
+            bool windowsBalanced = finalWindows == initialWindows;
+            bool factoriesBalanced = finalFactories == factoryStart + 11;
+            bool fallbacksBalanced = finalFallbacks == fallbackStart;
+            bool legacyBalanced = finalLegacyCalls == legacyStart;
+            bool requestsBalanced = finalActiveRequests == 0;
+            Marker("PHASE32_BALANCE_DETAIL=targets:" + initialTargets.ToString() +
+                ":" + finalTargets.ToString() +
+                ";windows:" + initialWindows.ToString() +
+                ":" + finalWindows.ToString() +
+                ";factories:" + factoryStart.ToString() +
+                ":" + finalFactories.ToString() +
+                ";fallbacks:" + fallbackStart.ToString() +
+                ":" + finalFallbacks.ToString() +
+                ";legacy:" + legacyStart.ToString() +
+                ":" + finalLegacyCalls.ToString() +
+                ";requests:" + finalActiveRequests.ToString() +
+                ";ownerReleased:" + (ownerReleased ? "1" : "0") +
+                ";targetsBalanced:" + (targetsBalanced ? "1" : "0") +
+                ";windowsBalanced:" + (windowsBalanced ? "1" : "0") +
+                ";factoriesBalanced:" + (factoriesBalanced ? "1" : "0") +
+                ";fallbacksBalanced:" + (fallbacksBalanced ? "1" : "0") +
+                ";legacyBalanced:" + (legacyBalanced ? "1" : "0") +
+                ";requestsBalanced:" + (requestsBalanced ? "1" : "0"));
+            bool balanced = cleanup && targetsBalanced && requestsBalanced &&
+                ownerReleased && windowsBalanced && factoriesBalanced &&
+                fallbacksBalanced && legacyBalanced;
             Marker("PHASE32_SUCCESSFUL_RETURN_LIFETIMES=" +
                 successfulReturns.ToString());
             Marker(targetIndex == 6 ? "PHASE32_TARGET_INSTANCE_COUNT=6" :

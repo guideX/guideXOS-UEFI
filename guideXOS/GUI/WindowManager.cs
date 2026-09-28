@@ -3,6 +3,7 @@ using guideXOS.FS;
 using guideXOS.Misc;
 using guideXOS.Kernel.Drivers;
 using guideXOS.OS;
+using Internal.Runtime.CompilerServices;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
@@ -51,6 +52,14 @@ namespace guideXOS.GUI {
                 H;
         }
         static List<PendingWindow> _pending;
+        // Windows is read by the frame loop and mutated by input, lifecycle,
+        // and cleanup paths. Keep every structural mutation and the cleanup
+        // pass under one reentrant lock so reverse scans cannot race another
+        // removal or a z-order move.
+        private static readonly object _cleanupClosedWindowsSync = new object();
+        private static bool _cleanupClosedWindowsRunning;
+        private static bool _cleanupClosedWindowsPending;
+        private static int _nextWindowOwnerId;
         // Perf tracking toggled off by default (previous logic caused potential hang during early boot)
         private static bool _perfTrackingEnabled = false; // can be enabled later by TaskManager if desired
         private static ulong _cpuEpochTick;
@@ -255,29 +264,87 @@ namespace guideXOS.GUI {
         public static void MoveToEnd(Window window) {
             if (window == null)
                 return;
-            
-            // Safety: Check if Windows list is initialized
-            if (Windows == null) {
-                Windows = new List<Window>();
-            }
-            
-            // Remove ALL instances of this window (in case of duplicates)
-            // Use a safe iteration approach to prevent index issues
-            int removed = 0;
-            for (int i = Windows.Count - 1; i >= 0; i--) {
-                if (i < Windows.Count && Windows[i] == window) {
-                    Windows.RemoveAt(i);
-                    removed++;
-                    // Safety: prevent infinite loop if something goes wrong
-                    if (removed > 100) break;
+
+            lock (_cleanupClosedWindowsSync) {
+                // Safety: Check if Windows list is initialized
+                if (Windows == null) {
+                    Windows = new List<Window>();
                 }
+
+                // Remove ALL instances of this window (in case of duplicates)
+                int removed = 0;
+                for (int i = Windows.Count - 1; i >= 0; i--) {
+                    if (i < Windows.Count && Windows[i] == window) {
+                        Windows.RemoveAt(i);
+                        removed++;
+                        if (removed > 100) break;
+                    }
+                }
+
+                // Add once at the end. Graphical z-order remains independent
+                // from semantic application lifecycle ownership.
+                Windows.Add(window);
             }
-            
-            // Add once at the end.  Graphical z-order is intentionally kept
-            // independent from semantic application lifecycle ownership;
-            // taskbar, factory, and shell paths notify the registry
-            // at their explicit ownership boundaries.
-            Windows.Add(window);
+        }
+
+        /// <summary>
+        /// Add a newly constructed window and give it a unique allocator owner
+        /// identity. The identity must not depend on z-order or List.IndexOf.
+        /// </summary>
+        internal static int RegisterWindow(Window window) {
+            if (window == null) return 0;
+            lock (_cleanupClosedWindowsSync) {
+                if (Windows == null) Windows = new List<Window>();
+                unchecked {
+                    _nextWindowOwnerId++;
+                    if (_nextWindowOwnerId <= 0) _nextWindowOwnerId = 1;
+                }
+                Windows.Add(window);
+                return _nextWindowOwnerId;
+            }
+        }
+
+        /// <summary>
+        /// Dispose and remove a window as one serialized manager operation.
+        /// Task Manager uses this instead of mutating the public list directly.
+        /// </summary>
+        internal static bool DisposeAndRemoveWindow(Window window) {
+            if (window == null) return false;
+            lock (_cleanupClosedWindowsSync) {
+                if (Windows == null) return false;
+                int found = -1;
+                for (int i = Windows.Count - 1; i >= 0; i--) {
+                    if (Windows[i] == window) {
+                        found = i;
+                        break;
+                    }
+                }
+                if (found < 0) return false;
+                window.Dispose();
+                for (int i = Windows.Count - 1; i >= 0; i--) {
+                    if (Windows[i] == window) Windows.RemoveAt(i);
+                }
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Resolve, dispose, and remove the selected window under the manager
+        /// lock so a stale Task Manager row cannot target a different window.
+        /// </summary>
+        internal static Window DisposeAndRemoveWindowAt(int index,
+                Window excludedWindow) {
+            lock (_cleanupClosedWindowsSync) {
+                if (Windows == null || index < 0 || index >= Windows.Count)
+                    return null;
+                Window window = Windows[index];
+                if (window == null || window == excludedWindow) return null;
+                window.Dispose();
+                for (int i = Windows.Count - 1; i >= 0; i--) {
+                    if (Windows[i] == window) Windows.RemoveAt(i);
+                }
+                return window;
+            }
         }
 
         /// <summary>
@@ -494,16 +561,17 @@ namespace guideXOS.GUI {
         }
 
         internal static bool ReleaseTransientServiceWindow(Window window) {
-            bool released = ApplicationServiceSessionTable.ReleaseTransientWindow(window);
-            if (window != null && Windows != null) {
-                // Dispose is the final graphical boundary.  Remove every
-                // bounded duplicate reference so a stale list entry cannot
-                // keep a service window alive after its semantic session ends.
-                for (int i = Windows.Count - 1; i >= 0; i--) {
-                    if (Windows[i] == window) Windows.RemoveAt(i);
+            lock (_cleanupClosedWindowsSync) {
+                bool released = ApplicationServiceSessionTable.ReleaseTransientWindow(window);
+                if (window != null && Windows != null) {
+                    // Dispose is the final graphical boundary. Remove every
+                    // bounded duplicate reference before cleanup can rescan.
+                    for (int i = Windows.Count - 1; i >= 0; i--) {
+                        if (Windows[i] == window) Windows.RemoveAt(i);
+                    }
                 }
+                return released;
             }
-            return released;
         }
 
         /// <summary>
@@ -531,6 +599,40 @@ namespace guideXOS.GUI {
         /// This should be called periodically (e.g., once per frame after drawing)
         /// </summary>
         public static void CleanupClosedWindows() {
+            lock (_cleanupClosedWindowsSync) {
+                // Cleanup is requested by both the frame loop and diagnostic
+                // lifecycle paths. Serialize those callers so two reverse
+                // scans cannot remove or dispose the same list entry at once.
+                // Monitor locks are reentrant, so turn a nested same-thread
+                // request into a second pass after the current pass completes.
+                if (_cleanupClosedWindowsRunning) {
+                    _cleanupClosedWindowsPending = true;
+                    return;
+                }
+
+                _cleanupClosedWindowsRunning = true;
+                try {
+                    do {
+                        _cleanupClosedWindowsPending = false;
+                        CleanupClosedWindowsCore();
+                    } while (_cleanupClosedWindowsPending);
+                } finally {
+                    _cleanupClosedWindowsRunning = false;
+                    _cleanupClosedWindowsPending = false;
+                }
+            }
+        }
+
+        internal static int GetWindowCountSnapshot() {
+            lock (_cleanupClosedWindowsSync) {
+                return Windows == null ? 0 : Windows.Count;
+            }
+        }
+
+        private static void CleanupClosedWindowsCore() {
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+            bool diagnosticCleanupStarted = false;
+#endif
             // FIXED: Remove windows that are no longer visible and dispose them properly
             for (int i = Windows.Count - 1; i >= 0; i--) {
                 var w = Windows[i];
@@ -553,9 +655,27 @@ namespace guideXOS.GUI {
                 }
                 // Remove windows that are not visible and not animating (i.e., fully closed)
                 if (!w.Visible && !w.IsMinimized && !w.IsTombstoned) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+                    string cleanupIdentity = DescribeCleanupWindow(i, w);
+                    if (!diagnosticCleanupStarted) {
+                        Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_ENTRY;windows=" +
+                            Windows.Count.ToString());
+                        diagnosticCleanupStarted = true;
+                    }
+                    Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_SELECTED;" +
+                        cleanupIdentity);
+                    Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_REMOVE_BEGIN;" +
+                        cleanupIdentity);
+#endif
                     // Check if window has no ongoing animation
                     // A window with _animType == None and not visible is considered disposed
                     Windows.RemoveAt(i);
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+                    Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_REMOVE_END;" +
+                        cleanupIdentity + ";windows=" + Windows.Count.ToString());
+                    Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_OWNER_DETACH_BEGIN;" +
+                        cleanupIdentity);
+#endif
                     // FIXED: Dispose the window to free its resources
                     if (w != null) {
                         string closedTitle = w.Title ?? "";
@@ -564,7 +684,20 @@ namespace guideXOS.GUI {
                         if (!w.IsServiceSessionWindow) {
                             ApplicationInstanceRegistry.OnWindowClosed(w);
                         }
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+                        Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_OWNER_DETACH_END;" +
+                            cleanupIdentity + ";ownerAfter=" +
+                            w.ApplicationInstanceHandle.Value.ToString());
+                        Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_DISPOSE_BEGIN;" +
+                            cleanupIdentity + ";disposed=" +
+                            (w.IsDisposed ? "1" : "0"));
+#endif
                         w.Dispose();
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+                        Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_DISPOSE_END;" +
+                            cleanupIdentity + ";disposed=" +
+                            (w.IsDisposed ? "1" : "0"));
+#endif
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                         Program.MarkUefiAppRuntime("WINDOW_CLOSED=title=" +
                             closedTitle + ";type=WINDOW" +
@@ -578,7 +711,90 @@ namespace guideXOS.GUI {
                     }
                 }
             }
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+            if (diagnosticCleanupStarted) {
+                Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_TASKBAR_RECONCILE_BEGIN;entries=" +
+                    TaskbarApplicationEntryRegistry.EntryCount.ToString());
+            }
+#endif
             TaskbarApplicationEntryRegistry.Reconcile();
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+            if (diagnosticCleanupStarted) {
+                Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_TASKBAR_RECONCILE_END;entries=" +
+                    TaskbarApplicationEntryRegistry.EntryCount.ToString());
+                Program.MarkUefiRing3Phase32("WINDOW_CLEANUP_EXIT;windows=" +
+                    Windows.Count.ToString());
+            }
+#endif
         }
+
+#if UEFI_DIAGNOSTIC_RING3_PHASE32
+        private static unsafe string DescribeCleanupWindow(int index, Window window) {
+            ulong objectAddress = Unsafe.As<Window, ulong>(ref window);
+            ulong methodTable = objectAddress == 0 ? 0 : *(ulong*)objectAddress;
+            ulong disposeTarget = methodTable == 0 ? 0 :
+                *(ulong*)(methodTable + 0x50);
+            ApplicationInstanceHandle ownerHandle = window.ApplicationInstanceHandle;
+            ApplicationInstance owner = null;
+            bool ownerLive = ownerHandle.IsValid &&
+                ApplicationInstanceRegistry.TryGet(ownerHandle, out owner) &&
+                owner != null;
+            string appId = ownerLive ? owner.DescriptorId : "none";
+            string lifecycle = ownerLive
+                ? ApplicationInstanceLifecycle.Name(owner.LifecycleState) : "unresolved";
+            string title = window.Title ?? "";
+            if (title.Length > 64) title = title.Substring(0, 64);
+            Thread currentThread = ThreadPool.CurrentThread;
+            ulong threadAddress = currentThread == null ? 0 :
+                Unsafe.As<Thread, ulong>(ref currentThread);
+            Ring3Process currentProcess = ThreadPool.CurrentProcess;
+            ulong processHandle = currentProcess == null ? 0 :
+                currentProcess.Handle.Value;
+            TaskbarApplicationEntry entry = null;
+            bool taskbarEntry = ownerHandle.IsValid &&
+                TaskbarApplicationEntryRegistry.TryGet(ownerHandle, out entry) &&
+                entry != null;
+
+            return "index=" + index.ToString() +
+                ";serialObject=" + objectAddress.ToString() +
+                ";type=" + CleanupWindowType(window) +
+                ";typeTable=" + methodTable.ToString() +
+                ";title=" + title +
+                ";ownerId=" + window.OwnerId.ToString() +
+                ";owner=" + ownerHandle.Value.ToString() +
+                ";generation=" + ownerHandle.Generation.ToString() +
+                ";appId=" + appId +
+                ";lifecycle=" + lifecycle +
+                ";ownsWindow=" + (ownerLive && owner.OwnsWindow(window) ? "1" : "0") +
+                ";visible=" + (window.Visible ? "1" : "0") +
+                ";minimized=" + (window.IsMinimized ? "1" : "0") +
+                ";tombstoned=" + (window.IsTombstoned ? "1" : "0") +
+                ";disposed=" + (window.IsDisposed ? "1" : "0") +
+                ";methodTable=" + methodTable.ToString() +
+                ";disposeTarget=" + disposeTarget.ToString() +
+                ";activeApp=" + ApplicationInstanceRegistry.ActiveApplicationHandle.Value.ToString() +
+                ";taskbarEntry=" + (taskbarEntry ? "1" : "0") +
+                ";taskbarActive=" + (taskbarEntry && entry.IsActive ? "1" : "0") +
+                ";taskbarActiveWindow=" + (taskbarEntry && entry.ActiveWindow == window ? "1" : "0") +
+                ";taskbarMostRecentWindow=" + (taskbarEntry && entry.MostRecentWindow == window ? "1" : "0") +
+                ";topmost=" + (Windows != null && Windows.Count > 0 &&
+                    Windows[Windows.Count - 1] == window ? "1" : "0") +
+                ";thread=" + threadAddress.ToString() +
+                ";process=" + processHandle.ToString() +
+                ";memory=" + Allocator.MemoryInUse.ToString() +
+                ";freeInvalid=" + Allocator.FreeFailInvalidPtr.ToString() +
+                ";freeNoPages=" + Allocator.FreeFailNoPages.ToString() +
+                ";freeCorrupt=" + Allocator.FreeFailCorruptRun.ToString();
+        }
+
+        private static string CleanupWindowType(Window window) {
+            if (window is Notepad) return "Notepad";
+            if (window is Calculator) return "Calculator";
+            if (window is ComputerFiles) return "ComputerFiles";
+            if (window is TaskManager) return "TaskManager";
+            if (window is GXMScriptWindow) return "GXMScriptWindow";
+            return "Window";
+        }
+#endif
     }
 }

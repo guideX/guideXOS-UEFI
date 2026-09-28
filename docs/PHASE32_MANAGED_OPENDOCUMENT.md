@@ -1,6 +1,8 @@
 # Phase 32 — Managed OpenDocument through the Phase 9 Shell service
 
-**Earlier run: Outcome A. Current-checkout revalidation: OpenDocument gates pass, but window cleanup faults (Outcome G for this run).**
+> **Current status:** the 2026-09-27 H2 repair supersedes the earlier cleanup-failure status below. The accepted current cleanup diagnosis and latest verification are maintained in [UEFI_INTEGRATION_H2_WINDOW_CLEANUP.md](UEFI_INTEGRATION_H2_WINDOW_CLEANUP.md). The remainder of this document preserves the older Phase 32 proof report and its historical checkout-specific statements; do not use those historical statements as the current repository state.
+
+**Historical run:** Phase32 semantic gates passed, but that checkout's later cleanup run faulted. The H2 repair and current verification are recorded in [UEFI_INTEGRATION_H2_WINDOW_CLEANUP.md](UEFI_INTEGRATION_H2_WINDOW_CLEANUP.md).
 
 In the earlier completed run, the primary NativeAOT application used only the public `GuideXos.User` SDK, passed a bounded document path, received a copied typed success result, and returned `32`. The App Model resolved the association, constructed the file launch request, selected the Notepad factory, created and activated the target, and delivered the document value. Five successful OpenDocument requester lifetimes returned `32` (four primary requesters and one replacement). Empty, oversized, unsupported-association, missing-document, stale-owner, and FailFast cases were also exercised. The 2026-09-27 revalidation below repeats those gates, but cannot claim final window/resource balance because the shared window-cleanup path faults afterward.
 
@@ -283,7 +285,7 @@ No source or configuration change was made under `out\rt`; the nested checkout�
 
 The public managed SDK now has bounded Shell application launch and OpenDocument, typed transport and Shell outcomes, and no async shell request handles, GUI/window API, file picker, Save dialog, or general file-reading API. Resolve the current target-window cleanup fault and rerun the complete balance checks before expanding the SDK. After that, a small Phase 33 candidate is a managed typed shell-action call through the existing Shell service, with action identity still resolved by the App Model’s fixed registry.
 
-## Follow-up revalidation at the current checkout
+## Historical follow-up revalidation (superseded by the H2 repair)
 
 On 2026-09-27, the current checkout was revalidated from `main` at starting HEAD `4b0576cda6acf7c5daa5c3468b6fe437d2fffdf4`. The branch remained at the same HEAD and `origin/main` ahead/behind remained `0/0`. The Phase 31 checkpoint `a1173c100002e49aaf451b5d1eabe98085c18001` is already in its ancestry. The root worktree initially contained 18 modified tracked Phase 30 EXE/GXMI artifacts; their original bytes were backed up before the full build and restored afterward. `out\rt` remained at `9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3`, detached, with exactly its preflight tracked and untracked status; no runtime source was changed.
 

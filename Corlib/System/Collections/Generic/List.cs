@@ -74,11 +74,11 @@ namespace System.Collections.Generic {
         }
 
         public int IndexOf(T item) {
+            object boxedItem = (object)item;
             for (int i = 0; i < Count; i++) {
-                T first = this[i];
-                T second = item;
-
-                if (this[i] == item)
+                object first = (object)this[i];
+                if (object.ReferenceEquals(first, boxedItem) ||
+                    (first != null && first.Equals(boxedItem)))
                     return i;
             }
 

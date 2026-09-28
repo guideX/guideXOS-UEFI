@@ -123,6 +123,7 @@ namespace guideXOS.GUI {
         private Graphics _blurredBarG; // persistent graphics for cache to avoid repeated allocations
         private int _cachedBarX, _cachedBarY, _cachedBarW, _cachedBarH;
         private bool _disposed;
+        internal bool IsDisposed => _disposed;
         #endregion
         #region "methods"
         /// <summary>
@@ -160,10 +161,9 @@ namespace guideXOS.GUI {
             this.X = X; this.Y = Y; this.Width = Width; this.Height = Height; _normX = X; _normY = Y; _normW = Width; _normH = Height;
             ClampToScreen(); 
             this.Visible = true; 
-            WindowManager.Windows.Add(this); 
+            _ownerId = WindowManager.RegisterWindow(this);
             Title = "Window1"; 
             TaskbarIcon = Icons.DocumentIcon(32);
-            _ownerId = WindowManager.Windows.IndexOf(this) + 1; // stable owner id
             Allocator.CurrentOwnerId = _ownerId; // set current owner context during construction allocations
             BeginFadeIn();
             Allocator.CurrentOwnerId = 0; // reset

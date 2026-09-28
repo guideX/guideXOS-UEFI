@@ -1364,9 +1364,10 @@ function Send-QmpAppRuntimeWorkload {
 
     Open-QmpTaskbarOverflow $Qmp
 
-    # Repeated launches of a light and a text application expose duplicate
-    # registrations, stale state, and owner-memory cleanup defects.
-    for ($cycle = 0; $cycle -lt 3; $cycle++) {
+    # Ten total launches per target (the initial launch above plus nine
+    # repeated launches) exercise duplicate registrations, stale state, and
+    # owner-memory cleanup on every normal open/close boundary.
+    for ($cycle = 0; $cycle -lt 9; $cycle++) {
         Open-QmpStartApplication $Qmp 'Calculator' 0
         Open-QmpStartApplication $Qmp 'Notepad' 8
     }
@@ -1894,6 +1895,7 @@ try {
                         Send-QmpContextMenuWorkload $qmp
                     } elseif ($isTaskbarSoakValidation) {
                         Send-QmpTaskbarSoak $qmp 120
+                        $status = 'TASKBAR_SOAK_COMPLETE'
                     } elseif ($isAppRuntimeValidation) {
                         Send-QmpAppRuntimeWorkload $qmp
                         $status = 'APP_RUNTIME_COMPLETE'
@@ -1919,6 +1921,9 @@ try {
                             Send-QmpContextMenuSoak $qmp 300
                         }
                         $status = 'CONTEXT_MENU_COMPLETE'
+                        break
+                    }
+                    if ($isTaskbarSoakValidation) {
                         break
                     }
                     if ($isWidgetValidation) {
@@ -2684,7 +2689,7 @@ Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '   Validation Summary' -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
-Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'APP_RUNTIME_COMPLETE', 'RING3_PROOF_COMPLETE', 'RING3_PHASE30_COMPLETE', 'RING3_PHASE31_COMPLETE', 'RING3_PHASE32_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
+Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'TASKBAR_SOAK_COMPLETE', 'APP_RUNTIME_COMPLETE', 'RING3_PROOF_COMPLETE', 'RING3_PHASE30_COMPLETE', 'RING3_PHASE31_COMPLETE', 'RING3_PHASE32_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
 Write-Host "Dispatch selected: $dispatchSelected" -ForegroundColor Gray
 Write-Host "Continuous entered: $continuousEntered" -ForegroundColor Gray
 Write-Host "Heartbeats: $heartbeatCount (last frame $lastHeartbeatFrame)" -ForegroundColor Gray
