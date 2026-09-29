@@ -69,6 +69,12 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'CleanupStress'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_APP_RUNTIME;UEFI_DIAGNOSTIC_CLEANUP_STRESS</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'StartMenuStress'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_START_MENU_STRESS</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'ForegroundStress'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_APP_RUNTIME;UEFI_DIAGNOSTIC_START_MENU_STRESS</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'FaultBytesProbe'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_FAULT_BYTES_PROBE</DefineConstants>
 	</PropertyGroup>

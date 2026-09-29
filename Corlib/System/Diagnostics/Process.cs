@@ -49,8 +49,14 @@ namespace System.Diagnostics {
         [DllImport("*")]
         static unsafe extern void memcpy(byte* dest, byte* src, ulong count);
 
+#if Kernel
+        static void StartThread(delegate*<void> func) {
+            guideXOS.API.API_StartThread(func);
+        }
+#else
         [DllImport("StartThread")]
         static extern void StartThread(delegate*<void> func);
+#endif
 
         static void FixImageRelocations(DOSHeader* dos_header, NtHeaders64* nt_header, long delta) {
             ulong size;

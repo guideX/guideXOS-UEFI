@@ -20,9 +20,17 @@ namespace Internal.Runtime.CompilerHelpers {
         }
 
         public static unsafe IntPtr ResolvePInvoke(MethodFixupCell* pCell) {
+#if Kernel
+            // The dynamic P/Invoke trampoline is a Ring 3 syscall entry. Kernel
+            // imports must be linked directly or routed through typed kernel
+            // APIs; fail closed if one reaches the generic resolver.
+            guideXOS.Misc.Panic.Error("Unsupported dynamic kernel P/Invoke", false);
+            return IntPtr.Zero;
+#else
             uint int0x80 = 0xC380CD;
             uint* ptr = &int0x80;
             return ((delegate*<MethodFixupCell*, IntPtr>)ptr)(pCell);
+#endif
         }
 
         public static unsafe string StringToAnsiString(string str, bool bestFit, bool throwOnUnmappableChar) {

@@ -281,9 +281,16 @@ unsafe class Program {
     }
 
     internal static void MarkUefiStartMenuOpened() {
-#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS || UEFI_DIAGNOSTIC_APP_RUNTIME
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_START_MENU_STRESS
         if (!IsUefiMode) return;
         SerialBreadcrumb("START_MENU_OPENED");
+#endif
+    }
+
+    internal static void MarkUefiStartMenuStress(string breadcrumb) {
+#if UEFI_DIAGNOSTIC_START_MENU_STRESS
+        if (!IsUefiMode || breadcrumb == null) return;
+        SerialBreadcrumb("H2D_START_MENU_" + breadcrumb);
 #endif
     }
 

@@ -120,6 +120,7 @@ public static class IDT {
 
     // Counter for IRQ0 debug output
     private static uint _irq0Count;
+    private static bool _faultBreadcrumbsActive;
 
     private static void SerialWriteLiteral(string text) {
         if (text == null) return;
@@ -164,7 +165,6 @@ public static class IDT {
     }
 
     private static void SerialWriteExecutionContext() {
-        SerialWriteHexLine64("CURRENT_CPU=", (ulong)(uint)SMP.ThisCPU);
         SerialWriteHexLine64("ALLOCATOR_CURRENT_OWNER_ID=",
             unchecked((ulong)(long)Allocator.CurrentOwnerId));
         SerialWriteHexLine64("WINDOW_CLEANUP_RUNNING=",
@@ -175,6 +175,22 @@ public static class IDT {
             (ulong)(uint)WindowManager.CleanupDiagnosticPass);
         SerialWriteHexLine64("WINDOW_CLEANUP_CURRENT_OWNER_ID=",
             unchecked((ulong)(long)WindowManager.CleanupDiagnosticCurrentOwnerId));
+        SerialWriteHexLine64("START_FOREGROUND_OPERATION_ID=",
+            unchecked((ulong)(uint)StartMenu.ForegroundDiagnosticOperationId));
+        SerialWriteHexLine64("START_FOREGROUND_ACTION=",
+            unchecked((ulong)(uint)StartMenu.ForegroundDiagnosticAction));
+        SerialWriteHexLine64("START_FOREGROUND_PHASE=",
+            unchecked((ulong)(uint)StartMenu.ForegroundDiagnosticPhase));
+        guideXOS.OS.ApplicationInstanceHandle activeApplication =
+            guideXOS.OS.ApplicationInstanceRegistry.ActiveApplicationHandle;
+        SerialWriteHexLine64("ACTIVE_APPLICATION_HANDLE=",
+            activeApplication.Value);
+        SerialWriteHexLine64("ACTIVE_APPLICATION_GENERATION=",
+            activeApplication.Generation);
+        // Read LocalAPIC-backed CPU identity only after the software state
+        // above has been captured; fatal PF diagnostics must retain useful
+        // context even if the APIC/MMIO read itself faults.
+        SerialWriteHexLine64("CURRENT_CPU=", (ulong)(uint)SMP.ThisCPU);
 
         Thread thread = ThreadPool.CurrentThread;
         if (thread == null) {
@@ -194,6 +210,10 @@ public static class IDT {
             thread.KernelStackBase);
         SerialWriteHexLine64("SCHEDULER_THREAD_KERNEL_STACK_TOP=",
             thread.KernelStackTop);
+        // Thread has no separate numeric ID. Its allocator-backed kernel stack
+        // base is stable and unique for the lifetime of this thread.
+        SerialWriteHexLine64("SCHEDULER_THREAD_ID=",
+            thread.KernelStackBase);
 
         Ring3Process process = thread.OwnerProcess;
         if (process == null) {
@@ -210,19 +230,160 @@ public static class IDT {
             process.OwningApplicationInstance);
     }
 
-    private static unsafe void SerialWriteAbiGateCallSite(ulong rip) {
-        SerialWriteLineLiteral("ABI_GATE_CALLER_BYTES_BEGIN");
-        ulong start = rip >= 16UL ? rip - 16UL : rip;
-        for (int i = 0; i < 16; i++) {
+    private static unsafe void SerialWriteAbiGateInstructionWindow(ulong rip) {
+        const ulong BytesBeforeRip = 32UL;
+        const int WindowLength = 65;
+        ulong start = rip >= BytesBeforeRip ? rip - BytesBeforeRip : 0;
+        SerialWriteLineLiteral("ABI_GATE_CODE_WINDOW_BEGIN");
+        SerialWriteHexLine64("ABI_GATE_CODE_WINDOW_BASE=", start);
+        SerialWriteHexLine64("ABI_GATE_CODE_WINDOW_RIP_OFFSET=", BytesBeforeRip);
+        for (int i = 0; i < WindowLength; i++) {
             ulong address = start + (ulong)i;
-            if (!IsMapped(address)) {
+            if (address < start || !IsMapped(address)) {
                 SerialWriteLiteral("??");
                 continue;
             }
             SerialWriteHex8(*(byte*)address);
         }
         Native.Out8(0x3F8, (byte)'\n');
-        SerialWriteLineLiteral("ABI_GATE_CALLER_BYTES_END");
+        SerialWriteLineLiteral("ABI_GATE_CODE_WINDOW_END");
+    }
+
+    private static unsafe void SerialWriteAbiGateStack(ulong rsp, ulong cpl) {
+        const int StackQwordCount = 16;
+        SerialWriteLineLiteral("ABI_GATE_STACK_BEGIN");
+        if (cpl != 0 || rsp < 0x1000UL ||
+                rsp > 0xFFFFFFFFFFFFFFFFUL -
+                    ((ulong)StackQwordCount * 8UL) ||
+                !IsSupervisorMapped(rsp)) {
+            SerialWriteLineLiteral("ABI_GATE_STACK_UNAVAILABLE");
+            SerialWriteLineLiteral("ABI_GATE_STACK_END");
+            return;
+        }
+
+        ulong* words = (ulong*)rsp;
+        for (int i = 0; i < StackQwordCount; i++) {
+            ulong address = rsp + ((ulong)i * 8UL);
+            if (address < rsp ||
+                    !IsSupervisorMapped(address) ||
+                    !IsSupervisorMapped(address + 7UL)) {
+                SerialWriteLiteral("ABI_GATE_STACK_QWORD;index=");
+                SerialWriteHex64((ulong)i);
+                SerialWriteLiteral(";address=0x");
+                SerialWriteHex64(address);
+                SerialWriteLiteral(";value=UNMAPPED\n");
+                continue;
+            }
+            SerialWriteLiteral("ABI_GATE_STACK_QWORD;index=");
+            SerialWriteHex64((ulong)i);
+            SerialWriteLiteral(";address=0x");
+            SerialWriteHex64(address);
+            SerialWriteLiteral(";value=0x");
+            SerialWriteHex64(words[i]);
+            Native.Out8(0x3F8, (byte)'\n');
+        }
+        SerialWriteLineLiteral("ABI_GATE_STACK_END");
+    }
+
+    private static unsafe void SerialWriteAbiGateCodePage(ulong address) {
+        const ulong Present = 1UL;
+        const ulong Writable = 1UL << 1;
+        const ulong User = 1UL << 2;
+        const ulong LargePage = 1UL << 7;
+        const ulong NoExecute = 1UL << 63;
+        const ulong PhysicalAddressMask = 0x000FFFFFFFFFF000UL;
+        ulong cr3 = Native.ReadCR3() & ~0xFFFUL;
+        SerialWriteLineLiteral("ABI_GATE_CODE_PAGE_BEGIN");
+        SerialWriteHexLine64("ABI_GATE_CODE_PAGE_ADDRESS=", address);
+        SerialWriteHexLine64("ABI_GATE_CODE_PAGE_CR3=", cr3);
+
+        ulong* pml4 = (ulong*)cr3;
+        ulong pml4e = pml4[(address >> 39) & 0x1FFUL];
+        SerialWriteHexLine64("ABI_GATE_CODE_PML4E=", pml4e);
+        if ((pml4e & Present) == 0) {
+            SerialWriteAbiGateCodePageMissing();
+            return;
+        }
+
+        ulong* pdpt = (ulong*)(pml4e & PhysicalAddressMask);
+        ulong pdpte = pdpt[(address >> 30) & 0x1FFUL];
+        SerialWriteHexLine64("ABI_GATE_CODE_PDPTE=", pdpte);
+        if ((pdpte & Present) == 0) {
+            SerialWriteAbiGateCodePageMissing();
+            return;
+        }
+        ulong effectiveWritable = pml4e & Writable;
+        ulong effectiveUser = pml4e & User;
+        bool effectiveNx = (pml4e & NoExecute) != 0 ||
+            (pdpte & NoExecute) != 0;
+        if ((pdpte & LargePage) != 0) {
+            ulong physical = (pdpte & 0x000FFFFFC0000000UL) |
+                (address & 0x3FFFFFFFUL);
+            SerialWriteLineLiteral("ABI_GATE_CODE_PAGE_MAPPED=1");
+            SerialWriteHexLine64("ABI_GATE_CODE_PAGE_PHYSICAL=", physical);
+            SerialWriteHexLine64("ABI_GATE_CODE_PAGE_WRITABLE=",
+                (effectiveWritable & (pdpte & Writable)) != 0 ? 1UL : 0UL);
+            SerialWriteHexLine64("ABI_GATE_CODE_PAGE_USER=",
+                (effectiveUser & (pdpte & User)) != 0 ? 1UL : 0UL);
+            SerialWriteHexLine64("ABI_GATE_CODE_PAGE_EXECUTABLE=",
+                effectiveNx ? 0UL : 1UL);
+            SerialWriteLineLiteral("ABI_GATE_CODE_PAGE_END");
+            return;
+        }
+
+        effectiveWritable &= pdpte & Writable;
+        effectiveUser &= pdpte & User;
+        ulong* pd = (ulong*)(pdpte & PhysicalAddressMask);
+        ulong pde = pd[(address >> 21) & 0x1FFUL];
+        SerialWriteHexLine64("ABI_GATE_CODE_PDE=", pde);
+        if ((pde & Present) == 0) {
+            SerialWriteAbiGateCodePageMissing();
+            return;
+        }
+        effectiveWritable &= pde & Writable;
+        effectiveUser &= pde & User;
+        effectiveNx = effectiveNx || (pde & NoExecute) != 0;
+        if ((pde & LargePage) != 0) {
+            ulong physical = (pde & 0x000FFFFFFFE00000UL) |
+                (address & 0x1FFFFFUL);
+            SerialWriteLineLiteral("ABI_GATE_CODE_PAGE_MAPPED=1");
+            SerialWriteHexLine64("ABI_GATE_CODE_PAGE_PHYSICAL=", physical);
+            SerialWriteHexLine64("ABI_GATE_CODE_PAGE_WRITABLE=",
+                effectiveWritable != 0 ? 1UL : 0UL);
+            SerialWriteHexLine64("ABI_GATE_CODE_PAGE_USER=",
+                effectiveUser != 0 ? 1UL : 0UL);
+            SerialWriteHexLine64("ABI_GATE_CODE_PAGE_EXECUTABLE=",
+                effectiveNx ? 0UL : 1UL);
+            SerialWriteLineLiteral("ABI_GATE_CODE_PAGE_END");
+            return;
+        }
+
+        ulong* pt = (ulong*)(pde & PhysicalAddressMask);
+        ulong pte = pt[(address >> 12) & 0x1FFUL];
+        SerialWriteHexLine64("ABI_GATE_CODE_PTE=", pte);
+        if ((pte & Present) == 0) {
+            SerialWriteAbiGateCodePageMissing();
+            return;
+        }
+        effectiveWritable &= pte & Writable;
+        effectiveUser &= pte & User;
+        effectiveNx = effectiveNx || (pte & NoExecute) != 0;
+        SerialWriteLineLiteral("ABI_GATE_CODE_PAGE_MAPPED=1");
+        SerialWriteHexLine64("ABI_GATE_CODE_PAGE_PHYSICAL=",
+            (pte & PhysicalAddressMask) | (address & 0xFFFUL));
+        SerialWriteHexLine64("ABI_GATE_CODE_PAGE_FLAGS=", pte & 0xFFFUL);
+        SerialWriteHexLine64("ABI_GATE_CODE_PAGE_WRITABLE=",
+            effectiveWritable != 0 ? 1UL : 0UL);
+        SerialWriteHexLine64("ABI_GATE_CODE_PAGE_USER=",
+            effectiveUser != 0 ? 1UL : 0UL);
+        SerialWriteHexLine64("ABI_GATE_CODE_PAGE_EXECUTABLE=",
+            effectiveNx ? 0UL : 1UL);
+        SerialWriteLineLiteral("ABI_GATE_CODE_PAGE_END");
+    }
+
+    private static void SerialWriteAbiGateCodePageMissing() {
+        SerialWriteLineLiteral("ABI_GATE_CODE_PAGE_MAPPED=0");
+        SerialWriteLineLiteral("ABI_GATE_CODE_PAGE_END");
     }
 
     private static unsafe void SerialWriteAbiGateDiagnostics(
@@ -264,10 +425,25 @@ public static class IDT {
             stack->rs.rsi);
         SerialWriteHexLine64("ABI_GATE_RDX_ARGUMENT_CANDIDATE=",
             stack->rs.rdx);
+        SerialWriteHexLine64("ABI_GATE_SYSCALL_OPERATION_ID_CANDIDATE=",
+            stack->rs.rax);
         SerialWriteHexLine64("ABI_GATE_RBP=", stack->rs.rbp);
-        SerialWriteAbiGateCallSite(stack->irs.rip);
-        SerialWriteFaultFrameChain(stack->rs.rbp);
-        SerialWriteStackNeighborhood(GetInterruptedRsp(&stack->irs));
+        ulong rbp = stack->rs.rbp;
+        if ((rbp & 7UL) == 0 && rbp >= 0x1000UL &&
+                rbp <= 0x00007FFFFFFFFFF0UL &&
+                IsSupervisorMapped(rbp + 8UL)) {
+            SerialWriteHexLine64("ABI_GATE_DIRECT_RETURN_ADDRESS_CANDIDATE=",
+                *((ulong*)(rbp + 8UL)));
+        } else {
+            SerialWriteLineLiteral("ABI_GATE_DIRECT_RETURN_ADDRESS_CANDIDATE=UNAVAILABLE");
+        }
+        if (cpl == 0) {
+            SerialWriteAbiGateInstructionWindow(stack->irs.rip);
+            SerialWriteAbiGateCodePage(stack->irs.rip >= 2UL ?
+                stack->irs.rip - 2UL : stack->irs.rip);
+        }
+        SerialWriteFaultFrameChain(stack->rs.rbp, cpl == 0);
+        SerialWriteAbiGateStack(GetInterruptedRsp(&stack->irs), cpl);
         SerialWriteExecutionContext();
         SerialWriteLineLiteral("ABI_GATE_DIAGNOSTICS_END");
     }
@@ -321,7 +497,10 @@ public static class IDT {
     }
 
     private static unsafe bool IsMapped(ulong virtualAddress) {
-        if (virtualAddress == 0 || (virtualAddress >> 48) != 0) return false;
+        ulong upper = virtualAddress >> 48;
+        ulong expectedUpper = ((virtualAddress >> 47) & 1UL) == 0
+            ? 0UL : 0xFFFFUL;
+        if (virtualAddress == 0 || upper != expectedUpper) return false;
         ulong cr3 = Native.ReadCR3() & ~0xFFFUL;
         ulong* pml4 = (ulong*)cr3;
         ulong pml4e = pml4[(virtualAddress >> 39) & 0x1FFUL];
@@ -336,6 +515,31 @@ public static class IDT {
         if ((pde & (1UL << 7)) != 0) return true;
         ulong* pt = (ulong*)(pde & ~0xFFFUL);
         return (pt[(virtualAddress >> 12) & 0x1FFUL] & 1) != 0;
+    }
+
+    private static unsafe bool IsSupervisorMapped(ulong virtualAddress) {
+        ulong upper = virtualAddress >> 48;
+        ulong expectedUpper = ((virtualAddress >> 47) & 1UL) == 0
+            ? 0UL : 0xFFFFUL;
+        if (virtualAddress == 0 || upper != expectedUpper) return false;
+        ulong cr3 = Native.ReadCR3() & ~0xFFFUL;
+        const ulong Present = 1UL;
+        const ulong User = 1UL << 2;
+        const ulong LargePage = 1UL << 7;
+        ulong* pml4 = (ulong*)cr3;
+        ulong pml4e = pml4[(virtualAddress >> 39) & 0x1FFUL];
+        if ((pml4e & (Present | User)) != Present) return false;
+        ulong* pdpt = (ulong*)(pml4e & ~0xFFFUL);
+        ulong pdpte = pdpt[(virtualAddress >> 30) & 0x1FFUL];
+        if ((pdpte & (Present | User)) != Present) return false;
+        if ((pdpte & LargePage) != 0) return true;
+        ulong* pd = (ulong*)(pdpte & ~0xFFFUL);
+        ulong pde = pd[(virtualAddress >> 21) & 0x1FFUL];
+        if ((pde & (Present | User)) != Present) return false;
+        if ((pde & LargePage) != 0) return true;
+        ulong* pt = (ulong*)(pde & ~0xFFFUL);
+        ulong pte = pt[(virtualAddress >> 12) & 0x1FFUL];
+        return (pte & (Present | User)) == Present;
     }
 
     private static unsafe void SerialWriteStackNeighborhood(ulong rsp) {
@@ -367,12 +571,15 @@ public static class IDT {
         SerialWriteLineLiteral("STACK_WINDOW_END");
     }
 
-    private static unsafe void SerialWriteFaultFrameChain(ulong rbp) {
+    private static unsafe void SerialWriteFaultFrameChain(ulong rbp,
+            bool supervisorOnly = false) {
         SerialWriteLineLiteral("FAULT_FRAME_CHAIN_BEGIN");
         for (int i = 0; i < 8; i++) {
             if ((rbp & 7UL) != 0 || rbp < 0x1000UL ||
                     rbp > 0x00007FFFFFFFFFF0UL ||
-                    !IsMapped(rbp) || !IsMapped(rbp + 8UL)) {
+                    !(supervisorOnly ? IsSupervisorMapped(rbp) : IsMapped(rbp)) ||
+                    !(supervisorOnly ? IsSupervisorMapped(rbp + 8UL) :
+                        IsMapped(rbp + 8UL))) {
                 SerialWriteLiteral("FAULT_FRAME_CHAIN_STOP;frame=");
                 SerialWriteHex64((ulong)i);
                 SerialWriteLiteral(";reason=unmapped-or-unaligned\n");
@@ -413,6 +620,25 @@ public static class IDT {
     }
 
     private static unsafe void SerialWriteFaultBreadcrumbs(int irq, ulong errorCode, RegistersStack* regs, InterruptReturnStack* irs) {
+        if (_faultBreadcrumbsActive) {
+            SerialWriteLineLiteral("FAULT_DIAGNOSTIC_REENTRY");
+            SerialWriteHexLine8("NESTED_VEC=", (byte)irq);
+            SerialWriteHexLine64("NESTED_ERR=", errorCode);
+            if (irq == 14)
+                SerialWriteHexLine64("NESTED_CR2=", Native.ReadCR2());
+            if (irs != null) {
+                SerialWriteHexLine64("NESTED_RIP=", irs->rip);
+                SerialWriteHexLine64("NESTED_CS=", irs->cs);
+                SerialWriteHexLine64("NESTED_RSP=", GetInterruptedRsp(irs));
+            }
+            if (regs != null) {
+                SerialWriteHexLine64("NESTED_RBP=", regs->rbp);
+                SerialWriteHexLine64("NESTED_RAX=", regs->rax);
+            }
+            for (;;) Native.Hlt();
+        }
+        _faultBreadcrumbsActive = true;
+
         switch (irq) {
             case 14:
                 SerialWriteLineLiteral("CPU_FAULT_PAGE_FAULT");
@@ -436,6 +662,39 @@ public static class IDT {
             SerialWriteHexLine8("PF_RESERVED=", (byte)((errorCode >> 3) & 1UL));
             SerialWriteHexLine8("PF_INSTRUCTION_FETCH=",
                 (byte)((errorCode >> 4) & 1UL));
+            SerialWriteLineLiteral("PAGE_FAULT_RAW_CONTEXT_BEGIN");
+            SerialWriteHexLine64("CR3=", Native.ReadCR3());
+            if (irs != null) {
+                SerialWriteHexLine64("RIP=", irs->rip);
+                SerialWriteHexLine64("CS=", irs->cs);
+                SerialWriteHexLine64("RFLAGS=", irs->rflags);
+                SerialWriteHexLine64("RSP=", GetInterruptedRsp(irs));
+            }
+            if (regs != null) {
+                SerialWriteHexLine64("REG_RAX=", regs->rax);
+                SerialWriteHexLine64("REG_RCX=", regs->rcx);
+                SerialWriteHexLine64("REG_RDX=", regs->rdx);
+                SerialWriteHexLine64("REG_RBX=", regs->rbx);
+                SerialWriteHexLine64("REG_RBP=", regs->rbp);
+                SerialWriteHexLine64("REG_RSI=", regs->rsi);
+                SerialWriteHexLine64("REG_RDI=", regs->rdi);
+                SerialWriteHexLine64("REG_R8=", regs->r8);
+                SerialWriteHexLine64("REG_R9=", regs->r9);
+                SerialWriteHexLine64("REG_R10=", regs->r10);
+                SerialWriteHexLine64("REG_R11=", regs->r11);
+                SerialWriteHexLine64("REG_R12=", regs->r12);
+                SerialWriteHexLine64("REG_R13=", regs->r13);
+                SerialWriteHexLine64("REG_R14=", regs->r14);
+                SerialWriteHexLine64("REG_R15=", regs->r15);
+            }
+            SerialWriteLineLiteral("PAGE_FAULT_RAW_CONTEXT_END");
+            if (irs != null) {
+                SerialWriteFaultInstructionBytes(irs->rip);
+                SerialWriteStackNeighborhood(GetInterruptedRsp(irs));
+            }
+            if (regs != null)
+                SerialWriteFaultFrameChain(regs->rbp, true);
+            SerialWritePageTableWalk(Native.ReadCR2());
             SerialWriteExecutionContext();
         }
 
@@ -475,7 +734,8 @@ public static class IDT {
             SerialWriteHexLine64("REG_R15=", regs->r15);
         }
 
-        SerialWritePageTableWalk(irq == 14 ? Native.ReadCR2() : (irs != null ? irs->rip : 0));
+        if (irq != 14)
+            SerialWritePageTableWalk(irs != null ? irs->rip : 0);
     }
 
     [RuntimeExport("intr_handler")]

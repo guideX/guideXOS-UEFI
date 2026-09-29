@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Windows.Forms;
 using System.Drawing;
 using guideXOS.DefaultApps;
+using guideXOS.Misc;
 using guideXOS.OS;
 namespace guideXOS.GUI {
     /// <summary>
@@ -68,6 +69,12 @@ namespace guideXOS.GUI {
         private bool _leftDownPrev; // edge detect
         private bool _constructed;
 
+        // Captured by the fatal Ring 3 ABI gate if Start foreground routing is
+        // still in progress. Phase values are documented in the H2d closeout.
+        internal static volatile int ForegroundDiagnosticOperationId;
+        internal static volatile int ForegroundDiagnosticAction;
+        internal static volatile int ForegroundDiagnosticPhase;
+
         public unsafe StartMenu() : base(_x, _y, _x2, _y2) {
             Title = "Start";
             BarHeight = 0;
@@ -88,24 +95,61 @@ namespace guideXOS.GUI {
 
         public override void OnSetVisible(bool value) {
             if (!_constructed) return;
+            ForegroundDiagnosticOperationId++;
+            ForegroundDiagnosticAction = value ? 1 : 2;
+            ForegroundDiagnosticPhase = 1;
+#if UEFI_DIAGNOSTIC_START_MENU_STRESS
+            Program.MarkUefiStartMenuStress("TOGGLE;operation=" +
+                ForegroundDiagnosticOperationId.ToString() +
+                ";visible=" + (value ? "1" : "0"));
+#endif
             base.OnSetVisible(value);
             if (value) {
                 // Start is a shell foreground owner, not a fake application
                 // descriptor.  Deactivate the semantic app owner while it is
                 // open and leave all application instances alive.
+                ForegroundDiagnosticPhase = 2;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime(
+                    "FOREGROUND_NOTIFY_BEGIN;operation=" +
+                    ForegroundDiagnosticOperationId.ToString() +
+                    ";action=START_OPEN;active=" +
+                    ApplicationInstanceRegistry.ActiveApplicationHandle.Value.ToString());
+#endif
+#if UEFI_DIAGNOSTIC_START_MENU_STRESS
+                Program.MarkUefiStartMenuStress("FOREGROUND_NOTIFY_BEGIN;operation=" +
+                    ForegroundDiagnosticOperationId.ToString() + ";active=" +
+                    ApplicationInstanceRegistry.ActiveApplicationHandle.Value.ToString());
+#endif
                 ApplicationInstanceRegistry.NotifyShellForeground();
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime(
+                    "FOREGROUND_NOTIFY_END;operation=" +
+                    ForegroundDiagnosticOperationId.ToString() +
+                    ";action=START_OPEN;active=" +
+                    ApplicationInstanceRegistry.ActiveApplicationHandle.Value.ToString());
+#endif
+#if UEFI_DIAGNOSTIC_START_MENU_STRESS
+                Program.MarkUefiStartMenuStress("FOREGROUND_NOTIFY_END;operation=" +
+                    ForegroundDiagnosticOperationId.ToString() + ";active=" +
+                    ApplicationInstanceRegistry.ActiveApplicationHandle.Value.ToString());
+#endif
                 // Always bring Start Menu to front when shown
+                ForegroundDiagnosticPhase = 3;
                 WindowManager.MoveToEnd(this);
                 _leftDownPrev = false;
                 _scrollDrag = false;
                 // Rebuild background blur cache once
                 _bgCacheReady = false;
                 if (_bgBlurCache != null) { _bgBlurCache.Dispose(); _bgBlurCache = null; }
+                ForegroundDiagnosticPhase = 4;
                 BuildBackgroundBlurCache();
                 // Invalidate frame cache
+                ForegroundDiagnosticPhase = 5;
                 if (_frameCache != null) { _frameCache.Dispose(); _frameCache = null; }
                 _frameDirty = true;
             } else {
+                ForegroundDiagnosticPhase = 6;
                 // dispose caches when hidden to free memory
                 if (_bgBlurCache != null) { _bgBlurCache.Dispose(); _bgBlurCache = null; }
                 if (_frameCache != null) { _frameCache.Dispose(); _frameCache = null; }
@@ -119,22 +163,72 @@ namespace guideXOS.GUI {
                 _leftDownPrev = false;
                 _bgCacheReady = false; _frameDirty = true;
             }
+            ForegroundDiagnosticPhase = 0;
+            ForegroundDiagnosticAction = 0;
+        }
+
+        private void MarkBackgroundBlurProgress(string stage, int width,
+                                                int height, long pixels) {
+#if UEFI_DIAGNOSTIC_START_MENU_STRESS
+            Program.MarkUefiStartMenuStress("BLUR_" + stage +
+                ";operation=" + ForegroundDiagnosticOperationId.ToString() +
+                ";width=" + width.ToString() +
+                ";height=" + height.ToString() +
+                ";pixels=" + pixels.ToString() +
+                ";memory=" + Allocator.MemoryInUse.ToString() +
+                ";ticks=" + Timer.Ticks.ToString());
+#elif UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("START_BLUR_" + stage +
+                ";operation=" + ForegroundDiagnosticOperationId.ToString() +
+                ";width=" + width.ToString() +
+                ";height=" + height.ToString() +
+                ";pixels=" + pixels.ToString() +
+                ";memory=" + Allocator.MemoryInUse.ToString() +
+                ";ticks=" + Timer.Ticks.ToString());
+#endif
         }
 
         private void BuildBackgroundBlurCache() {
             // Capture current screen region under the menu and blur once
-            int w = Width; int h = Height; if (w <= 0 || h <= 0) { _bgCacheReady = false; return; }
-            var img = new Image(w, h);
+            int w = Width; int h = Height;
+            long pixelCount = (long)w * h;
+            MarkBackgroundBlurProgress("BEGIN", w, h, pixelCount);
+            if (w <= 0 || h <= 0) { _bgCacheReady = false; return; }
+            MarkBackgroundBlurProgress("IMAGE_OBJECT_ALLOC_BEGIN", w, h,
+                                       pixelCount);
+            var img = new Image();
+            MarkBackgroundBlurProgress("IMAGE_OBJECT_ALLOCATED", w, h,
+                                       pixelCount);
+            img.Bpp = 4;
+            img.Width = w;
+            img.Height = h;
+            MarkBackgroundBlurProgress("PIXEL_ARRAY_ALLOC_BEGIN", w, h,
+                                       pixelCount);
+            img.RawData = new int[(int)pixelCount];
+            MarkBackgroundBlurProgress("PIXEL_ARRAY_ALLOCATED", w, h,
+                                       pixelCount);
+            MarkBackgroundBlurProgress("IMAGE_ALLOCATED", w, h, pixelCount);
             for (int yy = 0; yy < h; yy++) {
                 int fbY = Y + yy;
                 for (int xx = 0; xx < w; xx++) {
                     int fbX = X + xx;
                     img.RawData[yy * w + xx] = (int)Framebuffer.Graphics.GetPoint(fbX, fbY);
                 }
+                if ((yy & 255) == 255)
+                    MarkBackgroundBlurProgress("CAPTURE_ROW_" + yy.ToString(),
+                        w, h, pixelCount);
             }
+            MarkBackgroundBlurProgress("CAPTURED", w, h, pixelCount);
             // Box blur into temp buffers (horizontal + vertical), radius 3 to match previous look
             int radius = 3;
-            int[] src = img.RawData; int[] tmp = new int[w * h]; int[] dst = new int[w * h];
+            int[] src = img.RawData;
+            MarkBackgroundBlurProgress("TMP_ALLOC_BEGIN", w, h, pixelCount);
+            int[] tmp = new int[w * h];
+            MarkBackgroundBlurProgress("TMP_ALLOCATED", w, h, pixelCount);
+            MarkBackgroundBlurProgress("DST_ALLOC_BEGIN", w, h, pixelCount);
+            int[] dst = new int[w * h];
+            MarkBackgroundBlurProgress("DST_ALLOCATED", w, h, pixelCount);
+            MarkBackgroundBlurProgress("BUFFERS_ALLOCATED", w, h, pixelCount);
             // Horizontal
             for (int yy = 0; yy < h; yy++) {
                 int row = yy * w;
@@ -154,6 +248,7 @@ namespace guideXOS.GUI {
                     tmp[row + xx] = (int)((a << 24) | (r << 16) | (g << 8) | b);
                 }
             }
+            MarkBackgroundBlurProgress("HORIZONTAL_COMPLETE", w, h, pixelCount);
             // Vertical
             for (int xx = 0; xx < w; xx++) {
                 for (int yy = 0; yy < h; yy++) {
@@ -172,11 +267,18 @@ namespace guideXOS.GUI {
                     dst[yy * w + xx] = (int)((a << 24) | (r << 16) | (g << 8) | b);
                 }
             }
+            MarkBackgroundBlurProgress("VERTICAL_COMPLETE", w, h, pixelCount);
             // write back blurred pixels
             for (int i = 0; i < dst.Length; i++) img.RawData[i] = dst[i];
+            MarkBackgroundBlurProgress("COPY_COMPLETE", w, h, pixelCount);
+            // These are per-open scratch buffers. The Image keeps the source
+            // pixels as its cache, so release only the temporary arrays here.
+            tmp.Dispose();
+            dst.Dispose();
             // swap into cache
             if (_bgBlurCache != null) _bgBlurCache.Dispose();
             _bgBlurCache = img; _bgCacheReady = true;
+            MarkBackgroundBlurProgress("COMPLETE", w, h, pixelCount);
         }
 
         private struct AppEntry { public Image Icon; public string Name; }

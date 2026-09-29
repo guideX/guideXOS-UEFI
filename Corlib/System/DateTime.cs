@@ -1114,8 +1114,18 @@ namespace System {
             }
         }
 
+        public static ulong GetTime() {
+#if Kernel
+            return guideXOS.API.API_GetTime();
+#else
+            return GetTimeFromKernel();
+#endif
+        }
+
+#if !Kernel
         [DllImport("GetTime")]
-        public static extern ulong GetTime();
+        private static extern ulong GetTimeFromKernel();
+#endif
 
         // Returns the second part of this DateTime. The returned value is
         // an integer between 0 and 59.

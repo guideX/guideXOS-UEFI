@@ -71,6 +71,12 @@
     Run 50 Notepad closes, 50 Calculator closes, 25 alternating closes, and
     a Computer Files taskbar open/activate/close control through QMP input.
 
+.PARAMETER StartMenuStress
+    Run a bounded Start-menu open/close workload without launching applications.
+
+.PARAMETER StartMenuCycles
+    Number of Start-menu open/close cycles for StartMenuStress (default 100).
+
 .PARAMETER TaskbarSoak
     Run the production Continuous desktop with Calculator, Notepad, and
     Computer Files open on the UEFI taskbar during the soak interval.
@@ -137,6 +143,12 @@ param(
     [switch]$AppModel,
     [switch]$AppRuntime,
     [switch]$CleanupStress,
+    [switch]$StartMenuStress,
+    [switch]$ForegroundStress,
+    [ValidateRange(1, 10000)]
+    [int]$StartMenuCycles = 100,
+    [ValidateRange(1, 1000)]
+    [int]$ForegroundCycles = 50,
     [switch]$Ring3,
     [switch]$Ring3Phase15,
     [switch]$Ring3Phase25,
@@ -163,7 +175,8 @@ param(
     [int]$TimeoutSeconds = 300,
     [switch]$GuiVisible,
     [switch]$SkipBuild,
-    [string]$SerialLog = ''
+    [string]$SerialLog = '',
+    [switch]$QemuDebug
 )
 
 $ErrorActionPreference = 'Stop'
@@ -179,6 +192,8 @@ $selectorCount = @(
     $(if ($AppModel) { 1 } else { 0 }),
     $(if ($AppRuntime) { 1 } else { 0 }),
     $(if ($CleanupStress) { 1 } else { 0 }),
+    $(if ($StartMenuStress) { 1 } else { 0 }),
+    $(if ($ForegroundStress) { 1 } else { 0 }),
     $(if ($Ring3) { 1 } else { 0 }),
     $(if ($Ring3Phase15) { 1 } else { 0 }),
     $(if ($Ring3Phase25) { 1 } else { 0 }),
@@ -213,7 +228,8 @@ if ($Frames -gt 0 -and $Frames -ne 300) {
 if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Font -and
     -not $Background -and -not $BackgroundRotation -and
-    -not $AppModel -and -not $AppRuntime -and -not $CleanupStress -and -not $Ring3 -and
+    -not $AppModel -and -not $AppRuntime -and -not $CleanupStress -and
+    -not $StartMenuStress -and -not $ForegroundStress -and -not $Ring3 -and
     -not $Ring3Phase15 -and -not $Ring3Phase25 -and -not $Ring3Phase26 -and -not $Ring3Phase27 -and -not $Ring3Phase28 -and -not $Ring3Phase29 -and -not $Ring3Phase30 -and -not $Ring3Phase31 -and -not $Ring3Phase32 -and
     -not $Ring3Direct -and
     -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
@@ -242,6 +258,10 @@ if ($Tiny) {
     $diagnosticMode = 'AppRuntime'
 } elseif ($CleanupStress) {
     $diagnosticMode = 'CleanupStress'
+} elseif ($StartMenuStress) {
+    $diagnosticMode = 'StartMenuStress'
+} elseif ($ForegroundStress) {
+    $diagnosticMode = 'ForegroundStress'
 } elseif ($Ring3) {
     $diagnosticMode = 'Ring3'
 } elseif ($Ring3Phase15) {
@@ -282,15 +302,18 @@ if ($Tiny) {
 $isWidgetValidation = $diagnosticMode -in @('Widget', 'WidgetStress', 'WidgetSoak')
 $isAppModelValidation = $diagnosticMode -eq 'AppModel'
 $isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Ring3', 'Ring3Phase15', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Direct', 'Widget', 'WidgetStress')
-$isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu')
-$isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress')
+$isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu', 'ForegroundStress')
+$isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress', 'StartMenuStress', 'ForegroundStress')
+$isStartMenuStressValidation = $diagnosticMode -eq 'StartMenuStress'
+$isForegroundStressValidation = $diagnosticMode -eq 'ForegroundStress'
 $isCleanupStressValidation = $CleanupStress
 $isAppRuntimeValidation = $diagnosticMode -eq 'AppRuntime' -and
     -not $isCleanupStressValidation
 $isTaskbarSoakValidation = $TaskbarSoak
 $isInteractiveValidation = $isInputValidation -or $isWidgetValidation -or
     $isAppRuntimeValidation -or $isTaskbarSoakValidation -or
-    $isCleanupStressValidation
+    $isCleanupStressValidation -or $isStartMenuStressValidation -or
+    $isForegroundStressValidation
 $isContinuousValidation = -not $isBoundedDiagnostic
 $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'Tiny' { 'UTINY_COMPLETE'; break }
@@ -329,6 +352,18 @@ if ($TaskbarSoak) {
 }
 if ($CleanupStress -and $TimeoutSeconds -lt 1800) {
     $TimeoutSeconds = 1800
+}
+if ($StartMenuStress) {
+    $minimumStartMenuTimeout = [Math]::Min(86400, 60 + (4 * $StartMenuCycles))
+    if ($TimeoutSeconds -lt $minimumStartMenuTimeout) {
+        $TimeoutSeconds = $minimumStartMenuTimeout
+    }
+}
+if ($ForegroundStress) {
+    $minimumForegroundTimeout = [Math]::Min(86400, 60 + (4 * $ForegroundCycles))
+    if ($TimeoutSeconds -lt $minimumForegroundTimeout) {
+        $TimeoutSeconds = $minimumForegroundTimeout
+    }
 }
 
 $qemuPath = 'C:\Program Files\qemu\qemu-system-x86_64.exe'
@@ -1127,7 +1162,7 @@ function Invoke-QmpCleanupStressCycle {
     Open-QmpStartApplication $Qmp $Name $Index -ActivateTaskbarItem
     Wait-ForContextMarkerCount $closedPattern ($closedBefore + 1) 6000
     $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
-    if ($content -match '(?im)(#UD|#PF|#GP|CPU_FAULT_[A-Z_]+|PANIC:|UEFI_FRAME_FAULT_CONTEXT)') {
+    if ($content -match '(?im)(RING3_ABI_KERNEL_GATE|#UD|#PF|#GP|CPU_FAULT_[A-Z_]+|PANIC:|UEFI_FRAME_FAULT_CONTEXT)') {
         throw "Guest fault detected during $Name cleanup cycle."
     }
     if ($content -notmatch '(?m)^\[TASKBAR_VISUAL\] groups=0;buttons=0;icons=0;fallback=0;active=0;activations=\d+;active-handle=(?:none|\d+);hidden=0;invalid=0\r?$') {
@@ -1709,6 +1744,171 @@ function Wait-ForContextMarkerCount {
     throw "Guest did not emit marker '$Pattern' count $Minimum."
 }
 
+function Wait-ForStartMenuMarkerCount {
+    param(
+        [string]$Pattern,
+        [int]$Minimum,
+        [int]$TimeoutMilliseconds = 120000
+    )
+    $faultPattern = '(?im)(RING3_ABI_KERNEL_GATE|#UD|#PF|#GP|CPU_FAULT_[A-Z_]+|PANIC:|UEFI_FRAME_FAULT_CONTEXT)'
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMilliseconds)
+    do {
+        if (Test-Path -LiteralPath $serialPath) {
+            $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+            if ($content -match $faultPattern) {
+                throw "Guest fault during Start-menu stress: $($Matches[0])"
+            }
+            if ([regex]::Matches($content, $Pattern).Count -ge $Minimum) { return }
+        }
+        Start-Sleep -Milliseconds 20
+    } while ((Get-Date) -lt $deadline)
+    throw "Guest did not emit Start-menu marker '$Pattern' count $Minimum."
+}
+
+function Wait-ForStartMenuOperation {
+    param([int]$OperationId, [int]$Visible, [int]$TimeoutMilliseconds = 120000)
+    $faultPattern = '(?im)(RING3_ABI_KERNEL_GATE|#UD|#PF|#GP|CPU_FAULT_[A-Z_]+|PANIC:|UEFI_FRAME_FAULT_CONTEXT)'
+    $operationPattern = '(?m)^H2D_START_MENU_TOGGLE;operation=' +
+        $OperationId.ToString() + ';visible=' + $Visible.ToString() + '$'
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMilliseconds)
+    do {
+        if (Test-Path -LiteralPath $serialPath) {
+            $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+            if ($content -match $faultPattern) {
+                throw "Guest fault during Start-menu stress: $($Matches[0])"
+            }
+            if ($content -match $operationPattern) { return }
+        }
+        Start-Sleep -Milliseconds 20
+    } while ((Get-Date) -lt $deadline)
+    throw "Guest did not complete Start-menu operation $OperationId with visible=$Visible."
+}
+
+function Send-QmpStartMenuStressWorkload {
+    param($Qmp, [int]$Cycles)
+
+    $toggleOpenPattern = '(?m)^H2D_START_MENU_TOGGLE;operation=\d+;visible=1$'
+    $toggleClosePattern = '(?m)^H2D_START_MENU_TOGGLE;operation=\d+;visible=0$'
+    $foregroundEndPattern = '(?m)^H2D_START_MENU_FOREGROUND_NOTIFY_END;operation=\d+;active=0$'
+    $openedPattern = '(?m)^START_MENU_OPENED$'
+    $script:startMenuStressCompleted = 0
+    Write-Host "  Start-menu stress: $Cycles open/close cycles, no application launches" -ForegroundColor Green
+    Set-QmpPointer $Qmp 30 780
+
+    for ($i = 0; $i -lt $Cycles; $i++) {
+        $openOperation = 1 + (2 * $i)
+        $closeOperation = $openOperation + 1
+        $foregroundPattern = '(?m)^H2D_START_MENU_FOREGROUND_NOTIFY_END;operation=' +
+            $openOperation.ToString() + ';active=0$'
+        $startedBefore = Get-ContextMarkerCount $openedPattern
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForStartMenuOperation $openOperation 1
+        Wait-ForStartMenuMarkerCount $foregroundPattern 1
+        Wait-ForStartMenuMarkerCount $openedPattern ($startedBefore + 1)
+
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
+        Start-Sleep -Milliseconds 80
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+        Wait-ForStartMenuOperation $closeOperation 0
+        $script:startMenuStressCompleted++
+        if (($i + 1) % 10 -eq 0) {
+            Write-Host "    Start-menu cycles: $($i + 1)/$Cycles" -ForegroundColor Gray
+        }
+    }
+
+    if ($script:startMenuStressCompleted -ne $Cycles -or
+            (Get-ContextMarkerCount $toggleOpenPattern) -lt $Cycles -or
+            (Get-ContextMarkerCount $toggleClosePattern) -lt $Cycles -or
+            (Get-ContextMarkerCount $foregroundEndPattern) -lt $Cycles -or
+            (Get-ContextMarkerCount $openedPattern) -lt $Cycles) {
+        throw 'Start-menu stress did not complete the requested open/close and foreground notification counts.'
+    }
+    Write-Host "  Start-menu stress complete: $($script:startMenuStressCompleted)/$Cycles" -ForegroundColor Green
+}
+
+function Send-QmpForegroundStressWorkload {
+    param($Qmp, [int]$Cycles)
+
+    $toggleOpenPattern = '(?m)^H2D_START_MENU_TOGGLE;operation=(\d+);visible=1$'
+    $toggleClosePattern = '(?m)^H2D_START_MENU_TOGGLE;operation=(\d+);visible=0$'
+    $openedPattern = '(?m)^START_MENU_OPENED$'
+    $taskbarPattern = '(?m)^\[TASKBAR_VISUAL\] groups=1;buttons=1;icons=1;fallback=0;active=1;activations=(\d+);active-handle=(\d+);hidden=0;invalid=0\r?$'
+    $script:foregroundStressCompleted = 0
+
+    Write-Host "  foreground stress: launch Calculator, then $Cycles Start/taskbar switches" -ForegroundColor Green
+    $taskbarBefore = Get-ContextMarkerCount $taskbarPattern
+    Open-QmpStartApplication $Qmp 'Calculator' 0 -KeepOpen
+    Wait-ForContextMarkerCount $taskbarPattern ($taskbarBefore + 1) 10000
+
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+    $taskbarMatches = [regex]::Matches($content, $taskbarPattern)
+    if ($taskbarMatches.Count -eq 0) {
+        throw 'Calculator did not produce a live taskbar item before foreground stress.'
+    }
+    $lastTaskbar = $taskbarMatches[$taskbarMatches.Count - 1]
+    $activeHandle = $lastTaskbar.Groups[2].Value
+    $activationCount = [int]$lastTaskbar.Groups[1].Value
+
+    Set-QmpPointer $Qmp 30 780
+    for ($i = 0; $i -lt $Cycles; $i++) {
+        $openBefore = Get-ContextMarkerCount $toggleOpenPattern
+        $openedBefore = Get-ContextMarkerCount $openedPattern
+        Send-QmpMouseClick $Qmp 'left'
+        Wait-ForStartMenuMarkerCount $toggleOpenPattern ($openBefore + 1)
+        $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+        $openMatches = [regex]::Matches($content, $toggleOpenPattern)
+        $openOperation = [int]$openMatches[$openMatches.Count - 1].Groups[1].Value
+        Wait-ForStartMenuOperation $openOperation 1
+        Wait-ForStartMenuMarkerCount $openedPattern ($openedBefore + 1)
+        $foregroundPattern = '(?m)^H2D_START_MENU_FOREGROUND_NOTIFY_END;operation=' +
+            $openOperation.ToString() + ';active=0$'
+        Wait-ForStartMenuMarkerCount $foregroundPattern 1
+
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $true))
+        Start-Sleep -Milliseconds 80
+        Send-QmpEvents $Qmp @((New-QmpKeyEvent 'esc' $false))
+        $closeOperation = $openOperation + 1
+        Wait-ForStartMenuOperation $closeOperation 0
+
+        Start-Sleep -Milliseconds 350
+        Set-QmpPointer $Qmp 120 780
+        Send-QmpMouseClick $Qmp 'left'
+        $activationPattern = '(?m)^\[TASKBAR_VISUAL\] groups=1;buttons=1;icons=1;fallback=0;active=1;activations=(\d+);active-handle=' +
+            [regex]::Escape($activeHandle) + ';hidden=0;invalid=0\r?$'
+        $deadline = (Get-Date).AddSeconds(8)
+        $activated = $false
+        do {
+            $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+            $activationMatches = [regex]::Matches($content, $activationPattern)
+            if ($activationMatches.Count -gt 0) {
+                $newActivationCount = [int]$activationMatches[$activationMatches.Count - 1].Groups[1].Value
+                if ($newActivationCount -gt $activationCount) {
+                    $activationCount = $newActivationCount
+                    $activated = $true
+                    break
+                }
+            }
+            Start-Sleep -Milliseconds 20
+        } while ((Get-Date) -lt $deadline)
+        if (-not $activated) {
+            throw "Calculator taskbar activation did not restore the same instance after foreground cycle $($i + 1)."
+        }
+
+        $script:foregroundStressCompleted++
+        Set-QmpPointer $Qmp 30 780
+        if (($i + 1) % 10 -eq 0) {
+            Write-Host "    foreground cycles: $($i + 1)/$Cycles" -ForegroundColor Gray
+        }
+    }
+
+    if ($script:foregroundStressCompleted -ne $Cycles -or
+            (Get-ContextMarkerCount $toggleOpenPattern) -lt $Cycles -or
+            (Get-ContextMarkerCount $toggleClosePattern) -lt $Cycles) {
+        throw 'Foreground stress did not complete the requested Start/taskbar switch count.'
+    }
+    Write-Host "  foreground stress complete: $($script:foregroundStressCompleted)/$Cycles; Calculator handle $activeHandle" -ForegroundColor Green
+}
+
 function Send-QmpContextMenuWorkload {
     param($Qmp)
 
@@ -1981,6 +2181,7 @@ $qemuArgs = @(
     '-serial', "file:$serialName",
     '-name', 'guideXOS',
     '-no-reboot',
+    '-no-shutdown',
     '-boot', 'menu=off,splash-time=0',
     '-display', $(if ($GuiVisible) { 'gtk' } else { 'none' })
 )
@@ -1989,6 +2190,10 @@ $qmpPort = 0
 if ($isInteractiveValidation) {
     $qmpPort = Get-Random -Minimum 43000 -Maximum 43999
     $qemuArgs += @('-qmp', "tcp:127.0.0.1:$qmpPort,server=on,wait=off")
+}
+if ($QemuDebug) {
+    $qemuDebugLogPath = [System.IO.Path]::ChangeExtension($serialPath, '.qemu-debug.log')
+    $qemuArgs += @('-d', 'int,cpu_reset,guest_errors', '-D', $qemuDebugLogPath)
 }
 
 Write-Host "Serial log: $serialPath" -ForegroundColor Gray
@@ -2044,7 +2249,13 @@ try {
                 -not $inputInjected) {
                 try {
                     Write-Host '  injecting bounded native keyboard/mouse workload' -ForegroundColor Green
-                    if ($diagnosticMode -eq 'ContextMenu') {
+                    if ($isStartMenuStressValidation) {
+                        Send-QmpStartMenuStressWorkload $qmp $StartMenuCycles
+                        $status = 'START_MENU_STRESS_COMPLETE'
+                    } elseif ($isForegroundStressValidation) {
+                        Send-QmpForegroundStressWorkload $qmp $ForegroundCycles
+                        $status = 'FOREGROUND_STRESS_COMPLETE'
+                    } elseif ($diagnosticMode -eq 'ContextMenu') {
                         Send-QmpContextMenuWorkload $qmp
                     } elseif ($isTaskbarSoakValidation) {
                         Send-QmpTaskbarSoak $qmp 120
@@ -2091,6 +2302,12 @@ try {
                     if ($isCleanupStressValidation) {
                         break
                     }
+                    if ($isStartMenuStressValidation) {
+                        break
+                    }
+                    if ($isForegroundStressValidation) {
+                        break
+                    }
                 } catch {
                     $qemuStateAtInputFailure = 'unknown'
                     $qemuExitCodeAtInputFailure = 'unknown'
@@ -2103,9 +2320,36 @@ try {
                     } catch {
                         $qemuStateAtInputFailure = 'refresh-failed'
                     }
+                    $qemuGuestStatusAtInputFailure = 'unavailable'
+                    if ($qmp -and $qmp.Client -and $qmp.Client.Connected) {
+                        try {
+                            $qmp.Writer.WriteLine((@{ execute = 'query-status' } | ConvertTo-Json -Compress))
+                            $qmpStatusResponse = Read-QmpMessage $qmp.Reader
+                            if ($qmpStatusResponse -and $qmpStatusResponse.return) {
+                                $qemuGuestStatusAtInputFailure = [string]$qmpStatusResponse.return.status
+                            } elseif ($qmpStatusResponse -and $qmpStatusResponse.error) {
+                                $qemuGuestStatusAtInputFailure = 'query-error'
+                            }
+                        } catch {
+                            $qemuGuestStatusAtInputFailure = 'query-failed'
+                        }
+                    }
                     $inputInjectionError = '{0}; qemuAtInputFailure={1}; qemuExitCode={2}' -f `
                         $_.Exception.Message, $qemuStateAtInputFailure, $qemuExitCodeAtInputFailure
-                    $status = 'INPUT_INJECTION_FAILED'
+                    $inputInjectionError += '; qemuGuestStatus=' + $qemuGuestStatusAtInputFailure
+                    $guestFault = $null
+                    if (Test-Path -LiteralPath $serialPath) {
+                        $failedContent = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
+                        if ($failedContent -match '(?im)(RING3_ABI_KERNEL_GATE|#UD|#PF|#GP|CPU_FAULT_[A-Z_]+|PANIC:|UEFI_FRAME_FAULT_CONTEXT)') {
+                            $guestFault = $Matches[0]
+                        }
+                    }
+                    if ($guestFault) {
+                        $faultText = $guestFault
+                        $status = 'FAULT'
+                    } else {
+                        $status = 'INPUT_INJECTION_FAILED'
+                    }
                     break
                 }
             }
@@ -2134,7 +2378,7 @@ try {
 
             $faultMatches = [regex]::Matches(
                 $content,
-                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|APP_RUNTIME_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|BACKGROUND_PROBE_FAIL[^\r\n]*|BACKGROUND_ROTATION_FAIL[^\r\n]*|BACKGROUND_PROBE_RENDER_OK=0|BACKGROUND_ROTATION_RENDER_OK=0|FONT_PROBE_FAIL[^\r\n]*|FONT_PROBE_INIT_OK=0|FONT_PROBE_MEASURE_OK=0|FONT_RENDER_OK=0|CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|TASKBAR_CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|TASKBAR_CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|WIDGET_INIT=[^\r\n]*,ok=0|WIDGET_INIT=[^\r\n]*,bounds=0|WIDGET_DRAW=[^\r\n]*bounds=0|WIDGET_MENU_BOUNDS=[^\r\n]*,ok=0|WIDGET_MENU_DRAWN=[^\r\n]*,font=0|WIDGET_RUNTIME_FAULT=[^\r\n]*|CPU_FAULT_[A-Z_]+|#UD|#GP|#PF|GENERAL_PROTECTION|PAGE_FAULT|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
+                '(?im)(CONTINUOUS_DESKTOP_FAULT=[^\r\n]*|APP_RUNTIME_FAULT=[^\r\n]*|PNG_PROBE_FAIL[^\r\n]*|PNG_PROBE_ALPHA_RENDER_OK=0|BACKGROUND_PROBE_FAIL[^\r\n]*|BACKGROUND_ROTATION_FAIL[^\r\n]*|BACKGROUND_PROBE_RENDER_OK=0|BACKGROUND_ROTATION_RENDER_OK=0|FONT_PROBE_FAIL[^\r\n]*|FONT_PROBE_INIT_OK=0|FONT_PROBE_MEASURE_OK=0|FONT_RENDER_OK=0|CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|TASKBAR_CONTEXT_MENU_BOUNDS=[^\r\n]*,ok=0|TASKBAR_CONTEXT_MENU_DRAWN=[^\r\n]*,font=0|WIDGET_INIT=[^\r\n]*,ok=0|WIDGET_INIT=[^\r\n]*,bounds=0|WIDGET_DRAW=[^\r\n]*bounds=0|WIDGET_MENU_BOUNDS=[^\r\n]*,ok=0|WIDGET_MENU_DRAWN=[^\r\n]*,font=0|WIDGET_RUNTIME_FAULT=[^\r\n]*|RING3_ABI_KERNEL_GATE|CPU_FAULT_[A-Z_]+|#UD|#GP|#PF|GENERAL_PROTECTION|PAGE_FAULT|PANIC:|UEFI_FRAME_FAULT_CONTEXT)')
             if ($faultMatches.Count -gt 0) {
                 $faultText = $faultMatches[$faultMatches.Count - 1].Value
                 $status = 'FAULT'
@@ -2855,12 +3099,20 @@ $startMenuOpenedCount = [regex]::Matches(
 if ($isStartMenuValidation -and $inputInjected -and $startMenuOpenedCount -lt 1) {
     $status = 'INPUT_VALIDATION_FAILED'
 }
+if ($isStartMenuStressValidation -and $status -eq 'START_MENU_STRESS_COMPLETE' -and
+        $script:startMenuStressCompleted -ne $StartMenuCycles) {
+    $status = 'START_MENU_STRESS_VALIDATION_FAILED'
+}
+if ($isForegroundStressValidation -and $status -eq 'FOREGROUND_STRESS_COMPLETE' -and
+        $script:foregroundStressCompleted -ne $ForegroundCycles) {
+    $status = 'FOREGROUND_STRESS_VALIDATION_FAILED'
+}
 
 Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '   Validation Summary' -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
-Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'TASKBAR_SOAK_COMPLETE', 'APP_RUNTIME_COMPLETE', 'CLEANUP_STRESS_COMPLETE', 'RING3_PROOF_COMPLETE', 'RING3_PHASE30_COMPLETE', 'RING3_PHASE31_COMPLETE', 'RING3_PHASE32_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
+Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'TASKBAR_SOAK_COMPLETE', 'APP_RUNTIME_COMPLETE', 'CLEANUP_STRESS_COMPLETE', 'START_MENU_STRESS_COMPLETE', 'FOREGROUND_STRESS_COMPLETE', 'RING3_PROOF_COMPLETE', 'RING3_PHASE30_COMPLETE', 'RING3_PHASE31_COMPLETE', 'RING3_PHASE32_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
 Write-Host "Dispatch selected: $dispatchSelected" -ForegroundColor Gray
 Write-Host "Continuous entered: $continuousEntered" -ForegroundColor Gray
 Write-Host "Heartbeats: $heartbeatCount (last frame $lastHeartbeatFrame)" -ForegroundColor Gray
@@ -2877,6 +3129,12 @@ if ($isInteractiveValidation) {
     Write-Host "GUI key routed: $($finalContent -match 'INPUT_GUI_KEY_ROUTED')" -ForegroundColor Gray
     Write-Host "GUI mouse routed: $($finalContent -match 'INPUT_GUI_MOUSE_ROUTED')" -ForegroundColor Gray
     Write-Host "Start menu opened: $startMenuOpenedCount" -ForegroundColor Gray
+    if ($isStartMenuStressValidation) {
+        Write-Host "Start-menu stress cycles: $($script:startMenuStressCompleted)/$StartMenuCycles" -ForegroundColor Gray
+    }
+    if ($isForegroundStressValidation) {
+        Write-Host "Foreground switch cycles: $($script:foregroundStressCompleted)/$ForegroundCycles" -ForegroundColor Gray
+    }
     if ($inputInjectionError) {
         Write-Host "Input error: $inputInjectionError" -ForegroundColor Red
     }
@@ -2923,7 +3181,7 @@ if ($faultText) {
 }
 Write-Host "Serial log: $serialPath" -ForegroundColor Cyan
 
-if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'INPUT_VALIDATION_FAILED', 'APP_MODEL_VALIDATION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED', 'APP_RUNTIME_VALIDATION_FAILED', 'WIDGET_VALIDATION_FAILED')) {
+if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'INPUT_VALIDATION_FAILED', 'START_MENU_STRESS_VALIDATION_FAILED', 'APP_MODEL_VALIDATION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED', 'APP_RUNTIME_VALIDATION_FAILED', 'WIDGET_VALIDATION_FAILED')) {
     exit 1
 }
 exit 0

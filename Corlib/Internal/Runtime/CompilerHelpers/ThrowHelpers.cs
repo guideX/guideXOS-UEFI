@@ -3,8 +3,16 @@ using System.Runtime.InteropServices;
 
 namespace Internal.Runtime.CompilerHelpers {
     public static class ThrowHelpers {
+#if Kernel
+        // Kernel exceptions stay inside the kernel. The DllImport path below is
+        // the Ring 3 service ABI and must not be used by a CPL0 helper.
+        private static void Error(string s, bool skippable = false) {
+            guideXOS.API.API_Error(s, skippable);
+        }
+#else
         [DllImport("Error")]
         private static extern void Error(string s, bool skippable = false);
+#endif
 
         public static void ThrowInvalidProgramExceptionWithArgument(ExceptionStringID id, string methodName) {
             Error($"Invalid Program Exception With Argument: {methodName}", true);
