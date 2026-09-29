@@ -13,15 +13,44 @@ namespace guideXOS.Misc {
     }
 
     public static unsafe class SHA256 {
-        static readonly uint[] K = new uint[64] {
-            0x428A2F98,0x71374491,0xB5C0FBCF,0xE9B5DBA5,0x3956C25B,0x59F111F1,0x923F82A4,0xAB1C5ED5,
-            0xD807AA98,0x12835B01,0x243185BE,0x550C7DC3,0x72BE5D74,0x80DEB1FE,0x9BDC06A7,0xC19BF174,
-            0xE49B69C1,0xEFBE4786,0x0FC19DC6,0x240CA1CC,0x2DE92C6F,0x4A7484AA,0x5CB0A9DC,0x76F988DA,
-            0x983E5152,0xA831C66D,0xB00327C8,0xBF597FC7,0xC6E00BF3,0xD5A79147,0x06CA6351,0x14292967,
-            0x27B70A85,0x2E1B2138,0x4D2C6DFC,0x53380D13,0x650A7354,0x766A0ABB,0x81C2C92E,0x92722C85,
-            0xA2BFE8A1,0xA81A664B,0xC24B8B70,0xC76C51A3,0xD192E819,0xD6990624,0xF40E3585,0x106AA070,
-            0x19A4C116,0x1E376C08,0x2748774C,0x34B0BCB5,0x391C0CB3,0x4ED8AA4A,0x5B9CCA4F,0x682E6FF3,
-            0x748F82EE,0x78A5636F,0x84C87814,0x8CC70208,0x90BEFFFA,0xA4506CEB,0xBEF9A3F7,0xC67178F2 };
+        // Keep the round constants in code so kernel hashing does not trigger
+        // a managed array allocation or a type-initializer syscall.
+        static uint RoundConstant(int i) {
+            switch (i) {
+                case 0: return 0x428A2F98; case 1: return 0x71374491;
+                case 2: return 0xB5C0FBCF; case 3: return 0xE9B5DBA5;
+                case 4: return 0x3956C25B; case 5: return 0x59F111F1;
+                case 6: return 0x923F82A4; case 7: return 0xAB1C5ED5;
+                case 8: return 0xD807AA98; case 9: return 0x12835B01;
+                case 10: return 0x243185BE; case 11: return 0x550C7DC3;
+                case 12: return 0x72BE5D74; case 13: return 0x80DEB1FE;
+                case 14: return 0x9BDC06A7; case 15: return 0xC19BF174;
+                case 16: return 0xE49B69C1; case 17: return 0xEFBE4786;
+                case 18: return 0x0FC19DC6; case 19: return 0x240CA1CC;
+                case 20: return 0x2DE92C6F; case 21: return 0x4A7484AA;
+                case 22: return 0x5CB0A9DC; case 23: return 0x76F988DA;
+                case 24: return 0x983E5152; case 25: return 0xA831C66D;
+                case 26: return 0xB00327C8; case 27: return 0xBF597FC7;
+                case 28: return 0xC6E00BF3; case 29: return 0xD5A79147;
+                case 30: return 0x06CA6351; case 31: return 0x14292967;
+                case 32: return 0x27B70A85; case 33: return 0x2E1B2138;
+                case 34: return 0x4D2C6DFC; case 35: return 0x53380D13;
+                case 36: return 0x650A7354; case 37: return 0x766A0ABB;
+                case 38: return 0x81C2C92E; case 39: return 0x92722C85;
+                case 40: return 0xA2BFE8A1; case 41: return 0xA81A664B;
+                case 42: return 0xC24B8B70; case 43: return 0xC76C51A3;
+                case 44: return 0xD192E819; case 45: return 0xD6990624;
+                case 46: return 0xF40E3585; case 47: return 0x106AA070;
+                case 48: return 0x19A4C116; case 49: return 0x1E376C08;
+                case 50: return 0x2748774C; case 51: return 0x34B0BCB5;
+                case 52: return 0x391C0CB3; case 53: return 0x4ED8AA4A;
+                case 54: return 0x5B9CCA4F; case 55: return 0x682E6FF3;
+                case 56: return 0x748F82EE; case 57: return 0x78A5636F;
+                case 58: return 0x84C87814; case 59: return 0x8CC70208;
+                case 60: return 0x90BEFFFA; case 61: return 0xA4506CEB;
+                case 62: return 0xBEF9A3F7; default: return 0xC67178F2;
+            }
+        }
 
         static uint ROTR(uint x, int n) => (x >> n) | (x << (32 - n));
         static uint Ch(uint x, uint y, uint z) => (x & y) ^ (~x & z);
@@ -47,7 +76,7 @@ namespace guideXOS.Misc {
 
             uint a = c->State[0], b = c->State[1], cv = c->State[2], d = c->State[3], e = c->State[4], f = c->State[5], g = c->State[6], h = c->State[7];
             for (int i = 0; i < 64; i++) {
-                uint T1 = h + BigSig1(e) + Ch(e, f, g) + K[i] + c->W[i];
+                uint T1 = h + BigSig1(e) + Ch(e, f, g) + RoundConstant(i) + c->W[i];
                 uint T2 = BigSig0(a) + Maj(a, b, cv);
                 h = g; g = f; f = e; e = d + T1; d = cv; cv = b; b = a; a = T1 + T2;
             }

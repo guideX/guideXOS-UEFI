@@ -227,226 +227,8 @@ namespace guideXOS.Misc {
                     U32(hash, 24) == 0x3E4C3391U &&
                     U32(hash, 28) == 0x845255D3U;
             }
-            if ((flags & ManagedImageContract.FlagPhase30FailFast) != 0) {
-                return U32(hash, 0) == 0x36E5DD60U &&
-                    U32(hash, 4) == 0xBE9907D5U &&
-                    U32(hash, 8) == 0xD4A0E32EU &&
-                    U32(hash, 12) == 0x1EE01720U &&
-                    U32(hash, 16) == 0x7485FCF1U &&
-                    U32(hash, 20) == 0x05366E22U &&
-                    U32(hash, 24) == 0xF1F01B99U &&
-                    U32(hash, 28) == 0xD466A7ECU;
-            }
-            if ((flags & ManagedImageContract.FlagPhase30Oversize) != 0) {
-                return U32(hash, 0) == 0xCB060CFDU &&
-                    U32(hash, 4) == 0x6EC1A87AU &&
-                    U32(hash, 8) == 0x57B4220AU &&
-                    U32(hash, 12) == 0x2F632A6DU &&
-                    U32(hash, 16) == 0x0788EB9AU &&
-                    U32(hash, 20) == 0x4117EFAFU &&
-                    U32(hash, 24) == 0x53B099A1U &&
-                    U32(hash, 28) == 0x8FB07CE2U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase30Empty) != 0) {
-                return U32(hash, 0) == 0xD954191BU &&
-                    U32(hash, 4) == 0xCF0A8366U &&
-                    U32(hash, 8) == 0x107002EAU &&
-                    U32(hash, 12) == 0xFC5177A7U &&
-                    U32(hash, 16) == 0xC0DD6677U &&
-                    U32(hash, 20) == 0x1FDD79E9U &&
-                    U32(hash, 24) == 0xCDBC0400U &&
-                    U32(hash, 28) == 0xBA19E101U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase30Clipboard) != 0) {
-                return U32(hash, 0) == 0x9267935AU &&
-                    U32(hash, 4) == 0x43D01244U &&
-                    U32(hash, 8) == 0xA8682B2EU &&
-                    U32(hash, 12) == 0x9596AD63U &&
-                    U32(hash, 16) == 0x453006DCU &&
-                    U32(hash, 20) == 0xB1AB7386U &&
-                    U32(hash, 24) == 0x317CE254U &&
-                    U32(hash, 28) == 0xD0244AD6U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase30Clear) != 0) {
-                return U32(hash, 0) == 0xC21F864FU &&
-                    U32(hash, 4) == 0x632C7968U &&
-                    U32(hash, 8) == 0x909D4E63U &&
-                    U32(hash, 12) == 0x013652C5U &&
-                    U32(hash, 16) == 0xA811FCDCU &&
-                    U32(hash, 20) == 0x34EB6128U &&
-                    U32(hash, 24) == 0x779E3B51U &&
-                    U32(hash, 28) == 0x7C48ACEFU;
-            }
-            if ((flags & ManagedImageContract.FlagPhase30Overwrite) != 0) {
-                return U32(hash, 0) == 0xEF50B79FU &&
-                    U32(hash, 4) == 0x1EC149D9U &&
-                    U32(hash, 8) == 0xA67604E9U &&
-                    U32(hash, 12) == 0x00AA35E9U &&
-                    U32(hash, 16) == 0x5CD7AEDCU &&
-                    U32(hash, 20) == 0x67752372U &&
-                    U32(hash, 24) == 0xBCEC33A9U &&
-                    U32(hash, 28) == 0x23F50005U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase30Reader) != 0) {
-                return U32(hash, 0) == 0x861A4A50U &&
-                    U32(hash, 4) == 0x77E353EFU &&
-                    U32(hash, 8) == 0xA42F8ED3U &&
-                    U32(hash, 12) == 0xFDE0B581U &&
-                    U32(hash, 16) == 0x562A71B0U &&
-                    U32(hash, 20) == 0x4274A9B3U &&
-                    U32(hash, 24) == 0x0D4DDEFAU &&
-                    U32(hash, 28) == 0x3D91FFA7U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase30MalformedLength) != 0) {
-                return U32(hash, 0) == 0x019EC3C5U &&
-                    U32(hash, 4) == 0x9E45B88DU &&
-                    U32(hash, 8) == 0x8C86DFC9U &&
-                    U32(hash, 12) == 0xE4F940ECU &&
-                    U32(hash, 16) == 0xAC477697U &&
-                    U32(hash, 20) == 0x2A55AEF2U &&
-                    U32(hash, 24) == 0xCBA3EEB8U &&
-                    U32(hash, 28) == 0x7FC43E88U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase30CrossWriter) != 0) {
-                return U32(hash, 0) == 0x5D1780A7U &&
-                    U32(hash, 4) == 0x009197F4U &&
-                    U32(hash, 8) == 0x01E3C25CU &&
-                    U32(hash, 12) == 0xF5D27B0AU &&
-                    U32(hash, 16) == 0xA3E9B89CU &&
-                    U32(hash, 20) == 0xE8ACF044U &&
-                    U32(hash, 24) == 0x207A6CEDU &&
-                    U32(hash, 28) == 0xAB548C76U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase31FailFast) != 0) {
-                return U32(hash, 0) == 0x1224D306U &&
-                    U32(hash, 4) == 0x4440B071U &&
-                    U32(hash, 8) == 0xF8CEC8E1U &&
-                    U32(hash, 12) == 0x2DB7C681U &&
-                    U32(hash, 16) == 0x0E5DFD1EU &&
-                    U32(hash, 20) == 0xD3CF7C13U &&
-                    U32(hash, 24) == 0x21BC3604U &&
-                    U32(hash, 28) == 0xB4BDE79EU;
-            }
-            if ((flags & ManagedImageContract.FlagPhase31InvalidTarget) != 0) {
-                return U32(hash, 0) == 0xF4B2034CU &&
-                    U32(hash, 4) == 0x2EAEA171U &&
-                    U32(hash, 8) == 0x0062F67EU &&
-                    U32(hash, 12) == 0x8D1E453AU &&
-                    U32(hash, 16) == 0x36763D0BU &&
-                    U32(hash, 20) == 0xD23FFF6DU &&
-                    U32(hash, 24) == 0xE2ADE10BU &&
-                    U32(hash, 28) == 0x27BBC9F7U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase31Oversize) != 0) {
-                return U32(hash, 0) == 0xCE093DC1U &&
-                    U32(hash, 4) == 0x84DF8020U &&
-                    U32(hash, 8) == 0x62398EAAU &&
-                    U32(hash, 12) == 0x08688D88U &&
-                    U32(hash, 16) == 0x8E0E7553U &&
-                    U32(hash, 20) == 0x1C83D5F1U &&
-                    U32(hash, 24) == 0x9EBF961AU &&
-                    U32(hash, 28) == 0x290C053AU;
-            }
-            if ((flags & ManagedImageContract.FlagPhase31Launch) != 0) {
-                return U32(hash, 0) == 0x98A02E4FU &&
-                    U32(hash, 4) == 0x12DC7607U &&
-                    U32(hash, 8) == 0x1490B309U &&
-                    U32(hash, 12) == 0x721F2BDAU &&
-                    U32(hash, 16) == 0xE64F53C1U &&
-                    U32(hash, 20) == 0xE8C7A8CBU &&
-                    U32(hash, 24) == 0x335F47ABU &&
-                    U32(hash, 28) == 0x05CDA6B7U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase31StaleOwner) != 0) {
-                return U32(hash, 0) == 0xEB7E5B11U &&
-                    U32(hash, 4) == 0xBCEDE2F4U &&
-                    U32(hash, 8) == 0x8287004DU &&
-                    U32(hash, 12) == 0x1F7CA0C8U &&
-                    U32(hash, 16) == 0x8B0BCABDU &&
-                    U32(hash, 20) == 0xF136C2A2U &&
-                    U32(hash, 24) == 0x40042060U &&
-                    U32(hash, 28) == 0x52129A09U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase32StaleOwner) ==
-                    ManagedImageContract.FlagPhase32StaleOwner) {
-                return U32(hash, 0) == 0x29516933U &&
-                    U32(hash, 4) == 0xB4DAFC14U &&
-                    U32(hash, 8) == 0x3CC0D50FU &&
-                    U32(hash, 12) == 0x93E7F040U &&
-                    U32(hash, 16) == 0xDA9B87A0U &&
-                    U32(hash, 20) == 0xDA08918AU &&
-                    U32(hash, 24) == 0xCEF1FC8FU &&
-                    U32(hash, 28) == 0x8F43A233U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase32FailFast) != 0) {
-                return U32(hash, 0) == 0x642F1F8EU &&
-                    U32(hash, 4) == 0xA905D244U &&
-                    U32(hash, 8) == 0x1645018BU &&
-                    U32(hash, 12) == 0xB5FCD7EFU &&
-                    U32(hash, 16) == 0x215AA7C1U &&
-                    U32(hash, 20) == 0x4A7F54F9U &&
-                    U32(hash, 24) == 0xA131E276U &&
-                    U32(hash, 28) == 0x3A501AC1U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase32OpenDocument) != 0) {
-                return U32(hash, 0) == 0x5E515671U &&
-                    U32(hash, 4) == 0x2153B7ABU &&
-                    U32(hash, 8) == 0x537FE193U &&
-                    U32(hash, 12) == 0x6F3BD90EU &&
-                    U32(hash, 16) == 0x3A01F492U &&
-                    U32(hash, 20) == 0x9AA11D8AU &&
-                    U32(hash, 24) == 0x0D6FF62FU &&
-                    U32(hash, 28) == 0x675B7C3CU;
-            }
-            if ((flags & ManagedImageContract.FlagPhase29FailFast) != 0) {
-                return U32(hash, 0) == 0x53371EB3U &&
-                    U32(hash, 4) == 0xC1CE9880U &&
-                    U32(hash, 8) == 0x80945ED2U &&
-                    U32(hash, 12) == 0x844200DFU &&
-                    U32(hash, 16) == 0x94F92918U &&
-                    U32(hash, 20) == 0x6A9A4EA9U &&
-                    U32(hash, 24) == 0x6F4DB6F5U &&
-                    U32(hash, 28) == 0xDC517096U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase29InvalidType) != 0) {
-                return U32(hash, 0) == 0x7372C4D5U &&
-                    U32(hash, 4) == 0x0E54AFBAU &&
-                    U32(hash, 8) == 0xEF6F6241U &&
-                    U32(hash, 12) == 0x54A57786U &&
-                    U32(hash, 16) == 0xC6CB96D3U &&
-                    U32(hash, 20) == 0x31D3A49DU &&
-                    U32(hash, 24) == 0x4E3F7005U &&
-                    U32(hash, 28) == 0x8B0439FEU;
-            }
-            if ((flags & ManagedImageContract.FlagPhase29BodyFailure) != 0) {
-                return U32(hash, 0) == 0xD1654174U &&
-                    U32(hash, 4) == 0x5C3EC6ADU &&
-                    U32(hash, 8) == 0x6D923ED5U &&
-                    U32(hash, 12) == 0x10FB627BU &&
-                    U32(hash, 16) == 0xE0707626U &&
-                    U32(hash, 20) == 0x832AAAE9U &&
-                    U32(hash, 24) == 0xED23486FU &&
-                    U32(hash, 28) == 0xB2F1BEBAU;
-            }
-            if ((flags & ManagedImageContract.FlagPhase29TitleFailure) != 0) {
-                return U32(hash, 0) == 0xA07B19FDU &&
-                    U32(hash, 4) == 0x26056356U &&
-                    U32(hash, 8) == 0x14CCFAFBU &&
-                    U32(hash, 12) == 0xB7047E91U &&
-                    U32(hash, 16) == 0x19C2E5A7U &&
-                    U32(hash, 20) == 0xF18FBC4EU &&
-                    U32(hash, 24) == 0x52BFA33EU &&
-                    U32(hash, 28) == 0xF2446226U;
-            }
-            if ((flags & ManagedImageContract.FlagPhase29Notification) != 0) {
-                return U32(hash, 0) == 0xB128230DU &&
-                    U32(hash, 4) == 0xD4F5C893U &&
-                    U32(hash, 8) == 0x4056B3BBU &&
-                    U32(hash, 12) == 0xC3C907CFU &&
-                    U32(hash, 16) == 0xB0A5A54FU &&
-                    U32(hash, 20) == 0xF436E884U &&
-                    U32(hash, 24) == 0xB5DBBF7BU &&
-                    U32(hash, 28) == 0x5BAAFAD1U;
+            if ((flags & 0xFFFFF800U) != 0) {
+                return ManagedArtifactIdentities.Matches(hash, flags);
             }
             if ((flags & ManagedImageContract.FlagPhase26ManagedEntry) != 0) {
                 return U32(hash, 0) == 0xE1A4E1B9U &&
@@ -474,6 +256,20 @@ namespace guideXOS.Misc {
                 hash[26] == 0x89 && hash[27] == 0x7A &&
                 hash[28] == 0x23 && hash[29] == 0xDA &&
                 hash[30] == 0x19 && hash[31] == 0x5A;
+        }
+
+        private static unsafe bool MatchesImageSha256(byte[] image, byte[] expected) {
+            if (image == null || expected == null || expected.Length != 32)
+                return false;
+
+            byte* actual = stackalloc byte[32];
+            fixed (byte* imageBytes = image)
+                SHA256.Compute(imageBytes, image.Length, actual);
+
+            for (int i = 0; i < 32; i++) {
+                if (actual[i] != expected[i]) return false;
+            }
+            return true;
         }
 
         private static void Marker(string text) {
@@ -747,10 +543,13 @@ namespace guideXOS.Misc {
                 failure = "DESCRIPTOR_CONTRACT";
                 return false;
             }
-            bool hashMatches = MatchesExpectedSha256(descriptor.Sha256,
+            bool descriptorAllowed = MatchesExpectedSha256(descriptor.Sha256,
                 descriptor.Flags);
+            bool imageMatchesDescriptor = MatchesImageSha256(image,
+                descriptor.Sha256);
             if ((descriptor.Flags & ManagedImageContract.FlagPhase26ManagedEntry) != 0) {
-                HexMarker("PHASE26_HASH_MATCH=0x", hashMatches ? 1UL : 0UL);
+                HexMarker("PHASE26_HASH_MATCH=0x",
+                    descriptorAllowed && imageMatchesDescriptor ? 1UL : 0UL);
                 HexMarker("PHASE26_DESCRIPTOR_FLAGS=0x", descriptor.Flags);
                 HexMarker("PHASE26_DESCRIPTOR_HASH0=0x", descriptor.Sha256[0]);
                 HexMarker("PHASE26_DESCRIPTOR_HASH1=0x", U32(descriptor.Sha256, 0));
@@ -762,7 +561,11 @@ namespace guideXOS.Misc {
                 HexMarker("PHASE26_DESCRIPTOR_HASH7=0x", U32(descriptor.Sha256, 24));
                 HexMarker("PHASE26_DESCRIPTOR_HASH8=0x", U32(descriptor.Sha256, 28));
             }
-            if (!hashMatches) {
+            if (!imageMatchesDescriptor || !descriptorAllowed) {
+                if (!imageMatchesDescriptor)
+                    HexMarker("MANAGED_IMAGE_RAW_HASH_MATCH=0x", 0);
+                if (!descriptorAllowed)
+                    HexMarker("MANAGED_IMAGE_ALLOWLIST_MATCH=0x", 0);
                 failure = "ARTIFACT_HASH";
                 return false;
             }

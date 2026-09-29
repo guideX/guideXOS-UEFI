@@ -49,16 +49,7 @@ $modes = @(
     [ordered]@{ Name = 'stale-owner'; Mode = 'StaleOwner'; Result = 32 }
 )
 
-function Normalize-PeTimestamps([string]$Path) {
-    $bytes = [IO.File]::ReadAllBytes($Path)
-    $peOffset = [BitConverter]::ToUInt32($bytes, 0x3C)
-    if ($peOffset + 24 -gt $bytes.Length) {
-        throw "PE header is truncated: $Path"
-    }
-    ([BitConverter]::GetBytes([uint32]0)).CopyTo($bytes,
-        [int]($peOffset + 8))
-    [IO.File]::WriteAllBytes($Path, $bytes)
-}
+. (Join-Path $PSScriptRoot '..\ManagedArtifacts\Normalize-PeTimestamps.ps1')
 
 $records = @()
 foreach ($mode in $modes) {

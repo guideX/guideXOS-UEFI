@@ -2,6 +2,7 @@ using guideXOS;
 using guideXOS.Kernel.Drivers;
 using guideXOS.Kernel.Helpers;
 using guideXOS.Misc;
+using guideXOS.GUI;
 using Internal.Runtime.CompilerServices;
 using System.Runtime;
 using System.Runtime.InteropServices;
@@ -162,6 +163,115 @@ public static class IDT {
         Native.Out8(0x3F8, (byte)'\n');
     }
 
+    private static void SerialWriteExecutionContext() {
+        SerialWriteHexLine64("CURRENT_CPU=", (ulong)(uint)SMP.ThisCPU);
+        SerialWriteHexLine64("ALLOCATOR_CURRENT_OWNER_ID=",
+            unchecked((ulong)(long)Allocator.CurrentOwnerId));
+        SerialWriteHexLine64("WINDOW_CLEANUP_RUNNING=",
+            WindowManager.CleanupDiagnosticRunning ? 1UL : 0UL);
+        SerialWriteHexLine64("WINDOW_CLEANUP_PENDING=",
+            WindowManager.CleanupDiagnosticPending ? 1UL : 0UL);
+        SerialWriteHexLine64("WINDOW_CLEANUP_PASS=",
+            (ulong)(uint)WindowManager.CleanupDiagnosticPass);
+        SerialWriteHexLine64("WINDOW_CLEANUP_CURRENT_OWNER_ID=",
+            unchecked((ulong)(long)WindowManager.CleanupDiagnosticCurrentOwnerId));
+
+        Thread thread = ThreadPool.CurrentThread;
+        if (thread == null) {
+            SerialWriteLineLiteral("SCHEDULER_THREAD_PRESENT=0");
+            SerialWriteLineLiteral("CURRENT_PROCESS_PRESENT=0");
+            return;
+        }
+
+        SerialWriteLineLiteral("SCHEDULER_THREAD_PRESENT=1");
+        SerialWriteHexLine64("SCHEDULER_THREAD_CPU=",
+            (ulong)(uint)thread.RunOnWhichCPU);
+        SerialWriteHexLine64("SCHEDULER_THREAD_IS_USER=",
+            thread.IsUserThread ? 1UL : 0UL);
+        SerialWriteHexLine64("SCHEDULER_THREAD_TERMINATED=",
+            thread.Terminated ? 1UL : 0UL);
+        SerialWriteHexLine64("SCHEDULER_THREAD_KERNEL_STACK_BASE=",
+            thread.KernelStackBase);
+        SerialWriteHexLine64("SCHEDULER_THREAD_KERNEL_STACK_TOP=",
+            thread.KernelStackTop);
+
+        Ring3Process process = thread.OwnerProcess;
+        if (process == null) {
+            SerialWriteLineLiteral("CURRENT_PROCESS_PRESENT=0");
+            return;
+        }
+
+        SerialWriteLineLiteral("CURRENT_PROCESS_PRESENT=1");
+        SerialWriteHexLine64("CURRENT_PROCESS_HANDLE=", process.Handle.Value);
+        SerialWriteHexLine64("CURRENT_PROCESS_GENERATION=",
+            (ulong)process.Handle.Generation);
+        SerialWriteHexLine8("CURRENT_PROCESS_STATE=", (byte)process.State);
+        SerialWriteHexLine64("CURRENT_PROCESS_APPLICATION_OWNER=",
+            process.OwningApplicationInstance);
+    }
+
+    private static unsafe void SerialWriteAbiGateCallSite(ulong rip) {
+        SerialWriteLineLiteral("ABI_GATE_CALLER_BYTES_BEGIN");
+        ulong start = rip >= 16UL ? rip - 16UL : rip;
+        for (int i = 0; i < 16; i++) {
+            ulong address = start + (ulong)i;
+            if (!IsMapped(address)) {
+                SerialWriteLiteral("??");
+                continue;
+            }
+            SerialWriteHex8(*(byte*)address);
+        }
+        Native.Out8(0x3F8, (byte)'\n');
+        SerialWriteLineLiteral("ABI_GATE_CALLER_BYTES_END");
+    }
+
+    private static unsafe void SerialWriteAbiGateDiagnostics(
+            IDTStackGeneric* stack) {
+        SerialWriteLineLiteral("ABI_GATE_DIAGNOSTICS_BEGIN");
+        if (stack == null) {
+            SerialWriteHexLine8("ABI_GATE_REASON_ENUM=", 1);
+            SerialWriteLineLiteral("ABI_GATE_REASON=INT80_WITHOUT_SAVED_FRAME");
+            SerialWriteHexLine64("CR3=", Native.ReadCR3());
+            SerialWriteExecutionContext();
+            SerialWriteLineLiteral("ABI_GATE_DIAGNOSTICS_END");
+            return;
+        }
+
+        ulong cpl = stack->irs.cs & 3UL;
+        if (cpl == 0) {
+            SerialWriteHexLine8("ABI_GATE_REASON_ENUM=", 2);
+            SerialWriteLineLiteral("ABI_GATE_REASON=KERNEL_ORIGINATED_INT80");
+        } else {
+            SerialWriteHexLine8("ABI_GATE_REASON_ENUM=", 3);
+            SerialWriteLineLiteral("ABI_GATE_REASON=INT80_FROM_UNEXPECTED_CPL");
+        }
+        SerialWriteHexLine64("ABI_GATE_IRQ=", 0x80UL);
+        SerialWriteHexLine64("ABI_GATE_RIP=", stack->irs.rip);
+        SerialWriteHexLine64("ABI_GATE_CS=", stack->irs.cs);
+        SerialWriteHexLine64("ABI_GATE_RFLAGS=", stack->irs.rflags);
+        SerialWriteHexLine64("ABI_GATE_RSP=",
+            GetInterruptedRsp(&stack->irs));
+        SerialWriteHexLine64("ABI_GATE_CPU_FRAME_RAW_RSP_SLOT=",
+            stack->irs.rsp);
+        SerialWriteHexLine64("ABI_GATE_CPU_FRAME_RAW_SS_SLOT=",
+            stack->irs.ss);
+        SerialWriteHexLine64("CR3=", Native.ReadCR3());
+        SerialWriteHexLine64("ABI_GATE_RAX_OPERATION_CANDIDATE=",
+            stack->rs.rax);
+        SerialWriteHexLine64("ABI_GATE_RDI_REQUEST_POINTER_CANDIDATE=",
+            stack->rs.rdi);
+        SerialWriteHexLine64("ABI_GATE_RSI_REQUEST_LENGTH_CANDIDATE=",
+            stack->rs.rsi);
+        SerialWriteHexLine64("ABI_GATE_RDX_ARGUMENT_CANDIDATE=",
+            stack->rs.rdx);
+        SerialWriteHexLine64("ABI_GATE_RBP=", stack->rs.rbp);
+        SerialWriteAbiGateCallSite(stack->irs.rip);
+        SerialWriteFaultFrameChain(stack->rs.rbp);
+        SerialWriteStackNeighborhood(GetInterruptedRsp(&stack->irs));
+        SerialWriteExecutionContext();
+        SerialWriteLineLiteral("ABI_GATE_DIAGNOSTICS_END");
+    }
+
     private static unsafe void SerialWriteFaultInstructionBytes(ulong rip) {
         SerialWriteLiteral("FAULT_BYTES=");
         for (int i = 0; i < 16; i++) {
@@ -320,6 +430,13 @@ public static class IDT {
 
         if (irq == 14) {
             SerialWriteHexLine64("CR2=", Native.ReadCR2());
+            SerialWriteHexLine8("PF_PRESENT=", (byte)(errorCode & 1UL));
+            SerialWriteHexLine8("PF_WRITE=", (byte)((errorCode >> 1) & 1UL));
+            SerialWriteHexLine8("PF_USER=", (byte)((errorCode >> 2) & 1UL));
+            SerialWriteHexLine8("PF_RESERVED=", (byte)((errorCode >> 3) & 1UL));
+            SerialWriteHexLine8("PF_INSTRUCTION_FETCH=",
+                (byte)((errorCode >> 4) & 1UL));
+            SerialWriteExecutionContext();
         }
 
         if (irs != null) {
@@ -386,13 +503,8 @@ public static class IDT {
                 return;
             }
             SerialWriteLineLiteral("RING3_ABI_KERNEL_GATE");
-            if (stack != null) {
-                SerialWriteHexLine64("ABI_GATE_RIP=", stack->irs.rip);
-                SerialWriteHexLine64("ABI_GATE_CS=", stack->irs.cs);
-                SerialWriteHexLine64("ABI_GATE_RSP=", stack->irs.rsp);
-                SerialWriteStackNeighborhood(GetInterruptedRsp(&stack->irs));
-            }
-            Panic.Error("Kernel invoked the Ring3 ABI gate");
+            SerialWriteAbiGateDiagnostics(stack);
+            Panic.Error("Ring3 ABI gate invariant: int 0x80 must originate at CPL3");
             for (;;) Native.Hlt();
         }
 

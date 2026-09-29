@@ -59,10 +59,32 @@ namespace guideXOS.GUI {
         private static readonly object _cleanupClosedWindowsSync = new object();
         private static bool _cleanupClosedWindowsRunning;
         private static bool _cleanupClosedWindowsPending;
+        private static int _cleanupClosedWindowsDiagnosticPass;
+        private static int _cleanupClosedWindowsCurrentOwnerId;
+#if UEFI_DIAGNOSTIC_CLEANUP_STRESS
+        private static bool _cleanupSecondPassProbeArmed = true;
+        private static bool _cleanupSecondPassProbeWorkPending;
+        private static Window _cleanupSecondPassProbeWindow;
+
+        private sealed class CleanupSecondPassProbeWindow : Window {
+            internal CleanupSecondPassProbeWindow() : base(0, 0, 160, 120) { }
+            public override void OnDraw() { }
+            public override void OnInput() { }
+        }
+#endif
         private static int _nextWindowOwnerId;
         // Perf tracking toggled off by default (previous logic caused potential hang during early boot)
         private static bool _perfTrackingEnabled = false; // can be enabled later by TaskManager if desired
         private static ulong _cpuEpochTick;
+
+        internal static bool CleanupDiagnosticRunning =>
+            _cleanupClosedWindowsRunning;
+        internal static bool CleanupDiagnosticPending =>
+            _cleanupClosedWindowsPending;
+        internal static int CleanupDiagnosticPass =>
+            _cleanupClosedWindowsDiagnosticPass;
+        internal static int CleanupDiagnosticCurrentOwnerId =>
+            _cleanupClosedWindowsCurrentOwnerId;
         /// <summary>
         /// Initialize
         /// </summary>
@@ -633,14 +655,64 @@ namespace guideXOS.GUI {
                     do {
                         _cleanupClosedWindowsPending = false;
                         pass++;
+                        _cleanupClosedWindowsDiagnosticPass = pass;
+                        _cleanupClosedWindowsCurrentOwnerId = 0;
 #if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+                        if (pass == 1)
+                            MarkCleanupDiagnostic("WINDOW_CLEANUP_PASS_BEGIN",
+                                "pass=1;running=1;pending=0");
                         if (pass > 1)
                             MarkCleanupDiagnostic(
                                 "WINDOW_CLEANUP_SECOND_PASS_BEGIN",
                                 "pass=" + pass.ToString());
 #endif
+#if UEFI_DIAGNOSTIC_CLEANUP_STRESS
+                        if (pass == 1 && _cleanupSecondPassProbeArmed) {
+                            _cleanupSecondPassProbeArmed = false;
+                            Program.MarkUefiAppRuntime(
+                                "WINDOW_CLEANUP_NESTED_PROBE_REQUEST;pass=1;running=1");
+                            CleanupClosedWindows();
+                            _cleanupSecondPassProbeWorkPending =
+                                _cleanupClosedWindowsPending;
+                            Program.MarkUefiAppRuntime(
+                                "WINDOW_CLEANUP_NESTED_PROBE_RETURN;pending=" +
+                                (_cleanupSecondPassProbeWorkPending ? "1" : "0"));
+                        }
+#endif
                         CleanupClosedWindowsCore();
+#if UEFI_DIAGNOSTIC_CLEANUP_STRESS
+                        if (pass == 1 && _cleanupSecondPassProbeWorkPending) {
+                            Window probe = new CleanupSecondPassProbeWindow();
+                            probe.Title = "Cleanup second-pass probe";
+                            probe.Visible = false;
+                            _cleanupSecondPassProbeWindow = probe;
+                            Program.MarkUefiAppRuntime(
+                                "WINDOW_CLEANUP_SECOND_PASS_PROBE_ENQUEUED;owner=" +
+                                probe.OwnerId.ToString());
+                        }
+                        if (pass > 1 && _cleanupSecondPassProbeWindow != null) {
+                            bool probeStillRegistered = false;
+                            if (Windows != null) {
+                                for (int i = 0; i < Windows.Count; i++) {
+                                    if (Windows[i] == _cleanupSecondPassProbeWindow) {
+                                        probeStillRegistered = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            Program.MarkUefiAppRuntime(
+                                probeStillRegistered ?
+                                "WINDOW_CLEANUP_SECOND_PASS_PROBE_CLEANED=0" :
+                                "WINDOW_CLEANUP_SECOND_PASS_PROBE_CLEANED=1");
+                            _cleanupSecondPassProbeWindow = null;
+                            _cleanupSecondPassProbeWorkPending = false;
+                        }
+#endif
 #if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+                        if (pass == 1)
+                            MarkCleanupDiagnostic("WINDOW_CLEANUP_PASS_END",
+                                "pass=1;pending=" +
+                                (_cleanupClosedWindowsPending ? "1" : "0"));
                         if (pass > 1)
                             MarkCleanupDiagnostic(
                                 "WINDOW_CLEANUP_SECOND_PASS_END",
@@ -649,8 +721,15 @@ namespace guideXOS.GUI {
 #endif
                     } while (_cleanupClosedWindowsPending);
                 } finally {
+#if UEFI_DIAGNOSTIC_CLEANUP_STRESS
+                    Program.MarkUefiAppRuntime(
+                        "WINDOW_CLEANUP_DIAGNOSTIC_EXIT;pass=" +
+                        _cleanupClosedWindowsDiagnosticPass.ToString() +
+                        ";pending=" + (_cleanupClosedWindowsPending ? "1" : "0"));
+#endif
                     _cleanupClosedWindowsRunning = false;
                     _cleanupClosedWindowsPending = false;
+                    _cleanupClosedWindowsCurrentOwnerId = 0;
                 }
             }
         }
@@ -699,6 +778,7 @@ namespace guideXOS.GUI {
                 }
                 // Remove windows that are not visible and not animating (i.e., fully closed)
                 if (!w.Visible && !w.IsMinimized && !w.IsTombstoned) {
+                    _cleanupClosedWindowsCurrentOwnerId = w.OwnerId;
 #if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
                     string cleanupIdentity = DescribeCleanupWindow(i, w);
                     if (!diagnosticCleanupStarted) {
@@ -737,6 +817,7 @@ namespace guideXOS.GUI {
                             (w.IsDisposed ? "1" : "0"));
 #endif
                         w.Dispose();
+                        _cleanupClosedWindowsCurrentOwnerId = 0;
 #if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
                         MarkCleanupDiagnostic("WINDOW_CLEANUP_DISPOSE_END",
                             cleanupIdentity + ";disposed=" +

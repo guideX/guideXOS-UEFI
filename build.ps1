@@ -60,7 +60,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'FaultBytesProbe', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
+  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'CleanupStress', 'FaultBytesProbe', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Direct', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
     [string]$UefiDiagnosticMode = ''
 )
 
@@ -209,7 +209,7 @@ if (-not $SkipKernel) {
 # Check for Python
 $pythonExe = $null
 $pythonExeArgs = @()
-if ((-not $SkipRamdisk) -or (-not $SkipConversion)) {
+if ((-not $SkipRamdisk) -or (-not $SkipConversion) -or (-not $SkipKernel)) {
     $bundledPython = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
     if (Test-Path $bundledPython) {
         $pythonExe = $bundledPython
@@ -226,7 +226,7 @@ if ((-not $SkipRamdisk) -or (-not $SkipConversion)) {
         $pythonExeArgs = @()
         $pythonVersion = python --version
         Write-Success "Python found: $pythonVersion"
-    } elseif (-not $SkipRamdisk) {
+    } elseif ((-not $SkipRamdisk) -or (-not $SkipKernel)) {
         Write-Error "Python not found! Install Python 3.x"
         exit 1
     } else {
@@ -343,6 +343,159 @@ if (-not $SkipBootloader) {
     Write-Success "Bootloader built successfully ($([math]::Round($size/1KB, 2)) KB)"
 } else {
     Write-Header "[1/5] Skipping Bootloader Build"
+}
+
+# Managed proof identities must be final before the kernel is compiled.
+# Their descriptors remain untrusted at runtime; this step only creates the
+# kernel's strict compile-time allowlist from the finalized staged bytes.
+if (-not $SkipRamdisk) {
+    Write-Header "[Managed Proofs] Build and stage managed payload cohort"
+    # Phase 24 uses the existing RDSK source path.  Stage only the exact,
+    # already-validated Phase 23 image; the kernel still treats both the PE and
+    # its compact descriptor as untrusted input and validates them again.
+    $phase24Stage = Join-Path $RootDir "Tools\Phase24\stage_phase24_image.ps1"
+    $phase23Artifact = Join-Path $RootDir "out\dotnet\phase23-user-managed-proof\publish\guideXOS.UserManagedProof.exe"
+    $phase23Map = Join-Path $RootDir "out\dotnet\phase23-user-managed-proof\guidexos.map"
+    if ((Test-Path -LiteralPath $phase24Stage) -and
+        (Test-Path -LiteralPath $phase23Artifact) -and
+        (Test-Path -LiteralPath $phase23Map)) {
+        Write-Info "Staging exact Phase 23 image for the Phase 24 kernel loader..."
+        & $phase24Stage -Artifact $phase23Artifact -Map $phase23Map -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Phase 24 image staging failed"
+            exit 1
+        }
+    } else {
+        Write-Info "Phase 24 image not staged (accepted Phase 23 artifact/map unavailable)"
+    }
+
+    $phase25Stage = Join-Path $RootDir "Tools\Phase25\stage_phase25_bootstrap.ps1"
+    if (Test-Path -LiteralPath $phase25Stage) {
+        Write-Info "Staging the independently reviewed Phase 25 native bootstrap..."
+        & $phase25Stage -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Phase 25 bootstrap staging failed"
+            exit 1
+        }
+    }
+
+    $phase26Stage = Join-Path $RootDir "Tools\Phase26\stage_phase26_image.ps1"
+    $phase26Artifact = Join-Path $RootDir "out\dotnet\phase26-user-managed-proof\publish\guideXOS.UserManagedProof.exe"
+    $phase26Map = Join-Path $RootDir "out\dotnet\phase26-user-managed-proof\guidexos.map"
+    if ((Test-Path -LiteralPath $phase26Stage) -and
+        (Test-Path -LiteralPath $phase26Artifact) -and
+        (Test-Path -LiteralPath $phase26Map)) {
+        Write-Info "Staging the separately reviewed Phase 26 managed-entry image..."
+        & $phase26Stage -Artifact $phase26Artifact -Map $phase26Map -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Phase 26 image staging failed"
+            exit 1
+        }
+    } else {
+        Write-Info "Phase 26 image not staged (accepted Phase 26 artifact/map unavailable)"
+    }
+
+    $phase26BootstrapStage = Join-Path $RootDir "Tools\Phase26\stage_phase26_bootstrap.ps1"
+    if (Test-Path -LiteralPath $phase26BootstrapStage) {
+        Write-Info "Staging the independently reviewed Phase 26 managed-entry bootstrap..."
+        & $phase26BootstrapStage -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Phase 26 bootstrap staging failed"
+            exit 1
+        }
+    }
+
+    $phase27Build = Join-Path $RootDir "Tools\Phase27\build_phase27_managed_service_proof.ps1"
+    $phase27BootstrapBuild = Join-Path $RootDir "Tools\Phase27\build_phase27_bootstrap.ps1"
+    $phase27Stage = Join-Path $RootDir "Tools\Phase27\stage_phase27_image.ps1"
+    $phase27BuildRoot = Join-Path $RootDir "out\dotnet\phase27-managed-service-proof"
+    if ((Test-Path -LiteralPath $phase27Build) -and
+        (Test-Path -LiteralPath $phase27BootstrapBuild)) {
+        Write-Info "Building the Phase 27 managed App Model service proof..."
+        & $phase27Build
+        if ($LASTEXITCODE -ne 0) { throw "Phase 27 managed proof build failed: $LASTEXITCODE" }
+        & $phase27BootstrapBuild
+        if ($LASTEXITCODE -ne 0) { throw "Phase 27 bootstrap build failed: $LASTEXITCODE" }
+    }
+    if (Test-Path -LiteralPath $phase27Stage) {
+        Write-Info "Staging the Phase 27 managed System Information proof..."
+        & $phase27Stage -BuildRoot $phase27BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) { throw "Phase 27 image staging failed: $LASTEXITCODE" }
+    }
+
+    $phase28Build = Join-Path $RootDir "Tools\Phase28\build_phase28_managed_sdk.ps1"
+    $phase28Stage = Join-Path $RootDir "Tools\Phase28\stage_phase28_image.ps1"
+    $phase28BuildRoot = Join-Path $RootDir "out\dotnet\phase28-managed-sdk"
+    if ((Test-Path -LiteralPath $phase28Build) -and
+        (Test-Path -LiteralPath $phase28Stage)) {
+        Write-Info "Building the Phase 28 reusable managed SDK proof..."
+        & $phase28Build
+        if ($LASTEXITCODE -ne 0) { throw "Phase 28 managed SDK build failed: $LASTEXITCODE" }
+        & $phase28Stage -BuildRoot $phase28BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) { throw "Phase 28 image staging failed: $LASTEXITCODE" }
+    }
+
+    $phase29Build = Join-Path $RootDir "Tools\Phase29\build_phase29_managed_notification.ps1"
+    $phase29Stage = Join-Path $RootDir "Tools\Phase29\stage_phase29_image.ps1"
+    $phase29BuildRoot = Join-Path $RootDir "out\dotnet\phase29-managed-notification"
+    if ((Test-Path -LiteralPath $phase29Build) -and
+        (Test-Path -LiteralPath $phase29Stage)) {
+        Write-Info "Building the Phase 29 managed Notifications proof..."
+        & $phase29Build
+        if ($LASTEXITCODE -ne 0) { throw "Phase 29 managed notification build failed: $LASTEXITCODE" }
+        & $phase29Stage -BuildRoot $phase29BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) { throw "Phase 29 image staging failed: $LASTEXITCODE" }
+    }
+
+    $phase30Build = Join-Path $RootDir "Tools\Phase30\build_phase30_managed_clipboard.ps1"
+    $phase30Stage = Join-Path $RootDir "Tools\Phase30\stage_phase30_image.ps1"
+    $phase30BuildRoot = Join-Path $RootDir "out\dotnet\phase30-managed-clipboard"
+    if ((Test-Path -LiteralPath $phase30Build) -and
+        (Test-Path -LiteralPath $phase30Stage)) {
+        Write-Info "Building the Phase 30 managed Clipboard proof..."
+        & $phase30Build
+        if ($LASTEXITCODE -ne 0) { throw "Phase 30 managed clipboard build failed: $LASTEXITCODE" }
+        & $phase30Stage -BuildRoot $phase30BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) { throw "Phase 30 image staging failed: $LASTEXITCODE" }
+    }
+
+    $phase31Build = Join-Path $RootDir "Tools\Phase31\build_phase31_managed_shell.ps1"
+    $phase31Stage = Join-Path $RootDir "Tools\Phase31\stage_phase31_image.ps1"
+    $phase31BuildRoot = Join-Path $RootDir "out\dotnet\phase31-managed-shell"
+    if ((Test-Path -LiteralPath $phase31Build) -and
+        (Test-Path -LiteralPath $phase31Stage)) {
+        Write-Info "Building the Phase 31 managed Shell proof..."
+        & $phase31Build
+        if ($LASTEXITCODE -ne 0) { throw "Phase 31 managed Shell build failed: $LASTEXITCODE" }
+        & $phase31Stage -BuildRoot $phase31BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) { throw "Phase 31 image staging failed: $LASTEXITCODE" }
+    }
+
+    $phase32Build = Join-Path $RootDir "Tools\Phase32\build_phase32_managed_open_document.ps1"
+    $phase32Stage = Join-Path $RootDir "Tools\Phase32\stage_phase32_image.ps1"
+    $phase32BuildRoot = Join-Path $RootDir "out\dotnet\phase32-managed-open-document"
+    if ((Test-Path -LiteralPath $phase32Build) -and
+        (Test-Path -LiteralPath $phase32Stage)) {
+        Write-Info "Building the Phase 32 managed OpenDocument proof..."
+        & $phase32Build
+        if ($LASTEXITCODE -ne 0) { throw "Phase 32 managed OpenDocument build failed: $LASTEXITCODE" }
+        & $phase32Stage -BuildRoot $phase32BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) { throw "Phase 32 image staging failed: $LASTEXITCODE" }
+    }
+}
+
+if (-not $SkipKernel) {
+    Write-Header "[Managed Artifacts] Generate kernel admission identities"
+    $identityTool = Join-Path $RootDir "Tools\ManagedArtifacts\managed_artifacts.py"
+    $identitySource = Join-Path $RootDir "guideXOS\obj\ManagedArtifactIdentities.g.cs"
+    $identityReport = Join-Path $RootDir "out\h2c-managed-artifact-audit.csv"
+    if (-not (Test-Path -LiteralPath $identityTool)) {
+        throw "Managed artifact identity tool is missing: $identityTool"
+    }
+    & $pythonExe @pythonExeArgs $identityTool --stage generated --ramdisk-source (Join-Path $RamdiskSrc "Native") --identity-source $identitySource --report-csv $identityReport
+    if ($LASTEXITCODE -ne 0) {
+        throw "Managed artifact identity generation failed: $LASTEXITCODE"
+    }
 }
 
 # Step 2: Build C# Kernel
@@ -533,139 +686,6 @@ if (-not $SkipRamdisk) {
         Write-Warning "Created placeholder files - replace with real assets!"
     }
 
-    # Phase 24 uses the existing RDSK source path.  Stage only the exact,
-    # already-validated Phase 23 image; the kernel still treats both the PE and
-    # its compact descriptor as untrusted input and validates them again.
-    $phase24Stage = Join-Path $RootDir "Tools\Phase24\stage_phase24_image.ps1"
-    $phase23Artifact = Join-Path $RootDir "out\dotnet\phase23-user-managed-proof\publish\guideXOS.UserManagedProof.exe"
-    $phase23Map = Join-Path $RootDir "out\dotnet\phase23-user-managed-proof\guidexos.map"
-    if ((Test-Path -LiteralPath $phase24Stage) -and
-        (Test-Path -LiteralPath $phase23Artifact) -and
-        (Test-Path -LiteralPath $phase23Map)) {
-        Write-Info "Staging exact Phase 23 image for the Phase 24 kernel loader..."
-        & $phase24Stage -Artifact $phase23Artifact -Map $phase23Map -RamdiskSource (Join-Path $RamdiskSrc "Native")
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "Phase 24 image staging failed"
-            exit 1
-        }
-    } else {
-        Write-Info "Phase 24 image not staged (accepted Phase 23 artifact/map unavailable)"
-    }
-
-    $phase25Stage = Join-Path $RootDir "Tools\Phase25\stage_phase25_bootstrap.ps1"
-    if (Test-Path -LiteralPath $phase25Stage) {
-        Write-Info "Staging the independently reviewed Phase 25 native bootstrap..."
-        & $phase25Stage -RamdiskSource (Join-Path $RamdiskSrc "Native")
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "Phase 25 bootstrap staging failed"
-            exit 1
-        }
-    }
-
-    $phase26Stage = Join-Path $RootDir "Tools\Phase26\stage_phase26_image.ps1"
-    $phase26Artifact = Join-Path $RootDir "out\dotnet\phase26-user-managed-proof\publish\guideXOS.UserManagedProof.exe"
-    $phase26Map = Join-Path $RootDir "out\dotnet\phase26-user-managed-proof\guidexos.map"
-    if ((Test-Path -LiteralPath $phase26Stage) -and
-        (Test-Path -LiteralPath $phase26Artifact) -and
-        (Test-Path -LiteralPath $phase26Map)) {
-        Write-Info "Staging the separately reviewed Phase 26 managed-entry image..."
-        & $phase26Stage -Artifact $phase26Artifact -Map $phase26Map -RamdiskSource (Join-Path $RamdiskSrc "Native")
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "Phase 26 image staging failed"
-            exit 1
-        }
-    } else {
-        Write-Info "Phase 26 image not staged (accepted Phase 26 artifact/map unavailable)"
-    }
-
-    $phase26BootstrapStage = Join-Path $RootDir "Tools\Phase26\stage_phase26_bootstrap.ps1"
-    if (Test-Path -LiteralPath $phase26BootstrapStage) {
-        Write-Info "Staging the independently reviewed Phase 26 managed-entry bootstrap..."
-        & $phase26BootstrapStage -RamdiskSource (Join-Path $RamdiskSrc "Native")
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "Phase 26 bootstrap staging failed"
-            exit 1
-        }
-    }
-
-    $phase27Build = Join-Path $RootDir "Tools\Phase27\build_phase27_managed_service_proof.ps1"
-    $phase27BootstrapBuild = Join-Path $RootDir "Tools\Phase27\build_phase27_bootstrap.ps1"
-    $phase27Stage = Join-Path $RootDir "Tools\Phase27\stage_phase27_image.ps1"
-    $phase27BuildRoot = Join-Path $RootDir "out\dotnet\phase27-managed-service-proof"
-    if ((Test-Path -LiteralPath $phase27Build) -and
-        (Test-Path -LiteralPath $phase27BootstrapBuild)) {
-        Write-Info "Building the Phase 27 managed App Model service proof..."
-        & $phase27Build
-        if ($LASTEXITCODE -ne 0) { throw "Phase 27 managed proof build failed: $LASTEXITCODE" }
-        & $phase27BootstrapBuild
-        if ($LASTEXITCODE -ne 0) { throw "Phase 27 bootstrap build failed: $LASTEXITCODE" }
-    }
-    if (Test-Path -LiteralPath $phase27Stage) {
-        Write-Info "Staging the Phase 27 managed System Information proof..."
-        & $phase27Stage -BuildRoot $phase27BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
-        if ($LASTEXITCODE -ne 0) { throw "Phase 27 image staging failed: $LASTEXITCODE" }
-    }
-
-    $phase28Build = Join-Path $RootDir "Tools\Phase28\build_phase28_managed_sdk.ps1"
-    $phase28Stage = Join-Path $RootDir "Tools\Phase28\stage_phase28_image.ps1"
-    $phase28BuildRoot = Join-Path $RootDir "out\dotnet\phase28-managed-sdk"
-    if ((Test-Path -LiteralPath $phase28Build) -and
-        (Test-Path -LiteralPath $phase28Stage)) {
-        Write-Info "Building the Phase 28 reusable managed SDK proof..."
-        & $phase28Build
-        if ($LASTEXITCODE -ne 0) { throw "Phase 28 managed SDK build failed: $LASTEXITCODE" }
-        & $phase28Stage -BuildRoot $phase28BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
-        if ($LASTEXITCODE -ne 0) { throw "Phase 28 image staging failed: $LASTEXITCODE" }
-    }
-
-    $phase29Build = Join-Path $RootDir "Tools\Phase29\build_phase29_managed_notification.ps1"
-    $phase29Stage = Join-Path $RootDir "Tools\Phase29\stage_phase29_image.ps1"
-    $phase29BuildRoot = Join-Path $RootDir "out\dotnet\phase29-managed-notification"
-    if ((Test-Path -LiteralPath $phase29Build) -and
-        (Test-Path -LiteralPath $phase29Stage)) {
-        Write-Info "Building the Phase 29 managed Notifications proof..."
-        & $phase29Build
-        if ($LASTEXITCODE -ne 0) { throw "Phase 29 managed notification build failed: $LASTEXITCODE" }
-        & $phase29Stage -BuildRoot $phase29BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
-        if ($LASTEXITCODE -ne 0) { throw "Phase 29 image staging failed: $LASTEXITCODE" }
-    }
-
-    $phase30Build = Join-Path $RootDir "Tools\Phase30\build_phase30_managed_clipboard.ps1"
-    $phase30Stage = Join-Path $RootDir "Tools\Phase30\stage_phase30_image.ps1"
-    $phase30BuildRoot = Join-Path $RootDir "out\dotnet\phase30-managed-clipboard"
-    if ((Test-Path -LiteralPath $phase30Build) -and
-        (Test-Path -LiteralPath $phase30Stage)) {
-        Write-Info "Building the Phase 30 managed Clipboard proof..."
-        & $phase30Build
-        if ($LASTEXITCODE -ne 0) { throw "Phase 30 managed clipboard build failed: $LASTEXITCODE" }
-        & $phase30Stage -BuildRoot $phase30BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
-        if ($LASTEXITCODE -ne 0) { throw "Phase 30 image staging failed: $LASTEXITCODE" }
-    }
-
-    $phase31Build = Join-Path $RootDir "Tools\Phase31\build_phase31_managed_shell.ps1"
-    $phase31Stage = Join-Path $RootDir "Tools\Phase31\stage_phase31_image.ps1"
-    $phase31BuildRoot = Join-Path $RootDir "out\dotnet\phase31-managed-shell"
-    if ((Test-Path -LiteralPath $phase31Build) -and
-        (Test-Path -LiteralPath $phase31Stage)) {
-        Write-Info "Building the Phase 31 managed Shell proof..."
-        & $phase31Build
-        if ($LASTEXITCODE -ne 0) { throw "Phase 31 managed Shell build failed: $LASTEXITCODE" }
-        & $phase31Stage -BuildRoot $phase31BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
-        if ($LASTEXITCODE -ne 0) { throw "Phase 31 image staging failed: $LASTEXITCODE" }
-    }
-
-    $phase32Build = Join-Path $RootDir "Tools\Phase32\build_phase32_managed_open_document.ps1"
-    $phase32Stage = Join-Path $RootDir "Tools\Phase32\stage_phase32_image.ps1"
-    $phase32BuildRoot = Join-Path $RootDir "out\dotnet\phase32-managed-open-document"
-    if ((Test-Path -LiteralPath $phase32Build) -and
-        (Test-Path -LiteralPath $phase32Stage)) {
-        Write-Info "Building the Phase 32 managed OpenDocument proof..."
-        & $phase32Build
-        if ($LASTEXITCODE -ne 0) { throw "Phase 32 managed OpenDocument build failed: $LASTEXITCODE" }
-        & $phase32Stage -BuildRoot $phase32BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
-        if ($LASTEXITCODE -ne 0) { throw "Phase 32 image staging failed: $LASTEXITCODE" }
-    }
-    
     $ramdiskBuilder = (Resolve-Path "$ToolsDir\ramdisk_builder.py").Path
     $ramdiskOutput = (Join-Path $RootDir "ramdisk.img")
     $ramdiskSource = (Resolve-Path $RamdiskSrc).Path
@@ -681,6 +701,18 @@ if (-not $SkipRamdisk) {
     if ($LASTEXITCODE -eq 0 -and (Test-Path $ramdiskOutput)) {
         $size = (Get-Item $ramdiskOutput).Length
         Write-Success "Ramdisk built successfully ($([math]::Round($size/1KB, 2)) KB)"
+        $identityTool = Join-Path $RootDir "Tools\ManagedArtifacts\managed_artifacts.py"
+        $identitySource = Join-Path $RootDir "guideXOS\obj\ManagedArtifactIdentities.g.cs"
+        $identityReport = Join-Path $RootDir "out\h2c-managed-artifact-audit.csv"
+        $identityStage = if ($SkipKernel) { "generated" } else { "after" }
+        $identityVerifyArgs = @($identityTool, "--audit-only", "--stage", $identityStage, "--ramdisk-source", (Join-Path $RamdiskSrc "Native"), "--ramdisk-image", $ramdiskOutput, "--report-csv", $identityReport)
+        if (-not $SkipKernel) {
+            $identityVerifyArgs += @("--identity-source", $identitySource, "--kernel-built")
+        }
+        & $pythonExe @pythonExeArgs @identityVerifyArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Final ramdisk managed-artifact verification failed: $LASTEXITCODE"
+        }
     } else {
         Write-Error "Ramdisk build failed"
         exit 1
@@ -766,7 +798,17 @@ $ramdiskSrc = "$RootDir\ramdisk.img"
 $ramdiskDst = "$ESPDir\ramdisk.img"
 if (Test-Path $ramdiskSrc) {
     Copy-Item $ramdiskSrc $ramdiskDst -Force
+    $ramdiskSrcInfo = Get-ArtifactSnapshot $ramdiskSrc
+    $ramdiskDstInfo = Get-ArtifactSnapshot $ramdiskDst
+    if (-not $ramdiskDstInfo -or $ramdiskSrcInfo.Hash -ne $ramdiskDstInfo.Hash) {
+        Write-Error "Ramdisk copy verification failed"
+        Write-Error "  source: $($ramdiskSrcInfo.Path)"
+        Write-Error "  dest:   $ramdiskDst"
+        exit 1
+    }
     Write-Success "Copied ramdisk: ramdisk.img"
+    Write-Info "  source SHA-256: $($ramdiskSrcInfo.Hash)"
+    Write-Info "  staged SHA-256: $($ramdiskDstInfo.Hash)"
 } else {
     Write-Warning "Ramdisk not found: $ramdiskSrc"
 }

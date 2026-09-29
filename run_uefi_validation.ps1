@@ -238,8 +238,10 @@ if ($Tiny) {
     $diagnosticMode = 'BackgroundRotation'
 } elseif ($AppModel) {
     $diagnosticMode = 'AppModel'
-} elseif ($AppRuntime -or $CleanupStress) {
+} elseif ($AppRuntime) {
     $diagnosticMode = 'AppRuntime'
+} elseif ($CleanupStress) {
+    $diagnosticMode = 'CleanupStress'
 } elseif ($Ring3) {
     $diagnosticMode = 'Ring3'
 } elseif ($Ring3Phase15) {
@@ -300,6 +302,7 @@ $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'BackgroundRotation' { 'BACKGROUND_ROTATION_COMPLETE'; break }
     'AppModel' { 'APP_MODEL_COMPLETE'; break }
     'AppRuntime' { 'APP_RUNTIME_COMPLETE'; break }
+    'CleanupStress' { 'APP_RUNTIME_COMPLETE'; break }
     'Ring3' { 'RING3_PROOF_COMPLETE=1'; break }
     'Ring3Phase15' { 'RING3_PHASE15_COMPLETE=1'; break }
     'Ring3Phase25' { 'RING3_PHASE25_COMPLETE=1'; break }
@@ -1206,6 +1209,25 @@ function Send-QmpCleanupStressWorkload {
         (Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLEANUP_NESTED_REQUEST;')
     $script:cleanupStressTelemetry.secondPassBegins =
         (Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLEANUP_SECOND_PASS_BEGIN;')
+    $probeMarkers = @(
+        'APP_RUNTIME_WINDOW_CLEANUP_NESTED_PROBE_REQUEST;pass=1;running=1',
+        'APP_RUNTIME_WINDOW_CLEANUP_NESTED_REQUEST;pending=1',
+        'APP_RUNTIME_WINDOW_CLEANUP_NESTED_PROBE_RETURN;pending=1',
+        'APP_RUNTIME_WINDOW_CLEANUP_SECOND_PASS_PROBE_ENQUEUED;owner=',
+        'APP_RUNTIME_WINDOW_CLEANUP_SECOND_PASS_BEGIN;pass=2',
+        'APP_RUNTIME_WINDOW_CLEANUP_SECOND_PASS_PROBE_CLEANED=1',
+        'APP_RUNTIME_WINDOW_CLEANUP_DIAGNOSTIC_EXIT;pass=2;pending=0'
+    )
+    $probePositions = @($probeMarkers | ForEach-Object { $content.IndexOf($_, [System.StringComparison]::Ordinal) })
+    $probeCleaned = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLEANUP_SECOND_PASS_PROBE_CLEANED=1$'
+    if ($script:cleanupStressTelemetry.nestedRequests -lt 1 -or
+            $script:cleanupStressTelemetry.secondPassBegins -lt 1 -or
+            $probeCleaned -ne 1 -or
+            ($probePositions | Where-Object { $_ -lt 0 }).Count -gt 0 -or
+            (($probePositions | Sort-Object -Unique).Count -ne $probePositions.Count) -or
+            (@($probePositions | Sort-Object) -join ',') -ne ($probePositions -join ',')) {
+        throw 'Serialized cleanup second-pass probe did not complete in the required order.'
+    }
     $expectedEmpty = '(?m)^\[TASKBAR_VISUAL\] groups=0;buttons=0;icons=0;fallback=0;active=0;activations=\d+;active-handle=(?:none|\d+);hidden=0;invalid=0$'
     if ($script:cleanupStressCounts.Notepad -ne 50 -or
             $script:cleanupStressCounts.Calculator -ne 50 -or
@@ -1217,6 +1239,7 @@ function Send-QmpCleanupStressWorkload {
     Write-Host ("  cleanup stress complete: Notepad=$($script:cleanupStressCounts.Notepad), " +
         "Calculator=$($script:cleanupStressCounts.Calculator), mixed=$($script:cleanupStressCounts.Mixed), " +
         "ComputerFiles=$($script:cleanupStressCounts.ComputerFiles)") -ForegroundColor Green
+    Write-Host '  cleanup second-pass probe: requested, deferred, pass 2 cleaned owner' -ForegroundColor Green
 }
 
 function Open-QmpComputerFilesFromHome {
