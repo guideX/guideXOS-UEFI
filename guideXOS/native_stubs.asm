@@ -334,8 +334,17 @@ GetR3FaultPayloadSize:
 ; than preemptively resuming the bootstrap context.
 section .data align=8
 r3_resume_rsp: dq 0
+align 8
+exception_sequence_counter: dq 0
 
 section .text
+global IncrementExceptionSequence
+IncrementExceptionSequence:
+    mov rax, 1
+    lock xadd [rel exception_sequence_counter], rax
+    inc rax
+    ret
+
 global GetR3ResumeStack
 GetR3ResumeStack:
     mov rax, [rel r3_resume_rsp]
@@ -562,6 +571,16 @@ Load_IDT:
     lidt [rcx]
     ret
 
+global Read_IDT
+Read_IDT:
+    sidt [rcx]
+    ret
+
+global Read_GDT
+Read_GDT:
+    sgdt [rcx]
+    ret
+
 ; ==========================================================
 ; IDT + Interrupt stubs (minimal)
 ;
@@ -630,7 +649,8 @@ extern intr_handler
 ;       RegistersStack rs;        // 15 * 8 = 120 bytes (rax, rcx, rdx, rbx, rbp, rsi, rdi, r8-r15)
 ;       ulong errorCode;          // 8 bytes
 ;       ulong vectorSlot;         // native-only, not part of the C# struct
-;       InterruptReturnStack irs; // 5 * 8 = 40 bytes (rip, cs, rflags, rsp, ss) - pushed by CPU
+;       InterruptReturnStack irs; // superset: rip, cs, rflags; rsp/ss are
+;                                  // pushed only on privilege transition or IST
 ;   }
 ;
 ; So we need to push GPRs FIRST (so they're at lowest address), then error code.
@@ -643,20 +663,22 @@ isr_common:
     ; Actually no - we need the MEMORY LAYOUT to match the struct.
     ; Stack grows DOWN, so what we push LAST is at the LOWEST address.
 ; C# struct has RegistersStack at offset 0 (lowest), errorCode at offset 120.
-; The native-only vector slot is at offset 128 and the CPU frame starts at 136.
-    ; 
-; The vector slot is above the CPU frame. The CPU frame remains immediately
-; below the slot and is either 3 qwords (no error code) or 4 qwords (error).
-    ;
+; The native-only vector slot is at offset 128. With no CPU error code the
+; return frame starts at 136; with an error code, the code is at 136 and the
+; return frame starts at 144.
+;
     ; We need to build the struct so that when we pass RSP to managed code:
     ;   [RSP+0..119] = RegistersStack (15 regs)
     ;   [RSP+120] = errorCode
 ;   [RSP+128] = native-only vector slot
-;   [RSP+136..175] = InterruptReturnStack (CPU frame)
+;   [RSP+136..175] = InterruptReturnStack for no-error vectors
+;   [RSP+136] = CPU error code; [RSP+144..183] = return frame with error
     ;
-    ; The CPU's frame is already at the right place if we push:
-    ;   - errorCode (8 bytes)
-    ;   - GPRs (120 bytes, pushed in reverse order so first reg is at lowest addr)
+; The CPU return frame follows the native vector slot. For a same-CPL gate
+; without IST it contains RIP/CS/RFLAGS; a privilege transition or IST also
+; pushes the old RSP/SS. Error-code exceptions place the CPU error code before
+; RIP. The common stub's synthetic error slot and native vector slot are
+; separate from the CPU frame.
     ;
 ; Final layout:
 ;   [RSP+0] = rax (first of RegistersStack)
@@ -664,11 +686,10 @@ isr_common:
     ;   [RSP+112] = r15 (last of RegistersStack)  
     ;   [RSP+120] = errorCode
 ;   [RSP+128] = vectorSlot
-;   [RSP+136] = RIP (irs.rip)
-;   [RSP+144] = CS
-;   [RSP+152] = RFLAGS
-;   [RSP+160] = RSP
-;   [RSP+168] = SS
+;   no CPU error code: RIP +136, CS +144, RFLAGS +152,
+;                      optional RSP +160, SS +168
+;   CPU error code:    ERR +136, RIP +144, CS +152, RFLAGS +160,
+;                      optional RSP +168, SS +176
     ;
     ; So we push errorCode first (goes above irs), then GPRs (go above errorCode)
 ; Total pushed by common: 1 (errorCode) + 15 (GPRs) = 128 bytes. The

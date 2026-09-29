@@ -151,15 +151,52 @@ abstract unsafe class Allocator {
     /// Initialize
     /// </summary>
     /// <param name="start"></param>
-    public static void Initialize(IntPtr start) {
+    public static void Initialize(IntPtr start) => Initialize(start, 0, 0);
+
+    /// <summary>
+    /// Initialize the allocator and reserve a virtual-address interval that is
+    /// occupied by the kernel's linked image. The allocator returns identity
+    /// addresses, so this exclusion prevents those addresses from aliasing the
+    /// bootloader's high-physical kernel mapping.
+    /// </summary>
+    public static void Initialize(IntPtr start, ulong reservedAddress,
+                                  ulong reservedSize) {
         fixed (Info* pInfo = &_Info) Native.Stosb(pInfo, 0, (ulong)sizeof(Info));
         _Info.Start = start; 
         _Info.PageInUse = 0;
+
+        ReserveAddressRange(start, reservedAddress, reservedSize);
         
         // Initialize owner tracking with simple arrays
         _ownerIds = new int[MAX_OWNERS];
         _ownerPages = new ulong[MAX_OWNERS];
         _ownerCount = 0;
+    }
+
+    private static void ReserveAddressRange(IntPtr arenaStartPointer,
+                                            ulong reservedAddress,
+                                            ulong reservedSize) {
+        if (reservedAddress == 0 || reservedSize == 0) return;
+
+        ulong reservedEnd = reservedAddress + reservedSize;
+        if (reservedEnd < reservedAddress) return;
+
+        ulong arenaStart = (ulong)arenaStartPointer;
+        ulong arenaEnd = arenaStart + MemorySize;
+        if (arenaEnd < arenaStart) return;
+
+        ulong overlapStart = reservedAddress > arenaStart ? reservedAddress : arenaStart;
+        ulong overlapEnd = reservedEnd < arenaEnd ? reservedEnd : arenaEnd;
+        if (overlapStart >= overlapEnd) return;
+
+        ulong firstPage = (overlapStart - arenaStart) / PageSize;
+        ulong endOffset = overlapEnd - arenaStart;
+        ulong endPage = endOffset / PageSize;
+        if ((endOffset % PageSize) != 0) endPage++;
+        if (endPage > (ulong)NumPages) endPage = (ulong)NumPages;
+
+        for (ulong page = firstPage; page < endPage; page++)
+            _Info.Pages[page] = PageSignature;
     }
     /// <summary>
     /// Memory In Use

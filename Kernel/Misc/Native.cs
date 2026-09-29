@@ -30,6 +30,15 @@ static unsafe class Native {
     public static extern ulong ReadCR3();
 
     [DllImport("*")]
+    public static extern ulong IncrementExceptionSequence();
+
+    [DllImport("*")]
+    public static extern void Read_IDT(ref IDT.IDTDescriptor idtr);
+
+    [DllImport("*")]
+    public static extern void Read_GDT(ref GDT.GDTDescriptor gdtr);
+
+    [DllImport("*")]
     public static extern ulong Rdtsc();
 
     [DllImport("*")]

@@ -67,7 +67,8 @@ namespace guideXOS.Misc {
             }
 
             BootConsole.WriteLine("[ALLOCATOR] INITIALIZE");
-            Allocator.Initialize((IntPtr)0x4000000);
+            Allocator.Initialize((IntPtr)0x4000000,
+                bootInfo->Reserved[0], bootInfo->Reserved[1]);
 
             BootConsole.WriteLine("[MOD] INITIALIZE");
             IntPtr modulesPtr = GetModulesPointer();

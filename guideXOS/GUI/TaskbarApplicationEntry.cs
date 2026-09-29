@@ -167,6 +167,7 @@ namespace guideXOS.GUI {
 
         public static int Capacity { get { return ApplicationInstanceRegistry.Capacity; } }
         public static int EntryCount { get { Initialize(); return _entryCount; } }
+        internal static int DiagnosticEntryCount { get { return _entryCount; } }
         public static int EntriesCreated { get { return _entriesCreated; } }
         public static int EntriesRemoved { get { return _entriesRemoved; } }
         public static int EntriesReused { get { return _entriesReused; } }
@@ -176,6 +177,7 @@ namespace guideXOS.GUI {
             get { return _zeroWindowSuppressionCount; }
         }
         public static int StaleOwnerCount { get { return _staleOwnerCount; } }
+        internal static int DiagnosticStaleOwnerCount { get { return _staleOwnerCount; } }
         public static int MultiWindowGroupCount { get { return _multiWindowGroupCount; } }
         public static int MaximumGroupSize { get { return _maximumGroupSize; } }
         public static int SameInstanceWindowSwitchCount {

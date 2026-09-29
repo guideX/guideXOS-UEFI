@@ -92,7 +92,9 @@ namespace guideXOS.Misc {
         public ulong AbsolutePointerProtocol;  // 0x80: EFI_ABSOLUTE_POINTER_PROTOCOL* (touchscreen)
         public ulong SimpleTextInputEx;        // 0x88: EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL* (keyboard)
 
-        // Reserved for future use (24 bytes @ 0x90)
+        // BootInfo v1 extensions (24 bytes @ 0x90). Reserved[0] and [1] carry
+        // the kernel's linked virtual-address start and span for allocator
+        // exclusion; [2] remains reserved.
         public fixed ulong Reserved[3];        // 0x90-0xA7
 
         /// <summary>

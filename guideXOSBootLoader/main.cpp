@@ -1208,6 +1208,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     }
 
     // Compute checksum so that 32-bit sum of all words is 0
+    v1BootInfo->Reserved[0] = (uint64_t)kernelMinVaddr;
+    v1BootInfo->Reserved[1] = (uint64_t)kernelSpanBytes;
+    v1BootInfo->Reserved[2] = 0;
     v1BootInfo->HeaderChecksum = 0u;
     {
         uint32_t byteCount = v1BootInfo->Size & ~0x3u;

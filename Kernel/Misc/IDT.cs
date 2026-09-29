@@ -41,6 +41,11 @@ public static class IDT {
 
 
     public static unsafe bool Initialize() {
+        _interruptNestingByCpu = new int[256];
+        _activeInterruptVectorByCpu = new int[256];
+        for (int i = 0; i < _activeInterruptVectorByCpu.Length; i++)
+            _activeInterruptVectorByCpu[i] = -1;
+
         idt = new IDTEntry[256];
 
         set_idt_entries(Unsafe.AsPointer(ref idt[0]));
@@ -101,6 +106,9 @@ public static class IDT {
         public ulong rip;
         public ulong cs;
         public ulong rflags;
+        // The CPU pushes these two fields only on a privilege transition or
+        // when the IDT gate selects an IST stack. Same-CPL frames contain only
+        // RIP/CS/RFLAGS; forensic readers must derive the interrupted RSP.
         public ulong rsp;
         public ulong ss;
     }
@@ -121,6 +129,8 @@ public static class IDT {
     // Counter for IRQ0 debug output
     private static uint _irq0Count;
     private static bool _faultBreadcrumbsActive;
+    private static int[] _interruptNestingByCpu;
+    private static int[] _activeInterruptVectorByCpu;
 
     private static void SerialWriteLiteral(string text) {
         if (text == null) return;
@@ -157,6 +167,14 @@ public static class IDT {
         Native.Out8(0x3F8, (byte)'\n');
     }
 
+    private static void SerialWriteHexLine16(string label, ushort value) {
+        SerialWriteLiteral(label);
+        SerialWriteLiteral("0x");
+        SerialWriteHex8((byte)(value >> 8));
+        SerialWriteHex8((byte)value);
+        Native.Out8(0x3F8, (byte)'\n');
+    }
+
     private static void SerialWriteHexLine64(string label, ulong value) {
         SerialWriteLiteral(label);
         SerialWriteLiteral("0x");
@@ -164,7 +182,7 @@ public static class IDT {
         Native.Out8(0x3F8, (byte)'\n');
     }
 
-    private static void SerialWriteExecutionContext() {
+    private static void SerialWriteExecutionContext(ulong interruptedRsp = 0) {
         SerialWriteHexLine64("ALLOCATOR_CURRENT_OWNER_ID=",
             unchecked((ulong)(long)Allocator.CurrentOwnerId));
         SerialWriteHexLine64("WINDOW_CLEANUP_RUNNING=",
@@ -181,6 +199,36 @@ public static class IDT {
             unchecked((ulong)(uint)StartMenu.ForegroundDiagnosticAction));
         SerialWriteHexLine64("START_FOREGROUND_PHASE=",
             unchecked((ulong)(uint)StartMenu.ForegroundDiagnosticPhase));
+        var liveWindows = WindowManager.Windows;
+        SerialWriteHexLine64("WINDOW_COUNT=",
+            liveWindows == null ? 0UL : (ulong)(uint)liveWindows.Count);
+        if (liveWindows != null && liveWindows.Count > 0) {
+            Window topmostWindow = liveWindows[liveWindows.Count - 1];
+            if (topmostWindow != null) {
+                SerialWriteHexLine64("WINDOW_TOPMOST_OWNER_ID=",
+                    unchecked((ulong)(long)topmostWindow.OwnerId));
+                guideXOS.OS.ApplicationInstanceHandle topmostOwner =
+                    topmostWindow.ApplicationInstanceHandle;
+                SerialWriteHexLine64("WINDOW_TOPMOST_APPLICATION_HANDLE=",
+                    topmostOwner.Value);
+                SerialWriteHexLine64("WINDOW_TOPMOST_APPLICATION_GENERATION=",
+                    topmostOwner.Generation);
+                SerialWriteHexLine64("WINDOW_TOPMOST_VISIBLE=",
+                    topmostWindow.Visible ? 1UL : 0UL);
+                SerialWriteHexLine64("WINDOW_TOPMOST_DISPOSED=",
+                    topmostWindow.IsDisposed ? 1UL : 0UL);
+            }
+        }
+        SerialWriteHexLine64("TASKBAR_PROJECTION_COUNT=",
+            (ulong)(uint)TaskbarApplicationEntryRegistry.DiagnosticEntryCount);
+        SerialWriteHexLine64("TASKBAR_STALE_OWNER_COUNT=",
+            (ulong)(uint)TaskbarApplicationEntryRegistry.DiagnosticStaleOwnerCount);
+        SerialWriteHexLine64("ALLOC_FREE_INVALID=",
+            (ulong)(uint)Allocator.FreeFailInvalidPtr);
+        SerialWriteHexLine64("ALLOC_FREE_CORRUPT=",
+            (ulong)(uint)Allocator.FreeFailCorruptRun);
+        SerialWriteHexLine64("ALLOC_FREE_NO_PAGES=",
+            (ulong)(uint)Allocator.FreeFailNoPages);
         guideXOS.OS.ApplicationInstanceHandle activeApplication =
             guideXOS.OS.ApplicationInstanceRegistry.ActiveApplicationHandle;
         SerialWriteHexLine64("ACTIVE_APPLICATION_HANDLE=",
@@ -210,6 +258,15 @@ public static class IDT {
             thread.KernelStackBase);
         SerialWriteHexLine64("SCHEDULER_THREAD_KERNEL_STACK_TOP=",
             thread.KernelStackTop);
+        if (interruptedRsp == 0) interruptedRsp = Native.ReadRSP();
+        SerialWriteHexLine64("INTERRUPTED_RSP_IN_KERNEL_STACK=",
+            interruptedRsp >= thread.KernelStackBase &&
+                interruptedRsp <= thread.KernelStackTop ? 1UL : 0UL);
+        if (interruptedRsp >= thread.KernelStackBase &&
+                interruptedRsp <= thread.KernelStackTop) {
+            SerialWriteHexLine64("INTERRUPTED_STACK_USED_BYTES=",
+                thread.KernelStackTop - interruptedRsp);
+        }
         // Thread has no separate numeric ID. Its allocator-backed kernel stack
         // base is stable and unique for the lifetime of this thread.
         SerialWriteHexLine64("SCHEDULER_THREAD_ID=",
@@ -411,7 +468,7 @@ public static class IDT {
         SerialWriteHexLine64("ABI_GATE_CS=", stack->irs.cs);
         SerialWriteHexLine64("ABI_GATE_RFLAGS=", stack->irs.rflags);
         SerialWriteHexLine64("ABI_GATE_RSP=",
-            GetInterruptedRsp(&stack->irs));
+            GetInterruptedRsp(0x80, &stack->irs));
         SerialWriteHexLine64("ABI_GATE_CPU_FRAME_RAW_RSP_SLOT=",
             stack->irs.rsp);
         SerialWriteHexLine64("ABI_GATE_CPU_FRAME_RAW_SS_SLOT=",
@@ -443,7 +500,7 @@ public static class IDT {
                 stack->irs.rip - 2UL : stack->irs.rip);
         }
         SerialWriteFaultFrameChain(stack->rs.rbp, cpl == 0);
-        SerialWriteAbiGateStack(GetInterruptedRsp(&stack->irs), cpl);
+        SerialWriteAbiGateStack(GetInterruptedRsp(0x80, &stack->irs), cpl);
         SerialWriteExecutionContext();
         SerialWriteLineLiteral("ABI_GATE_DIAGNOSTICS_END");
     }
@@ -461,11 +518,222 @@ public static class IDT {
         Native.Out8(0x3F8, (byte)'\n');
     }
 
+    private static bool IsCanonicalAddress(ulong address) {
+        ulong upper = address >> 48;
+        ulong expectedUpper = ((address >> 47) & 1UL) == 0
+            ? 0UL : 0xFFFFUL;
+        return address != 0 && upper == expectedUpper;
+    }
+
+    private static unsafe void SerialWriteFaultCodeWindow(ulong rip) {
+        const ulong BytesBeforeRip = 16UL;
+        const int WindowLength = 32;
+        SerialWriteLineLiteral("FAULT_CODE_WINDOW_BEGIN");
+        SerialWriteHexLine64("FAULT_CODE_WINDOW_RIP=", rip);
+        if (!IsCanonicalAddress(rip) || rip < BytesBeforeRip) {
+            SerialWriteLineLiteral("FAULT_CODE_WINDOW_UNAVAILABLE=noncanonical-or-underflow");
+            SerialWriteLineLiteral("FAULT_CODE_WINDOW_END");
+            return;
+        }
+
+        ulong start = rip - BytesBeforeRip;
+        SerialWriteHexLine64("FAULT_CODE_WINDOW_BASE=", start);
+        SerialWriteHexLine64("FAULT_CODE_WINDOW_RIP_OFFSET=", BytesBeforeRip);
+        SerialWriteLiteral("FAULT_CODE_WINDOW_BYTES=");
+        for (int i = 0; i < WindowLength; i++) {
+            ulong address = start + (ulong)i;
+            if (address < start || !IsMapped(address)) {
+                SerialWriteLiteral("??");
+                continue;
+            }
+            SerialWriteHex8(*(byte*)address);
+        }
+        Native.Out8(0x3F8, (byte)'\n');
+        SerialWriteLineLiteral("FAULT_CODE_WINDOW_END");
+    }
+
+    private static unsafe void SerialWriteIdtGate(ulong baseAddress,
+            ushort limit, byte vector) {
+        ulong offset = (ulong)vector * (ulong)sizeof(IDTEntry);
+        if (offset + (ulong)sizeof(IDTEntry) - 1UL > limit ||
+                baseAddress > 0xFFFFFFFFFFFFFFFFUL - offset ||
+                !IsMapped(baseAddress + offset) ||
+                !IsMapped(baseAddress + offset + (ulong)sizeof(IDTEntry) - 1UL)) {
+            SerialWriteHexLine64("IDT_GATE_UNAVAILABLE_VECTOR=", vector);
+            return;
+        }
+
+        IDTEntry* entry = (IDTEntry*)(baseAddress + offset);
+        ulong target = entry->BaseLow |
+            ((ulong)entry->BaseMid << 16) |
+            ((ulong)entry->BaseHigh << 32);
+        SerialWriteHexLine8("IDT_GATE_VECTOR=", vector);
+        SerialWriteHexLine16("IDT_GATE_SELECTOR=", entry->Selector);
+        SerialWriteHexLine8("IDT_GATE_PRESENT=",
+            (byte)((entry->Type_Attributes >> 7) & 1));
+        SerialWriteHexLine8("IDT_GATE_DPL=",
+            (byte)((entry->Type_Attributes >> 5) & 3));
+        SerialWriteHexLine8("IDT_GATE_TYPE=",
+            (byte)(entry->Type_Attributes & 0xF));
+        SerialWriteHexLine8("IDT_GATE_IST=", (byte)(entry->Reserved0 & 7));
+        SerialWriteHexLine64("IDT_GATE_TARGET=", target);
+    }
+
+    private static unsafe void SerialWriteDescriptorForensics() {
+        IDTDescriptor activeIdtr = default(IDTDescriptor);
+        GDT.GDTDescriptor activeGdtr = default(GDT.GDTDescriptor);
+        Native.Read_IDT(ref activeIdtr);
+        Native.Read_GDT(ref activeGdtr);
+
+        SerialWriteLineLiteral("DESCRIPTOR_FORENSICS_BEGIN");
+        SerialWriteHexLine64("IDTR_ACTIVE_BASE=", activeIdtr.Base);
+        SerialWriteHexLine16("IDTR_ACTIVE_LIMIT=", activeIdtr.Limit);
+        SerialWriteHexLine64("IDTR_CACHED_BASE=", idtr.Base);
+        SerialWriteHexLine16("IDTR_CACHED_LIMIT=", idtr.Limit);
+        SerialWriteIdtGate(activeIdtr.Base, activeIdtr.Limit, 8);
+        SerialWriteIdtGate(activeIdtr.Base, activeIdtr.Limit, 13);
+        SerialWriteIdtGate(activeIdtr.Base, activeIdtr.Limit, 14);
+
+        SerialWriteHexLine64("GDTR_ACTIVE_BASE=", activeGdtr.Base);
+        SerialWriteHexLine16("GDTR_ACTIVE_LIMIT=", activeGdtr.Limit);
+        SerialWriteHexLine64("GDTR_CACHED_BASE=", GDT.gdtr.Base);
+        SerialWriteHexLine16("GDTR_CACHED_LIMIT=", GDT.gdtr.Limit);
+        SerialWriteHexLine16("TASK_REGISTER_SELECTOR=", Native.Read_TR());
+        if (activeGdtr.Limit >= 55 &&
+                IsMapped(activeGdtr.Base) &&
+                IsMapped(activeGdtr.Base + 55UL)) {
+            ulong* entries = (ulong*)activeGdtr.Base;
+            SerialWriteHexLine64("GDT_KERNEL_CODE=", entries[1]);
+            SerialWriteHexLine64("GDT_KERNEL_DATA=", entries[2]);
+            SerialWriteHexLine64("GDT_USER_CODE=", entries[3]);
+            SerialWriteHexLine64("GDT_USER_DATA=", entries[4]);
+            ulong tssLow = entries[5];
+            ulong tssHigh = entries[6];
+            SerialWriteHexLine64("GDT_TSS_LOW=", tssLow);
+            SerialWriteHexLine64("GDT_TSS_HIGH=", tssHigh);
+            ulong tssBase = ((tssLow >> 16) & 0xFFFFUL) |
+                (((tssLow >> 32) & 0xFFUL) << 16) |
+                (((tssLow >> 56) & 0xFFUL) << 24) |
+                ((tssHigh & 0xFFFFFFFFUL) << 32);
+            SerialWriteHexLine64("TSS_BASE=", tssBase);
+            SerialWriteHexLine8("TSS_PRESENT=", (byte)((tssLow >> 47) & 1));
+            SerialWriteHexLine8("TSS_TYPE=", (byte)((tssLow >> 40) & 0xF));
+            if (IsCanonicalAddress(tssBase) && IsMapped(tssBase + 103UL)) {
+                byte* tss = (byte*)tssBase;
+                ulong rsp0 = *(uint*)(tss + 4) |
+                    ((ulong)*(uint*)(tss + 8) << 32);
+                SerialWriteHexLine64("TSS_RSP0=", rsp0);
+                SerialWriteHexLine64("GDT_KERNEL_STACK_TOP=", GDT.KernelStackTop);
+                for (int ist = 0; ist < 7; ist++) {
+                    int offset = 36 + ist * 8;
+                    ulong value = *(uint*)(tss + offset) |
+                        ((ulong)*(uint*)(tss + offset + 4) << 32);
+                    SerialWriteLiteral("TSS_IST");
+                    SerialWriteHex8((byte)(ist + 1));
+                    SerialWriteLiteral("=0x");
+                    SerialWriteHex64(value);
+                    Native.Out8(0x3F8, (byte)'\n');
+                }
+            } else {
+                SerialWriteLineLiteral("TSS_MEMORY_UNAVAILABLE=1");
+            }
+        } else {
+            SerialWriteLineLiteral("GDT_MEMORY_UNAVAILABLE=1");
+        }
+        SerialWriteLineLiteral("DESCRIPTOR_FORENSICS_END");
+    }
+
+    private static unsafe void SerialWriteExceptionSnapshot(ulong sequence,
+            int irq, ulong errorCode, bool hasErrorCode,
+            RegistersStack* regs, InterruptReturnStack* irs,
+            int priorNestingDepth, int priorVector, uint cpuId) {
+        SerialWriteLineLiteral("EXCEPTION_RECORD_BEGIN");
+        SerialWriteHexLine64("EXCEPTION_SEQUENCE=", sequence);
+        SerialWriteHexLine8("EXCEPTION_VECTOR=", (byte)irq);
+        SerialWriteHexLine64("EXCEPTION_ERROR_CODE=", errorCode);
+        SerialWriteHexLine64("EXCEPTION_ERROR_CODE_PRESENT=", hasErrorCode ? 1UL : 0UL);
+        SerialWriteHexLine64("EXCEPTION_FRAME_SYNTHETIC_ERROR_SLOT=",
+            regs == null ? 0UL : ((ulong*)regs)[15]);
+        SerialWriteHexLine64("EXCEPTION_FRAME_VECTOR_SLOT=",
+            regs == null ? 0UL : ((ulong*)regs)[16]);
+        SerialWriteHexLine64("EXCEPTION_CPU_ERROR_OFFSET=",
+            hasErrorCode ? 136UL : 0UL);
+        SerialWriteHexLine64("EXCEPTION_CPU_FRAME_OFFSET=",
+            hasErrorCode ? 144UL : 136UL);
+        SerialWriteHexLine64("INTERRUPT_PARENT_DEPTH=",
+            (ulong)(uint)priorNestingDepth);
+        SerialWriteHexLine64("INTERRUPT_PARENT_VECTOR=",
+            unchecked((ulong)(long)priorVector));
+        SerialWriteHexLine64("CURRENT_CPU=", cpuId);
+        SerialWriteHexLine64("CR2=", Native.ReadCR2());
+        SerialWriteHexLine64("CR3=", Native.ReadCR3());
+
+        if (irs != null) {
+            bool pushedStack = CpuPushedRspSs(irq, irs);
+            ulong rsp = GetInterruptedRsp(irq, irs);
+            SerialWriteHexLine64("RIP=", irs->rip);
+            SerialWriteHexLine64("CS=", irs->cs);
+            SerialWriteHexLine64("RFLAGS=", irs->rflags);
+            SerialWriteHexLine64("RSP=", rsp);
+            SerialWriteHexLine64("SS_RSP_PUSHED=", pushedStack ? 1UL : 0UL);
+            if (pushedStack)
+                SerialWriteHexLine64("SS=", irs->ss);
+            else
+                SerialWriteLineLiteral("SS=not-pushed");
+            SerialWriteHexLine64("FRAME_CPU_RIP_ADDRESS=", (ulong)irs);
+        }
+
+        if (regs != null) {
+            SerialWriteHexLine64("REG_RAX=", regs->rax);
+            SerialWriteHexLine64("REG_RCX=", regs->rcx);
+            SerialWriteHexLine64("REG_RDX=", regs->rdx);
+            SerialWriteHexLine64("REG_RBX=", regs->rbx);
+            SerialWriteHexLine64("REG_RBP=", regs->rbp);
+            SerialWriteHexLine64("REG_RSI=", regs->rsi);
+            SerialWriteHexLine64("REG_RDI=", regs->rdi);
+            SerialWriteHexLine64("REG_R8=", regs->r8);
+            SerialWriteHexLine64("REG_R9=", regs->r9);
+            SerialWriteHexLine64("REG_R10=", regs->r10);
+            SerialWriteHexLine64("REG_R11=", regs->r11);
+            SerialWriteHexLine64("REG_R12=", regs->r12);
+            SerialWriteHexLine64("REG_R13=", regs->r13);
+            SerialWriteHexLine64("REG_R14=", regs->r14);
+            SerialWriteHexLine64("REG_R15=", regs->r15);
+        }
+
+        if (irq == 13) {
+            SerialWriteHexLine8("GP_ERROR_EXTERNAL=", (byte)(errorCode & 1UL));
+            SerialWriteHexLine8("GP_ERROR_IDT=", (byte)((errorCode >> 1) & 1UL));
+            SerialWriteHexLine8("GP_ERROR_TI=", (byte)((errorCode >> 2) & 1UL));
+            SerialWriteHexLine64("GP_ERROR_SELECTOR_INDEX=", errorCode >> 3);
+            SerialWriteHexLine64("GP_ERROR_SELECTOR_VALUE=", errorCode & ~7UL);
+            SerialWriteLineLiteral((errorCode & 2UL) != 0
+                ? "GP_ERROR_SELECTOR_TABLE=IDT"
+                : ((errorCode & 4UL) != 0
+                    ? "GP_ERROR_SELECTOR_TABLE=LDT"
+                    : "GP_ERROR_SELECTOR_TABLE=GDT_OR_NONSELECTOR"));
+        } else if (irq == 14) {
+            SerialWriteHexLine8("PF_PRESENT=", (byte)(errorCode & 1UL));
+            SerialWriteHexLine8("PF_WRITE=", (byte)((errorCode >> 1) & 1UL));
+            SerialWriteHexLine8("PF_USER=", (byte)((errorCode >> 2) & 1UL));
+            SerialWriteHexLine8("PF_RESERVED=", (byte)((errorCode >> 3) & 1UL));
+            SerialWriteHexLine8("PF_INSTRUCTION_FETCH=", (byte)((errorCode >> 4) & 1UL));
+            SerialWriteHexLine8("PF_PROTECTION_KEY=", (byte)((errorCode >> 5) & 1UL));
+            SerialWriteHexLine8("PF_SHADOW_STACK=", (byte)((errorCode >> 6) & 1UL));
+            SerialWriteHexLine8("PF_SGX=", (byte)((errorCode >> 15) & 1UL));
+        }
+        SerialWriteLineLiteral("EXCEPTION_RECORD_END");
+    }
+
     private static unsafe void SerialWritePageTableWalk(ulong virtualAddress) {
         const ulong Present = 1;
         const ulong LargePage = 1UL << 7;
         ulong cr3 = Native.ReadCR3() & ~0xFFFUL;
         SerialWriteHexLine64("CR3=", cr3);
+        if (!IsCanonicalAddress(virtualAddress)) {
+            SerialWriteHexLine64("PT_WALK_SKIPPED_NONCANONICAL=", virtualAddress);
+            return;
+        }
 
         ulong* pml4 = (ulong*)cr3;
         ulong pml4e = pml4[(virtualAddress >> 39) & 0x1FFUL];
@@ -608,15 +876,23 @@ public static class IDT {
         SerialWriteLineLiteral("FAULT_FRAME_CHAIN_END");
     }
 
-    private static unsafe ulong GetInterruptedRsp(InterruptReturnStack* irs) {
-        if (irs == null) return 0;
+    private static unsafe bool CpuPushedRspSs(int irq,
+            InterruptReturnStack* irs) {
+        if (irs == null) return false;
+        if ((irs->cs & 3UL) != 0) return true;
+        if (irq < 0 || irq >= 256 || idt == null || irq >= idt.Length)
+            return false;
+        fixed (IDTEntry* entries = idt)
+            return (entries[irq].Reserved0 & 7) != 0;
+    }
 
-        // A ring-0 exception does not push RSP/SS.  The CPU frame is still
-        // RIP, CS, RFLAGS, so its original RSP is the address after those 3
-        // qwords.  For a privilege transition, use the CPU-pushed RSP.
-        if ((irs->cs & 3UL) == 0)
-            return (ulong)((byte*)irs + 24);
-        return irs->rsp;
+    private static unsafe ulong GetInterruptedRsp(int irq,
+            InterruptReturnStack* irs) {
+        if (irs == null) return 0;
+        if (CpuPushedRspSs(irq, irs)) return irs->rsp;
+        // A same-CPL frame starts at RIP and contains exactly three qwords.
+        // The interrupted RSP is the address immediately above RFLAGS.
+        return (ulong)irs + 3UL * sizeof(ulong);
     }
 
     private static unsafe void SerialWriteFaultBreadcrumbs(int irq, ulong errorCode, RegistersStack* regs, InterruptReturnStack* irs) {
@@ -629,7 +905,7 @@ public static class IDT {
             if (irs != null) {
                 SerialWriteHexLine64("NESTED_RIP=", irs->rip);
                 SerialWriteHexLine64("NESTED_CS=", irs->cs);
-                SerialWriteHexLine64("NESTED_RSP=", GetInterruptedRsp(irs));
+                SerialWriteHexLine64("NESTED_RSP=", GetInterruptedRsp(irq, irs));
             }
             if (regs != null) {
                 SerialWriteHexLine64("NESTED_RBP=", regs->rbp);
@@ -640,6 +916,9 @@ public static class IDT {
         _faultBreadcrumbsActive = true;
 
         switch (irq) {
+            case 6:
+                SerialWriteLineLiteral("CPU_FAULT_INVALID_OPCODE");
+                break;
             case 14:
                 SerialWriteLineLiteral("CPU_FAULT_PAGE_FAULT");
                 break;
@@ -653,6 +932,19 @@ public static class IDT {
 
         SerialWriteHexLine8("VEC=", (byte)irq);
         SerialWriteHexLine64("ERR=", errorCode);
+
+        // Emit code bytes before managed context and descriptor walks. If a
+        // later diagnostic helper faults, the original instruction is already
+        // durable in the serial log.
+        if (irs != null && (irq == 6 || irq == 13 || irq == 14))
+            SerialWriteFaultCodeWindow(irs->rip);
+        if (irs != null)
+            SerialWriteStackNeighborhood(GetInterruptedRsp(irq, irs));
+        if (regs != null && irs != null)
+            SerialWriteFaultFrameChain(regs->rbp, (irs->cs & 3UL) == 0);
+        if (irq == 8 || irq == 13 || irq == 14)
+            SerialWriteDescriptorForensics();
+        SerialWriteExecutionContext(irs == null ? 0 : GetInterruptedRsp(irq, irs));
 
         if (irq == 14) {
             SerialWriteHexLine64("CR2=", Native.ReadCR2());
@@ -668,7 +960,7 @@ public static class IDT {
                 SerialWriteHexLine64("RIP=", irs->rip);
                 SerialWriteHexLine64("CS=", irs->cs);
                 SerialWriteHexLine64("RFLAGS=", irs->rflags);
-                SerialWriteHexLine64("RSP=", GetInterruptedRsp(irs));
+                SerialWriteHexLine64("RSP=", GetInterruptedRsp(irq, irs));
             }
             if (regs != null) {
                 SerialWriteHexLine64("REG_RAX=", regs->rax);
@@ -690,22 +982,21 @@ public static class IDT {
             SerialWriteLineLiteral("PAGE_FAULT_RAW_CONTEXT_END");
             if (irs != null) {
                 SerialWriteFaultInstructionBytes(irs->rip);
-                SerialWriteStackNeighborhood(GetInterruptedRsp(irs));
+                SerialWriteStackNeighborhood(GetInterruptedRsp(irq, irs));
             }
             if (regs != null)
                 SerialWriteFaultFrameChain(regs->rbp, true);
             SerialWritePageTableWalk(Native.ReadCR2());
-            SerialWriteExecutionContext();
         }
 
         if (irs != null) {
             SerialWriteHexLine64("RIP=", irs->rip);
             SerialWriteHexLine64("CS=", irs->cs);
             SerialWriteHexLine64("RFLAGS=", irs->rflags);
-            SerialWriteHexLine64("RSP=", GetInterruptedRsp(irs));
+            SerialWriteHexLine64("RSP=", GetInterruptedRsp(irq, irs));
             SerialWriteHexLine64("CPU_FRAME_RAW_RSP_SLOT=", irs->rsp);
             SerialWriteHexLine64("CPU_FRAME_RAW_SS_SLOT=", irs->ss);
-            SerialWriteStackNeighborhood(GetInterruptedRsp(irs));
+            SerialWriteStackNeighborhood(GetInterruptedRsp(irq, irs));
             // Keep the vector 6 evidence path and also snapshot the interrupted
             // instruction for kernel page faults. PF CR2/RIP pairs in cleanup
             // diagnostics have been inconsistent with the preserved image's
@@ -740,6 +1031,17 @@ public static class IDT {
 
     [RuntimeExport("intr_handler")]
     public static unsafe void intr_handler(int irq, IDTStackGeneric* stack) {
+        uint cpuId = SMP.ThisCPU;
+        int cpuSlot = (int)(cpuId & 0xFFU);
+        int priorNestingDepth = _interruptNestingByCpu == null
+            ? 0 : _interruptNestingByCpu[cpuSlot];
+        int priorVector = _activeInterruptVectorByCpu == null
+            ? -1 : _activeInterruptVectorByCpu[cpuSlot];
+        if (_interruptNestingByCpu != null) {
+            _interruptNestingByCpu[cpuSlot] = priorNestingDepth + 1;
+            _activeInterruptVectorByCpu[cpuSlot] = irq;
+        }
+
         // Prevent nested interrupts while inside managed interrupt handler.
         Native.Cli();
 
@@ -760,6 +1062,7 @@ public static class IDT {
                         ThreadPool.Schedule(stack);
                     }
                 }
+                RestoreInterruptContext(cpuSlot, priorNestingDepth, priorVector);
                 return;
             }
             SerialWriteLineLiteral("RING3_ABI_KERNEL_GATE");
@@ -802,6 +1105,14 @@ public static class IDT {
                     break;
             }
 
+            ulong exceptionSequence = Native.IncrementExceptionSequence();
+            SerialWriteExceptionSnapshot(exceptionSequence, irq,
+                actualErrorCode, hasErrorCode, &stack->rs, irs,
+                priorNestingDepth, priorVector, cpuId);
+            if (exceptionSequence > 1) {
+                SerialWriteHexLine64("EXCEPTION_CONTEXT_INHERITED_FROM_SEQUENCE=", 1);
+            }
+
             if (irs != null && (irs->cs & 3UL) == 3UL) {
                 if (Ring3Process.HandleUserFault(irq, actualErrorCode, irs->rip,
                                                  irs->rsp,
@@ -814,6 +1125,7 @@ public static class IDT {
                             ThreadPool.Schedule(stack);
                         }
                     }
+                    RestoreInterruptContext(cpuSlot, priorNestingDepth, priorVector);
                     return;
                 }
                 Panic.Error("CPL3 fault without a current process");
@@ -830,8 +1142,7 @@ public static class IDT {
 
             // Display enhanced graphical panic screen
             InterruptReturnStack displayStack = *irs;
-            displayStack.rsp = GetInterruptedRsp(irs);
-            if ((displayStack.cs & 3UL) == 0) displayStack.ss = 0;
+            displayStack.rsp = GetInterruptedRsp(irq, irs);
             Panic.ShowEnhancedCrashScreen(
                 irq,
                 actualErrorCode,
@@ -888,10 +1199,20 @@ public static class IDT {
                 BootConsole.WriteLine("EOI");
             }
             
+            RestoreInterruptContext(cpuSlot, priorNestingDepth, priorVector);
             return;
         }
 
         Interrupts.HandleInterrupt(irq);
         Interrupts.EndOfInterrupt((byte)irq);
+        RestoreInterruptContext(cpuSlot, priorNestingDepth, priorVector);
+    }
+
+    private static void RestoreInterruptContext(int cpuSlot,
+            int nestingDepth, int activeVector) {
+        if (_interruptNestingByCpu == null ||
+                _activeInterruptVectorByCpu == null) return;
+        _interruptNestingByCpu[cpuSlot] = nestingDepth;
+        _activeInterruptVectorByCpu[cpuSlot] = activeVector;
     }
 }

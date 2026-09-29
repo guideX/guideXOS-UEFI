@@ -68,8 +68,20 @@
     routes, and file-association opens through QMP input.
 
 .PARAMETER CleanupStress
-    Run 50 Notepad closes, 50 Calculator closes, 25 alternating closes, and
-    a Computer Files taskbar open/activate/close control through QMP input.
+    Run bounded application launch/close cycles through QMP input. Cycle
+    counts are configurable with the CleanupStress cycle parameters.
+
+.PARAMETER NotepadCycles
+    Number of Notepad launch/close cycles in CleanupStress (default 50).
+
+.PARAMETER CalculatorCycles
+    Number of Calculator launch/close cycles in CleanupStress (default 50).
+
+.PARAMETER MixedCycles
+    Number of alternating Calculator/Notepad cycles in CleanupStress (default 25).
+
+.PARAMETER ComputerFilesCycles
+    Number of Computer Files launch/close cycles in CleanupStress (default 25).
 
 .PARAMETER StartMenuStress
     Run a bounded Start-menu open/close workload without launching applications.
@@ -124,6 +136,12 @@
     Reuse the existing ESP and only run the selected QEMU validation. Use
     this after a successful build when iterating on the host-side workload.
 
+.PARAMETER QemuInstructionTrace
+    Add a QEMU instruction trace filtered to the kernel's first code page.
+
+.PARAMETER QemuGdbPort
+    Listen for a GDB connection on this QEMU guest-debug port while validation runs.
+
 .EXAMPLE
     .\run_uefi_validation.ps1 -Continuous -TimeoutSeconds 300 -GuiVisible
 
@@ -149,6 +167,14 @@ param(
     [int]$StartMenuCycles = 100,
     [ValidateRange(1, 1000)]
     [int]$ForegroundCycles = 50,
+    [ValidateRange(0, 10000)]
+    [int]$NotepadCycles = 50,
+    [ValidateRange(0, 10000)]
+    [int]$CalculatorCycles = 50,
+    [ValidateRange(0, 10000)]
+    [int]$MixedCycles = 25,
+    [ValidateRange(0, 10000)]
+    [int]$ComputerFilesCycles = 25,
     [switch]$Ring3,
     [switch]$Ring3Phase15,
     [switch]$Ring3Phase25,
@@ -176,7 +202,10 @@ param(
     [switch]$GuiVisible,
     [switch]$SkipBuild,
     [string]$SerialLog = '',
-    [switch]$QemuDebug
+    [switch]$QemuDebug,
+    [switch]$QemuInstructionTrace,
+    [ValidateRange(0, 65535)]
+    [int]$QemuGdbPort = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -218,6 +247,10 @@ $selectorCount = @(
 
 if ($selectorCount -gt 1) {
     throw 'Select only one validation selector.'
+}
+if ($CleanupStress -and
+        ($NotepadCycles + $CalculatorCycles + $MixedCycles + $ComputerFilesCycles) -eq 0) {
+    throw 'CleanupStress requires at least one nonzero cycle count.'
 }
 if ($Frames -lt 0) {
     throw '-Frames cannot be negative.'
@@ -1157,15 +1190,27 @@ function Get-QmpLatestFreeInvalid {
 function Invoke-QmpCleanupStressCycle {
     param($Qmp, [string]$Name, [int]$Index, [string]$CounterName)
 
-    $closedPattern = '(?m)^APP_RUNTIME_WINDOW_CLOSED='
+    # Notepad's dirty-close confirmation emits its own WINDOW_CLOSED marker
+    # before the Notepad window is removed. Wait for the requested app by
+    # title, then for a fresh empty-taskbar projection, instead of treating
+    # the confirmation dialog's close as completion of the app cycle.
+    $closedPattern = '(?m)^APP_RUNTIME_WINDOW_CLOSED=title=' +
+        [regex]::Escape($Name) + ';'
     $closedBefore = Get-ContextMarkerCount $closedPattern
+    $taskbarEmptyPattern = '(?m)^\[TASKBAR_VISUAL\] groups=0;buttons=0;icons=0;fallback=0;active=0;activations=\d+;active-handle=(?:none|\d+);hidden=0;invalid=0\r?$'
+    $taskbarEmptyBefore = Get-ContextMarkerCount $taskbarEmptyPattern
     Open-QmpStartApplication $Qmp $Name $Index -ActivateTaskbarItem
     Wait-ForContextMarkerCount $closedPattern ($closedBefore + 1) 6000
+    Wait-ForContextMarkerCount $taskbarEmptyPattern ($taskbarEmptyBefore + 1) 6000
     $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
     if ($content -match '(?im)(RING3_ABI_KERNEL_GATE|#UD|#PF|#GP|CPU_FAULT_[A-Z_]+|PANIC:|UEFI_FRAME_FAULT_CONTEXT)') {
         throw "Guest fault detected during $Name cleanup cycle."
     }
-    if ($content -notmatch '(?m)^\[TASKBAR_VISUAL\] groups=0;buttons=0;icons=0;fallback=0;active=0;activations=\d+;active-handle=(?:none|\d+);hidden=0;invalid=0\r?$') {
+    $taskbarVisualMatches = [regex]::Matches($content,
+        '(?m)^\[TASKBAR_VISUAL\].*\r?$')
+    if ($taskbarVisualMatches.Count -eq 0 -or
+            $taskbarVisualMatches[$taskbarVisualMatches.Count - 1].Value -notmatch
+                '^\[TASKBAR_VISUAL\] groups=0;buttons=0;icons=0;fallback=0;active=0;activations=\d+;active-handle=(?:none|\d+);hidden=0;invalid=0\r?$') {
         throw "Taskbar projection did not return to empty after $Name cleanup."
     }
     $closeLines = [regex]::Matches($content,
@@ -1208,24 +1253,24 @@ function Send-QmpCleanupStressWorkload {
     Start-Sleep -Seconds 2
     $script:cleanupStressTelemetry.idle = Get-QmpLatestFreeInvalid
 
-    Write-Host '  cleanup stress: 50 Notepad cycles' -ForegroundColor Green
+    Write-Host "  cleanup stress: $NotepadCycles Notepad cycles" -ForegroundColor Green
     $script:cleanupStressTelemetry.beforeNotepad = Get-QmpLatestFreeInvalid
-    for ($i = 0; $i -lt 50; $i++) {
+    for ($i = 0; $i -lt $NotepadCycles; $i++) {
         Invoke-QmpCleanupStressCycle $Qmp 'Notepad' 8 'Notepad'
         if ($i -eq 0) { $script:cleanupStressTelemetry.oneNotepad = Get-QmpLatestFreeInvalid }
         if ($i -eq 9) { $script:cleanupStressTelemetry.tenNotepad = Get-QmpLatestFreeInvalid }
     }
 
-    Write-Host '  cleanup stress: 50 Calculator cycles' -ForegroundColor Green
+    Write-Host "  cleanup stress: $CalculatorCycles Calculator cycles" -ForegroundColor Green
     $script:cleanupStressTelemetry.beforeCalculator = Get-QmpLatestFreeInvalid
-    for ($i = 0; $i -lt 50; $i++) {
+    for ($i = 0; $i -lt $CalculatorCycles; $i++) {
         Invoke-QmpCleanupStressCycle $Qmp 'Calculator' 0 'Calculator'
         if ($i -eq 0) { $script:cleanupStressTelemetry.oneCalculator = Get-QmpLatestFreeInvalid }
         if ($i -eq 9) { $script:cleanupStressTelemetry.tenCalculator = Get-QmpLatestFreeInvalid }
     }
 
-    Write-Host '  cleanup stress: 25 alternating Calculator/Notepad cycles' -ForegroundColor Green
-    for ($i = 0; $i -lt 25; $i++) {
+    Write-Host "  cleanup stress: $MixedCycles alternating Calculator/Notepad cycles" -ForegroundColor Green
+    for ($i = 0; $i -lt $MixedCycles; $i++) {
         if (($i % 2) -eq 0) {
             Invoke-QmpCleanupStressCycle $Qmp 'Calculator' 0 ''
         } else {
@@ -1234,8 +1279,8 @@ function Send-QmpCleanupStressWorkload {
         $script:cleanupStressCounts.Mixed++
     }
 
-    Write-Host '  desktop control: 10 Computer Files taskbar cycles' -ForegroundColor Green
-    for ($i = 0; $i -lt 10; $i++) {
+    Write-Host "  desktop control: $ComputerFilesCycles Computer Files taskbar cycles" -ForegroundColor Green
+    for ($i = 0; $i -lt $ComputerFilesCycles; $i++) {
         Invoke-QmpCleanupStressCycle $Qmp 'Computer Files' 1 'ComputerFiles'
     }
 
@@ -1253,6 +1298,7 @@ function Send-QmpCleanupStressWorkload {
         'APP_RUNTIME_WINDOW_CLEANUP_SECOND_PASS_PROBE_CLEANED=1',
         'APP_RUNTIME_WINDOW_CLEANUP_DIAGNOSTIC_EXIT;pass=2;pending=0'
     )
+    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
     $probePositions = @($probeMarkers | ForEach-Object { $content.IndexOf($_, [System.StringComparison]::Ordinal) })
     $probeCleaned = Get-ContextMarkerCount '(?m)^APP_RUNTIME_WINDOW_CLEANUP_SECOND_PASS_PROBE_CLEANED=1$'
     if ($script:cleanupStressTelemetry.nestedRequests -lt 1 -or
@@ -1264,10 +1310,10 @@ function Send-QmpCleanupStressWorkload {
         throw 'Serialized cleanup second-pass probe did not complete in the required order.'
     }
     $expectedEmpty = '(?m)^\[TASKBAR_VISUAL\] groups=0;buttons=0;icons=0;fallback=0;active=0;activations=\d+;active-handle=(?:none|\d+);hidden=0;invalid=0$'
-    if ($script:cleanupStressCounts.Notepad -ne 50 -or
-            $script:cleanupStressCounts.Calculator -ne 50 -or
-            $script:cleanupStressCounts.Mixed -ne 25 -or
-            $script:cleanupStressCounts.ComputerFiles -ne 10 -or
+    if ($script:cleanupStressCounts.Notepad -ne $NotepadCycles -or
+            $script:cleanupStressCounts.Calculator -ne $CalculatorCycles -or
+            $script:cleanupStressCounts.Mixed -ne $MixedCycles -or
+            $script:cleanupStressCounts.ComputerFiles -ne $ComputerFilesCycles -or
             (Get-ContextMarkerCount $expectedEmpty) -lt 1) {
         throw 'Cleanup stress cycle totals or empty taskbar invariant failed.'
     }
@@ -1722,12 +1768,87 @@ function Open-QmpContextMenu {
     Start-Sleep -Milliseconds 55
 }
 
+function Reset-ContextMarkerCache {
+    $script:contextMarkerCacheInitialized = $true
+    $script:contextMarkerCacheOffset = [long]0
+    $script:contextMarkerPendingLine = ''
+    $script:contextMarkerLines = [System.Collections.Generic.List[string]]::new()
+    $script:contextMarkerPatternCache =
+        [System.Collections.Generic.Dictionary[string,object]]::new([System.StringComparer]::Ordinal)
+}
+
+function Update-ContextMarkerCache {
+    if (-not $script:contextMarkerCacheInitialized) {
+        Reset-ContextMarkerCache
+    }
+
+    $stream = $null
+    try {
+        $stream = [System.IO.FileStream]::new(
+            $serialPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::ReadWrite)
+        if ($stream.Length -lt $script:contextMarkerCacheOffset) {
+            Reset-ContextMarkerCache
+        }
+        if ($stream.Length -le $script:contextMarkerCacheOffset) { return }
+
+        $stream.Position = $script:contextMarkerCacheOffset
+        $remaining = $stream.Length - $script:contextMarkerCacheOffset
+        while ($remaining -gt 0) {
+            $readLength = [int][Math]::Min(1048576, $remaining)
+            $buffer = [byte[]]::new($readLength)
+            $readTotal = 0
+            while ($readTotal -lt $readLength) {
+                $read = $stream.Read($buffer, $readTotal, $readLength - $readTotal)
+                if ($read -le 0) { break }
+                $readTotal += $read
+            }
+            if ($readTotal -le 0) { break }
+
+            $script:contextMarkerCacheOffset += $readTotal
+            $remaining -= $readTotal
+            $newText = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $readTotal)
+            $combined = $script:contextMarkerPendingLine + $newText
+            $lastNewline = $combined.LastIndexOf("`n")
+            if ($lastNewline -ge 0) {
+                $completeText = $combined.Substring(0, $lastNewline)
+                foreach ($line in $completeText.Split([char]10)) {
+                    $script:contextMarkerLines.Add($line.TrimEnd([char]13))
+                }
+                $script:contextMarkerPendingLine = $combined.Substring($lastNewline + 1)
+            } else {
+                $script:contextMarkerPendingLine = $combined
+            }
+        }
+    } finally {
+        if ($stream) { $stream.Dispose() }
+    }
+}
+
 function Get-ContextMarkerCount {
     param([string]$Pattern)
     if (-not (Test-Path -LiteralPath $serialPath)) { return 0 }
-    $content = Get-Content -LiteralPath $serialPath -Raw -ErrorAction SilentlyContinue
-    if (-not $content) { return 0 }
-    return [regex]::Matches($content, $Pattern).Count
+    Update-ContextMarkerCache
+
+    $state = $null
+    if (-not $script:contextMarkerPatternCache.TryGetValue($Pattern, [ref]$state)) {
+        $count = 0
+        foreach ($line in $script:contextMarkerLines) {
+            if ([regex]::IsMatch($line, $Pattern)) { $count++ }
+        }
+        $state = @{ Count = $count; ProcessedLines = $script:contextMarkerLines.Count }
+        $script:contextMarkerPatternCache[$Pattern] = $state
+    } else {
+        for ($i = $state.ProcessedLines; $i -lt $script:contextMarkerLines.Count; $i++) {
+            if ([regex]::IsMatch($script:contextMarkerLines[$i], $Pattern)) {
+                $state.Count++
+            }
+        }
+        $state.ProcessedLines = $script:contextMarkerLines.Count
+    }
+    return [int]$state.Count
 }
 
 function Wait-ForContextMarkerCount {
@@ -2191,9 +2312,17 @@ if ($isInteractiveValidation) {
     $qmpPort = Get-Random -Minimum 43000 -Maximum 43999
     $qemuArgs += @('-qmp', "tcp:127.0.0.1:$qmpPort,server=on,wait=off")
 }
-if ($QemuDebug) {
+if ($QemuGdbPort -gt 0) {
+    $qemuArgs += @('-gdb', "tcp:127.0.0.1:$QemuGdbPort")
+}
+if ($QemuDebug -or $QemuInstructionTrace) {
     $qemuDebugLogPath = [System.IO.Path]::ChangeExtension($serialPath, '.qemu-debug.log')
-    $qemuArgs += @('-d', 'int,cpu_reset,guest_errors', '-D', $qemuDebugLogPath)
+    $debugItems = 'int,cpu_reset,guest_errors'
+    if ($QemuInstructionTrace) {
+        $debugItems += ',in_asm'
+        $qemuArgs += @('-dfilter', '0x10001000+0x1000')
+    }
+    $qemuArgs += @('-d', $debugItems, '-D', $qemuDebugLogPath)
 }
 
 Write-Host "Serial log: $serialPath" -ForegroundColor Gray
