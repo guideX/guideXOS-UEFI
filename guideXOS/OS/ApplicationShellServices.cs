@@ -347,10 +347,20 @@ namespace guideXOS.OS {
             LaunchResult failure;
             if (!ModernShellAdapter.TryCreateLaunchRequest(shellObjectId,
                     out target, out request, out resolution, out failure)) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE33
+                Program.MarkUefiRing3Phase33("OBJECT_RESOLVE=failed;id=" +
+                    (shellObjectId ?? ""));
+#endif
                 return failure ?? LaunchResult.Failed(
                     LaunchErrorCode.NotFound,
                     "Shell object was not found", null);
             }
+#if UEFI_DIAGNOSTIC_RING3_PHASE33
+            Program.MarkUefiRing3Phase33("OBJECT_RESOLVE=success;id=" +
+                resolution.ShellId + ";kind=" + resolution.Kind.ToString() +
+                ";app=" + (resolution.AppId ?? "") + ";alias=" +
+                (resolution.MatchedAlias ?? ""));
+#endif
             if (target.TargetKind == ApplicationShellTargetKind.Action) {
                 return OpenTypedShellAction(target.ShellObjectId);
             }

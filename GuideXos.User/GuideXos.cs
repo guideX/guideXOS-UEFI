@@ -328,6 +328,15 @@ namespace GuideXos
     }
 
     /// <summary>
+    /// The bounded shell objects exposed by the public managed SDK.
+    /// Values are resolved by the kernel/App Model; they are not object handles.
+    /// </summary>
+    public enum GuideXosShellObject : uint
+    {
+        ComputerFiles = 1,
+    }
+
+    /// <summary>
     /// Typed wrapper over the existing Phase 9 Shell application-ID launch.
     /// The application ID is bounded in UTF-16 code units and copied before
     /// the synchronous service call. Launch authority stays in the App Model.
@@ -361,6 +370,22 @@ namespace GuideXos
                 GuideXosLaunchResultCode.InvalidRequest);
             return GuideXosInternalAbi.TryOpenDocument(
                 document, out launchResult);
+        }
+
+        /// <summary>
+        /// Opens the existing Computer Files shell object through Phase 9.
+        /// The App Model resolves the object, factory, and application lifetime.
+        /// </summary>
+        public static GuideXosResult TryOpenShellObject(
+            GuideXosShellObject shellObject,
+            out GuideXosLaunchResult launchResult)
+        {
+            launchResult = new GuideXosLaunchResult(
+                GuideXosLaunchResultCode.InvalidRequest);
+            if (shellObject != GuideXosShellObject.ComputerFiles)
+                return new GuideXosResult(GuideXosStatus.InvalidArgument);
+            return GuideXosInternalAbi.TryOpenShellObject(
+                shellObject, out launchResult);
         }
     }
 

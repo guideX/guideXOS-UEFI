@@ -731,7 +731,9 @@ namespace guideXOS.Misc {
             get {
                 int expectedReturn = 42;
                 if (ManagedImage != null) {
-                    if (ManagedImage.IsPhase32FailFast ||
+                    if (ManagedImage.IsPhase33FailFast) expectedReturn = -1;
+                    else if (ManagedImage.IsPhase33) expectedReturn = 33;
+                    else if (ManagedImage.IsPhase32FailFast ||
                             ManagedImage.IsPhase31FailFast ||
                             ManagedImage.IsPhase30FailFast) expectedReturn = -1;
                     else if (ManagedImage.IsPhase32StaleOwner) expectedReturn = 32;

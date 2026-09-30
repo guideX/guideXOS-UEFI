@@ -4,7 +4,7 @@ using Internal.Runtime.CompilerServices;
 using System;
 
 namespace guideXOS.Misc {
-    internal static unsafe class Ring3Proof {
+    internal static unsafe partial class Ring3Proof {
         private const ulong Phase15Sentinel = 0xA15A15A15A15A15UL;
         private static bool _scheduled;
         private static bool _direct;

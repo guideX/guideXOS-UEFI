@@ -147,6 +147,7 @@ namespace GuideXos
         private const uint ShellService = 7;
         private const uint ShellLaunchApplicationOperation = 1;
         private const uint ShellOpenDocumentOperation = 2;
+        private const uint ShellOpenObjectOperation = 3;
 
         [DllImport("*", EntryPoint = "guidexos_pal_abi_version",
             CallingConvention = CallingConvention.Cdecl)]
@@ -366,6 +367,21 @@ namespace GuideXos
                 ShellOpenDocumentOperation, out launchResult);
         }
 
+        internal static GuideXosResult TryOpenShellObject(
+            GuideXosShellObject shellObject,
+            out GuideXosLaunchResult launchResult)
+        {
+            if (shellObject != GuideXosShellObject.ComputerFiles)
+            {
+                launchResult = new GuideXosLaunchResult(
+                    GuideXosLaunchResultCode.InvalidRequest);
+                return new GuideXosResult(GuideXosStatus.InvalidArgument);
+            }
+            return TryShellTarget("gxos.shell.computerfiles",
+                GuideXosShell.MaxApplicationIdLength,
+                ShellOpenObjectOperation, out launchResult);
+        }
+
         private static GuideXosResult TryShellTarget(
             string targetText, int maximumLength, uint operationId,
             out GuideXosLaunchResult launchResult)
@@ -390,6 +406,15 @@ namespace GuideXos
             request.TargetLength = (uint)targetText.Length;
             request.ResponseCapacity = (uint)sizeof(
                 GuideXosShellLaunchResponseWire);
+#if GUIDEXOS_PHASE33_RAW_INVALID_ACTION
+            if (operationId == ShellOpenObjectOperation)
+                targetText = "gxos.shell.installtoharddrive";
+#elif GUIDEXOS_PHASE33_MALFORMED
+            if (operationId == ShellOpenObjectOperation)
+                operationId = 99;
+#endif
+            request.OperationId = operationId;
+            request.TargetLength = (uint)targetText.Length;
 
             byte* target = request.Target;
             for (int i = 0; i < targetText.Length; i++)

@@ -59,6 +59,11 @@ PAYLOADS = (
     Payload("Phase32", "success", "guideXOS.Phase32ManagedOpenDocumentProof", "phase32-managed-open-document-build.json", "success", 1 << 30, "FlagPhase32OpenDocument"),
     Payload("Phase32", "failfast", "guideXOS.Phase32OpenDocumentFailFastProof", "phase32-managed-open-document-build.json", "failfast", 1 << 31, "FlagPhase32FailFast"),
     Payload("Phase32", "stale-owner", "guideXOS.Phase32OpenDocumentStaleOwnerProof", "phase32-managed-open-document-build.json", "stale-owner", (1 << 30) | (1 << 31), "FlagPhase32StaleOwner"),
+    Payload("Phase33", "success", "guideXOS.Phase33ManagedShellActionProof", "phase33-managed-shell-action-build.json", "success", (1 << 25) | (1 << 30) | (1 << 31), "FlagPhase33ShellObject"),
+    Payload("Phase33", "failfast", "guideXOS.Phase33ShellActionFailFastProof", "phase33-managed-shell-action-build.json", "failfast", (1 << 26) | (1 << 30) | (1 << 31), "FlagPhase33FailFast"),
+    Payload("Phase33", "stale-owner", "guideXOS.Phase33ShellActionStaleOwnerProof", "phase33-managed-shell-action-build.json", "stale-owner", (1 << 27) | (1 << 30) | (1 << 31), "FlagPhase33StaleOwner"),
+    Payload("Phase33", "invalid-action", "guideXOS.Phase33ShellActionInvalidActionProof", "phase33-managed-shell-action-build.json", "invalid-action", (1 << 28) | (1 << 30) | (1 << 31), "FlagPhase33InvalidAction"),
+    Payload("Phase33", "malformed", "guideXOS.Phase33ShellActionMalformedProof", "phase33-managed-shell-action-build.json", "malformed", (1 << 29) | (1 << 30) | (1 << 31), "FlagPhase33Malformed"),
 )
 
 
@@ -123,7 +128,7 @@ def read_generated_kernel_hashes(source: Path) -> dict[int, str]:
     """Read generated identities so post-build audits verify the compiled input."""
     text = source.read_text(encoding="utf-8-sig")
     pattern = re.compile(
-        r"// Phase(?:29|30|31|32) [\w-]+: ([0-9A-Fa-f]{64})\s+"
+        r"// Phase(?:29|30|31|32|33) [\w-]+: ([0-9A-Fa-f]{64})\s+"
         r"case 0x([0-9A-Fa-f]{8})U:"
     )
     found: dict[int, str] = {}
@@ -151,6 +156,7 @@ def read_build_payloads(root: Path) -> dict[tuple[str, str], dict]:
             "Phase30": "phase30-managed-clipboard",
             "Phase31": "phase31-managed-shell",
             "Phase32": "phase32-managed-open-document",
+            "Phase33": "phase33-managed-shell-action",
         }[payload.phase] / payload.record_name
         if not record.is_file():
             raise ValueError(f"Build record is missing: {record}")
@@ -257,8 +263,8 @@ def collect_rows(root: Path, ramdisk_source: Path) -> list[dict[str, str]]:
                 "classification": "compiled allowlist stale" if raw_digest else "",
             }
         )
-    if len(rows) != 22 or len(seen_flags) != 22:
-        raise ValueError(f"Expected 22 unique managed proof identities; found {len(rows)}")
+    if len(rows) != 27 or len(seen_flags) != 27:
+        raise ValueError(f"Expected 27 unique managed proof identities; found {len(rows)}")
     return rows
 
 
@@ -405,7 +411,7 @@ def main() -> int:
     if args.kernel_source:
         accepted = read_legacy_kernel_hashes(args.kernel_source)
         if args.stage == "before" and len(accepted) != 22:
-            raise ValueError(f"Expected 22 existing hard-coded identities, parsed {len(accepted)}")
+            raise ValueError(f"Expected 22 existing legacy identities, parsed {len(accepted)}")
     generated: dict[int, str] = {}
     if args.identity_source:
         if args.audit_only:
@@ -425,7 +431,7 @@ def main() -> int:
                 generated[payload.proof_flags] == row["raw_sha256"]
             ).lower()
         if args.kernel_built and any(row["allowlist_equals_executable"] != "true" for row in rows):
-            raise ValueError("Generated compiled-input identities do not match all 22 final executables")
+            raise ValueError("Generated compiled-input identities do not match all 27 final executables")
     if args.report_csv:
         write_csv(rows, args.report_csv, args.stage, accepted, args.kernel_built)
     matches = sum(

@@ -173,6 +173,9 @@ namespace guideXOS.Misc {
             (uint)ApplicationServiceId.Shell;
         internal const uint ShellLaunchApplicationOperation = 1;
         internal const uint ShellOpenDocumentOperation = 2;
+        internal const uint ShellOpenObjectOperation = 3;
+        private const string Phase33ShellObjectId =
+            "gxos.shell.computerfiles";
 
         private static void Marker(string text) {
             if (text == null) return;
@@ -759,6 +762,7 @@ namespace guideXOS.Misc {
                 Ring3Process process, ulong requestPointer,
                 ulong requestLength) {
             bool openDocument = false;
+            bool openShellObject = false;
             if (requestLength != (ulong)sizeof(Ring3ShellLaunchRequest) ||
                 !PageTable.ValidateReadableUserRange(process.Space.Pml4,
                     requestPointer, requestLength)) {
@@ -776,10 +780,15 @@ namespace guideXOS.Misc {
                 Marker("RING3_SHELL_REQUEST_COPIED_IN=1");
                 openDocument = storage->OperationId ==
                     ShellOpenDocumentOperation;
+                openShellObject = storage->OperationId ==
+                    ShellOpenObjectOperation;
                 Marker(openDocument ?
                     "RING3_SHELL_OPEN_DOCUMENT_ABI_ENTERED=1" :
-                    "RING3_SHELL_LAUNCH_ABI_ENTERED=1");
-                if (!IsValidShellLaunchRequest(storage, openDocument)) {
+                    (openShellObject ?
+                    "RING3_SHELL_OBJECT_ABI_ENTERED=1" :
+                    "RING3_SHELL_LAUNCH_ABI_ENTERED=1"));
+                if (!IsValidShellLaunchRequest(storage, openDocument,
+                        openShellObject)) {
                     Marker("RING3_SHELL_INVALID_REQUEST_REJECTED=1");
                     return InvalidRequest;
                 }
@@ -813,6 +822,20 @@ namespace guideXOS.Misc {
                     response.ResultCode = (uint)(contextResult == null ?
                         ApplicationServiceResultCode.InvalidContext :
                         contextResult.Code);
+                } else if (openShellObject &&
+                        requester.LifecycleState !=
+                            ApplicationInstanceLifecycleState.Running &&
+                        requester.LifecycleState !=
+                            ApplicationInstanceLifecycleState.Activated) {
+                    response.ResultCode = (uint)
+                        ApplicationServiceResultCode.InvalidState;
+                    Marker("RING3_SHELL_REQUESTER_LIFECYCLE_REJECTED=1");
+                    Marker("RING3_SHELL_BACKEND_ACTION_DELTA=0");
+                } else if (openShellObject && target != Phase33ShellObjectId) {
+                    response.ResultCode = (uint)
+                        ApplicationServiceResultCode.UnsupportedTarget;
+                    Marker("RING3_SHELL_OBJECT_ALLOWLIST_REJECTED=1");
+                    Marker("RING3_SHELL_BACKEND_ACTION_DELTA=0");
                 } else {
                     int factoryBefore = ApplicationFactoryRegistry.FactoryLaunches;
                     int fallbackBefore =
@@ -820,7 +843,13 @@ namespace guideXOS.Misc {
                     int legacyBefore = AppModelCompatibilityDiagnostics.LegacyBackendCalls;
                     ApplicationShellOpenRequest shellRequest = openDocument
                         ? ApplicationShellOpenRequest.ForDocument(target)
-                        : ApplicationShellOpenRequest.ForApplicationId(target);
+                        : (openShellObject
+                            ? ApplicationShellOpenRequest.ForShellObject(target)
+                            : ApplicationShellOpenRequest.ForApplicationId(target));
+#if UEFI_DIAGNOSTIC_RING3_PHASE33
+                    if (openShellObject)
+                        Program.MarkUefiRing3Phase33("SHELL_BEGIN=1");
+#endif
                     ApplicationServiceResult<ApplicationServiceRequestHandle>
                         begun = access.Shell.Begin(context,
                             shellRequest);
@@ -874,7 +903,9 @@ namespace guideXOS.Misc {
                                         out targetInstance) &&
                                     targetInstance != null &&
                                     targetInstance.DescriptorId ==
-                                        (openDocument ? launch.AppId : target);
+                                        (openDocument ? launch.AppId :
+                                        (openShellObject ? "gxos.builtin.files" :
+                                            target));
                                 Marker(targetResolved ?
                                     "RING3_SHELL_TARGET_INSTANCE_CREATED=1" :
                                     "RING3_SHELL_TARGET_INSTANCE_CREATED=0");
@@ -887,6 +918,44 @@ namespace guideXOS.Misc {
                                         "RING3_SHELL_TARGET_LIFECYCLE_RUNNING=0");
                                     Marker("RING3_SHELL_TARGET_ID=" +
                                         targetInstance.DescriptorId);
+                                    if (openShellObject) {
+                                        ApplicationFactory objectFactory;
+                                        bool filesFactory =
+                                            ApplicationFactoryRegistry.TryGet(
+                                                targetInstance.DescriptorId,
+                                                out objectFactory) &&
+                                            objectFactory is
+                                                ComputerFilesApplicationFactory;
+                                        bool objectRequest =
+                                            targetInstance.LaunchRequestContext != null &&
+                                            targetInstance.LaunchRequestContext.TargetKind ==
+                                                LaunchRequestTargetKind.ShellObject &&
+                                            targetInstance.LaunchRequestContext.SourceShellObjectId ==
+                                                Phase33ShellObjectId &&
+                                            targetInstance.OwnedWindowCount > 0;
+                                        Marker(filesFactory ?
+                                            "RING3_PHASE33_COMPUTERFILES_FACTORY=1" :
+                                            "RING3_PHASE33_COMPUTERFILES_FACTORY=0");
+                                        Marker(objectRequest ?
+                                            "RING3_PHASE33_SHELL_OBJECT_TARGET=1" :
+                                            "RING3_PHASE33_SHELL_OBJECT_TARGET=0");
+                                        Marker(targetInstance.LifecycleState ==
+                                                ApplicationInstanceLifecycleState.Activated ?
+                                            "RING3_PHASE33_TARGET_ACTIVATED=1" :
+                                            "RING3_PHASE33_TARGET_ACTIVATED=0");
+#if UEFI_DIAGNOSTIC_RING3_PHASE33
+                                        Program.MarkUefiRing3Phase33(
+                                            "BACKEND_RESULT=app=" +
+                                            targetInstance.DescriptorId +
+                                            ";factory=" + (filesFactory ?
+                                                "ComputerFilesApplicationFactory" : "other") +
+                                            ";windows=" +
+                                            targetInstance.OwnedWindowCount.ToString() +
+                                            ";lifecycle=" +
+                                            ApplicationInstanceLifecycle.Name(
+                                                targetInstance.LifecycleState));
+#endif
+                                    }
                                     if (openDocument) {
                                         ApplicationFactory factory;
                                         bool notepadFactory =
@@ -937,13 +1006,16 @@ namespace guideXOS.Misc {
         }
 
         private static bool IsValidShellLaunchRequest(
-                Ring3ShellLaunchRequest* request, bool openDocument) {
+                Ring3ShellLaunchRequest* request, bool openDocument,
+                bool openShellObject) {
             return request != null &&
                 request->StructureVersion == AbiVersion &&
                 request->ServiceId == ShellService &&
                 (request->OperationId == ShellLaunchApplicationOperation ||
                     (openDocument && request->OperationId ==
-                        ShellOpenDocumentOperation)) &&
+                        ShellOpenDocumentOperation) ||
+                    (openShellObject && request->OperationId ==
+                        ShellOpenObjectOperation)) &&
                 request->RequestLength ==
                     sizeof(Ring3ShellLaunchRequest) &&
                 request->TargetLength != 0 &&
@@ -962,7 +1034,17 @@ namespace guideXOS.Misc {
             if (request == null) return InvalidRequest;
             bool openDocument = request->OperationId ==
                 ShellOpenDocumentOperation;
-            return IsValidShellLaunchRequest(request, openDocument)
+            return IsValidShellLaunchRequest(request, openDocument, false)
+                ? Success
+                : InvalidRequest;
+        }
+
+        internal static ulong ValidateShellLaunchRequestForPhase33Proof(
+                Ring3ShellLaunchRequest* request) {
+            if (request == null) return InvalidRequest;
+            bool openShellObject = request->OperationId ==
+                ShellOpenObjectOperation;
+            return IsValidShellLaunchRequest(request, false, openShellObject)
                 ? Success
                 : InvalidRequest;
         }

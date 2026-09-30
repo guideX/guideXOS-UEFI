@@ -42,6 +42,21 @@ namespace guideXOS.Misc {
         internal const uint FlagPhase32FailFast = 2147483648U;
         internal const uint FlagPhase32StaleOwner =
             FlagPhase32OpenDocument | FlagPhase32FailFast;
+        internal const uint FlagPhase33ShellObject =
+            FlagPhase31Launch | FlagPhase32OpenDocument |
+            FlagPhase32FailFast;
+        internal const uint FlagPhase33FailFast =
+            FlagPhase31InvalidTarget | FlagPhase32OpenDocument |
+            FlagPhase32FailFast;
+        internal const uint FlagPhase33StaleOwner =
+            FlagPhase31Oversize | FlagPhase32OpenDocument |
+            FlagPhase32FailFast;
+        internal const uint FlagPhase33InvalidAction =
+            FlagPhase31FailFast | FlagPhase32OpenDocument |
+            FlagPhase32FailFast;
+        internal const uint FlagPhase33Malformed =
+            FlagPhase31StaleOwner | FlagPhase32OpenDocument |
+            FlagPhase32FailFast;
         internal const byte Read = 1;
         internal const byte Write = 2;
         internal const byte Execute = 4;
@@ -1157,6 +1172,11 @@ namespace guideXOS.Misc {
             if (phase32Kind == 1) prefix = "Native/guideXOS.Phase32ManagedOpenDocumentProof";
             if (phase32Kind == 2) prefix = "Native/guideXOS.Phase32OpenDocumentFailFastProof";
             if (phase32Kind == 3) prefix = "Native/guideXOS.Phase32OpenDocumentStaleOwnerProof";
+            if (phase32Kind == 4) prefix = "Native/guideXOS.Phase33ManagedShellActionProof";
+            if (phase32Kind == 5) prefix = "Native/guideXOS.Phase33ShellActionFailFastProof";
+            if (phase32Kind == 6) prefix = "Native/guideXOS.Phase33ShellActionStaleOwnerProof";
+            if (phase32Kind == 7) prefix = "Native/guideXOS.Phase33ShellActionInvalidActionProof";
+            if (phase32Kind == 8) prefix = "Native/guideXOS.Phase33ShellActionMalformedProof";
             byte[] image = File.ReadAllBytes(prefix + ".exe");
             byte[] descriptor = File.ReadAllBytes(prefix + ".gxmi");
             if (image == null || descriptor == null) {
@@ -1266,6 +1286,33 @@ namespace guideXOS.Misc {
         internal bool IsPhase32StaleOwner => Descriptor != null &&
             (Descriptor.Flags & ManagedImageContract.FlagPhase32StaleOwner) ==
                 ManagedImageContract.FlagPhase32StaleOwner;
+
+        internal bool IsPhase33 => Descriptor != null &&
+            (Descriptor.Flags & (ManagedImageContract.FlagPhase32OpenDocument |
+                ManagedImageContract.FlagPhase32FailFast)) ==
+                (ManagedImageContract.FlagPhase32OpenDocument |
+                 ManagedImageContract.FlagPhase32FailFast) &&
+            (Descriptor.Flags & (ManagedImageContract.FlagPhase31Launch |
+                ManagedImageContract.FlagPhase31InvalidTarget |
+                ManagedImageContract.FlagPhase31Oversize |
+                ManagedImageContract.FlagPhase31FailFast |
+                ManagedImageContract.FlagPhase31StaleOwner)) != 0;
+
+        internal bool IsPhase33FailFast => Descriptor != null &&
+            (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase33FailFast;
+
+        internal bool IsPhase33StaleOwner => Descriptor != null &&
+            (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase33StaleOwner;
+
+        internal bool IsPhase33InvalidAction => Descriptor != null &&
+            (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase33InvalidAction;
+
+        internal bool IsPhase33Malformed => Descriptor != null &&
+            (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase33Malformed;
 
         internal bool TryAuthorizeEntry(ulong rip,
                                         bool allowManagedEntryResume = false) {
