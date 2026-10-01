@@ -110,6 +110,38 @@ namespace guideXOS.Misc {
         public uint Reserved;
     }
 
+    // Phase 10 resource access contains a metadata or read operation, a
+    // bounded ASCII resource key, and caller-owned response/data destinations.
+    // Neither an AppId nor any App Model authority is accepted from Ring 3.
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct Ring3ResourceRequest {
+        public uint StructureVersion;
+        public uint ServiceId;
+        public uint OperationId;
+        public uint RequestLength;
+        public uint ResourceNameLength;
+        public uint DataCapacity;
+        public uint ResponseCapacity;
+        public uint Reserved;
+        public ulong ResponseBuffer;
+        public ulong DataBuffer;
+        public ulong ExpectedResourceLength;
+        public fixed byte ResourceName[ApplicationResourceRequest.MaxResourceKeyLength];
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct Ring3ResourceResponse {
+        public uint StructureVersion;
+        public uint Size;
+        public uint ResultCode;
+        public uint Flags;
+        public ulong ResourceLength;
+        public ulong Offset;
+        public uint BytesRead;
+        public uint EndOfResource;
+        public uint Reserved;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct Ring3ApplicationIdentityResponse {
         public uint StructureVersion;
@@ -174,6 +206,10 @@ namespace guideXOS.Misc {
         internal const uint ShellLaunchApplicationOperation = 1;
         internal const uint ShellOpenDocumentOperation = 2;
         internal const uint ShellOpenObjectOperation = 3;
+        internal const uint ResourcesService =
+            (uint)ApplicationServiceId.Resources;
+        internal const uint ResourceMetadataOperation = 1;
+        internal const uint ResourceReadOperation = 2;
         private const string Phase33ShellObjectId =
             "gxos.shell.computerfiles";
 
@@ -396,6 +432,9 @@ namespace guideXOS.Misc {
                     requestLength);
             if (requestLength == (ulong)sizeof(Ring3ClipboardClearRequest))
                 return DispatchClipboardClearRequest(process, requestPointer,
+                    requestLength);
+            if (requestLength == (ulong)sizeof(Ring3ResourceRequest))
+                return DispatchResourceRequest(process, requestPointer,
                     requestLength);
             if (requestLength == (ulong)sizeof(Ring3ShellLaunchRequest))
                 return DispatchShellLaunchRequest(process, requestPointer,
@@ -756,6 +795,299 @@ namespace guideXOS.Misc {
             Marker("RING3_CLIPBOARD_CLEAR_BACKEND_ACCEPTED=1");
             Marker("RING3_CLIPBOARD_RESPONSE_COPIED_OUT=1");
             return Success;
+        }
+
+        private static ulong DispatchResourceRequest(
+                Ring3Process process, ulong requestPointer,
+                ulong requestLength) {
+            Marker("RING3_RESOURCE_ABI_ENTERED=1");
+            if (requestLength != (ulong)sizeof(Ring3ResourceRequest) ||
+                !PageTable.ValidateReadableUserRange(process.Space.Pml4,
+                    requestPointer, requestLength)) {
+                Marker("RING3_RESOURCE_INVALID_REQUEST_REJECTED=1");
+                return InvalidPointer;
+            }
+
+            Ring3ResourceRequest request = default(Ring3ResourceRequest);
+            Native.Movsb(&request, (void*)requestPointer,
+                (ulong)sizeof(Ring3ResourceRequest));
+            Marker("RING3_RESOURCE_REQUEST_COPIED_IN=1");
+            string resourceName;
+            if (!TryValidateResourceRequest(&request, out resourceName)) {
+                Marker("RING3_RESOURCE_INVALID_REQUEST_REJECTED=1");
+                return InvalidRequest;
+            }
+            if (!PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                    request.ResponseBuffer, request.ResponseCapacity)) {
+                Marker("RING3_RESOURCE_INVALID_RESPONSE_REJECTED=1");
+                return InvalidPointer;
+            }
+            bool readOperation = request.OperationId ==
+                ResourceReadOperation;
+            if (readOperation && !ValidateResourceWritableRange(process,
+                    request.DataBuffer, request.DataCapacity)) {
+                Marker("RING3_RESOURCE_INVALID_DATA_BUFFER_REJECTED=1");
+                return InvalidPointer;
+            }
+
+            ApplicationServiceContext context;
+            ApplicationServiceAccess access;
+            ApplicationServiceResult contextResult;
+            ApplicationInstance requester;
+            if (!TryResolveResourceAccess(process, out context, out access,
+                    out contextResult, out requester)) {
+                return MapServiceResult(contextResult);
+            }
+            Ring3ResourceResponse response = default(Ring3ResourceResponse);
+            response.StructureVersion = (uint)AbiVersion;
+            response.Size = (uint)sizeof(Ring3ResourceResponse);
+
+            ApplicationResourceRequest metadataRequest =
+                ApplicationResourceRequest.Create(resourceName);
+            ApplicationServiceResult<ApplicationResourceMetadata> metadata =
+                access.Resources.GetMetadata(context, metadataRequest);
+            if (!metadata.Succeeded || metadata.Value == null) {
+                response.ResultCode = (uint)(metadata.Succeeded
+                    ? ApplicationServiceResultCode.BackendFailure
+                    : metadata.Code);
+                WriteResourceResponse(request.ResponseBuffer, &response);
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_RESOURCE_TYPED_RESULT=" +
+                    response.ResultCode.ToString());
+                Marker("RING3_RESOURCE_RESPONSE_COPIED_OUT=1");
+                return Success;
+            }
+            if (metadata.Value.Length < 0) {
+                response.ResultCode = (uint)
+                    ApplicationServiceResultCode.BackendFailure;
+                WriteResourceResponse(request.ResponseBuffer, &response);
+                process.RecordServiceRequestSuccess();
+                return Success;
+            }
+            if (metadata.Value.Length > 0)
+                response.ResourceLength = (ulong)metadata.Value.Length;
+            response.Flags = metadata.Value.IsReadable ? 1U : 0U;
+            Marker("RING3_RESOURCE_SCOPE_RESOLVED=1");
+            Marker("RING3_RESOURCE_METADATA_DISPATCHED=1");
+
+            if (!readOperation) {
+                WriteResourceResponse(request.ResponseBuffer, &response);
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_RESOURCE_RESPONSE_COPIED_OUT=1");
+                return Success;
+            }
+
+            // The metadata query is advisory. Re-resolve the same key under
+            // the current caller context and require its exact length and the
+            // caller's exact capacity before the resource bytes are copied.
+            if ((ulong)metadata.Value.Length !=
+                    request.ExpectedResourceLength ||
+                request.DataCapacity != request.ExpectedResourceLength) {
+                response.ResultCode = (uint)
+                    ApplicationServiceResultCode.Conflict;
+                response.Flags = 0;
+                response.ResourceLength = 0;
+                WriteResourceResponse(request.ResponseBuffer, &response);
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_RESOURCE_SIZE_REVALIDATION_REJECTED=1");
+                return Success;
+            }
+            if (!metadata.Value.IsReadable || metadata.Value.Length == 0) {
+                response.ResultCode = (uint)
+                    ApplicationServiceResultCode.InvalidRequest;
+                response.Flags = 0;
+                response.ResourceLength = 0;
+                WriteResourceResponse(request.ResponseBuffer, &response);
+                process.RecordServiceRequestSuccess();
+                return Success;
+            }
+
+            ApplicationResourceReadRequest readRequest =
+                ApplicationResourceReadRequest.Create(resourceName, 0,
+                    (int)request.ExpectedResourceLength);
+            ApplicationServiceResult<ApplicationResourceReadResult> read =
+                access.Resources.Read(context, readRequest);
+            if (!read.Succeeded || read.Value == null) {
+                response.ResultCode = (uint)(read.Succeeded
+                    ? ApplicationServiceResultCode.BackendFailure
+                    : read.Code);
+                response.Flags = 0;
+                response.ResourceLength = 0;
+                WriteResourceResponse(request.ResponseBuffer, &response);
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_RESOURCE_TYPED_RESULT=" +
+                    response.ResultCode.ToString());
+                return Success;
+            }
+            ApplicationResourceReadResult value = read.Value;
+            if (value.ResourceKey != resourceName || value.Offset != 0 ||
+                value.Bytes == null || value.BytesRead != value.Bytes.Length ||
+                value.BytesRead != request.DataCapacity ||
+                !value.EndOfResource) {
+                response.ResultCode = (uint)
+                    ApplicationServiceResultCode.BackendFailure;
+                response.Flags = 0;
+                response.ResourceLength = 0;
+                WriteResourceResponse(request.ResponseBuffer, &response);
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_RESOURCE_BACKEND_RESULT_REJECTED=1");
+                return Success;
+            }
+
+            // The service value owns its bytes. Copy those bytes to the
+            // already validated user array; never retain a user pointer.
+            fixed (byte* resourceBytes = value.Bytes) {
+                Native.Movsb((void*)request.DataBuffer, resourceBytes,
+                    (ulong)value.BytesRead);
+            }
+            response.Offset = 0;
+            response.BytesRead = (uint)value.BytesRead;
+            response.EndOfResource = 1;
+            WriteResourceResponse(request.ResponseBuffer, &response);
+            process.RecordServiceRequestSuccess();
+            Marker("RING3_RESOURCE_READ_DISPATCHED=1");
+            Marker("RING3_RESOURCE_DATA_COPIED_TO_CALLER=1");
+            Marker("RING3_RESOURCE_BYTES_COPIED=" +
+                response.BytesRead.ToString());
+            Marker("RING3_RESOURCE_RESPONSE_COPIED_OUT=1");
+            return Success;
+        }
+
+        private static bool TryValidateResourceRequest(
+                Ring3ResourceRequest* request, out string resourceName) {
+            resourceName = null;
+            if (request == null || request->StructureVersion != AbiVersion ||
+                request->ServiceId != ResourcesService ||
+                request->RequestLength != sizeof(Ring3ResourceRequest) ||
+                request->ResourceNameLength == 0 ||
+                request->ResourceNameLength >
+                    ApplicationResourceRequest.MaxResourceKeyLength ||
+                request->ResponseCapacity !=
+                    (uint)sizeof(Ring3ResourceResponse) ||
+                request->ResponseBuffer == 0 || request->Reserved != 0)
+                return false;
+
+            bool metadata = request->OperationId ==
+                ResourceMetadataOperation;
+            bool read = request->OperationId == ResourceReadOperation;
+            if (!metadata && !read) return false;
+            if (metadata) {
+                if (request->DataCapacity != 0 || request->DataBuffer != 0 ||
+                    request->ExpectedResourceLength != 0) return false;
+            } else if (request->ExpectedResourceLength == 0 ||
+                    request->ExpectedResourceLength >
+                        ApplicationResourceReadRequest.MaxChunkLength ||
+                    request->DataCapacity !=
+                        request->ExpectedResourceLength ||
+                    request->DataBuffer == 0) {
+                return false;
+            }
+
+            char[] characters = new char[(int)request->ResourceNameLength];
+            byte* nameBytes = request->ResourceName;
+            for (int i = 0; i < characters.Length; i++) {
+                byte value = nameBytes[i];
+                if (!((value >= (byte)'a' && value <= (byte)'z') ||
+                      (value >= (byte)'A' && value <= (byte)'Z') ||
+                      (value >= (byte)'0' && value <= (byte)'9') ||
+                      value == (byte)'.' || value == (byte)'-' ||
+                      value == (byte)'_')) return false;
+                characters[i] = (char)value;
+            }
+            byte* fullName = request->ResourceName;
+            for (int i = characters.Length;
+                    i < ApplicationResourceRequest.MaxResourceKeyLength; i++) {
+                if (fullName[i] != 0) return false;
+            }
+            resourceName = new string(characters);
+            return ApplicationResourceRequest.Create(resourceName).IsValid;
+        }
+
+        private static bool ValidateResourceWritableRange(
+                Ring3Process process, ulong address, ulong length) {
+            if (process == null || address == 0 || length == 0 ||
+                address > 0xFFFFFFFFFFFFFFFFUL - (length - 1)) return false;
+            ulong end = address + length - 1;
+            while (length != 0) {
+                ulong chunk = length > PageTable.MaxUserTransfer
+                    ? PageTable.MaxUserTransfer : length;
+                if (!PageTable.ValidateWritableUserRange(
+                        process.Space.Pml4, address, chunk)) return false;
+                length -= chunk;
+                if (length != 0) address += chunk;
+            }
+            return end >= address;
+        }
+
+        private static void WriteResourceResponse(ulong destination,
+                Ring3ResourceResponse* response) {
+            Native.Movsb((void*)destination, response,
+                (ulong)sizeof(Ring3ResourceResponse));
+        }
+
+        private static bool TryResolveResourceAccess(
+                Ring3Process process, out ApplicationServiceContext context,
+                out ApplicationServiceAccess access,
+                out ApplicationServiceResult result,
+                out ApplicationInstance requester) {
+            context = null;
+            access = null;
+            requester = null;
+            result = ApplicationServiceResult.InvalidContextResult();
+            Marker("RING3_RESOURCE_PROCESS_IDENTITY_DERIVED=1");
+            ApplicationInstanceHandle owner =
+                ApplicationInstanceHandle.FromValue(
+                    process.OwningApplicationInstance);
+            if (!owner.IsValid ||
+                !ApplicationInstanceRegistry.TryGet(owner, out requester) ||
+                requester == null) {
+                Marker("RING3_RESOURCE_APP_MODEL_OWNER_DERIVED=0");
+                return false;
+            }
+            Marker("RING3_RESOURCE_APP_MODEL_OWNER_DERIVED=1");
+            if (!ApplicationServiceRegistry.TryCreateContext(owner,
+                    out context, out result)) {
+                Marker("RING3_RESOURCE_SERVICE_CONTEXT_DERIVED=0");
+                return false;
+            }
+            ApplicationInstance resolved;
+            if (context.ApplicationId != requester.ApplicationId ||
+                !ApplicationServiceRegistry.TryValidateContext(context,
+                    ApplicationServiceId.Resources, out resolved, out result) ||
+                resolved != requester) {
+                Marker("RING3_RESOURCE_SERVICE_CONTEXT_DERIVED=0");
+                return false;
+            }
+            if (!ApplicationServiceRegistry.TryGetAccess(context,
+                    out access, out result) || access == null ||
+                access.Resources == null) {
+                Marker("RING3_RESOURCE_SERVICE_CONTEXT_DERIVED=0");
+                return false;
+            }
+            if (requester.LifecycleState !=
+                    ApplicationInstanceLifecycleState.Running &&
+                requester.LifecycleState !=
+                    ApplicationInstanceLifecycleState.Activated) {
+                result = ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.InvalidState,
+                    "Resource requester is not running");
+                return false;
+            }
+            Marker("RING3_RESOURCE_SERVICE_CONTEXT_DERIVED=1");
+            Marker("RING3_RESOURCE_PACKAGE_SCOPE_DERIVED=1");
+            return true;
+        }
+
+        internal static ulong ValidateResourceRequestForPhase34Proof(
+                Ring3ResourceRequest* request) {
+            string ignored;
+            return TryValidateResourceRequest(request, out ignored)
+                ? Success : InvalidRequest;
+        }
+
+        internal static bool ValidateResourceBufferForPhase34Proof(
+                Ring3Process process, ulong address, ulong length) {
+            return ValidateResourceWritableRange(process, address, length);
         }
 
         private static ulong DispatchShellLaunchRequest(

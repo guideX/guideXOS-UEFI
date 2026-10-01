@@ -18,6 +18,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Phase34"))
+from phase34_flags import PHASE34_FLAGS  # noqa: E402
+
 
 VARIANT_MASK = 0xFFFFF800
 DESCRIPTOR_HEADER_SIZE = 116
@@ -64,6 +67,11 @@ PAYLOADS = (
     Payload("Phase33", "stale-owner", "guideXOS.Phase33ShellActionStaleOwnerProof", "phase33-managed-shell-action-build.json", "stale-owner", (1 << 27) | (1 << 30) | (1 << 31), "FlagPhase33StaleOwner"),
     Payload("Phase33", "invalid-action", "guideXOS.Phase33ShellActionInvalidActionProof", "phase33-managed-shell-action-build.json", "invalid-action", (1 << 28) | (1 << 30) | (1 << 31), "FlagPhase33InvalidAction"),
     Payload("Phase33", "malformed", "guideXOS.Phase33ShellActionMalformedProof", "phase33-managed-shell-action-build.json", "malformed", (1 << 29) | (1 << 30) | (1 << 31), "FlagPhase33Malformed"),
+    Payload("Phase34", "success", "guideXOS.Phase34ManagedResourceReadProof", "phase34-managed-resource-read-build.json", "success", PHASE34_FLAGS["success"], "FlagPhase34Success"),
+    Payload("Phase34", "failfast", "guideXOS.Phase34ResourceFailFastProof", "phase34-managed-resource-read-build.json", "failfast", PHASE34_FLAGS["failfast"], "FlagPhase34FailFast"),
+    Payload("Phase34", "stale-owner", "guideXOS.Phase34ResourceStaleOwnerProof", "phase34-managed-resource-read-build.json", "stale-owner", PHASE34_FLAGS["stale-owner"], "FlagPhase34StaleOwner"),
+    Payload("Phase34", "cross-scope", "guideXOS.Phase34ResourceCrossScopeProof", "phase34-managed-resource-read-build.json", "cross-scope", PHASE34_FLAGS["cross-scope"], "FlagPhase34CrossScope"),
+    Payload("Phase34", "malformed", "guideXOS.Phase34ResourceMalformedProof", "phase34-managed-resource-read-build.json", "malformed", PHASE34_FLAGS["malformed"], "FlagPhase34Malformed"),
 )
 
 
@@ -128,7 +136,7 @@ def read_generated_kernel_hashes(source: Path) -> dict[int, str]:
     """Read generated identities so post-build audits verify the compiled input."""
     text = source.read_text(encoding="utf-8-sig")
     pattern = re.compile(
-        r"// Phase(?:29|30|31|32|33) [\w-]+: ([0-9A-Fa-f]{64})\s+"
+        r"// Phase(?:29|30|31|32|33|34) [\w-]+: ([0-9A-Fa-f]{64})\s+"
         r"case 0x([0-9A-Fa-f]{8})U:"
     )
     found: dict[int, str] = {}
@@ -157,6 +165,7 @@ def read_build_payloads(root: Path) -> dict[tuple[str, str], dict]:
             "Phase31": "phase31-managed-shell",
             "Phase32": "phase32-managed-open-document",
             "Phase33": "phase33-managed-shell-action",
+            "Phase34": "phase34-managed-resource-read",
         }[payload.phase] / payload.record_name
         if not record.is_file():
             raise ValueError(f"Build record is missing: {record}")
@@ -263,8 +272,10 @@ def collect_rows(root: Path, ramdisk_source: Path) -> list[dict[str, str]]:
                 "classification": "compiled allowlist stale" if raw_digest else "",
             }
         )
-    if len(rows) != 27 or len(seen_flags) != 27:
-        raise ValueError(f"Expected 27 unique managed proof identities; found {len(rows)}")
+    if len(rows) != len(PAYLOADS) or len(seen_flags) != len(PAYLOADS):
+        raise ValueError(
+            f"Expected {len(PAYLOADS)} unique managed proof identities; found {len(rows)}"
+        )
     return rows
 
 
@@ -431,7 +442,9 @@ def main() -> int:
                 generated[payload.proof_flags] == row["raw_sha256"]
             ).lower()
         if args.kernel_built and any(row["allowlist_equals_executable"] != "true" for row in rows):
-            raise ValueError("Generated compiled-input identities do not match all 27 final executables")
+            raise ValueError(
+                f"Generated compiled-input identities do not match all {len(PAYLOADS)} final executables"
+            )
     if args.report_csv:
         write_csv(rows, args.report_csv, args.stage, accepted, args.kernel_built)
     matches = sum(

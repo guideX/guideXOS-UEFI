@@ -11,6 +11,9 @@ namespace guideXOS.OS {
             "selftest.phase8.services";
         private const string DiagnosticResourceKey = "diagnostic.fixture";
         private readonly ResourceEntry[] _entries = new ResourceEntry[1];
+        private int _lookupCount;
+
+        internal int LookupCount { get { return _lookupCount; } }
 
         internal CSharpApplicationResourceService() {
             _entries[0] = new ResourceEntry {
@@ -36,6 +39,7 @@ namespace guideXOS.OS {
                     ApplicationServiceResultCode.InvalidRequest,
                     "Resource key is invalid or exceeds its bound");
             }
+            _lookupCount++;
             ResourceEntry entry = Find(context.ApplicationId,
                 request.ResourceKey);
             if (entry == null) {
@@ -64,6 +68,7 @@ namespace guideXOS.OS {
                     ApplicationServiceResultCode.InvalidRequest,
                     "Resource read request is invalid or exceeds its bound");
             }
+            _lookupCount++;
             ResourceEntry entry = Find(context.ApplicationId,
                 request.ResourceKey);
             if (entry == null) {

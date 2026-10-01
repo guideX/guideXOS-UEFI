@@ -336,6 +336,41 @@ namespace GuideXos
         ComputerFiles = 1,
     }
 
+    // These values mirror the existing Phase 10 ApplicationServiceResultCode.
+    public enum GuideXosResourceResultCode : uint
+    {
+        Success = 0,
+        InvalidContext = 1,
+        InvalidRequest = 2,
+        NotFound = 3,
+        ResourceUnavailable = 4,
+        PermissionDenied = 5,
+        Unsupported = 6,
+        Conflict = 7,
+        Cancelled = 8,
+        InvalidState = 9,
+        UnsupportedTarget = 10,
+        BackendFailure = 11,
+    }
+
+    /// <summary>
+    /// Reads a bounded resource key from the current application's Phase 10
+    /// resource scope. The returned byte array is a managed copy; the key is
+    /// never interpreted as a filesystem path.
+    /// </summary>
+    public static class GuideXosResources
+    {
+        public const int MaxResourceNameLength = 96;
+        public const int MaxResourcePayloadLength = 64 * 1024;
+
+        public static GuideXosResult TryReadBytes(string resourceName,
+            out byte[] data, out GuideXosResourceResultCode resourceResult)
+        {
+            return GuideXosInternalAbi.TryReadResourceBytes(resourceName,
+                out data, out resourceResult);
+        }
+    }
+
     /// <summary>
     /// Typed wrapper over the existing Phase 9 Shell application-ID launch.
     /// The application ID is bounded in UTF-16 code units and copied before

@@ -115,6 +115,39 @@ namespace GuideXos
         internal uint Reserved;
     }
 
+    // Phase 10 uses a bounded ASCII key. Metadata and bytes are returned in
+    // separate caller buffers so the SDK can allocate the exact known length.
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct GuideXosResourceRequestWire
+    {
+        internal uint StructureVersion;
+        internal uint ServiceId;
+        internal uint OperationId;
+        internal uint RequestLength;
+        internal uint ResourceNameLength;
+        internal uint DataCapacity;
+        internal uint ResponseCapacity;
+        internal uint Reserved;
+        internal ulong ResponseBuffer;
+        internal ulong DataBuffer;
+        internal ulong ExpectedResourceLength;
+        internal fixed byte ResourceName[GuideXosResources.MaxResourceNameLength];
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct GuideXosResourceResponseWire
+    {
+        internal uint StructureVersion;
+        internal uint Size;
+        internal uint ResultCode;
+        internal uint Flags;
+        internal ulong ResourceLength;
+        internal ulong Offset;
+        internal uint BytesRead;
+        internal uint EndOfResource;
+        internal uint Reserved;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct GuideXosIdentityWire
     {
@@ -148,6 +181,9 @@ namespace GuideXos
         private const uint ShellLaunchApplicationOperation = 1;
         private const uint ShellOpenDocumentOperation = 2;
         private const uint ShellOpenObjectOperation = 3;
+        private const uint ResourcesService = 8;
+        private const uint ResourceMetadataOperation = 1;
+        private const uint ResourceReadOperation = 2;
 
         [DllImport("*", EntryPoint = "guidexos_pal_abi_version",
             CallingConvention = CallingConvention.Cdecl)]
@@ -380,6 +416,157 @@ namespace GuideXos
             return TryShellTarget("gxos.shell.computerfiles",
                 GuideXosShell.MaxApplicationIdLength,
                 ShellOpenObjectOperation, out launchResult);
+        }
+
+        internal static GuideXosResult TryReadResourceBytes(
+            string resourceName, out byte[] data,
+            out GuideXosResourceResultCode resourceResult)
+        {
+            data = null;
+            resourceResult = GuideXosResourceResultCode.InvalidRequest;
+            if (!IsValidResourceName(resourceName))
+                return new GuideXosResult(GuideXosStatus.InvalidArgument);
+
+            GuideXosResult compatible = RequireCompatible();
+            if (compatible.Failed)
+                return compatible;
+
+            GuideXosResourceResponseWire metadata;
+            GuideXosResult transport = InvokeResourceRequest(resourceName,
+                ResourceMetadataOperation, 0, null, out metadata);
+            if (transport.Failed)
+                return transport;
+            if (!IsValidResourceResponse(metadata))
+                return new GuideXosResult(GuideXosStatus.ValidationFailed);
+
+            resourceResult = (GuideXosResourceResultCode)metadata.ResultCode;
+            if (resourceResult != GuideXosResourceResultCode.Success)
+            {
+                return metadata.Flags == 0 && metadata.ResourceLength == 0 &&
+                       metadata.Offset == 0 && metadata.BytesRead == 0 &&
+                       metadata.EndOfResource == 0
+                    ? new GuideXosResult(GuideXosStatus.Success)
+                    : new GuideXosResult(GuideXosStatus.ValidationFailed);
+            }
+            if (metadata.Flags != 1 || metadata.ResourceLength >
+                    (ulong)GuideXosResources.MaxResourcePayloadLength ||
+                metadata.ResourceLength > int.MaxValue)
+            {
+                resourceResult = GuideXosResourceResultCode.ResourceUnavailable;
+                return new GuideXosResult(GuideXosStatus.Success);
+            }
+
+            byte[] copy = new byte[(int)metadata.ResourceLength];
+            if (copy.Length == 0)
+            {
+                data = copy;
+                resourceResult = GuideXosResourceResultCode.Success;
+                return new GuideXosResult(GuideXosStatus.Success);
+            }
+
+            GuideXosResourceResponseWire read;
+            transport = InvokeResourceRequest(resourceName,
+                ResourceReadOperation, metadata.ResourceLength, copy,
+                out read);
+            if (transport.Failed)
+                return transport;
+            if (!IsValidResourceResponse(read))
+                return new GuideXosResult(GuideXosStatus.ValidationFailed);
+
+            resourceResult = (GuideXosResourceResultCode)read.ResultCode;
+            if (resourceResult != GuideXosResourceResultCode.Success)
+                return read.Flags == 0 && read.BytesRead == 0 &&
+                       read.EndOfResource == 0
+                    ? new GuideXosResult(GuideXosStatus.Success)
+                    : new GuideXosResult(GuideXosStatus.ValidationFailed);
+            if (read.Flags != 1 || read.ResourceLength != metadata.ResourceLength ||
+                read.Offset != 0 || read.BytesRead != copy.Length ||
+                read.EndOfResource != 1)
+                return new GuideXosResult(GuideXosStatus.ValidationFailed);
+
+            data = copy;
+            return new GuideXosResult(GuideXosStatus.Success);
+        }
+
+        private static GuideXosResult InvokeResourceRequest(
+            string resourceName, uint operationId,
+            ulong expectedResourceLength, byte[] data,
+            out GuideXosResourceResponseWire response)
+        {
+            GuideXosResourceRequestWire request = default;
+            GuideXosResourceResponseWire local = default;
+            request.StructureVersion = AbiVersion;
+            request.ServiceId = ResourcesService;
+            request.OperationId = operationId;
+            request.RequestLength = (uint)sizeof(
+                GuideXosResourceRequestWire);
+            request.ResourceNameLength = (uint)resourceName.Length;
+            request.ResponseCapacity = (uint)sizeof(
+                GuideXosResourceResponseWire);
+            request.ExpectedResourceLength = expectedResourceLength;
+            if (data != null)
+                request.DataCapacity = (uint)data.Length;
+
+            byte* name = request.ResourceName;
+            for (int i = 0; i < resourceName.Length; i++)
+                name[i] = (byte)resourceName[i];
+
+#if GUIDEXOS_PHASE34_MALFORMED
+            // Diagnostic-only raw request corruption. Public validation has
+            // accepted the key; the kernel must reject before resource lookup.
+            if (operationId == ResourceMetadataOperation)
+                request.OperationId = 99;
+#endif
+
+            GuideXosResourceRequestWire* requestPointer = &request;
+            GuideXosResourceResponseWire* responsePointer = &local;
+            request.ResponseBuffer = (ulong)(nuint)responsePointer;
+            if (data == null)
+            {
+                ulong raw = InvokeServiceRequest(
+                    (ulong)(nuint)requestPointer,
+                    (ulong)sizeof(GuideXosResourceRequestWire));
+                response = local;
+                return MapStatus(raw);
+            }
+
+            fixed (byte* dataPointer = data)
+            {
+                request.DataBuffer = (ulong)(nuint)dataPointer;
+                ulong raw = InvokeServiceRequest(
+                    (ulong)(nuint)requestPointer,
+                    (ulong)sizeof(GuideXosResourceRequestWire));
+                response = local;
+                return MapStatus(raw);
+            }
+        }
+
+        private static bool IsValidResourceResponse(
+            GuideXosResourceResponseWire response)
+        {
+            return response.StructureVersion == AbiVersion &&
+                response.Size == (uint)sizeof(
+                    GuideXosResourceResponseWire) &&
+                response.ResultCode <= (uint)
+                    GuideXosResourceResultCode.BackendFailure &&
+                response.Reserved == 0 && response.Flags <= 1 &&
+                response.EndOfResource <= 1;
+        }
+
+        private static bool IsValidResourceName(string value)
+        {
+            if (string.IsNullOrEmpty(value) ||
+                value.Length > GuideXosResources.MaxResourceNameLength ||
+                value == "." || value == "..") return false;
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (!((c >= 'a' && c <= 'z') ||
+                      (c >= 'A' && c <= 'Z') ||
+                      (c >= '0' && c <= '9') || c == '.' ||
+                      c == '-' || c == '_')) return false;
+            }
+            return true;
         }
 
         private static GuideXosResult TryShellTarget(

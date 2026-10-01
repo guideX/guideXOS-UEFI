@@ -356,6 +356,19 @@ namespace guideXOS.Misc {
                 out process, out failure);
         }
 
+        internal static bool TryCreateManagedResourceEntry(
+                ulong owningApplicationInstance, int payloadKind,
+                out Ring3Process process, out string failure) {
+            if (payloadKind < 1 || payloadKind > 5) {
+                process = null;
+                failure = "PHASE34_INVALID_PAYLOAD_KIND";
+                return false;
+            }
+            return TryCreateManagedBootstrap(owningApplicationInstance, false,
+                true, false, false, 0, 0, 0, 0, payloadKind + 8,
+                out process, out failure);
+        }
+
         private static bool TryCreateManagedBootstrap(
             ulong owningApplicationInstance, bool deliberateFault, bool phase26,
             out Ring3Process process, out string failure) {
@@ -731,7 +744,9 @@ namespace guideXOS.Misc {
             get {
                 int expectedReturn = 42;
                 if (ManagedImage != null) {
-                    if (ManagedImage.IsPhase33FailFast) expectedReturn = -1;
+                    if (ManagedImage.IsPhase34FailFast) expectedReturn = -1;
+                    else if (ManagedImage.IsPhase34) expectedReturn = 34;
+                    else if (ManagedImage.IsPhase33FailFast) expectedReturn = -1;
                     else if (ManagedImage.IsPhase33) expectedReturn = 33;
                     else if (ManagedImage.IsPhase32FailFast ||
                             ManagedImage.IsPhase31FailFast ||

@@ -57,6 +57,23 @@ namespace guideXOS.Misc {
         internal const uint FlagPhase33Malformed =
             FlagPhase31StaleOwner | FlagPhase32OpenDocument |
             FlagPhase32FailFast;
+        // Phase 34 combinations remain unique within the deterministic proof
+        // identity mask while reusing the existing phase32Kind dispatch slot.
+        internal const uint FlagPhase34Success =
+            FlagPhase31Launch | FlagPhase31InvalidTarget |
+            FlagPhase32OpenDocument | FlagPhase32FailFast;
+        internal const uint FlagPhase34FailFast =
+            FlagPhase31Launch | FlagPhase31Oversize |
+            FlagPhase32OpenDocument | FlagPhase32FailFast;
+        internal const uint FlagPhase34StaleOwner =
+            FlagPhase31Launch | FlagPhase31FailFast |
+            FlagPhase32OpenDocument | FlagPhase32FailFast;
+        internal const uint FlagPhase34CrossScope =
+            FlagPhase31Launch | FlagPhase31StaleOwner |
+            FlagPhase32OpenDocument | FlagPhase32FailFast;
+        internal const uint FlagPhase34Malformed =
+            FlagPhase31InvalidTarget | FlagPhase31Oversize |
+            FlagPhase32OpenDocument | FlagPhase32FailFast;
         internal const byte Read = 1;
         internal const byte Write = 2;
         internal const byte Execute = 4;
@@ -1177,6 +1194,11 @@ namespace guideXOS.Misc {
             if (phase32Kind == 6) prefix = "Native/guideXOS.Phase33ShellActionStaleOwnerProof";
             if (phase32Kind == 7) prefix = "Native/guideXOS.Phase33ShellActionInvalidActionProof";
             if (phase32Kind == 8) prefix = "Native/guideXOS.Phase33ShellActionMalformedProof";
+            if (phase32Kind == 9) prefix = "Native/guideXOS.Phase34ManagedResourceReadProof";
+            if (phase32Kind == 10) prefix = "Native/guideXOS.Phase34ResourceFailFastProof";
+            if (phase32Kind == 11) prefix = "Native/guideXOS.Phase34ResourceStaleOwnerProof";
+            if (phase32Kind == 12) prefix = "Native/guideXOS.Phase34ResourceCrossScopeProof";
+            if (phase32Kind == 13) prefix = "Native/guideXOS.Phase34ResourceMalformedProof";
             byte[] image = File.ReadAllBytes(prefix + ".exe");
             byte[] descriptor = File.ReadAllBytes(prefix + ".gxmi");
             if (image == null || descriptor == null) {
@@ -1313,6 +1335,34 @@ namespace guideXOS.Misc {
         internal bool IsPhase33Malformed => Descriptor != null &&
             (Descriptor.Flags & 0xFFFFF800U) ==
                 ManagedImageContract.FlagPhase33Malformed;
+
+        internal bool IsPhase34 => Descriptor != null &&
+            ((Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase34Success ||
+             (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase34FailFast ||
+             (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase34StaleOwner ||
+             (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase34CrossScope ||
+             (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase34Malformed);
+
+        internal bool IsPhase34FailFast => Descriptor != null &&
+            (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase34FailFast;
+
+        internal bool IsPhase34StaleOwner => Descriptor != null &&
+            (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase34StaleOwner;
+
+        internal bool IsPhase34CrossScope => Descriptor != null &&
+            (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase34CrossScope;
+
+        internal bool IsPhase34Malformed => Descriptor != null &&
+            (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase34Malformed;
 
         internal bool TryAuthorizeEntry(ulong rip,
                                         bool allowManagedEntryResume = false) {
