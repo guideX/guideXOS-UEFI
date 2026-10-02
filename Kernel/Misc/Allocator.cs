@@ -240,7 +240,7 @@ abstract unsafe class Allocator {
     /// Free Fail Corrupt Run
     /// </summary>
     private static ulong _freeFailCorruptRun = 0;
-#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
     private const int FreeInvalidLogCapacity = 16;
     private static IntPtr[] _freeInvalidLoggedPointers;
     private static string[] _freeInvalidLoggedCallers;
@@ -282,7 +282,7 @@ abstract unsafe class Allocator {
         }
     }
 
-#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
     // Called after NativeAOT GC statics have been initialized. Allocator.Initialize
     // runs earlier during UEFI startup, so managed reference fields assigned there
     // would be cleared when InitializeModules prepares the GC static bases.
@@ -314,7 +314,7 @@ abstract unsafe class Allocator {
             
             if (p < 0 || p >= NumPages) { // guard invalid start index
                 _freeFailInvalidPtr++;
-#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
                 LogInvalidFreeOnce(intPtr, caller, callerAddress);
 #endif
                 return 0;
@@ -370,7 +370,7 @@ abstract unsafe class Allocator {
             return 0;
         }
     }
-#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
     private static void LogInvalidFreeOnce(IntPtr pointer, string caller,
                                           ulong callerAddress) {
         if (_freeInvalidLoggedPointers == null ||

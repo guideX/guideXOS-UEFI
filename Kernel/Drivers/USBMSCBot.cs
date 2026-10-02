@@ -38,8 +38,15 @@ namespace guideXOS.Kernel.Drivers {
 
             public USBDevice Device => _dev;
             public bool IsReady => _ready && _initialized;
+            public bool SupportsWrites => false;
             public uint LogicalBlockSize => _blockSize;
             public ulong TotalBlocks => _numBlocks;
+            public override uint BlockSize => _blockSize;
+            public override ulong BlockCount => IsReady ? _numBlocks : 0UL;
+            public override DiskCapabilities Capabilities => IsReady
+                ? DiskCapabilities.Readable
+                : DiskCapabilities.None;
+            public override bool IsAvailable => IsReady;
 
             public USBDisk(USBDevice dev) {
                 _dev = dev;
@@ -194,25 +201,20 @@ namespace guideXOS.Kernel.Drivers {
                 return ok && ok2;
             }
 
-            public override bool Read(ulong sector, uint count, byte* data) {
-                if (!IsReady) return false;
-                // Convert 512B sectors to device block size
-                if (_blockSize == 0) return false;
-                // Only multiples of device block size
-                ulong lba = (sector * 512UL) / _blockSize;
-                uint blocks = (uint)(((ulong)count * 512UL) / _blockSize);
-                // Validate alignment
-                if ((sector * 512UL) % _blockSize != 0) return false;
-                if (((ulong)count * 512UL) % _blockSize != 0) return false;
-                // Bound checks
-                if (lba + blocks > _numBlocks) return false;
-                return Read10(lba, blocks, data);
+            protected override DiskIoResult ReadCore(ulong lba, uint blocks, byte* data) {
+                if (!IsReady) return DiskIoResult.MediaUnavailable;
+                const uint maxCommandBlocks = 128;
+                while (blocks > 0) {
+                    uint batch = blocks > maxCommandBlocks ? maxCommandBlocks : blocks;
+                    if (!Read10(lba, batch, data)) return DiskIoResult.TransportFailure;
+                    lba += batch;
+                    blocks -= batch;
+                    data += (ulong)batch * _blockSize;
+                }
+                return DiskIoResult.Success;
             }
 
-            public override bool Write(ulong sector, uint count, byte* data) {
-                // For safety, disable writes by default
-                return false;
-            }
+            protected override DiskIoResult WriteCore(ulong lba, uint blocks, byte* data) => DiskIoResult.ReadOnly;
         }
 
         // Public helper to try create a USBDisk from a device with many safeguards

@@ -92,7 +92,15 @@ namespace guideXOS.FS {
         /// </summary>
         /// <param name="name"></param>
         /// <param name="content"></param>
-        public static void WriteAllBytes(string name, byte[] content) => Instance.WriteAllBytes(name, content);
+        public static FatOperationResult WriteAllBytes(string name, byte[] content) => TryWriteAllBytes(name, content);
+        public static FatOperationResult TryWriteAllBytes(string name, byte[] content) =>
+            Instance == null ? FatOperationResult.NotMounted : Instance.TryWriteAllBytes(name, content);
+        public static FatOperationResult TryDelete(string name) =>
+            Instance == null ? FatOperationResult.NotMounted : Instance.TryDelete(name);
+        public static FatOperationResult TrySync() =>
+            Instance == null ? FatOperationResult.NotMounted : Instance.TrySync();
+        public static FatOperationResult TryFormat() =>
+            Instance == null ? FatOperationResult.NotMounted : Instance.TryFormat();
         /// <summary>
         /// Exists (directory scan)
         /// </summary>
@@ -185,6 +193,13 @@ namespace guideXOS.FS {
         /// <param name="Name"></param>
         /// <param name="Content"></param>
         public abstract void WriteAllBytes(string Name, byte[] Content);
+        /// <summary>Truthful write result; filesystems opt in when they can report operation status.</summary>
+        public virtual FatOperationResult TryWriteAllBytes(string name, byte[] content) => FatOperationResult.Unsupported;
+        public virtual FatOperationResult TryDelete(string name) => FatOperationResult.Unsupported;
+        /// <summary>Flush all filesystem writes and the backing block device when supported.</summary>
+        public virtual FatOperationResult TrySync() => FatOperationResult.Unsupported;
+        /// <summary>Formats the active filesystem and reports write and flush failures.</summary>
+        public virtual FatOperationResult TryFormat() => FatOperationResult.Unsupported;
         /// <summary>
         /// Format
         /// </summary>

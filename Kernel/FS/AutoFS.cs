@@ -125,6 +125,10 @@ namespace guideXOS.FS {
         /// <param name="Name"></param>
         /// <param name="Content"></param>
         public override void WriteAllBytes(string Name, byte[] Content) => _impl.WriteAllBytes(Name, Content);
+        public override FatOperationResult TryWriteAllBytes(string Name, byte[] Content) => _impl.TryWriteAllBytes(Name, Content);
+        public override FatOperationResult TryDelete(string Name) => _impl.TryDelete(Name);
+        public override FatOperationResult TrySync() => _impl.TrySync();
+        public override FatOperationResult TryFormat() => _impl.TryFormat();
         /// <summary>
         /// Format
         /// </summary>

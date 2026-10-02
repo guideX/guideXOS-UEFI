@@ -190,9 +190,16 @@ namespace guideXOS.Kernel.Drivers {
 
         public ulong Size;
 
+        public override uint BlockSize => SectorSize;
+        public override ulong BlockCount => Size / SectorSize;
+        public override DiskCapabilities Capabilities => Size == 0
+            ? DiskCapabilities.None
+            : DiskCapabilities.Readable | DiskCapabilities.Writable | DiskCapabilities.FlushSupported;
+        public override bool IsAvailable => Size != 0;
+
         public bool ReadOrWrite(uint sector, byte* data, bool write) {
+            if (sector > 0x0FFFFFFF || data == null || Size == 0) return false;
             Native.Out8(DeviceHeadPort, (byte)(0xE0 | (Drive << 4) | ((sector >> 24) & 0x0F)));
-            //Native.Out8(FeaturePort, 0);
             Native.Out8(SectorCountPort, 1);
             Native.Out8(LBAHighPort, (byte)((sector >> 16) & 0xFF));
             Native.Out8(LBAMidPort, (byte)((sector >> 8) & 0xFF));
@@ -200,54 +207,52 @@ namespace guideXOS.Kernel.Drivers {
 
             Native.Out8(CommandPort, (write) ? WriteSectorsWithRetry : ReadSectorsWithRetry);
 
-            if (!WaitForReadyStatus())
-                return false;
-
-            while ((Native.In8(StatusPort) & 0x80) != 0) ;
+            if (!WaitForStatus(true)) return false;
 
             if (write) {
                 Native.Outsw(DataPort, (ushort*)data, SectorSize / 2);
-
-                Native.Out8(CommandPort, CacheFlush);
-
-                WaitForReadyStatus();
             } else {
                 Native.Insw(DataPort, (ushort*)data, SectorSize / 2);
             }
 
-            if ((Native.In8(StatusPort) & 0x1) != 0) {
-                BootConsole.WriteLine($"IDE bad status");
-                return false;
-            }
-
-            return true;
+            return WaitForStatus(false);
         }
 
-        private bool WaitForReadyStatus() {
-            byte status;
-            do {
-                status = Native.In8(StatusPort);
+        private bool WaitForStatus(bool requireDataRequest) {
+            for (int timeout = 0; timeout < 1000000; timeout++) {
+                byte status = Native.In8(StatusPort);
+                if (status == 0 || status == 0xFF) return false;
+                if ((status & Busy) != 0) continue;
+                if ((status & Error) != 0) return false;
+                if (requireDataRequest && (status & DataRequest) == 0) continue;
+                return true;
             }
-            while ((status & Busy) == Busy);
-
-            return true;
+            return false;
         }
 
-
-        public override bool Read(ulong sector, uint count, byte* p) {
+        protected override DiskIoResult ReadCore(ulong sector, uint count, byte* p) {
             for (ulong i = 0; i < count; i++) {
-                bool b = ReadOrWrite((uint)(sector + i), p + (i * SectorSize), false);
-                if (!b) return false;
+                if (sector + i > 0x0FFFFFFF ||
+                    !ReadOrWrite((uint)(sector + i), p + (i * SectorSize), false))
+                    return DiskIoResult.TransportFailure;
             }
-            return true;
+            return DiskIoResult.Success;
         }
 
-        public override bool Write(ulong sector, uint count, byte* p) {
+        protected override DiskIoResult WriteCore(ulong sector, uint count, byte* p) {
             for (ulong i = 0; i < count; i++) {
-                bool b = ReadOrWrite((uint)(sector + i), p + (i * SectorSize), true);
-                if (!b) return false;
+                if (sector + i > 0x0FFFFFFF ||
+                    !ReadOrWrite((uint)(sector + i), p + (i * SectorSize), true))
+                    return DiskIoResult.TransportFailure;
             }
-            return true;
+            return DiskIoResult.Success;
+        }
+
+        protected override DiskIoResult FlushCore() {
+            if (Size == 0) return DiskIoResult.MediaUnavailable;
+            Native.Out8(DeviceHeadPort, (byte)(0xE0 | (Drive << 4)));
+            Native.Out8(CommandPort, CacheFlush);
+            return WaitForStatus(false) ? DiskIoResult.Success : DiskIoResult.FlushFailure;
         }
     }
 }

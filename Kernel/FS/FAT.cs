@@ -3,6 +3,24 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 namespace guideXOS.FS {
+    public enum FatOperationResult : byte {
+        Success = 0,
+        NotMounted = 1,
+        InvalidPath = 2,
+        NotFound = 3,
+        NoSpace = 4,
+        ReadFailure = 5,
+        WriteFailure = 6,
+        FlushUnsupported = 7,
+        FlushFailure = 8,
+        Unsupported = 9,
+        ReadOnly = 10,
+        InvalidRange = 11,
+        InvalidBuffer = 12,
+        MediaUnavailable = 13,
+        TransportFailure = 14
+    }
+
     /// <summary>
     /// Complete FAT12/16/32 filesystem with LFN support and sector caching.
     /// Supports read, write, create, delete, and format operations.
@@ -113,53 +131,42 @@ namespace guideXOS.FS {
         private byte[][] _cacheValues;
         private int _cacheCount;
         private int _lruHead; // simple circular buffer for LRU
+        private bool _mounted;
+        private DiskIoResult _stickyIoResult;
+        private FatOperationResult _pendingMutationResult;
+
+        public DiskIoResult MountResult { get; private set; } = DiskIoResult.MediaUnavailable;
+        public DiskIoResult LastDiskResult => _stickyIoResult;
+        public FatOperationResult LastOperationResult { get; private set; } = FatOperationResult.NotMounted;
+        public bool IsMounted => _mounted;
 
         public FAT(Disk disk) {
             this._disk = disk;
-            // Initialize cache arrays
-            _cacheKeys = new ulong[CacheCapacity];
-            _cacheValues = new byte[CacheCapacity][];
-            _cacheCount = 0;
-            _lruHead = 0;
-
-            // Read boot sector
-            var sec0 = ReadSectorsCached(0, 1);
-            fixed (byte* p = sec0) {
-                BPB_Common* bpb = (BPB_Common*)p;
-                _bytesPerSec = bpb->BytsPerSec;
-                _secPerClus = bpb->SecPerClus;
-                _rsvdSecCnt = bpb->RsvdSecCnt;
-                _numFATs = bpb->NumFATs;
-                uint totSec = bpb->TotSec16 != 0 ? bpb->TotSec16 : bpb->TotSec32;
-                uint fatsz = bpb->FATSz16;
-                if (fatsz == 0) {
-                    BPB_FAT32* bpb32 = (BPB_FAT32*)(p + 0x24);
-                    fatsz = bpb32->FATSz32;
-                    _rootCluster = bpb32->RootClus;
-                }
-                _FATSz = fatsz;
-                uint rootEntCnt = bpb->RootEntCnt;
-                _rootDirSectors = (uint)((rootEntCnt * 32 + (_bytesPerSec - 1)) / _bytesPerSec);
-                uint dataSec = totSec - (uint)(_rsvdSecCnt + (_numFATs * fatsz) + _rootDirSectors);
-                uint countOfClusters = dataSec / _secPerClus;
-                _clusterCount = countOfClusters;
-                _type = countOfClusters < 4085 ? FatType.FAT12 : (countOfClusters < 65525 ? FatType.FAT16 : FatType.FAT32);
-                _fatStart = _rsvdSecCnt;
-                _firstDataSector = (uint)(_rsvdSecCnt + (_numFATs * fatsz) + _rootDirSectors);
-                _firstRootDirSector = (uint)(_rsvdSecCnt + (_numFATs * fatsz));
-                if (_type != FatType.FAT32) _rootCluster = 0; // not used
-            }
+            InitializeCache();
+            InitializeMount();
         }
 
         public FAT() {
-            // Initialize cache arrays
+            InitializeCache();
+            InitializeMount();
+        }
+
+        private void InitializeCache() {
             _cacheKeys = new ulong[CacheCapacity];
             _cacheValues = new byte[CacheCapacity][];
             _cacheCount = 0;
             _lruHead = 0;
+        }
 
-            // Read boot sector
+        private void InitializeMount() {
+            if (disk == null) { MountResult = DiskIoResult.MediaUnavailable; return; }
+            if (disk.BlockSize != SectorSize) { MountResult = DiskIoResult.Unsupported; return; }
             var sec0 = ReadSectorsCached(0, 1);
+            if (_stickyIoResult != DiskIoResult.Success) { MountResult = _stickyIoResult; return; }
+            if (sec0 == null || sec0.Length < SectorSize || sec0[510] != 0x55 || sec0[511] != 0xAA) {
+                MountResult = DiskIoResult.Unsupported;
+                return;
+            }
             fixed (byte* p = sec0) {
                 BPB_Common* bpb = (BPB_Common*)p;
                 _bytesPerSec = bpb->BytsPerSec;
@@ -173,46 +180,73 @@ namespace guideXOS.FS {
                     fatsz = bpb32->FATSz32;
                     _rootCluster = bpb32->RootClus;
                 }
-                _FATSz = fatsz;
-                uint rootEntCnt = bpb->RootEntCnt;
-                _rootDirSectors = (uint)((rootEntCnt * 32 + (_bytesPerSec - 1)) / _bytesPerSec);
-                uint dataSec = totSec - (uint)(_rsvdSecCnt + (_numFATs * fatsz) + _rootDirSectors);
+                ulong metadataSectors = (ulong)_rsvdSecCnt + ((ulong)_numFATs * fatsz);
+                _rootDirSectors = (uint)(((ulong)bpb->RootEntCnt * 32UL + (_bytesPerSec == 0 ? 0UL : _bytesPerSec - 1UL)) / (_bytesPerSec == 0 ? 1U : _bytesPerSec));
+                metadataSectors += _rootDirSectors;
+                if (_bytesPerSec != SectorSize || _secPerClus == 0 ||
+                    (_secPerClus & (_secPerClus - 1)) != 0 || _numFATs == 0 ||
+                    fatsz == 0 || totSec == 0 || metadataSectors >= totSec ||
+                    (ulong)totSec > disk.BlockCount) {
+                    MountResult = DiskIoResult.Unsupported;
+                    return;
+                }
+                uint dataSec = totSec - (uint)metadataSectors;
                 uint countOfClusters = dataSec / _secPerClus;
+                if (countOfClusters == 0) { MountResult = DiskIoResult.Unsupported; return; }
+                _FATSz = fatsz;
                 _clusterCount = countOfClusters;
                 _type = countOfClusters < 4085 ? FatType.FAT12 : (countOfClusters < 65525 ? FatType.FAT16 : FatType.FAT32);
                 _fatStart = _rsvdSecCnt;
-                _firstDataSector = (uint)(_rsvdSecCnt + (_numFATs * fatsz) + _rootDirSectors);
+                _firstDataSector = (uint)metadataSectors;
                 _firstRootDirSector = (uint)(_rsvdSecCnt + (_numFATs * fatsz));
-                if (_type != FatType.FAT32) _rootCluster = 0; // not used
+                if (_type != FatType.FAT32) _rootCluster = 0;
+                _mounted = true;
+                MountResult = DiskIoResult.Success;
+                LastOperationResult = FatOperationResult.Success;
             }
         }
 
         private void InvalidateSector(ulong lba) {
-            // Linear search and invalidate
+            // Invalidate every matching key. Older cache entries can share a
+            // key after repeated write/read cycles, and leaving a newer copy
+            // valid would hide committed directory or FAT updates.
             for (int i = 0; i < _cacheCount; i++) {
                 if (_cacheKeys[i] == lba) {
                     _cacheValues[i] = null;
-                    // Don't reduce count - keep slot for reuse
-                    return;
                 }
             }
         }
 
         private byte[] ReadSectorsCached(ulong lba, uint count) {
+            ulong byteCount = (ulong)count * SectorSize;
+            if (byteCount > int.MaxValue) {
+                _stickyIoResult = DiskIoResult.InvalidRange;
+                return new byte[0];
+            }
+            if (disk == null || _stickyIoResult != DiskIoResult.Success) {
+                if (disk == null) _stickyIoResult = DiskIoResult.MediaUnavailable;
+                return new byte[(int)byteCount];
+            }
             if (count == 1) {
-                // Check cache first
+                // Check cache first and remember an invalid slot for reuse.
+                int reusableSlot = -1;
                 for (int i = 0; i < _cacheCount; i++) {
-                    if (_cacheKeys[i] == lba && _cacheValues[i] != null) {
-                        return _cacheValues[i];
+                    if (_cacheKeys[i] == lba) {
+                        if (_cacheValues[i] != null) return _cacheValues[i];
+                        if (reusableSlot < 0) reusableSlot = i;
                     }
                 }
 
                 // Not in cache - read from disk
                 var buf = new byte[SectorSize];
-                fixed (byte* p = buf) disk.Read(lba, 1, p);
+                fixed (byte* p = buf) _stickyIoResult = disk.ReadBlocks(lba, 1, p, (ulong)buf.Length);
+                if (_stickyIoResult != DiskIoResult.Success) return buf;
 
-                // Add to cache
-                if (_cacheCount < CacheCapacity) {
+                // Refresh an invalidated slot before growing or replacing the
+                // circular cache, so the same sector does not accumulate keys.
+                if (reusableSlot >= 0) {
+                    _cacheValues[reusableSlot] = buf;
+                } else if (_cacheCount < CacheCapacity) {
                     // Add new entry
                     _cacheKeys[_cacheCount] = lba;
                     _cacheValues[_cacheCount] = buf;
@@ -227,27 +261,59 @@ namespace guideXOS.FS {
                 return buf;
             } else {
                 // Multi-sector read - don't cache
-                var buf = new byte[count * SectorSize];
-                fixed (byte* p = buf) disk.Read(lba, count, p);
+                var buf = new byte[(int)byteCount];
+                fixed (byte* p = buf) _stickyIoResult = disk.ReadBlocks(lba, count, p, (ulong)buf.Length);
                 return buf;
             }
         }
 
-        private void WriteSector(ulong lba, byte[] data) {
-            fixed (byte* p = data) disk.Write(lba, 1, p);
-            InvalidateSector(lba);
+        private DiskIoResult WriteSector(ulong lba, byte[] data) {
+            if (data == null || data.Length < SectorSize) return _stickyIoResult = DiskIoResult.InvalidBuffer;
+            if (disk == null) return _stickyIoResult = DiskIoResult.MediaUnavailable;
+            if (_stickyIoResult != DiskIoResult.Success) return _stickyIoResult;
+            fixed (byte* p = data) _stickyIoResult = disk.WriteBlocks(lba, 1, p, (ulong)data.Length);
+            if (_stickyIoResult == DiskIoResult.Success) InvalidateSector(lba);
+            return _stickyIoResult;
+        }
+
+        private void BeginOperation() {
+            _stickyIoResult = DiskIoResult.Success;
+            LastOperationResult = _mounted ? FatOperationResult.Success : FatOperationResult.NotMounted;
+        }
+
+        private bool StartOperation() {
+            BeginOperation();
+            return _mounted;
+        }
+
+        private FatOperationResult CurrentIoFailure(bool writing) {
+            switch (_stickyIoResult) {
+                case DiskIoResult.Unsupported: return FatOperationResult.Unsupported;
+                case DiskIoResult.ReadOnly: return FatOperationResult.ReadOnly;
+                case DiskIoResult.InvalidRange: return FatOperationResult.InvalidRange;
+                case DiskIoResult.InvalidBuffer: return FatOperationResult.InvalidBuffer;
+                case DiskIoResult.MediaUnavailable: return FatOperationResult.MediaUnavailable;
+                case DiskIoResult.TransportFailure: return FatOperationResult.TransportFailure;
+                case DiskIoResult.WriteFailure: return FatOperationResult.WriteFailure;
+                case DiskIoResult.FlushUnsupported: return FatOperationResult.FlushUnsupported;
+                case DiskIoResult.FlushFailure: return FatOperationResult.FlushFailure;
+                default: return writing ? FatOperationResult.WriteFailure : FatOperationResult.ReadFailure;
+            }
         }
 
         private uint FirstSectorOfCluster(uint n) { return (uint)((n - 2) * _secPerClus) + _firstDataSector; }
 
         private uint ReadFatEntry(uint cluster) {
+            if (_stickyIoResult != DiskIoResult.Success) return 0;
             switch (_type) {
                 case FatType.FAT12: {
                         uint fatOffset = cluster + (cluster / 2);
                         uint fatSec = (uint)(_fatStart + (fatOffset / _bytesPerSec));
                         int off = (int)(fatOffset % _bytesPerSec);
                         var sec = ReadSectorsCached(fatSec, 1);
+                        if (_stickyIoResult != DiskIoResult.Success) return 0;
                         var nextSec = off == _bytesPerSec - 1 ? ReadSectorsCached(fatSec + 1, 1) : null;
+                        if (_stickyIoResult != DiskIoResult.Success) return 0;
                         uint val = sec[off];
                         if (off == _bytesPerSec - 1) val |= (uint)(nextSec[0] << 8);
                         else val |= (uint)(sec[off + 1] << 8);
@@ -259,6 +325,7 @@ namespace guideXOS.FS {
                         uint fatSec = (uint)(_fatStart + (fatOffset / _bytesPerSec));
                         int off = (int)(fatOffset % _bytesPerSec);
                         var sec = ReadSectorsCached(fatSec, 1);
+                        if (_stickyIoResult != DiskIoResult.Success) return 0;
                         return (uint)(sec[off] | (sec[off + 1] << 8));
                     }
                 default: {
@@ -266,13 +333,15 @@ namespace guideXOS.FS {
                         uint fatSec = (uint)(_fatStart + (fatOffset / _bytesPerSec));
                         int off = (int)(fatOffset % _bytesPerSec);
                         var sec = ReadSectorsCached(fatSec, 1);
+                        if (_stickyIoResult != DiskIoResult.Success) return 0;
                         uint val = (uint)(sec[off] | (sec[off + 1] << 8) | (sec[off + 2] << 16) | (sec[off + 3] << 24));
                         return val & 0x0FFFFFFF;
                     }
             }
         }
 
-        private void WriteFatEntry(uint cluster, uint value) {
+        private bool WriteFatEntry(uint cluster, uint value) {
+            if (_stickyIoResult != DiskIoResult.Success) return false;
             // Write to all FAT copies
             for (int fatCopy = 0; fatCopy < _numFATs; fatCopy++) {
                 uint fatBase = (uint)(_fatStart + (fatCopy * _FATSz));
@@ -282,9 +351,11 @@ namespace guideXOS.FS {
                             uint fatSec = (uint)(fatBase + (fatOffset / _bytesPerSec));
                             int off = (int)(fatOffset % _bytesPerSec);
                             var sec = ReadSectorsCached(fatSec, 1);
+                            if (_stickyIoResult != DiskIoResult.Success) return false;
                             // get the two bytes
                             byte b0 = sec[off];
                             byte b1 = (off == _bytesPerSec - 1) ? ReadSectorsCached(fatSec + 1, 1)[0] : sec[off + 1];
+                            if (_stickyIoResult != DiskIoResult.Success) return false;
                             uint cur = (uint)(b0 | (b1 << 8));
                             if ((cluster & 1) == 1) {
                                 // odd cluster: high 12 bits
@@ -300,11 +371,11 @@ namespace guideXOS.FS {
                             if (off == _bytesPerSec - 1) {
                                 var sec2 = ReadSectorsCached(fatSec + 1, 1);
                                 sec2[0] = (byte)((cur >> 8) & 0xFF);
-                                WriteSector(fatSec + 1, sec2);
+                                if (WriteSector(fatSec + 1, sec2) != DiskIoResult.Success) return false;
                             } else {
                                 sec[off + 1] = (byte)((cur >> 8) & 0xFF);
                             }
-                            WriteSector(fatSec, sec);
+                            if (WriteSector(fatSec, sec) != DiskIoResult.Success) return false;
                             break;
                         }
                     case FatType.FAT16: {
@@ -312,9 +383,10 @@ namespace guideXOS.FS {
                             uint fatSec = (uint)(fatBase + (fatOffset / _bytesPerSec));
                             int off = (int)(fatOffset % _bytesPerSec);
                             var sec = ReadSectorsCached(fatSec, 1);
+                            if (_stickyIoResult != DiskIoResult.Success) return false;
                             sec[off] = (byte)(value & 0xFF);
                             sec[off + 1] = (byte)((value >> 8) & 0xFF);
-                            WriteSector(fatSec, sec);
+                            if (WriteSector(fatSec, sec) != DiskIoResult.Success) return false;
                             break;
                         }
                     default: {
@@ -322,6 +394,7 @@ namespace guideXOS.FS {
                             uint fatSec = (uint)(fatBase + (fatOffset / _bytesPerSec));
                             int off = (int)(fatOffset % _bytesPerSec);
                             var sec = ReadSectorsCached(fatSec, 1);
+                            if (_stickyIoResult != DiskIoResult.Success) return false;
                             uint cur = (uint)(sec[off] | (sec[off + 1] << 8) | (sec[off + 2] << 16) | (sec[off + 3] << 24));
                             cur &= 0xF0000000; // upper 4 bits preserved
                             cur |= (value & 0x0FFFFFFF);
@@ -329,11 +402,12 @@ namespace guideXOS.FS {
                             sec[off + 1] = (byte)((cur >> 8) & 0xFF);
                             sec[off + 2] = (byte)((cur >> 16) & 0xFF);
                             sec[off + 3] = (byte)((cur >> 24) & 0xFF);
-                            WriteSector(fatSec, sec);
+                            if (WriteSector(fatSec, sec) != DiskIoResult.Success) return false;
                             break;
                         }
                 }
             }
+            return true;
         }
 
         private bool IsEOC(uint clus) {
@@ -355,13 +429,16 @@ namespace guideXOS.FS {
         private List<uint> GetClusterChain(uint start) {
             List<uint> chain = new List<uint>();
             uint c = start;
-            while (c >= 2 && !IsEOC(c)) {
+            uint lastValidCluster = _clusterCount + 1U;
+            for (uint visited = 0; c >= 2 && c <= lastValidCluster && !IsEOC(c) && visited < _clusterCount; visited++) {
                 chain.Add(c);
                 uint next = ReadFatEntry(c);
+                if (_stickyIoResult != DiskIoResult.Success) return chain;
                 if (next == 0 || next == c) break;
                 c = next;
             }
-            if (c >= 2) chain.Add(c);
+            if (c >= 2 && c <= lastValidCluster && !IsEOC(c) &&
+                (chain.Count == 0 || chain[chain.Count - 1] != c)) chain.Add(c);
             return chain;
         }
 
@@ -376,12 +453,13 @@ namespace guideXOS.FS {
             }
         }
 
-        private void ZeroCluster(uint cluster) {
+        private bool ZeroCluster(uint cluster) {
             uint firstSec = FirstSectorOfCluster(cluster);
             var zero = new byte[_bytesPerSec];
             for (int i = 0; i < _secPerClus; i++) {
-                WriteSector(firstSec + (uint)i, zero);
+                if (WriteSector(firstSec + (uint)i, zero) != DiskIoResult.Success) return false;
             }
+            return true;
         }
 
         private byte[] ReadAllClusterChain(uint startCluster, uint fileSize) {
@@ -525,11 +603,15 @@ namespace guideXOS.FS {
         }
 
         private uint NextFreeCluster(uint start) {
-            uint lastClusterNum = (uint)(_clusterCount + 1); // clusters numbered up to count+1
-            if (start < 2) start = 2;
-            for (uint c = start; c <= lastClusterNum + 2; c++) {
-                uint idx = 2 + ((c - 2) % lastClusterNum);
+            uint clusterCount = _clusterCount;
+            if (clusterCount == 0) return 0;
+            uint lastClusterNum = clusterCount + 1U;
+            if (start < 2 || start > lastClusterNum) start = 2;
+            uint firstOffset = start - 2U;
+            for (uint scanned = 0; scanned < clusterCount; scanned++) {
+                uint idx = 2U + ((firstOffset + scanned) % clusterCount);
                 if (ReadFatEntry(idx) == 0) return idx;
+                if (_stickyIoResult != DiskIoResult.Success) return 0;
             }
             // No free clusters available
             return 0;
@@ -550,27 +632,30 @@ namespace guideXOS.FS {
                     return new List<uint>();
                 }
                 // mark allocated
-                WriteFatEntry(c, EOC());
-                if (prev != 0) WriteFatEntry(prev, c);
+                if (!WriteFatEntry(c, EOC())) return new List<uint>();
+                if (prev != 0 && !WriteFatEntry(prev, c)) return new List<uint>();
                 chain.Add(c);
                 prev = c; search = c + 1;
             }
             return chain;
         }
 
-        private void FreeClusterChain(uint start) {
-            if (start < 2) return;
+        private bool FreeClusterChain(uint start) {
+            if (start < 2) return true;
             uint c = start;
-            while (c >= 2 && !IsEOC(c)) {
+            uint lastValidCluster = _clusterCount + 1U;
+            for (uint visited = 0; visited < _clusterCount; visited++) {
+                if (c < 2 || c > lastValidCluster) return false;
                 uint next = ReadFatEntry(c);
-                WriteFatEntry(c, 0);
-                if (next == 0 || next == c) break; c = next;
+                if (_stickyIoResult != DiskIoResult.Success || !WriteFatEntry(c, 0)) return false;
+                if (IsEOC(next) || next == 0 || next == c) return true;
+                c = next;
             }
-            // free last one too
-            WriteFatEntry(c, 0);
+            // A chain longer than the volume's cluster count is cyclic or corrupt.
+            return false;
         }
 
-        private void WriteDataToChain(List<uint> chain, byte[] content) {
+        private bool WriteDataToChain(List<uint> chain, byte[] content) {
             int clusterBytes = _secPerClus * _bytesPerSec; int offset = 0; var scratch = new byte[clusterBytes];
             for (int i = 0; i < chain.Count; i++) {
                 // prepare buffer
@@ -588,15 +673,17 @@ namespace guideXOS.FS {
                 for (int s = 0; s < _secPerClus; s++) {
                     var slice = new byte[_bytesPerSec];
                     for (int b = 0; b < _bytesPerSec; b++) slice[b] = scratch[s * _bytesPerSec + b];
-                    WriteSector(firstSec + (uint)s, slice);
+                    if (WriteSector(firstSec + (uint)s, slice) != DiskIoResult.Success) return false;
                 }
                 offset += toCopy;
                 if (offset >= content.Length) break;
             }
+            return true;
         }
 
-        private void WriteDirEntry(EntryLoc slot, string shortName, uint firstCluster, uint fileSize, byte attr) {
+        private bool WriteDirEntry(EntryLoc slot, string shortName, uint firstCluster, uint fileSize, byte attr) {
             var sec = ReadSectorsCached(slot.LBA, 1);
+            if (_stickyIoResult != DiskIoResult.Success) return false;
             fixed (byte* p = sec) {
                 DirEntry* de = (DirEntry*)(p + slot.Index * 32);
                 // name
@@ -611,7 +698,7 @@ namespace guideXOS.FS {
                 de->FstClusLO = (ushort)(firstCluster & 0xFFFF);
                 de->FileSize = fileSize;
             }
-            WriteSector(slot.LBA, sec);
+            return WriteSector(slot.LBA, sec) == DiskIoResult.Success;
         }
 
         private string GenerateShortName(string name) {
@@ -628,26 +715,29 @@ namespace guideXOS.FS {
             return e2.Length > 0 ? (up + "." + e2) : up;
         }
 
-        private void EnsureDirHasFreeSlot(uint dirCluster, ref EntryLoc slot) {
-            if (slot.Found) return;
+        private bool EnsureDirHasFreeSlot(uint dirCluster, ref EntryLoc slot) {
+            if (slot.Found) return true;
             // need to expand directory if possible
             if (_type == FatType.FAT12 || _type == FatType.FAT16) {
                 if (dirCluster == 0) {
                     // Root directory is full on FAT12/16 - cannot expand
-                    return;
+                    return false;
                 }
             }
             // FAT32 or subdir: append a new cluster
             uint lastCluster = 0; var chain = GetClusterChain(GetDirStartCluster(dirCluster)); if (chain.Count > 0) lastCluster = chain[chain.Count - 1];
+            if (_stickyIoResult != DiskIoResult.Success) return false;
             uint newc = NextFreeCluster(2); 
             if (newc == 0) {
                 // No free clusters available
-                return;
+                return false;
             }
-            WriteFatEntry(newc, EOC()); if (lastCluster != 0) WriteFatEntry(lastCluster, newc);
-            ZeroCluster(newc);
+            if (!WriteFatEntry(newc, EOC())) return false;
+            if (lastCluster != 0 && !WriteFatEntry(lastCluster, newc)) return false;
+            if (!ZeroCluster(newc)) return false;
             // first entry of new cluster
             slot.Found = true; slot.Cluster = newc; slot.RootFixed = false; slot.LBA = FirstSectorOfCluster(newc); slot.Index = 0;
+            return true;
         } 
 
         public override List<FileInfo> GetFiles(string Directory) {
@@ -666,6 +756,13 @@ namespace guideXOS.FS {
         }
 
         public override void Delete(string Name) {
+            TryDelete(Name);
+        }
+
+        public override FatOperationResult TryDelete(string Name) {
+            if (!StartOperation()) return LastOperationResult = FatOperationResult.NotMounted;
+            _pendingMutationResult = FatOperationResult.Success;
+            if (string.IsNullOrEmpty(Name)) return FinishMutation(FatOperationResult.InvalidPath);
             // Only files for now
             string parent = Name.LastIndexOf('/') >= 0 ? Name.Substring(0, Name.LastIndexOf('/')) : "";
             string just = Name.Substring(Name.LastIndexOf('/') + 1);
@@ -673,32 +770,67 @@ namespace guideXOS.FS {
             if (parent.Length > 0) { 
                 var pr = FindPath(parent); 
                 if (!pr.Found) { 
-                    // Parent directory not found - cannot delete
-                    return; 
-                } 
+                    return FinishMutation(_stickyIoResult == DiskIoResult.Success
+                        ? FatOperationResult.NotFound : CurrentIoFailure(false));
+                }
                 parentCluster = pr.FirstCluster; 
             }
+            if (_stickyIoResult != DiskIoResult.Success) return FinishMutation(CurrentIoFailure(false));
             bool exists; 
             var loc = FindEntryLoc(parentCluster, just, false, out exists); 
             if (!exists || !loc.Found) { 
-                // File not found - nothing to delete
-                return; 
+                return FinishMutation(_stickyIoResult == DiskIoResult.Success
+                    ? FatOperationResult.NotFound : CurrentIoFailure(false));
             }
+            if (_stickyIoResult != DiskIoResult.Success) return FinishMutation(CurrentIoFailure(false));
             uint firstClus = ((uint)loc.Entry.FstClusHI << 16) | loc.Entry.FstClusLO; 
-            if (firstClus >= 2) FreeClusterChain(firstClus);
+            if (firstClus >= 2 && !FreeClusterChain(firstClus))
+                return FinishMutation(CurrentIoFailure(true));
             // mark deleted
             var sec = ReadSectorsCached(loc.LBA, 1); 
+            if (_stickyIoResult != DiskIoResult.Success) return FinishMutation(CurrentIoFailure(false));
             sec[loc.Index * 32] = 0xE5; 
-            WriteSector(loc.LBA, sec);
+            if (WriteSector(loc.LBA, sec) != DiskIoResult.Success)
+                return FinishMutation(CurrentIoFailure(true));
+            parent.Dispose(); just.Dispose();
+            return FinishMutation(FatOperationResult.Success);
         }
 
         public override byte[] ReadAllBytes(string Name) {
-            var res = FindPath(Name); if (!res.Found) { Panic.Error($"{Name} is not found!"); return null; }
-            if (res.FirstCluster < 2 && _type == FatType.FAT32) { Panic.Error("Path refers to a directory"); return null; }
-            return res.FirstCluster >= 2 ? ReadAllClusterChain(res.FirstCluster, res.Size) : new byte[0];
+            FatOperationResult result = TryReadAllBytes(Name, out byte[] content);
+            if (result != FatOperationResult.Success) {
+                Panic.Error("FAT read failed: " + result.ToString());
+                return null;
+            }
+            return content;
         }
 
         public override void WriteAllBytes(string Name, byte[] Content) {
+            TryWriteAllBytes(Name, Content);
+        }
+
+        public FatOperationResult TryReadAllBytes(string Name, out byte[] content) {
+            content = null;
+            if (!StartOperation()) return LastOperationResult = FatOperationResult.NotMounted;
+            if (string.IsNullOrEmpty(Name)) return LastOperationResult = FatOperationResult.InvalidPath;
+            var res = FindPath(Name);
+            if (_stickyIoResult != DiskIoResult.Success) return LastOperationResult = CurrentIoFailure(false);
+            if (!res.Found) return LastOperationResult = FatOperationResult.NotFound;
+            if (res.FirstCluster < 2 && _type == FatType.FAT32)
+                return LastOperationResult = FatOperationResult.InvalidPath;
+            content = res.FirstCluster >= 2 ? ReadAllClusterChain(res.FirstCluster, res.Size) : new byte[0];
+            if (_stickyIoResult != DiskIoResult.Success) {
+                content = null;
+                return LastOperationResult = CurrentIoFailure(false);
+            }
+            return LastOperationResult = FatOperationResult.Success;
+        }
+
+        public override FatOperationResult TryWriteAllBytes(string Name, byte[] Content) {
+            if (!StartOperation()) return FinishMutation(FatOperationResult.NotMounted);
+            _pendingMutationResult = FatOperationResult.Success;
+            if (string.IsNullOrEmpty(Name) || Content == null)
+                return FinishMutation(FatOperationResult.InvalidPath);
             // resolve parent
             string parent = Name.LastIndexOf('/') >= 0 ? Name.Substring(0, Name.LastIndexOf('/')) : "";
             string just = Name.Substring(Name.LastIndexOf('/') + 1);
@@ -706,49 +838,63 @@ namespace guideXOS.FS {
             if (parent.Length > 0) { 
                 var pr = FindPath(parent); 
                 if (!pr.Found) {
-                    // Parent directory not found - cannot write file
-                    return;
+                    return FinishMutation(_stickyIoResult == DiskIoResult.Success
+                        ? FatOperationResult.NotFound : CurrentIoFailure(false));
                 }
                 parentCluster = pr.FirstCluster; 
             }
+            if (_stickyIoResult != DiskIoResult.Success) return FinishMutation(CurrentIoFailure(false));
             // locate entry or free slot
             bool exists; var loc = FindEntryLoc(parentCluster, just, true, out exists);
+            if (_stickyIoResult != DiskIoResult.Success) return FinishMutation(CurrentIoFailure(false));
             if (!loc.Found && !exists) { 
-                EnsureDirHasFreeSlot(parentCluster, ref loc); 
+                if (!EnsureDirHasFreeSlot(parentCluster, ref loc)) {
+                    return FinishMutation(_stickyIoResult == DiskIoResult.Success
+                        ? FatOperationResult.NoSpace : CurrentIoFailure(true));
+                }
                 if (!loc.Found) {
-                    // No space available in directory
-                    return;
+                    return FinishMutation(FatOperationResult.NoSpace);
                 }
             }
+            if (exists && (loc.Entry.Attr & 0x10) != 0)
+                return FinishMutation(FatOperationResult.InvalidPath);
+            uint oldFirstCluster = exists ? (((uint)loc.Entry.FstClusHI << 16) | loc.Entry.FstClusLO) : 0;
             uint firstClus = 0;
-            if (exists) {
-                // free old chain
-                uint old = ((uint)loc.Entry.FstClusHI << 16) | loc.Entry.FstClusLO; if (old >= 2) FreeClusterChain(old);
-            }
-            // allocate if needed
             List<uint> chain = AllocateClustersForSize((uint)Content.Length);
-            if (Content.Length > 0 && chain.Count == 0) {
-                // Allocation failed - out of space
-                return;
-            }
+            if (_stickyIoResult != DiskIoResult.Success) return FinishMutation(CurrentIoFailure(true));
+            if (Content.Length > 0 && chain.Count == 0) return FinishMutation(FatOperationResult.NoSpace);
             if (chain.Count > 0) firstClus = chain[0];
-            // write data
-            if (Content.Length > 0) WriteDataToChain(chain, Content);
-            // write dir entry
+            if (Content.Length > 0 && !WriteDataToChain(chain, Content))
+                return FinishMutation(CurrentIoFailure(true));
             string shortName = GenerateShortName(just);
-            WriteDirEntry(loc, shortName, firstClus, (uint)Content.Length, 0x20);
+            if (!WriteDirEntry(loc, shortName, firstClus, (uint)Content.Length, 0x20))
+                return FinishMutation(CurrentIoFailure(true));
+            if (exists) {
+                if (oldFirstCluster >= 2 && !FreeClusterChain(oldFirstCluster))
+                    return FinishMutation(CurrentIoFailure(true));
+            }
             // cleanup
             parent.Dispose(); just.Dispose(); shortName.Dispose();
+            return FinishMutation(FatOperationResult.Success);
+        }
+
+        private FatOperationResult FinishMutation(FatOperationResult result) {
+            LastOperationResult = result;
+            if (result != FatOperationResult.Success) _pendingMutationResult = result;
+            return result;
         }
 
         /// <summary>
         /// Creates a directory on the FAT filesystem. Creates parent directories as needed.
         /// </summary>
-        public void CreateDirectory(string path) {
+        public FatOperationResult CreateDirectory(string path) {
+            if (!StartOperation()) return FinishMutation(FatOperationResult.NotMounted);
+            _pendingMutationResult = FatOperationResult.Success;
+            if (path == null) return FinishMutation(FatOperationResult.InvalidPath);
             // Normalize: strip leading/trailing slashes
             while (path.Length > 0 && path[0] == '/') path = path.Substring(1);
             while (path.Length > 0 && path[path.Length - 1] == '/') path = path.Substring(0, path.Length - 1);
-            if (path.Length == 0) return;
+            if (path.Length == 0) return FinishMutation(FatOperationResult.InvalidPath);
 
             // Split into components and create each level
             var parts = path.Split('/');
@@ -762,30 +908,36 @@ namespace guideXOS.FS {
 
                 // Check if this level already exists
                 var check = FindPath(built);
+                if (_stickyIoResult != DiskIoResult.Success) return FinishMutation(CurrentIoFailure(false));
                 if (check.Found) continue;
 
                 // Resolve parent cluster
                 uint parentCluster = _type == FatType.FAT32 ? _rootCluster : 0;
                 if (parentPath.Length > 0) {
                     var pr = FindPath(parentPath);
-                    if (!pr.Found) return; // parent missing and we couldn't create it
+                    if (!pr.Found) return FinishMutation(_stickyIoResult == DiskIoResult.Success
+                        ? FatOperationResult.NotFound : CurrentIoFailure(false));
                     parentCluster = pr.FirstCluster;
                 }
 
                 // Find a free directory entry slot in the parent
                 bool exists;
                 var loc = FindEntryLoc(parentCluster, component, true, out exists);
+                if (_stickyIoResult != DiskIoResult.Success) return FinishMutation(CurrentIoFailure(false));
                 if (exists) continue; // already exists
                 if (!loc.Found) {
-                    EnsureDirHasFreeSlot(parentCluster, ref loc);
-                    if (!loc.Found) return; // no space
+                    if (!EnsureDirHasFreeSlot(parentCluster, ref loc))
+                        return FinishMutation(_stickyIoResult == DiskIoResult.Success
+                            ? FatOperationResult.NoSpace : CurrentIoFailure(true));
+                    if (!loc.Found) return FinishMutation(FatOperationResult.NoSpace);
                 }
 
                 // Allocate one cluster for the new directory
                 uint newCluster = NextFreeCluster(2);
-                if (newCluster == 0) return; // no space
-                WriteFatEntry(newCluster, EOC());
-                ZeroCluster(newCluster);
+                if (newCluster == 0) return FinishMutation(_stickyIoResult == DiskIoResult.Success
+                    ? FatOperationResult.NoSpace : CurrentIoFailure(false));
+                if (!WriteFatEntry(newCluster, EOC())) return FinishMutation(CurrentIoFailure(true));
+                if (!ZeroCluster(newCluster)) return FinishMutation(CurrentIoFailure(true));
 
                 // Write "." entry (points to self)
                 uint dotSec = FirstSectorOfCluster(newCluster);
@@ -809,37 +961,57 @@ namespace guideXOS.FS {
                     dotdot->FstClusLO = (ushort)(parentCluster & 0xFFFF);
                     dotdot->FileSize = 0;
                 }
-                WriteSector(dotSec, dotData);
+                if (WriteSector(dotSec, dotData) != DiskIoResult.Success)
+                    return FinishMutation(CurrentIoFailure(true));
 
                 // Write the directory entry in the parent
                 string shortName = GenerateShortName(component);
-                WriteDirEntry(loc, shortName, newCluster, 0, 0x10);
+                if (!WriteDirEntry(loc, shortName, newCluster, 0, 0x10))
+                    return FinishMutation(CurrentIoFailure(true));
                 shortName.Dispose();
             }
+            return FinishMutation(FatOperationResult.Success);
         }
 
-        public override void Format() {
-            // Format the disk as FAT32
-            // Get total sectors from disk
-            ulong totalSectors = 0;
-            
-            // Try to read boot sector to get disk size, or use a default
-            byte[] testSec = new byte[512];
-            try {
-                testSec = ReadSectorsCached(0, 1);
-                // If we can read it, try to get total sectors from existing BPB
-                fixed (byte* p = testSec) {
-                    BPB_Common* bpb = (BPB_Common*)p;
-                    totalSectors = bpb->TotSec16 != 0 ? bpb->TotSec16 : bpb->TotSec32;
-                }
-            } catch {
-                // If we can't determine size, default to 100MB
-                totalSectors = (100 * 1024 * 1024) / 512;
-            }
-            
-            if (totalSectors == 0 || totalSectors < 4096) {
-                totalSectors = (100 * 1024 * 1024) / 512; // Default to 100MB
-            }
+        /// <summary>Flushes write-through FAT mutations to the device's durable-media command.</summary>
+        public override FatOperationResult TrySync() {
+            if (!_mounted || disk == null) return LastOperationResult = FatOperationResult.NotMounted;
+            DiskIoResult result = disk.Flush();
+            if (result == DiskIoResult.FlushUnsupported)
+                return LastOperationResult = FatOperationResult.FlushUnsupported;
+            if (result == DiskIoResult.MediaUnavailable)
+                return LastOperationResult = FatOperationResult.MediaUnavailable;
+            if (result != DiskIoResult.Success)
+                return LastOperationResult = FatOperationResult.FlushFailure;
+            if (_pendingMutationResult != FatOperationResult.Success)
+                return LastOperationResult = _pendingMutationResult;
+            return LastOperationResult = FatOperationResult.Success;
+        }
+
+        public string FileSystemVariant => _type == FatType.FAT12 ? "FAT12" :
+            (_type == FatType.FAT16 ? "FAT16" : "FAT32");
+
+        public override void Format() { TryFormat(); }
+
+        /// <summary>Formats this disk and reports each sector-write and final-flush result.</summary>
+        public override FatOperationResult TryFormat() {
+            Disk target = disk;
+            _stickyIoResult = DiskIoResult.Success;
+            _pendingMutationResult = FatOperationResult.Success;
+            _mounted = false;
+            MountResult = DiskIoResult.MediaUnavailable;
+            if (target == null) return FinishMutation(FatOperationResult.NotMounted);
+            if (target.BlockSize != SectorSize || target.BlockCount < 4096UL ||
+                target.BlockCount > 0xFFFFFFFFUL)
+                return FinishMutation(FatOperationResult.Unsupported);
+            if ((target.Capabilities & DiskCapabilities.Writable) == 0)
+                return FinishMutation(FatOperationResult.ReadOnly);
+            if ((target.Capabilities & DiskCapabilities.FlushSupported) == 0)
+                return FinishMutation(FatOperationResult.FlushUnsupported);
+            if (!target.IsAvailable) return FinishMutation(FatOperationResult.NotMounted);
+
+            // Use actual device geometry; never guess a larger default capacity.
+            ulong totalSectors = target.BlockCount;
             
             // Choose FAT type based on size
             bool useFAT32 = totalSectors > 65525 * 8; // > ~256MB
@@ -851,10 +1023,12 @@ namespace guideXOS.FS {
             uint rootDirSectors = (uint)((rootEntCnt * 32 + (bytesPerSec - 1)) / bytesPerSec);
             
             // Calculate FAT size
-            uint tmpVal1 = (uint)(totalSectors - (rsvdSecCnt + rootDirSectors));
-            uint tmpVal2 = (uint)((256 * secPerClus) + numFATs);
-            if (useFAT32) tmpVal2 = (uint)((128 * secPerClus) + numFATs);
-            uint FATSz = (tmpVal1 + tmpVal2 - 1) / tmpVal2;
+            ulong tmpVal1 = totalSectors - (ulong)(rsvdSecCnt + rootDirSectors);
+            ulong tmpVal2 = (ulong)((useFAT32 ? 128 : 256) * secPerClus) + numFATs;
+            ulong fatSize = (tmpVal1 + tmpVal2 - 1UL) / tmpVal2;
+            if (fatSize == 0 || fatSize > 0xFFFFFFFFUL)
+                return FinishMutation(FatOperationResult.Unsupported);
+            uint FATSz = (uint)fatSize;
             
             // Create boot sector
             byte[] bootSector = new byte[512];
@@ -910,14 +1084,16 @@ namespace guideXOS.FS {
             }
             
             // Write boot sector
-            WriteSector(0, bootSector);
+            if (WriteSector(0, bootSector) != DiskIoResult.Success)
+                return FinishMutation(CurrentIoFailure(true));
             
             // Clear reserved sectors
             byte[] zeroSec = new byte[512];
             for (int i = 0; i < 512; i++) zeroSec[i] = 0;
             
             for (ulong s = 1; s < rsvdSecCnt; s++) {
-                WriteSector(s, zeroSec);
+                if (WriteSector(s, zeroSec) != DiskIoResult.Success)
+                    return FinishMutation(CurrentIoFailure(true));
             }
             
             // Write FSInfo for FAT32
@@ -938,14 +1114,16 @@ namespace guideXOS.FS {
                 fsInfo[491] = 0xFF;
                 fsInfo[510] = 0x55;
                 fsInfo[511] = 0xAA;
-                WriteSector(1, fsInfo);
+                if (WriteSector(1, fsInfo) != DiskIoResult.Success)
+                    return FinishMutation(CurrentIoFailure(true));
             }
             
             // Initialize FAT tables
             ulong fatStart = rsvdSecCnt;
             for (int fatNum = 0; fatNum < numFATs; fatNum++) {
                 for (uint i = 0; i < FATSz; i++) {
-                    WriteSector(fatStart + (ulong)(fatNum * FATSz) + i, zeroSec);
+                    if (WriteSector(fatStart + (ulong)(fatNum * FATSz) + i, zeroSec) != DiskIoResult.Success)
+                        return FinishMutation(CurrentIoFailure(true));
                 }
             }
             
@@ -973,7 +1151,8 @@ namespace guideXOS.FS {
             
             // Write to all FAT copies
             for (int fatNum = 0; fatNum < numFATs; fatNum++) {
-                WriteSector(fatStart + (ulong)(fatNum * FATSz), fatFirst);
+                if (WriteSector(fatStart + (ulong)(fatNum * FATSz), fatFirst) != DiskIoResult.Success)
+                    return FinishMutation(CurrentIoFailure(true));
             }
             
             // Clear root directory area
@@ -982,12 +1161,14 @@ namespace guideXOS.FS {
                 // Root is in data area - clear cluster 2
                 ulong firstDataSector = firstRootSec;
                 for (int i = 0; i < secPerClus; i++) {
-                    WriteSector(firstDataSector + (ulong)i, zeroSec);
+                    if (WriteSector(firstDataSector + (ulong)i, zeroSec) != DiskIoResult.Success)
+                        return FinishMutation(CurrentIoFailure(true));
                 }
             } else {
                 // Fixed root directory for FAT12/16
                 for (uint i = 0; i < rootDirSectors; i++) {
-                    WriteSector(firstRootSec + i, zeroSec);
+                    if (WriteSector(firstRootSec + i, zeroSec) != DiskIoResult.Success)
+                        return FinishMutation(CurrentIoFailure(true));
                 }
             }
             
@@ -998,6 +1179,8 @@ namespace guideXOS.FS {
             _lruHead = 0;
             
             var sec0 = ReadSectorsCached(0, 1);
+            if (_stickyIoResult != DiskIoResult.Success)
+                return FinishMutation(CurrentIoFailure(false));
             fixed (byte* p = sec0) {
                 BPB_Common* bpb = (BPB_Common*)p;
                 _bytesPerSec = bpb->BytsPerSec;
@@ -1023,6 +1206,16 @@ namespace guideXOS.FS {
                 _firstRootDirSector = (uint)(_rsvdSecCnt + (_numFATs * fatsz));
                 if (_type != FatType.FAT32) _rootCluster = 0;
             }
+            DiskIoResult flushResult = target.Flush();
+            if (flushResult == DiskIoResult.FlushUnsupported)
+                return FinishMutation(FatOperationResult.FlushUnsupported);
+            if (flushResult == DiskIoResult.MediaUnavailable)
+                return FinishMutation(FatOperationResult.MediaUnavailable);
+            if (flushResult != DiskIoResult.Success)
+                return FinishMutation(FatOperationResult.FlushFailure);
+            _mounted = true;
+            MountResult = DiskIoResult.Success;
+            return FinishMutation(FatOperationResult.Success);
         }
     }
 }

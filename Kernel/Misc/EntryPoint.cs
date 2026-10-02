@@ -1,6 +1,7 @@
 using guideXOS.FS;
 using guideXOS.Kernel.Drivers;
 using guideXOS.Kernel.Drivers.Input;
+using guideXOS.Kernel.Tools;
 using Internal.Runtime.CompilerHelpers;
 using System;
 using System.Runtime;
@@ -81,7 +82,7 @@ namespace guideXOS.Misc {
             // immediately above, so InitializeModules now has its required
             // object-storage owner before any managed static is used.
             StartupCodeHelpers.InitializeModules(modulesPtr);
-#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
             Allocator.InitializeInvalidFreeDiagnostics();
 #endif
             BootConsole.WriteLine("[NATIVEAOT] modules initialized");
@@ -236,6 +237,7 @@ namespace guideXOS.Misc {
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy)
                  SMBIOS.Initialize();
             BootConsole.WriteLine("[PCI] INIT");
+            SATA.ResetForBoot();
             PCI.Initialize();
             BootConsole.WriteLine("[PCI] enumerated");
 
@@ -243,6 +245,10 @@ namespace guideXOS.Misc {
                 IDE.Initialize();
                 SATA.Initialize();
                 ThreadPool.Initialize();
+            } else if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                // Boot services are already retired here; the native AHCI
+                // driver owns SATA discovery and I/O in the UEFI kernel.
+                SATA.Initialize();
             }
 
 #if !UseAPIC
@@ -419,7 +425,7 @@ namespace guideXOS.Misc {
             if (bootInfo->HasRamdisk && bootInfo->RamdiskBase != 0) {
                 BootConsole.WriteLine("[Initrd] initializing");
                 try {
-                    Disk.Instance = new Ramdisk((IntPtr)bootInfo->RamdiskBase);
+                    Disk.Instance = new Ramdisk((IntPtr)bootInfo->RamdiskBase, bootInfo->RamdiskSize);
                     File.Instance = new RdskFS();
                     BootConsole.WriteLine("[FS] mounted");
                 } catch {
@@ -428,6 +434,16 @@ namespace guideXOS.Misc {
             } else {
                 BootConsole.WriteLine("[Initrd] unavailable");
             }
+
+#if UEFI_DIAGNOSTIC_STORAGE35Q
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                BootConsole.WriteLine(File.Instance != null &&
+                    File.Instance.FileSystemType == FileSystem.FS_TYPE_RDSK
+                    ? "35Q_RDSKFS_BOOT=PASS"
+                    : "35Q_RDSKFS_BOOT=FAIL");
+                Storage35QProof.Run();
+            }
+#endif
 
             // SKIP boot splash animation - Timer.Sleep() might not work with masked interrupts
             // for (int i = 0; i < 120; i++) {
@@ -547,6 +563,7 @@ namespace guideXOS.Misc {
             
             VMwareTools.Initialize();
             SMBIOS.Initialize();
+            SATA.ResetForBoot();
             PCI.Initialize();
             IDE.Initialize();
             SATA.Initialize();

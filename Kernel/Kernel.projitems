@@ -107,6 +107,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Misc\Process.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\Ring3Abi.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\Ring3Proof.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Tools\Storage35QProof.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\SchedulerExtensions.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\SHA256.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\SVG.cs" />

@@ -17,7 +17,7 @@ namespace guideXOS.Kernel.Drivers {
         private ulong _baseOffsetBytes;
         private bool _offsetDetected;
 
-        public Ramdisk(IntPtr _ptr) {
+        public Ramdisk(IntPtr _ptr, ulong sizeBytes = 0) {
             BootConsole.WriteLine("[Ramdisk] Constructor called");
             
             ptr = (byte*)_ptr;
@@ -34,7 +34,7 @@ namespace guideXOS.Kernel.Drivers {
             try {
                 // Many environments store this in BootInfo; if not present it stays 0 (no bounds checks).
                 // This is intentionally best-effort to avoid breaking boot if fields change.
-                _sizeBytes = 0;
+                _sizeBytes = sizeBytes;
             } catch {
                 _sizeBytes = 0;
             }
@@ -57,6 +57,10 @@ namespace guideXOS.Kernel.Drivers {
             
             BootConsole.WriteLine("[Ramdisk] Disk.Instance set");
         }
+
+        public override uint BlockSize => 512;
+        public override ulong BlockCount => _sizeBytes == 0 ? 0xFFFFFFFFFFFFFFFFUL / 512UL : _sizeBytes / 512UL;
+        public override DiskCapabilities Capabilities => DiskCapabilities.Readable | DiskCapabilities.Writable;
 
         private static void CopyBytes(byte* dest, byte* src, ulong len) {
             for (ulong i = 0; i < len; i++) {
@@ -97,13 +101,13 @@ namespace guideXOS.Kernel.Drivers {
             BootConsole.WriteLine("[Ramdisk] WARNING: TAR magic not found in initial scan; using offset 0");
         }
 
-        public override bool Read(ulong sector, uint count, byte* p) {
+        protected override DiskIoResult ReadCore(ulong sector, uint count, byte* p) {
             if (ptr == null) {
-                return false;
+                return DiskIoResult.MediaUnavailable;
             }
 
             if (p == null) {
-                return false;
+                return DiskIoResult.InvalidBuffer;
             }
 
             EnsureTarOffsetDetected();
@@ -111,11 +115,11 @@ namespace guideXOS.Kernel.Drivers {
             ulong byteOffset = _baseOffsetBytes + (sector * 512ul);
             ulong byteCount = (ulong)count * 512ul;
 
-            if (byteCount == 0) return true;
+            if (byteCount == 0) return DiskIoResult.Success;
 
             // Bounds check only when size is known (>0)
-            if (_sizeBytes != 0 && (byteOffset + byteCount) > _sizeBytes) {
-                return false;
+            if (_sizeBytes != 0 && (byteOffset > _sizeBytes || byteCount > _sizeBytes - byteOffset)) {
+                return DiskIoResult.InvalidRange;
             }
             
             // Calculate source address
@@ -123,22 +127,23 @@ namespace guideXOS.Kernel.Drivers {
 
             CopyBytes(p, src, byteCount);
             
-            return true;
+            return DiskIoResult.Success;
         }
 
-        public override bool Write(ulong sector, uint count, byte* p) {
-            if (ptr == null || p == null) return false;
+        protected override DiskIoResult WriteCore(ulong sector, uint count, byte* p) {
+            if (ptr == null) return DiskIoResult.MediaUnavailable;
+            if (p == null) return DiskIoResult.InvalidBuffer;
 
             EnsureTarOffsetDetected();
 
             ulong byteOffset = _baseOffsetBytes + (sector * 512ul);
             ulong byteCount = (ulong)count * 512ul;
 
-            if (byteCount == 0) return true;
-            if (_sizeBytes != 0 && (byteOffset + byteCount) > _sizeBytes) return false;
+            if (byteCount == 0) return DiskIoResult.Success;
+            if (_sizeBytes != 0 && (byteOffset > _sizeBytes || byteCount > _sizeBytes - byteOffset)) return DiskIoResult.InvalidRange;
 
             CopyBytes(ptr + byteOffset, p, byteCount);
-            return true;
+            return DiskIoResult.Success;
         }
 
         /// <summary>

@@ -32,14 +32,21 @@ namespace guideXOS.Kernel.Drivers {
             Console.WriteLine($"[FileDisk] Loaded '{imagePath}' ({_imageData.Length} bytes, {_imageData.Length / 512} sectors)");
         }
 
-        public override bool Read(ulong sector, uint count, byte* data) {
+        public override uint BlockSize => 512;
+        public override ulong BlockCount => _imageData == null ? 0UL : (ulong)_imageData.Length / 512UL;
+        public override DiskCapabilities Capabilities => _imageData == null
+            ? DiskCapabilities.None
+            : DiskCapabilities.Readable | DiskCapabilities.Writable;
+
+        protected override DiskIoResult ReadCore(ulong sector, uint count, byte* data) {
+            if (_imageData == null) return DiskIoResult.MediaUnavailable;
             ulong byteOffset = sector * 512;
-            uint byteCount = count * 512;
+            ulong byteCount = (ulong)count * 512;
             
             // Bounds check
             if (byteOffset + byteCount > (ulong)_imageData.Length) {
                 Console.WriteLine($"[FileDisk] Read beyond image bounds: sector {sector}, count {count}");
-                return false;
+                return DiskIoResult.InvalidRange;
             }
             
             // Copy data from image buffer to destination
@@ -47,17 +54,18 @@ namespace guideXOS.Kernel.Drivers {
                 Native.Movsb(data, src, byteCount);
             }
             
-            return true;
+            return DiskIoResult.Success;
         }
 
-        public override bool Write(ulong sector, uint count, byte* data) {
+        protected override DiskIoResult WriteCore(ulong sector, uint count, byte* data) {
+            if (_imageData == null) return DiskIoResult.MediaUnavailable;
             ulong byteOffset = sector * 512;
-            uint byteCount = count * 512;
+            ulong byteCount = (ulong)count * 512;
             
             // Bounds check
             if (byteOffset + byteCount > (ulong)_imageData.Length) {
                 Console.WriteLine($"[FileDisk] Write beyond image bounds: sector {sector}, count {count}");
-                return false;
+                return DiskIoResult.InvalidRange;
             }
             
             // Copy data from source to image buffer
@@ -65,7 +73,7 @@ namespace guideXOS.Kernel.Drivers {
                 Native.Movsb(dst, data, byteCount);
             }
             
-            return true;
+            return DiskIoResult.Success;
         }
 
         /// <summary>

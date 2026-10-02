@@ -87,6 +87,38 @@ namespace guideXOS {
             Native.Invlpg(virtualAddress);
         }
 
+        /// <summary>
+        /// Maps a physical device-register range into the current address space
+        /// as identity-mapped, writable, uncached, and non-executable memory.
+        /// </summary>
+        public static bool MapMmioRange(ulong physicalAddress, ulong length) {
+            if (physicalAddress == 0 || length == 0 ||
+                physicalAddress > 0xFFFFFFFFFFFFFFFFUL - (length - 1)) return false;
+
+            ulong firstPage = physicalAddress & ~0xFFFUL;
+            ulong lastPage = (physicalAddress + length - 1) & ~0xFFFUL;
+            ulong* root = CurrentRoot;
+            if (root == null) return false;
+
+            for (ulong address = firstPage; ; address += 0x1000UL) {
+                ulong* pte = GetPageInternal(root, address, user: false,
+                                             PageSize.Typical);
+                if (pte == null) return false;
+
+                const ulong present = 1UL;
+                const ulong writable = 1UL << 1;
+                const ulong writeThrough = 1UL << 3;
+                const ulong cacheDisable = 1UL << 4;
+                const ulong noExecute = 1UL << 63;
+                *pte = (address & PageMask) | present | writable |
+                       writeThrough | cacheDisable | noExecute;
+                Native.Invlpg(address);
+
+                if (address == lastPage) return true;
+                if (address > 0xFFFFFFFFFFFFFFFFUL - 0x1000UL) return false;
+            }
+        }
+
         public static void MapOnRootTracked(ulong* rootPml4, ulong virtualAddress,
                                              ulong physicalAddress, bool user, bool writable,
                                              bool executable, ulong[] allocations,
