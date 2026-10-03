@@ -1208,9 +1208,12 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     }
 
     // Compute checksum so that 32-bit sum of all words is 0
-    v1BootInfo->Reserved[0] = (uint64_t)kernelMinVaddr;
-    v1BootInfo->Reserved[1] = (uint64_t)kernelSpanBytes;
-    v1BootInfo->Reserved[2] = 0;
+    guideXOS::paging::BootMemoryHandoff* memoryHandoff =
+        guideXOS::paging::GetBootMemoryHandoff();
+    memoryHandoff->KernelSpanBytes = (uint64_t)kernelSpanBytes;
+    v1BootInfo->Reserved[0] = (uint64_t)kernelPhysBase;
+    v1BootInfo->Reserved[1] = (uint64_t)kernelMinVaddr;
+    v1BootInfo->Reserved[2] = reinterpret_cast<uint64_t>(memoryHandoff);
     v1BootInfo->HeaderChecksum = 0u;
     {
         uint32_t byteCount = v1BootInfo->Size & ~0x3u;

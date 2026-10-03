@@ -866,7 +866,8 @@ namespace guideXOS.OS {
             MaximumBytes = maximumBytes;
             IsValid = ApplicationStorageRequest.Create(space, RelativePath).IsValid &&
                       offset >= 0 && maximumBytes > 0 &&
-                      maximumBytes <= MaxChunkLength;
+                      maximumBytes <= MaxChunkLength &&
+                      offset <= long.MaxValue - maximumBytes;
         }
 
         public ApplicationStorageNamespace Namespace { get; private set; }

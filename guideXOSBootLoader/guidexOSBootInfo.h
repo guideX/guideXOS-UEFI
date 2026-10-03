@@ -89,8 +89,8 @@ namespace guideXOS
         uint64_t SimpleTextInputEx;        // EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL* (keyboard)
 
         // BootInfo v1 extensions (24 bytes) - reduced from 48 to accommodate input protocols.
-        // Reserved[0] and [1] carry the kernel linked virtual-address start and span
-        // so the identity-address allocator can exclude the kernel mapping; [2] stays reserved.
+        // Reserved[0] is the kernel physical backing start; [1] is its linked
+        // virtual start; [2] points to BootMemoryHandoff (span + page-table list).
         uint64_t Reserved[3];
     };
 }

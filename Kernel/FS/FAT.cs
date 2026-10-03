@@ -18,7 +18,8 @@ namespace guideXOS.FS {
         InvalidRange = 11,
         InvalidBuffer = 12,
         MediaUnavailable = 13,
-        TransportFailure = 14
+        TransportFailure = 14,
+        EntryLimitExceeded = 15
     }
 
     /// <summary>
@@ -26,6 +27,7 @@ namespace guideXOS.FS {
     /// Supports read, write, create, delete, and format operations.
     /// </summary>
     internal unsafe class FAT : FileSystem {
+        internal static bool DiagnosticTracePathLookup;
         /// <summary>
         /// Fat Type
         /// </summary>
@@ -134,13 +136,28 @@ namespace guideXOS.FS {
         private bool _mounted;
         private DiskIoResult _stickyIoResult;
         private FatOperationResult _pendingMutationResult;
+        private uint _volumeId;
+        private string _volumeLabel = string.Empty;
+        private int _lastCreateDirectoryFailureIndex = -1;
+        private int _lastCreateDirectoryPartCount;
 
         public DiskIoResult MountResult { get; private set; } = DiskIoResult.MediaUnavailable;
         public DiskIoResult LastDiskResult => _stickyIoResult;
         public FatOperationResult LastOperationResult { get; private set; } = FatOperationResult.NotMounted;
         public bool IsMounted => _mounted;
+        public uint VolumeId => _volumeId;
+        public string VolumeLabel => _volumeLabel;
+        internal int LastCreateDirectoryFailureIndex => _lastCreateDirectoryFailureIndex;
+        internal int LastCreateDirectoryPartCount => _lastCreateDirectoryPartCount;
 
-        public FAT(Disk disk) {
+        public FAT(Disk disk) : this(disk, true) { }
+
+        /// <summary>
+        /// Mounts a FAT volume without changing the global File API mount.
+        /// Persistent application storage uses this form so initrd resources
+        /// remain available through File.Instance.
+        /// </summary>
+        internal FAT(Disk disk, bool registerAsDefault) : base(registerAsDefault) {
             this._disk = disk;
             InitializeCache();
             InitializeMount();
@@ -196,6 +213,13 @@ namespace guideXOS.FS {
                 _FATSz = fatsz;
                 _clusterCount = countOfClusters;
                 _type = countOfClusters < 4085 ? FatType.FAT12 : (countOfClusters < 65525 ? FatType.FAT16 : FatType.FAT32);
+                if (_type == FatType.FAT32) {
+                    _volumeId = *(uint*)(p + 0x43);
+                    _volumeLabel = ReadVolumeLabel(p + 0x47);
+                } else {
+                    _volumeId = *(uint*)(p + 0x27);
+                    _volumeLabel = ReadVolumeLabel(p + 0x2B);
+                }
                 _fatStart = _rsvdSecCnt;
                 _firstDataSector = (uint)metadataSectors;
                 _firstRootDirSector = (uint)(_rsvdSecCnt + (_numFATs * fatsz));
@@ -204,6 +228,14 @@ namespace guideXOS.FS {
                 MountResult = DiskIoResult.Success;
                 LastOperationResult = FatOperationResult.Success;
             }
+        }
+
+        private static string ReadVolumeLabel(byte* value) {
+            string result = string.Empty;
+            int length = 11;
+            while (length > 0 && value[length - 1] == (byte)' ') length--;
+            for (int i = 0; i < length; i++) result += (char)value[i];
+            return result;
         }
 
         private void InvalidateSector(ulong lba) {
@@ -427,18 +459,56 @@ namespace guideXOS.FS {
         }
 
         private List<uint> GetClusterChain(uint start) {
-            List<uint> chain = new List<uint>();
+            int maximumClusters = _clusterCount > int.MaxValue
+                ? int.MaxValue : (int)_clusterCount;
+            if (maximumClusters <= 0) return new List<uint>();
+            int capacity = maximumClusters < 16 ? maximumClusters : 16;
+            List<uint> chain = new List<uint>(new uint[capacity]);
             uint c = start;
             uint lastValidCluster = _clusterCount + 1U;
-            for (uint visited = 0; c >= 2 && c <= lastValidCluster && !IsEOC(c) && visited < _clusterCount; visited++) {
+            int traversed = 0;
+            while (c >= 2 && c <= lastValidCluster && !IsEOC(c) &&
+                    traversed < maximumClusters) {
+                for (int i = 0; i < chain.Count; i++) {
+                    if (chain[i] == c) {
+                        if (DiagnosticTracePathLookup)
+                            BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-chain-cycle");
+                        _stickyIoResult = DiskIoResult.InvalidRange;
+                        return chain;
+                    }
+                }
+                if (chain.Count == capacity) {
+                    if (capacity >= maximumClusters) {
+                        _stickyIoResult = DiskIoResult.InvalidRange;
+                        return chain;
+                    }
+                    int nextCapacity = capacity > maximumClusters / 2
+                        ? maximumClusters : capacity * 2;
+                    uint[] grownBuffer = new uint[nextCapacity];
+                    for (int i = 0; i < chain.Count; i++)
+                        grownBuffer[i] = chain[i];
+                    List<uint> grown = new List<uint>(grownBuffer);
+                    grown.Count = chain.Count;
+                    chain = grown;
+                    capacity = nextCapacity;
+                    if (DiagnosticTracePathLookup && chain.Count >= 256)
+                        BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-chain-grown-past-256");
+                }
                 chain.Add(c);
+                traversed++;
                 uint next = ReadFatEntry(c);
                 if (_stickyIoResult != DiskIoResult.Success) return chain;
-                if (next == 0 || next == c) break;
+                if (next == 0) break;
+                if (next == c || (next < 2 && !IsEOC(next)) ||
+                        (next > lastValidCluster && !IsEOC(next))) {
+                    _stickyIoResult = DiskIoResult.InvalidRange;
+                    return chain;
+                }
                 c = next;
             }
-            if (c >= 2 && c <= lastValidCluster && !IsEOC(c) &&
-                (chain.Count == 0 || chain[chain.Count - 1] != c)) chain.Add(c);
+            if (traversed >= maximumClusters && c >= 2 &&
+                    c <= lastValidCluster && !IsEOC(c))
+                _stickyIoResult = DiskIoResult.InvalidRange;
             return chain;
         }
 
@@ -462,28 +532,74 @@ namespace guideXOS.FS {
             return true;
         }
 
-        private byte[] ReadAllClusterChain(uint startCluster, uint fileSize) {
-            int totalBytes = (int)(fileSize == 0 ? (_secPerClus * _bytesPerSec) : fileSize);
-            var buf = new byte[AlignUp(totalBytes, _secPerClus * _bytesPerSec)];
-            int off = 0;
-            var chain = GetClusterChain(startCluster);
-            for (int i = 0; i < chain.Count; i++) {
-                ReadCluster(chain[i], buf, off);
-                off += _secPerClus * _bytesPerSec;
+        private FatOperationResult ReadAllClusterChain(uint startCluster, uint fileSize, out byte[] content) {
+            content = null;
+            if (fileSize == 0) {
+                content = new byte[0];
+                return FatOperationResult.Success;
             }
-            if (fileSize == 0) return new byte[0];
-            if ((uint)buf.Length == fileSize) return buf;
-            var trimmed = new byte[fileSize];
+
+            ulong clusterBytes = (ulong)_secPerClus * _bytesPerSec;
+            if (clusterBytes == 0 || fileSize > int.MaxValue)
+                return FatOperationResult.InvalidRange;
+            ulong requiredClusters = ((ulong)fileSize + clusterBytes - 1UL) / clusterBytes;
+            ulong bufferBytes = requiredClusters * clusterBytes;
+            uint lastValidCluster = _clusterCount + 1U;
+            if (requiredClusters == 0 || requiredClusters > _clusterCount ||
+                bufferBytes > int.MaxValue || startCluster < 2 || startCluster > lastValidCluster)
+                return FatOperationResult.InvalidRange;
+
+            var buf = new byte[(int)bufferBytes];
+            var visited = new List<uint>();
+            uint cluster = startCluster;
+            int offset = 0;
+            for (ulong i = 0; i < requiredClusters; i++) {
+                bool repeated = false;
+                for (int visitedIndex = 0; visitedIndex < visited.Count; visitedIndex++) {
+                    if (visited[visitedIndex] == cluster) {
+                        repeated = true;
+                        break;
+                    }
+                }
+                if (cluster < 2 || cluster > lastValidCluster || repeated)
+                    return FatOperationResult.InvalidRange;
+                visited.Add(cluster);
+
+                ReadCluster(cluster, buf, offset);
+                if (_stickyIoResult != DiskIoResult.Success)
+                    return CurrentIoFailure(false);
+                offset += (int)clusterBytes;
+
+                if (i + 1UL < requiredClusters) {
+                    uint next = ReadFatEntry(cluster);
+                    if (_stickyIoResult != DiskIoResult.Success)
+                        return CurrentIoFailure(false);
+                    if (next < 2 || next > lastValidCluster || IsEOC(next))
+                        return FatOperationResult.InvalidRange;
+                    cluster = next;
+                }
+            }
+
+            if ((uint)buf.Length == fileSize) {
+                content = buf;
+                return FatOperationResult.Success;
+            }
+            content = new byte[(int)fileSize];
             fixed (byte* pSrc = buf)
-            fixed (byte* pDst = trimmed) {
+            fixed (byte* pDst = content) {
                 Native.Movsb(pDst, pSrc, fileSize);
             }
-            return trimmed;
+            return FatOperationResult.Success;
         }
 
         private static int AlignUp(int val, int align) { int m = val % align; return m == 0 ? val : val + (align - m); }
 
-        private struct DirResult { public bool Found; public uint FirstCluster; public uint Size; }
+        private struct DirResult {
+            public bool Found;
+            public bool IsDirectory;
+            public uint FirstCluster;
+            public uint Size;
+        }
 
         private static char ToChar(byte b) { return (char)b; }
 
@@ -548,19 +664,83 @@ namespace guideXOS.FS {
         }
 
         private DirResult FindPath(string path) {
+            bool traceLookup = DiagnosticTracePathLookup;
+            if (traceLookup)
+                BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-findpath-enter");
             while (path.Length > 0 && path[0] == '/') path = path.Substring(1);
-            if (path.Length == 0) return new DirResult { Found = true, FirstCluster = _type == FatType.FAT32 ? _rootCluster : 0, Size = 0 };
+            if (path.Length == 0) return new DirResult { Found = true, IsDirectory = true, FirstCluster = _type == FatType.FAT32 ? _rootCluster : 0, Size = 0 };
             var parts = path.Split('/');
+            if (traceLookup)
+                BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-parts-ready");
             uint current = _type == FatType.FAT32 ? _rootCluster : 0;
+            uint finalSize = 0;
+            bool finalIsDirectory = false;
             for (int i = 0; i < parts.Length; i++) {
+                if (traceLookup)
+                    BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-part-enter");
                 string part = parts[i]; bool last = i == parts.Length - 1; bool found = false;
-                IterateDirectory(current, (name, isDir, clus, size) => { if (EqualsIgnoreCase(name, part)) { if (!last && !isDir) return true; found = true; current = clus; return false; } return true; });
-                if (!found) return new DirResult { Found = false }; if (!last && current < 2 && _type == FatType.FAT32) return new DirResult { Found = false }; part.Dispose();
+                if (traceLookup) {
+                    BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-part-name");
+                    BootConsole.WriteLine(part);
+                    if (part == "00730074" && current >= 2) {
+                        BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-target-parent=" + current.ToString());
+                        uint targetLba = FirstSectorOfCluster(current);
+                        byte[] uncachedSector = new byte[_bytesPerSec];
+                        DiskIoResult previousIo = _stickyIoResult;
+                        DiskIoResult uncachedResult;
+                        fixed (byte* pUncached = uncachedSector)
+                            uncachedResult = disk.ReadBlocks(targetLba, 1,
+                                pUncached, (ulong)uncachedSector.Length);
+                        _stickyIoResult = previousIo;
+                        bool uncachedNameFound = false;
+                        if (uncachedResult == DiskIoResult.Success) {
+                            for (int entryIndex = 0;
+                                    entryIndex < _bytesPerSec / 32; entryIndex++) {
+                                int entryOffset = entryIndex * 32;
+                                byte first = uncachedSector[entryOffset];
+                                if (first == 0) break;
+                                if (first == 0xE5 ||
+                                        uncachedSector[entryOffset + 11] == 0x0F)
+                                    continue;
+                                bool sameName = true;
+                                for (int nameIndex = 0; nameIndex < 8; nameIndex++) {
+                                    if (uncachedSector[entryOffset + nameIndex] !=
+                                            (byte)part[nameIndex]) {
+                                        sameName = false;
+                                        break;
+                                    }
+                                }
+                                if (sameName &&
+                                        uncachedSector[entryOffset + 11] == 0x10) {
+                                    uncachedNameFound = true;
+                                    break;
+                                }
+                            }
+                        }
+                        BootConsole.WriteLine(uncachedNameFound
+                            ? "PHASE35P2_LOOKUP=fat-uncached-entry-found"
+                            : "PHASE35P2_LOOKUP=fat-uncached-entry-missing");
+                    }
+                }
+                IterateDirectory(current, (name, isDir, clus, size) => { if (EqualsIgnoreCase(name, part)) { if (!last && !isDir) return true; found = true; current = clus; finalSize = size; finalIsDirectory = isDir; return false; } return true; });
+                if (traceLookup)
+                    BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-part-scanned");
+                if (!found) {
+                    if (traceLookup)
+                        BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-part-not-found");
+                    return new DirResult { Found = false };
+                }
+                if (!last && current < 2 && _type == FatType.FAT32)
+                    return new DirResult { Found = false };
+                string releasablePart = part;
+                parts[i] = null;
+                part = null;
+                releasablePart.Dispose();
+                releasablePart = null;
             }
-            uint sizeFinal = 0; string parent = path.LastIndexOf('/') >= 0 ? path.Substring(0, path.LastIndexOf('/')) : ""; string lastName = path.Substring(path.LastIndexOf('/') + 1);
-            uint parentCluster = _type == FatType.FAT32 ? _rootCluster : 0; if (parent.Length > 0) { var parentRes = FindPath(parent); if (!parentRes.Found) return new DirResult { Found = false }; parentCluster = parentRes.FirstCluster; }
-            uint firstClusFinal = 0; IterateDirectory(parentCluster, (name, isDir, clus, size) => { if (EqualsIgnoreCase(name, lastName)) { firstClusFinal = clus; sizeFinal = size; return false; } return true; }); parent.Dispose(); lastName.Dispose();
-            return new DirResult { Found = true, FirstCluster = firstClusFinal, Size = sizeFinal };
+            if (traceLookup)
+                BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-findpath-return");
+            return new DirResult { Found = true, IsDirectory = finalIsDirectory, FirstCluster = current, Size = finalSize };
         }
 
         private struct EntryLoc { public bool Found; public ulong LBA; public int Index; public uint Cluster; public bool RootFixed; public DirEntry Entry; }
@@ -816,14 +996,216 @@ namespace guideXOS.FS {
             var res = FindPath(Name);
             if (_stickyIoResult != DiskIoResult.Success) return LastOperationResult = CurrentIoFailure(false);
             if (!res.Found) return LastOperationResult = FatOperationResult.NotFound;
+            if (res.IsDirectory) return LastOperationResult = FatOperationResult.InvalidPath;
             if (res.FirstCluster < 2 && _type == FatType.FAT32)
                 return LastOperationResult = FatOperationResult.InvalidPath;
-            content = res.FirstCluster >= 2 ? ReadAllClusterChain(res.FirstCluster, res.Size) : new byte[0];
+            if (res.Size == 0) {
+                content = new byte[0];
+            } else if (res.FirstCluster < 2) {
+                return LastOperationResult = FatOperationResult.InvalidPath;
+            } else {
+                FatOperationResult chainResult = ReadAllClusterChain(res.FirstCluster, res.Size, out content);
+                if (chainResult != FatOperationResult.Success) return LastOperationResult = chainResult;
+            }
             if (_stickyIoResult != DiskIoResult.Success) {
                 content = null;
                 return LastOperationResult = CurrentIoFailure(false);
             }
             return LastOperationResult = FatOperationResult.Success;
+        }
+
+        /// <summary>Reads a bounded byte range directly from the file's FAT chain.</summary>
+        public override FatOperationResult TryReadRange(string Name, long offset,
+                byte[] destination, int destinationOffset, int maximumBytes,
+                out int bytesRead, out bool endOfFile) {
+            bytesRead = 0;
+            endOfFile = false;
+            if (!StartOperation()) return LastOperationResult = FatOperationResult.NotMounted;
+            if (string.IsNullOrEmpty(Name))
+                return LastOperationResult = FatOperationResult.InvalidPath;
+            if (offset < 0 || destination == null || destinationOffset < 0 ||
+                    maximumBytes < 0 || destinationOffset > destination.Length - maximumBytes)
+                return LastOperationResult = FatOperationResult.InvalidBuffer;
+
+            DirResult file = FindPath(Name);
+            if (_stickyIoResult != DiskIoResult.Success)
+                return LastOperationResult = CurrentIoFailure(false);
+            if (!file.Found) return LastOperationResult = FatOperationResult.NotFound;
+            if (file.IsDirectory) return LastOperationResult = FatOperationResult.InvalidPath;
+            if (offset > file.Size) return LastOperationResult = FatOperationResult.InvalidRange;
+            if (offset == file.Size || maximumBytes == 0) {
+                endOfFile = offset == file.Size;
+                return LastOperationResult = FatOperationResult.Success;
+            }
+            if (file.FirstCluster < 2)
+                return LastOperationResult = FatOperationResult.InvalidPath;
+
+            ulong available = (ulong)file.Size - (ulong)offset;
+            int targetBytes = available > (ulong)maximumBytes
+                ? maximumBytes : (int)available;
+            ulong clusterBytes = (ulong)_secPerClus * _bytesPerSec;
+            uint lastValidCluster = _clusterCount + 1U;
+            if (clusterBytes == 0 || clusterBytes > int.MaxValue ||
+                    file.FirstCluster > lastValidCluster)
+                return LastOperationResult = FatOperationResult.InvalidRange;
+
+            ulong clusterIndex = (ulong)offset / clusterBytes;
+            if (clusterIndex >= _clusterCount)
+                return LastOperationResult = FatOperationResult.InvalidRange;
+            int clusterOffset = (int)((ulong)offset % clusterBytes);
+            var visited = new List<uint>();
+            uint cluster = file.FirstCluster;
+            for (ulong i = 0; i <= clusterIndex; i++) {
+                if (cluster < 2 || cluster > lastValidCluster)
+                    return LastOperationResult = FatOperationResult.InvalidRange;
+                for (int j = 0; j < visited.Count; j++)
+                    if (visited[j] == cluster)
+                        return LastOperationResult = FatOperationResult.InvalidRange;
+                visited.Add(cluster);
+                if (i < clusterIndex) {
+                    cluster = ReadFatEntry(cluster);
+                    if (_stickyIoResult != DiskIoResult.Success)
+                        return LastOperationResult = CurrentIoFailure(false);
+                    if (cluster < 2 || cluster > lastValidCluster || IsEOC(cluster))
+                        return LastOperationResult = FatOperationResult.InvalidRange;
+                }
+            }
+
+            while (bytesRead < targetBytes) {
+                int withinCluster = clusterOffset;
+                int clusterRemaining = (int)clusterBytes - withinCluster;
+                int copyBytes = targetBytes - bytesRead;
+                if (copyBytes > clusterRemaining) copyBytes = clusterRemaining;
+                FatOperationResult rangeResult = ReadClusterRange(cluster,
+                    withinCluster, destination, destinationOffset + bytesRead,
+                    copyBytes);
+                if (rangeResult != FatOperationResult.Success)
+                    return LastOperationResult = rangeResult;
+                bytesRead += copyBytes;
+                clusterOffset = 0;
+                if (bytesRead < targetBytes) {
+                    cluster = ReadFatEntry(cluster);
+                    if (_stickyIoResult != DiskIoResult.Success)
+                        return LastOperationResult = CurrentIoFailure(false);
+                    if (cluster < 2 || cluster > lastValidCluster || IsEOC(cluster))
+                        return LastOperationResult = FatOperationResult.InvalidRange;
+                    for (int j = 0; j < visited.Count; j++)
+                        if (visited[j] == cluster)
+                            return LastOperationResult = FatOperationResult.InvalidRange;
+                    visited.Add(cluster);
+                }
+            }
+            endOfFile = (ulong)offset + (uint)bytesRead == file.Size;
+            return LastOperationResult = FatOperationResult.Success;
+        }
+
+        private FatOperationResult ReadClusterRange(uint cluster, int clusterOffset,
+                byte[] destination, int destinationOffset, int byteCount) {
+            uint firstSector = FirstSectorOfCluster(cluster);
+            int remaining = byteCount;
+            int sourceOffset = clusterOffset;
+            int outputOffset = destinationOffset;
+            while (remaining > 0) {
+                uint sectorIndex = (uint)(sourceOffset / _bytesPerSec);
+                int sectorOffset = sourceOffset % _bytesPerSec;
+                int copyBytes = _bytesPerSec - sectorOffset;
+                if (copyBytes > remaining) copyBytes = remaining;
+                byte[] sector = ReadSectorsCached(firstSector + sectorIndex, 1);
+                if (_stickyIoResult != DiskIoResult.Success)
+                    return CurrentIoFailure(false);
+                for (int i = 0; i < copyBytes; i++)
+                    destination[outputOffset + i] = sector[sectorOffset + i];
+                sourceOffset += copyBytes;
+                outputOffset += copyBytes;
+                remaining -= copyBytes;
+            }
+            return FatOperationResult.Success;
+        }
+
+        /// <summary>Reads the bounded directory entry metadata for one file.</summary>
+        public FatOperationResult TryGetFileLength(string name, out uint length) {
+            length = 0;
+            if (!StartOperation()) return LastOperationResult = FatOperationResult.NotMounted;
+            if (string.IsNullOrEmpty(name))
+                return LastOperationResult = FatOperationResult.InvalidPath;
+            bool traceLookup = DiagnosticTracePathLookup;
+            if (traceLookup)
+                BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-length-findpath-begin");
+            DirResult result = FindPath(name);
+            if (traceLookup)
+                BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-length-findpath-returned");
+            if (_stickyIoResult != DiskIoResult.Success)
+                return LastOperationResult = CurrentIoFailure(false);
+            if (!result.Found) return LastOperationResult = FatOperationResult.NotFound;
+            if (result.IsDirectory)
+                return LastOperationResult = FatOperationResult.InvalidPath;
+            length = result.Size;
+            return LastOperationResult = FatOperationResult.Success;
+        }
+
+        /// <summary>
+        /// Enumerates one directory with a caller supplied hard bound and
+        /// preserves typed not-found and media-read failures.
+        /// </summary>
+        public FatOperationResult TryGetFiles(string directory, int maximumEntries,
+                out List<FileInfo> entries) {
+            entries = new List<FileInfo>();
+            List<FileInfo> foundEntries = entries;
+            if (!StartOperation()) return LastOperationResult = FatOperationResult.NotMounted;
+            if (directory == null || maximumEntries <= 0)
+                return LastOperationResult = FatOperationResult.InvalidPath;
+            uint directoryCluster = _type == FatType.FAT32 ? _rootCluster : 0;
+            if (directory.Length > 0) {
+                DirResult result = FindPath(directory);
+                if (_stickyIoResult != DiskIoResult.Success) {
+                    DisposeEntries(entries);
+                    return LastOperationResult = CurrentIoFailure(false);
+                }
+                if (!result.Found) {
+                    DisposeEntries(entries);
+                    return LastOperationResult = FatOperationResult.NotFound;
+                }
+                if (!result.IsDirectory) {
+                    DisposeEntries(entries);
+                    return LastOperationResult = FatOperationResult.InvalidPath;
+                }
+                directoryCluster = result.FirstCluster;
+            }
+
+            bool exceeded = false;
+            IterateDirectory(directoryCluster, (name, isDirectory, cluster, size) => {
+                if (name == "." || name == "..") return true;
+                if (foundEntries.Count >= maximumEntries) {
+                    exceeded = true;
+                    return false;
+                }
+                FileInfo info = new FileInfo();
+                info.Name = name;
+                if (isDirectory) info.Attribute |= FileAttribute.Directory;
+                info.Param0 = cluster;
+                info.Param1 = size;
+                foundEntries.Add(info);
+                return true;
+            });
+
+            if (_stickyIoResult != DiskIoResult.Success) {
+                DisposeEntries(foundEntries);
+                entries = new List<FileInfo>();
+                return LastOperationResult = CurrentIoFailure(false);
+            }
+            if (exceeded) {
+                DisposeEntries(foundEntries);
+                entries = new List<FileInfo>();
+                return LastOperationResult = FatOperationResult.EntryLimitExceeded;
+            }
+            return LastOperationResult = FatOperationResult.Success;
+        }
+
+        private static void DisposeEntries(List<FileInfo> entries) {
+            if (entries == null) return;
+            for (int i = 0; i < entries.Count; i++) {
+                if (entries[i] != null) entries[i].Dispose();
+            }
         }
 
         public override FatOperationResult TryWriteAllBytes(string Name, byte[] Content) {
@@ -890,6 +1272,8 @@ namespace guideXOS.FS {
         public FatOperationResult CreateDirectory(string path) {
             if (!StartOperation()) return FinishMutation(FatOperationResult.NotMounted);
             _pendingMutationResult = FatOperationResult.Success;
+            _lastCreateDirectoryFailureIndex = -1;
+            _lastCreateDirectoryPartCount = 0;
             if (path == null) return FinishMutation(FatOperationResult.InvalidPath);
             // Normalize: strip leading/trailing slashes
             while (path.Length > 0 && path[0] == '/') path = path.Substring(1);
@@ -898,6 +1282,7 @@ namespace guideXOS.FS {
 
             // Split into components and create each level
             var parts = path.Split('/');
+            _lastCreateDirectoryPartCount = parts.Length;
             string built = "";
             for (int pi = 0; pi < parts.Length; pi++) {
                 string component = parts[pi];
@@ -915,8 +1300,11 @@ namespace guideXOS.FS {
                 uint parentCluster = _type == FatType.FAT32 ? _rootCluster : 0;
                 if (parentPath.Length > 0) {
                     var pr = FindPath(parentPath);
-                    if (!pr.Found) return FinishMutation(_stickyIoResult == DiskIoResult.Success
-                        ? FatOperationResult.NotFound : CurrentIoFailure(false));
+                    if (!pr.Found) {
+                        _lastCreateDirectoryFailureIndex = pi;
+                        return FinishMutation(_stickyIoResult == DiskIoResult.Success
+                            ? FatOperationResult.NotFound : CurrentIoFailure(false));
+                    }
                     parentCluster = pr.FirstCluster;
                 }
 

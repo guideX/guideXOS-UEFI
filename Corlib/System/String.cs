@@ -1,6 +1,5 @@
 using Internal.Runtime.CompilerHelpers;
 using Internal.Runtime.CompilerServices;
-using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using static guideXOS.Misc.Interrupts;
@@ -228,22 +227,25 @@ namespace System {
         }
 
         public string[] Split(char chr) {
-            List<string> strings = new();
-            string tmp = string.Empty;
-            for (int i = 0; i < Length; i++) {
-                if (this[i] == chr) {
-                    strings.Add(tmp);
-                    tmp = string.Empty;
-                } else {
-                    tmp += this[i];
-                }
+            if (Length == 0) return new string[0];
 
-                if (i == (Length - 1)) {
-                    strings.Add(tmp);
-                    tmp = string.Empty;
-                }
+            int partCount = 1;
+            for (int i = 0; i < Length; i++) {
+                if (this[i] == chr) partCount++;
             }
-            return strings.ToArray();
+
+            string[] parts = new string[partCount];
+            int partIndex = 0;
+            int partStart = 0;
+            for (int i = 0; i < Length; i++) {
+                if (this[i] != chr) continue;
+                parts[partIndex++] = i == partStart
+                    ? string.Empty : Substring(partStart, i);
+                partStart = i + 1;
+            }
+            parts[partIndex] = partStart == Length
+                ? string.Empty : Substring(partStart, Length);
+            return parts;
         }
 
         public unsafe string Substring(int startIndex) {

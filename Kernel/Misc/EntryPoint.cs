@@ -68,8 +68,38 @@ namespace guideXOS.Misc {
             }
 
             BootConsole.WriteLine("[ALLOCATOR] INITIALIZE");
+            UefiBootMemoryHandoff* memoryHandoff =
+                (UefiBootMemoryHandoff*)bootInfo->Reserved[2];
+            if (memoryHandoff == null || memoryHandoff->KernelSpanBytes == 0 ||
+                    bootInfo->Reserved[0] == 0 || bootInfo->Reserved[1] == 0) {
+                for (;;) Native.Hlt();
+            }
             Allocator.Initialize((IntPtr)0x4000000,
-                bootInfo->Reserved[0], bootInfo->Reserved[1]);
+                bootInfo->Reserved[0], memoryHandoff->KernelSpanBytes);
+            Allocator.ReserveAddressRange((IntPtr)0x4000000,
+                bootInfo->Reserved[1], memoryHandoff->KernelSpanBytes);
+            const int maxBootPageTablePages = 2048;
+            ulong* bootPageTablePages = memoryHandoff->PageTablePages;
+            int reservedPageTableCount = 0;
+            if (bootPageTablePages != null) {
+                for (int i = 0; i <= maxBootPageTablePages; i++) {
+                    ulong page = bootPageTablePages[i];
+                    if (page == 0) break;
+                    Allocator.ReserveAddressRange((IntPtr)0x4000000, page, 4096);
+                    reservedPageTableCount++;
+                }
+                Allocator.ReserveAddressRange((IntPtr)0x4000000,
+                    (ulong)memoryHandoff,
+                    (ulong)sizeof(UefiBootMemoryHandoff));
+            }
+#if UEFI_DIAGNOSTIC_STORAGE35Q
+            BootConsole.WriteLine("[ALLOCATOR] kernelPhysical=" +
+                bootInfo->Reserved[0].ToString() + ",kernelVirtual=" +
+                bootInfo->Reserved[1].ToString() + ",kernelBytes=" +
+                memoryHandoff->KernelSpanBytes.ToString());
+            BootConsole.WriteLine("[ALLOCATOR] Reserved boot page-table pages=" +
+                reservedPageTableCount.ToString());
+#endif
 
             BootConsole.WriteLine("[MOD] INITIALIZE");
             IntPtr modulesPtr = GetModulesPointer();

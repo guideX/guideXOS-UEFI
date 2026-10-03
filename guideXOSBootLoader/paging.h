@@ -27,6 +27,15 @@ namespace paging
         EFI_PHYSICAL_ADDRESS Pml4Phys;
     };
 
+    // BootInfo v1 keeps a fixed-size reserved area. This external handoff
+    // carries the kernel image span and a zero-terminated page-table list.
+    static constexpr UINTN MAX_PT_PAGES = 2048;
+    struct BootMemoryHandoff
+    {
+        UINT64 KernelSpanBytes;
+        UINT64 PageTablePages[MAX_PT_PAGES + 1];
+    };
+
     // Build a minimal identity-mapped page table set for the ranges provided.
     // All pages are mapped RW, executable (NX not set) to keep it minimal.
     EFI_STATUS BuildIdentityPageTables(
@@ -64,5 +73,9 @@ namespace paging
     EFI_STATUS IdentityMapPageTablePages(
         EFI_SYSTEM_TABLE* SystemTable,
         EFI_PHYSICAL_ADDRESS pml4Phys);
+
+    // The kernel allocator uses identity addresses. Publish the linked image
+    // span and page-table backing pages so it can reserve both kernel aliases.
+    BootMemoryHandoff* GetBootMemoryHandoff();
 }
 }

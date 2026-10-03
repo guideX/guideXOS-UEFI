@@ -123,6 +123,9 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Storage35Q'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_STORAGE35Q</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Storage35P2'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_STORAGE35Q;UEFI_DIAGNOSTIC_APP_MODEL;UEFI_DIAGNOSTIC_STORAGE35P2</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Widget'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_WIDGET</DefineConstants>
 	</PropertyGroup>

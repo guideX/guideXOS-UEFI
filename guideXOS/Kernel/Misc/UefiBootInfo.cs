@@ -92,9 +92,9 @@ namespace guideXOS.Misc {
         public ulong AbsolutePointerProtocol;  // 0x80: EFI_ABSOLUTE_POINTER_PROTOCOL* (touchscreen)
         public ulong SimpleTextInputEx;        // 0x88: EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL* (keyboard)
 
-        // BootInfo v1 extensions (24 bytes @ 0x90). Reserved[0] and [1] carry
-        // the kernel's linked virtual-address start and span for allocator
-        // exclusion; [2] remains reserved.
+        // BootInfo v1 extensions (24 bytes @ 0x90). Reserved[0] is the kernel
+        // physical backing start; [1] is its linked virtual start; [2] points
+        // to UefiBootMemoryHandoff (span and zero-terminated page-table list).
         public fixed ulong Reserved[3];        // 0x90-0xA7
 
         /// <summary>
@@ -140,6 +140,16 @@ namespace guideXOS.Misc {
                 MemoryModel = 6,   // Direct color
             };
         }
+    }
+
+    /// <summary>
+    /// Bootloader-owned allocator exclusions appended indirectly to BootInfo
+    /// so the fixed-size v1 structure can retain its existing layout.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct UefiBootMemoryHandoff {
+        public ulong KernelSpanBytes;
+        public fixed ulong PageTablePages[2049];
     }
 
     /// <summary>

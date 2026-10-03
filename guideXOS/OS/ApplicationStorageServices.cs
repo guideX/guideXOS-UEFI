@@ -1,4 +1,5 @@
 using System;
+using guideXOS.FS;
 
 namespace guideXOS.OS {
     internal static class ApplicationResourceKeyRules {
@@ -74,6 +75,7 @@ namespace guideXOS.OS {
 
     internal sealed class CSharpApplicationStorageService :
             ApplicationStorageService {
+        internal static bool TracePersistentLookupForDiagnostics;
         private const int MaxNamespaces = 32;
         private const int MaxEntriesPerNamespace = 64;
 
@@ -91,27 +93,136 @@ namespace guideXOS.OS {
 
         private readonly StorageNamespace[] _namespaces =
             new StorageNamespace[MaxNamespaces];
+        private readonly PersistentFatBackend _persistentBackend;
         private int _namespaceCount;
         private int _backendCallCount;
+        private int _persistentExistsCount;
+        private int _persistentReadCount;
+        private int _persistentWriteCount;
+        private int _persistentDeleteCount;
+        private int _persistentEnumerateCount;
+        private int _scopeRejectionCount;
+        private int _staleContextRejectionCount;
+        private int _storageIoFailureCount;
+        private int _flushFailureCount;
+        private PersistentFixtureStatus _fixtureStatus;
+
+        internal CSharpApplicationStorageService() {
+            _persistentBackend = PersistentFatBackend.OpenSelectedVolume();
+            _fixtureStatus = _persistentBackend.EnsureTrustedFixture();
+        }
+
+        internal CSharpApplicationStorageService(
+                PersistentFatBackend persistentBackend) {
+            _persistentBackend = persistentBackend;
+            _fixtureStatus = PersistentFixtureStatus.Unavailable;
+        }
 
         internal int BackendCallCount { get { return _backendCallCount; } }
+        internal bool PersistentBackendAvailable {
+            get { return _persistentBackend != null && _persistentBackend.IsAvailable; }
+        }
+        internal bool PersistentBackendWritable {
+            get { return _persistentBackend != null && _persistentBackend.CanMutate; }
+        }
+        internal string PersistentVolumeSerial {
+            get { return _persistentBackend == null ? string.Empty :
+                _persistentBackend.SelectedSerial; }
+        }
+        internal string PersistentFilesystem {
+            get { return _persistentBackend == null ? string.Empty :
+                _persistentBackend.Filesystem; }
+        }
+        internal string PersistentVolumeLabel {
+            get { return _persistentBackend == null ? string.Empty :
+                _persistentBackend.VolumeLabel; }
+        }
+        internal uint PersistentVolumeId {
+            get { return _persistentBackend == null ? 0 :
+                _persistentBackend.VolumeId; }
+        }
+        internal int PersistentSeedWritesPerformed {
+            get { return _persistentBackend == null ? 0 :
+                _persistentBackend.SeedWritesPerformed; }
+        }
+        internal string PersistentVerifiedFixtureSha256 {
+            get { return _persistentBackend == null ? string.Empty :
+                _persistentBackend.VerifiedFixtureSha256; }
+        }
+        internal PersistentFixtureStatus PersistentFixtureStatus {
+            get { return _fixtureStatus; }
+        }
+        internal string PersistentFixtureStatusName {
+            get { return PersistentFatBackend.FixtureStatusName(_fixtureStatus); }
+        }
+        internal string PersistentFixtureDiagnostic {
+            get { return _persistentBackend == null ? "backend-null" :
+                _persistentBackend.FixtureDiagnostic; }
+        }
+        internal string PersistentLastMutationDiagnostic {
+            get { return _persistentBackend == null ? "backend-null" :
+                _persistentBackend.LastMutationDiagnostic; }
+        }
+        internal int PersistentExistsCount { get { return _persistentExistsCount; } }
+        internal int PersistentReadCount { get { return _persistentReadCount; } }
+        internal int PersistentWriteCount { get { return _persistentWriteCount; } }
+        internal int PersistentDeleteCount { get { return _persistentDeleteCount; } }
+        internal int PersistentEnumerateCount { get { return _persistentEnumerateCount; } }
+        internal int PersistentNamespaceDerivations {
+            get { return _persistentBackend == null ? 0 :
+                _persistentBackend.NamespaceDerivations; }
+        }
+        internal int ScopeRejectionCount { get { return _scopeRejectionCount; } }
+        internal int StaleContextRejectionCount { get { return _staleContextRejectionCount; } }
+        internal int StorageIoFailureCount { get { return _storageIoFailureCount; } }
+        internal int FlushFailureCount { get { return _flushFailureCount; } }
+
+        internal void RecordScopeRejectionDiagnostic() {
+            _scopeRejectionCount++;
+        }
 
         public override ApplicationServiceResult<bool> Exists(
                 ApplicationServiceContext context,
                 ApplicationStorageRequest request) {
+            bool tracePersistent = TracePersistentLookupForDiagnostics &&
+                request != null && request.Namespace ==
+                    ApplicationStorageNamespace.Persistent;
+            if (tracePersistent)
+                BootConsole.WriteLine("PHASE35P2_LOOKUP=service-enter");
             ApplicationInstance instance;
             ApplicationServiceResult valid;
             if (!TryValidate(context, out instance, out valid)) {
+                if (tracePersistent)
+                    BootConsole.WriteLine("PHASE35P2_LOOKUP=service-context-rejected");
                 return ApplicationServiceResult<bool>.Failure(
                     valid.Code, valid.BoundedDiagnostic);
             }
+            if (tracePersistent)
+                BootConsole.WriteLine("PHASE35P2_LOOKUP=service-context-validated");
             if (request == null || !request.IsValid) {
                 return ApplicationServiceResult<bool>.Failure(
                     ApplicationServiceResultCode.InvalidRequest,
                     "Storage path is invalid or exceeds its bound");
             }
+            if (tracePersistent)
+                BootConsole.WriteLine("PHASE35P2_LOOKUP=service-request-validated");
             if (request.Namespace == ApplicationStorageNamespace.Persistent) {
-                return PersistentUnavailable<bool>();
+                _backendCallCount++;
+                _persistentExistsCount++;
+                uint length;
+                FatOperationResult persistent = _persistentBackend == null
+                    ? FatOperationResult.MediaUnavailable
+                    : _persistentBackend.TryGetValueLength(context.ApplicationId,
+                        request.RelativePath, out length);
+                if (tracePersistent)
+                    BootConsole.WriteLine("PHASE35P2_LOOKUP=service-backend-returned");
+                if (persistent == FatOperationResult.NotFound) {
+                    if (_persistentBackend == null) return PersistentFailure<bool>(persistent);
+                    return ApplicationServiceResult<bool>.SuccessResult(false);
+                }
+                if (persistent != FatOperationResult.Success)
+                    return PersistentFailure<bool>(persistent);
+                return ApplicationServiceResult<bool>.SuccessResult(true);
             }
             StorageNamespace storage = FindNamespace(context.ApplicationId);
             return ApplicationServiceResult<bool>.SuccessResult(
@@ -133,7 +244,23 @@ namespace guideXOS.OS {
                     "Storage read request is invalid or exceeds its bound");
             }
             if (request.Namespace == ApplicationStorageNamespace.Persistent) {
-                return PersistentUnavailable<ApplicationStorageReadResult>();
+                _backendCallCount++;
+                _persistentReadCount++;
+                byte[] persistentBytes = null;
+                int persistentRead = 0;
+                bool persistentEnd = false;
+                FatOperationResult persistent = _persistentBackend == null
+                    ? FatOperationResult.MediaUnavailable
+                    : _persistentBackend.TryReadValue(context.ApplicationId,
+                        request.RelativePath, request.Offset,
+                        request.MaximumBytes, out persistentBytes,
+                        out persistentRead, out persistentEnd);
+                if (persistent != FatOperationResult.Success)
+                    return PersistentFailure<ApplicationStorageReadResult>(persistent);
+                return ApplicationServiceResult<ApplicationStorageReadResult>.SuccessResult(
+                    ApplicationStorageReadResult.Create(request.RelativePath,
+                        request.Offset, persistentBytes, persistentRead,
+                        persistentEnd));
             }
             StorageNamespace storage = FindNamespace(context.ApplicationId);
             StorageEntry entry = storage == null ? null : FindEntry(storage,
@@ -179,7 +306,16 @@ namespace guideXOS.OS {
                     "Storage write request is invalid or exceeds its bound");
             }
             if (request.Namespace == ApplicationStorageNamespace.Persistent) {
-                return PersistentUnavailable();
+                _backendCallCount++;
+                _persistentWriteCount++;
+                byte[] payload = CopyBytes(request.Payload);
+                FatOperationResult persistent = _persistentBackend == null
+                    ? FatOperationResult.MediaUnavailable
+                    : _persistentBackend.TryWriteValue(context.ApplicationId,
+                        request.RelativePath, payload);
+                return persistent == FatOperationResult.Success
+                    ? ApplicationServiceResult.SuccessResult()
+                    : PersistentFailure(persistent);
             }
             StorageNamespace storage = FindNamespace(context.ApplicationId);
             if (storage == null) {
@@ -221,7 +357,15 @@ namespace guideXOS.OS {
                     "Storage path is invalid or exceeds its bound");
             }
             if (request.Namespace == ApplicationStorageNamespace.Persistent) {
-                return PersistentUnavailable();
+                _backendCallCount++;
+                _persistentDeleteCount++;
+                FatOperationResult persistent = _persistentBackend == null
+                    ? FatOperationResult.MediaUnavailable
+                    : _persistentBackend.TryDeleteValue(context.ApplicationId,
+                        request.RelativePath);
+                return persistent == FatOperationResult.Success
+                    ? ApplicationServiceResult.SuccessResult()
+                    : PersistentFailure(persistent);
             }
             StorageNamespace storage = FindNamespace(context.ApplicationId);
             StorageEntry entry = storage == null ? null : FindEntry(storage,
@@ -258,7 +402,17 @@ namespace guideXOS.OS {
                     "Storage namespace is invalid");
             }
             if (space == ApplicationStorageNamespace.Persistent) {
-                return PersistentUnavailable<ApplicationStorageEntry[]>();
+                _backendCallCount++;
+                _persistentEnumerateCount++;
+                ApplicationStorageEntry[] persistentEntries = null;
+                FatOperationResult persistent = _persistentBackend == null
+                    ? FatOperationResult.MediaUnavailable
+                    : _persistentBackend.TryEnumerate(context.ApplicationId,
+                        out persistentEntries);
+                if (persistent != FatOperationResult.Success)
+                    return PersistentFailure<ApplicationStorageEntry[]>(persistent);
+                return ApplicationServiceResult<ApplicationStorageEntry[]>.SuccessResult(
+                    persistentEntries);
             }
             StorageNamespace storage = FindNamespace(context.ApplicationId);
             int count = storage == null ? 0 : storage.Count;
@@ -290,8 +444,11 @@ namespace guideXOS.OS {
         private bool TryValidate(ApplicationServiceContext context,
                 out ApplicationInstance instance,
                 out ApplicationServiceResult result) {
-            return ApplicationServiceRegistry.TryValidateContext(context,
+            bool valid = ApplicationServiceRegistry.TryValidateContext(context,
                 ApplicationServiceId.Storage, out instance, out result);
+            if (!valid && result.Code == ApplicationServiceResultCode.InvalidContext)
+                _staleContextRejectionCount++;
+            return valid;
         }
 
         private StorageNamespace FindNamespace(string applicationId) {
@@ -313,18 +470,57 @@ namespace guideXOS.OS {
             return null;
         }
 
-        private ApplicationServiceResult<T> PersistentUnavailable<T>() {
-            _backendCallCount++;
+        private ApplicationServiceResult<T> PersistentFailure<T>(
+                FatOperationResult result) {
+            RecordPersistentFailure(result);
             return ApplicationServiceResult<T>.Failure(
-                ApplicationServiceResultCode.ResourceUnavailable,
-                "Persistent application storage is unavailable on the selected backend");
+                MapPersistentFailure(result), PersistentDiagnostic(result));
         }
 
-        private ApplicationServiceResult PersistentUnavailable() {
-            _backendCallCount++;
+        private ApplicationServiceResult PersistentFailure(
+                FatOperationResult result) {
+            RecordPersistentFailure(result);
             return ApplicationServiceResult.Failure(
-                ApplicationServiceResultCode.ResourceUnavailable,
-                "Persistent application storage is unavailable on the selected backend");
+                MapPersistentFailure(result), PersistentDiagnostic(result));
+        }
+
+        private void RecordPersistentFailure(FatOperationResult result) {
+            if (result == FatOperationResult.ReadFailure ||
+                    result == FatOperationResult.WriteFailure ||
+                    result == FatOperationResult.TransportFailure) {
+                _storageIoFailureCount++;
+            }
+            if (result == FatOperationResult.FlushFailure ||
+                    result == FatOperationResult.FlushUnsupported) {
+                _flushFailureCount++;
+            }
+        }
+
+        private static ApplicationServiceResultCode MapPersistentFailure(
+                FatOperationResult result) {
+            switch (result) {
+                case FatOperationResult.NotFound:
+                    return ApplicationServiceResultCode.NotFound;
+                case FatOperationResult.InvalidPath:
+                case FatOperationResult.InvalidRange:
+                case FatOperationResult.InvalidBuffer:
+                    return ApplicationServiceResultCode.InvalidRequest;
+                case FatOperationResult.Unsupported:
+                    return ApplicationServiceResultCode.Unsupported;
+                case FatOperationResult.NotMounted:
+                case FatOperationResult.NoSpace:
+                case FatOperationResult.ReadOnly:
+                case FatOperationResult.FlushUnsupported:
+                case FatOperationResult.MediaUnavailable:
+                case FatOperationResult.EntryLimitExceeded:
+                    return ApplicationServiceResultCode.ResourceUnavailable;
+                default:
+                    return ApplicationServiceResultCode.BackendFailure;
+            }
+        }
+
+        private static string PersistentDiagnostic(FatOperationResult result) {
+            return "Persistent storage operation failed: " + result.ToString();
         }
 
         private static byte[] CopyBytes(byte[] source) {

@@ -137,9 +137,15 @@ namespace guideXOS.FS {
         /// <summary>
         /// Constructor
         /// </summary>
-        public FileSystem() {
+        public FileSystem() : this(true) { }
+
+        /// <summary>
+        /// Creates a filesystem that can be used independently without
+        /// replacing the kernel's default file API mount.
+        /// </summary>
+        protected FileSystem(bool registerAsDefault) {
             FileSystemType = FS_TYPE_UNKNOWN;
-            File.Instance = this;
+            if (registerAsDefault) File.Instance = this;
         }
         /// <summary>
         /// Sector Size
@@ -195,6 +201,26 @@ namespace guideXOS.FS {
         public abstract void WriteAllBytes(string Name, byte[] Content);
         /// <summary>Truthful write result; filesystems opt in when they can report operation status.</summary>
         public virtual FatOperationResult TryWriteAllBytes(string name, byte[] content) => FatOperationResult.Unsupported;
+        /// <summary>Read at most maximumBytes from a file into a validated caller buffer.</summary>
+        public virtual FatOperationResult TryReadRange(string name, long offset,
+                byte[] destination, int destinationOffset, int maximumBytes,
+                out int bytesRead, out bool endOfFile) {
+            bytesRead = 0;
+            endOfFile = false;
+            if (string.IsNullOrEmpty(name) || offset < 0 || destination == null ||
+                    destinationOffset < 0 || maximumBytes < 0 ||
+                    destinationOffset > destination.Length - maximumBytes)
+                return FatOperationResult.InvalidBuffer;
+            byte[] content = ReadAllBytes(name);
+            if (content == null) return FatOperationResult.ReadFailure;
+            if (offset > content.Length) return FatOperationResult.InvalidRange;
+            int available = content.Length - (int)offset;
+            bytesRead = available < maximumBytes ? available : maximumBytes;
+            for (int i = 0; i < bytesRead; i++)
+                destination[destinationOffset + i] = content[(int)offset + i];
+            endOfFile = (int)offset + bytesRead == content.Length;
+            return FatOperationResult.Success;
+        }
         public virtual FatOperationResult TryDelete(string name) => FatOperationResult.Unsupported;
         /// <summary>Flush all filesystem writes and the backing block device when supported.</summary>
         public virtual FatOperationResult TrySync() => FatOperationResult.Unsupported;

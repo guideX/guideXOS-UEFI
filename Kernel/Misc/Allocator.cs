@@ -154,18 +154,17 @@ abstract unsafe class Allocator {
     public static void Initialize(IntPtr start) => Initialize(start, 0, 0);
 
     /// <summary>
-    /// Initialize the allocator and reserve a virtual-address interval that is
-    /// occupied by the kernel's linked image. The allocator returns identity
-    /// addresses, so this exclusion prevents those addresses from aliasing the
-    /// bootloader's high-physical kernel mapping.
+    /// Initialize the allocator and reserve the physical pages that back the
+    /// kernel image. The allocator returns identity addresses, while the
+    /// bootloader may map the image at a different linked virtual address.
     /// </summary>
-    public static void Initialize(IntPtr start, ulong reservedAddress,
+    public static void Initialize(IntPtr start, ulong reservedPhysicalAddress,
                                   ulong reservedSize) {
         fixed (Info* pInfo = &_Info) Native.Stosb(pInfo, 0, (ulong)sizeof(Info));
         _Info.Start = start; 
         _Info.PageInUse = 0;
 
-        ReserveAddressRange(start, reservedAddress, reservedSize);
+        ReserveAddressRange(start, reservedPhysicalAddress, reservedSize);
         
         // Initialize owner tracking with simple arrays
         _ownerIds = new int[MAX_OWNERS];
@@ -173,7 +172,7 @@ abstract unsafe class Allocator {
         _ownerCount = 0;
     }
 
-    private static void ReserveAddressRange(IntPtr arenaStartPointer,
+    internal static void ReserveAddressRange(IntPtr arenaStartPointer,
                                             ulong reservedAddress,
                                             ulong reservedSize) {
         if (reservedAddress == 0 || reservedSize == 0) return;

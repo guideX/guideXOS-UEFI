@@ -1957,6 +1957,36 @@ unsafe class Program {
         string failure = null;
         try {
             SerialBreadcrumb("APP_MODEL_BEGIN");
+#if UEFI_DIAGNOSTIC_STORAGE35P2
+            CSharpApplicationStorageService seedPreflight =
+                ApplicationServiceRegistry.PersistentStorageDiagnostics;
+            SerialBreadcrumb("PHASE35P2_SEED_PREFLIGHT=status=" +
+                (seedPreflight == null ? "Unavailable" :
+                 seedPreflight.PersistentFixtureStatusName) +
+                ",seedWrites=" +
+                (seedPreflight == null ? "0" :
+                 seedPreflight.PersistentSeedWritesPerformed.ToString()) +
+                ",sha256=" + (seedPreflight == null ? "NONE" :
+                 seedPreflight.PersistentVerifiedFixtureSha256));
+            SerialBreadcrumb("PHASE35P2_BACKEND_PREFLIGHT=available=" +
+                (seedPreflight != null && seedPreflight.PersistentBackendAvailable
+                    ? "1" : "0") +
+                ",writable=" +
+                (seedPreflight != null && seedPreflight.PersistentBackendWritable
+                    ? "1" : "0") +
+                ",serial=" + (seedPreflight == null ? "NONE" :
+                    seedPreflight.PersistentVolumeSerial) +
+                ",filesystem=" + (seedPreflight == null ? "NONE" :
+                    seedPreflight.PersistentFilesystem) +
+                ",label=" + (seedPreflight == null ? "NONE" :
+                    seedPreflight.PersistentVolumeLabel) +
+                ",volumeId=" + (seedPreflight == null ? "00000000" :
+                    seedPreflight.PersistentVolumeId.ToString("X8")) +
+                ",fixtureDiagnostic=" + (seedPreflight == null ? "NONE" :
+                    seedPreflight.PersistentFixtureDiagnostic) +
+                ",mutationDiagnostic=" + (seedPreflight == null ? "NONE" :
+                    seedPreflight.PersistentLastMutationDiagnostic));
+#endif
             if (Desktop.Apps == null) {
                 failure = "APP_COLLECTION_UNAVAILABLE";
             } else if (!AppLaunchResolver.RunSelfTest()) {
@@ -2120,6 +2150,97 @@ unsafe class Program {
                 SerialBreadcrumb("PHASE10_STORAGE_RESET_OK=" +
                     (ApplicationServiceRegistry.LastStorageResetSelfTestPassed
                         ? "1" : "0"));
+#if UEFI_DIAGNOSTIC_STORAGE35P2
+                CSharpApplicationStorageService persistentDiagnostics =
+                    ApplicationServiceRegistry.PersistentStorageDiagnostics;
+                SerialBreadcrumb("PHASE35P2_BACKEND_AVAILABLE=" +
+                    (persistentDiagnostics != null &&
+                     persistentDiagnostics.PersistentBackendAvailable ? "1" : "0"));
+                SerialBreadcrumb("PHASE35P2_BACKEND_WRITABLE=" +
+                    (persistentDiagnostics != null &&
+                     persistentDiagnostics.PersistentBackendWritable ? "1" : "0"));
+                SerialBreadcrumb("PHASE35P2_SELECTED_VOLUME=" +
+                    (persistentDiagnostics == null ? "NONE" :
+                     persistentDiagnostics.PersistentVolumeSerial) +
+                    ",filesystem=" + (persistentDiagnostics == null ? "NONE" :
+                     persistentDiagnostics.PersistentFilesystem) +
+                    ",label=" + (persistentDiagnostics == null ? "NONE" :
+                     persistentDiagnostics.PersistentVolumeLabel) +
+                    ",volumeId=" + (persistentDiagnostics == null ? "0" :
+                     persistentDiagnostics.PersistentVolumeId.ToString("X8")));
+                SerialBreadcrumb("PHASE35P2_ROOT=" + PersistentFatBackend.Root);
+                SerialBreadcrumb("PHASE35P2_FIXTURE=" +
+                    PersistentFatBackend.FixtureApplicationId + "/" +
+                    PersistentFatBackend.FixturePath + ",status=" +
+                    (persistentDiagnostics == null ? "Unavailable" :
+                     persistentDiagnostics.PersistentFixtureStatusName) +
+                    ",seedWrites=" +
+                    ApplicationServiceRegistry.LastPersistentSeedWritesPerformed.ToString());
+                SerialBreadcrumb("PHASE35P2_FIXTURE_SHA256=" +
+                    (persistentDiagnostics == null ? "NONE" :
+                     persistentDiagnostics.PersistentVerifiedFixtureSha256));
+                SerialBreadcrumb("PHASE35P2_NAMESPACE_ENCODING=" +
+                    (ApplicationServiceRegistry.LastPersistentNamespaceSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_CROSS_SCOPE=" +
+                    (ApplicationServiceRegistry.LastPersistentCrossScopeSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_STALE_CONTEXT=" +
+                    (ApplicationServiceRegistry.LastPersistentStaleContextSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_READ_WRITE_LIFECYCLE=" +
+                    (ApplicationServiceRegistry.LastPersistentLifecycleSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_VALUE_BOUNDARIES=" +
+                    (ApplicationServiceRegistry.LastPersistentValueBoundsSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_OFFSET_BOUNDARIES=" +
+                    (ApplicationServiceRegistry.LastPersistentOffsetSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_DELETE=" +
+                    (ApplicationServiceRegistry.LastPersistentDeleteSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_FAILURE_PROPAGATION=" +
+                    (ApplicationServiceRegistry.LastPersistentFailurePropagationSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_ENUMERATE=" +
+                    (ApplicationServiceRegistry.LastPersistentEnumerateSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_RESET=" +
+                    (ApplicationServiceRegistry.LastPersistentResetSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_REBOOT_DELETE=" +
+                    (ApplicationServiceRegistry.LastPersistentRebootDeleteSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_TEMPORARY_SEPARATION=" +
+                    (ApplicationServiceRegistry.LastPersistentTemporarySeparationSelfTestPassed
+                        ? "PASS" : "FAIL"));
+                SerialBreadcrumb("PHASE35P2_COUNTS=exists=" +
+                    (persistentDiagnostics == null ? "0" :
+                     persistentDiagnostics.PersistentExistsCount.ToString()) +
+                    ",read=" + (persistentDiagnostics == null ? "0" :
+                     persistentDiagnostics.PersistentReadCount.ToString()) +
+                    ",write=" + (persistentDiagnostics == null ? "0" :
+                     persistentDiagnostics.PersistentWriteCount.ToString()) +
+                    ",delete=" + (persistentDiagnostics == null ? "0" :
+                     persistentDiagnostics.PersistentDeleteCount.ToString()) +
+                    ",enumerate=" + (persistentDiagnostics == null ? "0" :
+                     persistentDiagnostics.PersistentEnumerateCount.ToString()) +
+                    ",namespace=" + (persistentDiagnostics == null ? "0" :
+                     persistentDiagnostics.PersistentNamespaceDerivations.ToString()) +
+                    ",scopeReject=" + (persistentDiagnostics == null ? "0" :
+                     persistentDiagnostics.ScopeRejectionCount.ToString()) +
+                    ",staleReject=" + (persistentDiagnostics == null ? "0" :
+                     persistentDiagnostics.StaleContextRejectionCount.ToString()) +
+                    ",ioFailure=" + (persistentDiagnostics == null ? "0" :
+                     persistentDiagnostics.StorageIoFailureCount.ToString()) +
+                    ",flushFailure=" + (persistentDiagnostics == null ? "0" :
+                     persistentDiagnostics.FlushFailureCount.ToString()) +
+                    ",openHandles=0");
+                SerialBreadcrumb("PHASE35P2_TEMPORARY_RESET=" +
+                    (ApplicationServiceRegistry.LastStorageResetSelfTestPassed
+                        ? "PASS" : "FAIL"));
+#endif
                 SerialBreadcrumb("PHASE11_CLIPBOARD_CONTRACT_OK=" +
                     (ApplicationServiceRegistry.LastClipboardContractSelfTestPassed
                         ? "1" : "0"));

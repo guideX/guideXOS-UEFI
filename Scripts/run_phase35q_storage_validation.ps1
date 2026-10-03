@@ -2,7 +2,9 @@
 param(
     [ValidateRange(60, 7200)]
     [int]$TimeoutSeconds = 2400,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$Phase35P2,
+    [switch]$PreserveFailedImage
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,6 +21,8 @@ $varsPath = Join-Path $workDir "ovmf-vars-$runId.fd"
 $codePath = Join-Path $workDir "ovmf-code-$runId.fd"
 $serialName = "serial-$runId.log"
 $serialPath = Join-Path $workDir $serialName
+$qemuLogName = "qemu-$runId.log"
+$qemuLogRelative = "out/phase35q/$qemuLogName"
 $imageRelative = "out/phase35q/$imageName"
 $serialRelative = "out/phase35q/$serialName"
 
@@ -93,8 +97,9 @@ try {
     if ($SkipBuild) {
         Write-Host 'Reusing the currently staged Storage35Q diagnostic kernel and EFI artifacts.'
     } else {
-        Write-Host 'Building the Storage35Q diagnostic kernel and ordinary EFI artifacts...'
-        & (Join-Path $root 'build.ps1') -UefiDiagnosticMode Storage35Q
+        $diagnosticMode = if ($Phase35P2) { 'Storage35P2' } else { 'Storage35Q' }
+        Write-Host "Building the $diagnosticMode diagnostic kernel and ordinary EFI artifacts..."
+        & (Join-Path $root 'build.ps1') -UefiDiagnosticMode $diagnosticMode
         if ($LASTEXITCODE -ne 0) { throw "build.ps1 failed with exit code $LASTEXITCODE" }
     }
     if (-not (Test-Path -LiteralPath (Join-Path $root 'ESP\EFI\BOOT\BOOTX64.EFI')) -or
@@ -127,6 +132,8 @@ try {
         '-serial', "file:$serialRelative",
         '-name', 'guideXOS-Phase35Q',
         '-no-shutdown',
+        '-d', 'guest_errors,cpu_reset',
+        '-D', $qemuLogRelative,
         '-boot', 'menu=off,splash-time=0',
         '-display', 'none',
         '-qmp', "tcp:127.0.0.1:$qmpPort,server=on,wait=off"
@@ -140,6 +147,8 @@ try {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $resetCount = 0
     $bootCount = 0
+    $appModelCompleteCount = 0
+    $appModelResetSent = $false
     $lastProgress = Get-Date
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 250
@@ -153,6 +162,10 @@ try {
         if ($content -match '(?m)^35Q_FAIL=') {
             $failure = [regex]::Matches($content, '(?m)^35Q_FAIL=[^\r\n]*')[-1].Value
             throw "Guest durability proof failed: $failure"
+        }
+        if ($Phase35P2 -and $content -match '(?m)^APP_MODEL_FAIL=') {
+            $failure = [regex]::Matches($content, '(?m)^APP_MODEL_FAIL=[^\r\n]*')[-1].Value
+            throw "Guest Phase 35P2 App Model proof failed: $failure"
         }
         if ($content -match '(?im)(CPU_FAULT_[A-Z_]+|#PF|#GP|#UD|ABI.*PANIC|PANIC:|ALLOC_FREE_INVALID)') {
             $fault = [regex]::Match($content, '(?im)(CPU_FAULT_[A-Z_]+|#PF|#GP|#UD|ABI.*PANIC|PANIC:|ALLOC_FREE_INVALID)').Value
@@ -174,7 +187,22 @@ try {
             $lastProgress = Get-Date
         }
 
-        if ($content -match '(?m)^35Q_COMPLETE=1') {
+        if ($Phase35P2) {
+            $currentAppModelCompleteCount = Get-MarkerCount $content '(?m)^APP_MODEL_COMPLETE\r?$'
+            if ($currentAppModelCompleteCount -gt $appModelCompleteCount) {
+                $appModelCompleteCount = $currentAppModelCompleteCount
+                Write-Host "  App Model storage proof completed on guest boot $appModelCompleteCount"
+                if ($appModelCompleteCount -eq 1 -and -not $appModelResetSent) {
+                    Write-Host '  resetting guest after the first Persistent seed and lifecycle proof'
+                    $null = Send-QmpCommand $qmp 'system_reset'
+                    $appModelResetSent = $true
+                } elseif ($appModelCompleteCount -ge 2) {
+                    $proofSucceeded = $true
+                    break
+                }
+                $lastProgress = Get-Date
+            }
+        } elseif ($content -match '(?m)^35Q_COMPLETE=1') {
             $proofSucceeded = $true
             break
         }
@@ -211,6 +239,29 @@ try {
         '35Q_FAT_DIRECTORY_POST_REBOOT=PASS',
         '35Q_COMPLETE=1'
     )
+    if ($Phase35P2) {
+        $requiredMarkers += @(
+            'PHASE35P2_BACKEND_AVAILABLE=1',
+            'PHASE35P2_BACKEND_WRITABLE=1',
+            'PHASE35P2_SELECTED_VOLUME=GX35Q0001,filesystem=FAT16,label=GX35Q TEST,volumeId=35355131',
+            'PHASE35P2_ROOT=apps/persist',
+            'PHASE35P2_FIXTURE_SHA256=BEFA57E7EF0799D031A0188A3D0883F0F342B8F8AE90B3330652DA04ADBA739D',
+            'PHASE35P2_NAMESPACE_ENCODING=PASS',
+            'PHASE35P2_CROSS_SCOPE=PASS',
+            'PHASE35P2_STALE_CONTEXT=PASS',
+            'PHASE35P2_READ_WRITE_LIFECYCLE=PASS',
+            'PHASE35P2_VALUE_BOUNDARIES=PASS',
+            'PHASE35P2_OFFSET_BOUNDARIES=PASS',
+            'PHASE35P2_DELETE=PASS',
+            'PHASE35P2_FAILURE_PROPAGATION=PASS',
+            'PHASE35P2_ENUMERATE=PASS',
+            'PHASE35P2_RESET=PASS',
+            'PHASE35P2_REBOOT_DELETE=PASS',
+            'PHASE35P2_TEMPORARY_SEPARATION=PASS',
+            'PHASE35P2_TEMPORARY_RESET=PASS',
+            'APP_MODEL_COMPLETE'
+        )
+    }
     foreach ($marker in $requiredMarkers) {
         if ($finalContent.IndexOf($marker, [System.StringComparison]::Ordinal) -lt 0) {
             throw "Required guest marker is missing: $marker"
@@ -226,6 +277,26 @@ try {
     $rawCycleMarker = [regex]::Match($finalContent, '(?m)^35Q_RAW_WRITE_FLUSH_READ_CYCLES=([0-9]+):PASS\r?$')
     if (-not $rawCycleMarker.Success -or [int]$rawCycleMarker.Groups[1].Value -ne 25) {
         throw 'The raw durability cycle count did not equal 25.'
+    }
+    if ($Phase35P2) {
+        $seedPreflightRows = [regex]::Matches($finalContent,
+            '(?m)^PHASE35P2_SEED_PREFLIGHT=[^\r\n]*')
+        if ($seedPreflightRows.Count -lt 2 -or
+                $seedPreflightRows[0].Value -notmatch 'status=Seeded,seedWrites=1,sha256=BEFA57E7EF0799D031A0188A3D0883F0F342B8F8AE90B3330652DA04ADBA739D$' -or
+                $seedPreflightRows[1].Value -notmatch 'status=Verified,seedWrites=0,sha256=BEFA57E7EF0799D031A0188A3D0883F0F342B8F8AE90B3330652DA04ADBA739D$') {
+            throw 'The fixture seed state was not logged before reads, or the verification boot reseeded/mismatched it.'
+        }
+        if ((Get-MarkerCount $finalContent '(?m)^APP_MODEL_COMPLETE\r?$') -lt 2 -or
+                (Get-MarkerCount $finalContent '(?m)^35Q_COMPLETE=1\r?$') -lt 2) {
+            throw 'Phase 35P2 did not complete App Model verification before and after the same-image guest reset.'
+        }
+        if ($finalContent -notmatch '(?m)^PHASE35P2_FIXTURE=selftest\.phase10\.persistent/state\.bin,status=Seeded,seedWrites=1\r?$' -or
+                $finalContent -notmatch '(?m)^PHASE35P2_FIXTURE=selftest\.phase10\.persistent/state\.bin,status=Verified,seedWrites=0\r?$') {
+            throw 'The fixture was not seeded once and verified without reseeding after reboot.'
+        }
+        if ($finalContent -notmatch '(?m)^PHASE35P2_REBOOT_DELETE=PASS\r?$') {
+            throw 'The explicit Persistent Delete was not observed as absent after reboot.'
+        }
     }
 
     $imageShaMutated = Get-Sha256 $imagePath
@@ -245,7 +316,13 @@ try {
     }
     if ($qmp -and $qmp.Client) { $qmp.Client.Dispose() }
 
-    if ((Test-Path -LiteralPath $baselinePath) -and (Test-Path -LiteralPath $imagePath)) {
+    if ($PreserveFailedImage -and -not $proofSucceeded -and
+            (Test-Path -LiteralPath $imagePath)) {
+        Write-Host "Preserving failed disposable image for inspection: $imagePath"
+        if (Test-Path -LiteralPath $baselinePath) {
+            Remove-Item -LiteralPath $baselinePath -Force
+        }
+    } elseif ((Test-Path -LiteralPath $baselinePath) -and (Test-Path -LiteralPath $imagePath)) {
         [System.IO.File]::Copy($baselinePath, $imagePath, $true)
         $imageShaRestored = Get-Sha256 $imagePath
         if ($imageShaBefore -and $imageShaRestored -ne $imageShaBefore) {
@@ -260,4 +337,8 @@ try {
 if (-not $proofSucceeded) { throw 'Storage35Q proof did not complete.' }
 Write-Host "Pristine fixture SHA-256 restored before cleanup: $imageShaRestored"
 Write-Host "Serial proof log retained: $serialPath"
-Write-Host 'Storage35Q same-image reboot validation completed.'
+if ($Phase35P2) {
+    Write-Host 'Storage35Q and Phase35P2 same-image reboot validation completed.'
+} else {
+    Write-Host 'Storage35Q same-image reboot validation completed.'
+}

@@ -41,8 +41,18 @@ namespace guideXOS.Kernel.Tools {
             if (stage == 2) RunRawRestoreAndInitialFatWrite(disk, state);
             if (stage == 3) RunFatReplacementAtoB(disk, state);
             if (stage == 4) RunFatLengthChanges(disk, state);
-            if (stage == 5) RunFatPostRebootAndFinish(disk, state);
+            if (stage == 5) {
+                RunFatPostRebootAndFinish(disk, state);
+                return;
+            }
+#if UEFI_DIAGNOSTIC_STORAGE35P2
+            if (stage == 6) {
+                RunFatPostRebootAndFinish(disk, state);
+                return;
+            }
+#else
             if (stage == 6) Fail("unexpected-complete-state", "fixture-already-complete");
+#endif
             Fail("unknown-stage", stage.ToString());
         }
 
@@ -121,7 +131,7 @@ namespace guideXOS.Kernel.Tools {
             for (int i = 0; i < 3; i++) {
                 int failOnWrite = i == 0 ? 1 : (i == 1 ? 3 : 4);
                 FaultInjectingDisk proxy = new FaultInjectingDisk(disk, failOnWrite, false, false);
-                FAT fat = new FAT(proxy);
+                FAT fat = new FAT(proxy, false);
                 Require(fat.IsMounted, "fault-fixture-fat-mount", fat.MountResult.ToString());
                 FatOperationResult result = fat.TryWriteAllBytes("F35Q" + i.ToString() + ".BIN", oneSector);
                 RequireResult(result, FatOperationResult.WriteFailure, "fat-write-failure-stage-" + i.ToString());
@@ -129,14 +139,14 @@ namespace guideXOS.Kernel.Tools {
             }
 
             FaultInjectingDisk flushProxy = new FaultInjectingDisk(disk, 0, true, false);
-            FAT flushFat = new FAT(flushProxy);
+            FAT flushFat = new FAT(flushProxy, false);
             Require(flushFat.IsMounted, "flush-fixture-fat-mount", flushFat.MountResult.ToString());
             RequireResult(flushFat.TryWriteAllBytes("F35QFL.BIN", oneSector), FatOperationResult.Success,
                 "flush-fixture-write");
             RequireResult(flushFat.TrySync(), FatOperationResult.FlushFailure, "fat-flush-failure");
 
             FaultInjectingDisk readProxy = new FaultInjectingDisk(disk, 0, false, true);
-            FAT readFat = new FAT(readProxy);
+            FAT readFat = new FAT(readProxy, false);
             Require(readFat.MountResult == DiskIoResult.TransportFailure,
                 "fat-mount-read-failure", readFat.MountResult.ToString());
             BootConsole.WriteLine("35Q_INJECTED_FAILURES=FAT_TABLE,DATA,DIRECTORY,FLUSH,READ:PASS");
@@ -193,7 +203,7 @@ namespace guideXOS.Kernel.Tools {
             Require(Equal(original, restored), "restore-post-reboot-exact");
             BootConsole.WriteLine("35Q_RAW_RESTORE_POST_REBOOT=PASS");
 
-            FAT fat = new FAT(disk);
+            FAT fat = new FAT(disk, false);
             Require(fat.IsMounted, "fat-mount", fat.MountResult.ToString());
             BootConsole.WriteLine("35Q_FAT_MOUNT=PASS:" + fat.FileSystemVariant);
             RequireResult(fat.CreateDirectory("apps/35qapp"), FatOperationResult.Success, "fat-create-directories");
@@ -259,11 +269,15 @@ namespace guideXOS.Kernel.Tools {
             BootConsole.WriteLine("35Q_FAT_POST_REBOOT_LONGER=65536," + Hash(longer));
             SaveStage(disk, state, 6);
             BootConsole.WriteLine("35Q_COMPLETE=1");
+#if UEFI_DIAGNOSTIC_STORAGE35P2
+            return;
+#else
             Halt();
+#endif
         }
 
         private static FAT MountFat(Disk disk, string check) {
-            FAT fat = new FAT(disk);
+            FAT fat = new FAT(disk, false);
             Require(fat.IsMounted, check + "-mount", fat.MountResult.ToString());
             return fat;
         }
@@ -379,29 +393,42 @@ namespace guideXOS.Kernel.Tools {
         }
 
         /// <summary>Sparse in-memory overlay used only to inject safe FAT I/O failures.</summary>
-        private sealed class FaultInjectingDisk : Disk {
+        internal sealed class FaultInjectingDisk : Disk {
             private readonly Disk _inner;
             private readonly int _failWriteCall;
             private readonly bool _failFlush;
             private readonly bool _failFirstRead;
+            private readonly int _failReadCall;
+            private readonly bool _available;
+            private readonly bool _readOnly;
             private readonly Dictionary<ulong, byte[]> _overlay = new Dictionary<ulong, byte[]>();
             private int _writeCalls;
+            private int _readCalls;
             private bool _readFailed;
 
-            public FaultInjectingDisk(Disk inner, int failWriteCall, bool failFlush, bool failFirstRead) {
+            public FaultInjectingDisk(Disk inner, int failWriteCall, bool failFlush,
+                    bool failFirstRead, int failReadCall = 0,
+                    bool available = true, bool readOnly = false) {
                 _inner = inner;
                 _failWriteCall = failWriteCall;
                 _failFlush = failFlush;
                 _failFirstRead = failFirstRead;
+                _failReadCall = failReadCall;
+                _available = available;
+                _readOnly = readOnly;
             }
 
             public override uint BlockSize => _inner.BlockSize;
             public override ulong BlockCount => _inner.BlockCount;
-            public override DiskCapabilities Capabilities => _inner.Capabilities;
-            public override bool IsAvailable => _inner.IsAvailable;
+            public override DiskCapabilities Capabilities => _readOnly
+                ? DiskCapabilities.Readable : _inner.Capabilities;
+            public override bool IsAvailable => _available && _inner.IsAvailable;
+            internal int WriteCalls { get { return _writeCalls; } }
 
             protected override DiskIoResult ReadCore(ulong lba, uint count, byte* data) {
-                if (_failFirstRead && !_readFailed) {
+                _readCalls++;
+                if ((_failFirstRead && !_readFailed) ||
+                        (_failReadCall != 0 && _readCalls == _failReadCall)) {
                     _readFailed = true;
                     return DiskIoResult.TransportFailure;
                 }
@@ -422,6 +449,7 @@ namespace guideXOS.Kernel.Tools {
             }
 
             protected override DiskIoResult WriteCore(ulong lba, uint count, byte* data) {
+                if (_readOnly) return DiskIoResult.ReadOnly;
                 _writeCalls++;
                 if (_failWriteCall != 0 && _writeCalls == _failWriteCall)
                     return DiskIoResult.TransportFailure;
