@@ -746,6 +746,7 @@ unsafe class Program {
             BootConsole.DrawDebugLines = false;
             BootConsole.WriteLine("[BOOT_MODE] UEFI");
             BootConsole.WriteLine("[INPUT] Native post-EBS path selected");
+            ApplicationModelBootState.ResetForKernelBoot();
 
             BootConsole.WriteLine("[FS] Re-mounting filesystem for UEFI");
             if (Ramdisk.RawBasePointer != null) {
@@ -1103,6 +1104,16 @@ unsafe class Program {
     /// UEFI-specific setup (framebuffer test, wallpaper, triple buffering)
     /// </summary>
     private static void SMainSetupUefi() {
+        // A warm guest reset restarts the kernel over the same physical RAM.
+        // Cached Image references from the previous boot are no longer owned
+        // by the new allocator instance, so drop them without calling Dispose.
+        _cachedDocumentIcon = null;
+        _cachedFolderIcon = null;
+        _cachedImageIcon = null;
+        _cachedAudioIcon = null;
+        _lastIconCacheRefresh = 0;
+        _uefiRealIconMarkerEmitted = false;
+
         BootConsole.WriteLine("[BOOT_MODE] UEFI");
         Framebuffer.RecoverUefiState();
         Framebuffer.TripleBuffered = false;
@@ -1990,6 +2001,8 @@ unsafe class Program {
             if (Desktop.Apps == null) {
                 failure = "APP_COLLECTION_UNAVAILABLE";
             } else if (!AppLaunchResolver.RunSelfTest()) {
+                SerialBreadcrumb("APP_MODEL_RESOLUTION_SELFTEST_FAILURE=" +
+                    (AppLaunchResolver.LastSelfTestFailure ?? "unknown"));
                 failure = "APP_RESOLUTION";
             } else if (!FileAssociationRegistry.RunSelfTest()) {
                 failure = "FILE_ASSOCIATION";

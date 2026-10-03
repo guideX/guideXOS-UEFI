@@ -438,6 +438,33 @@ namespace guideXOS.OS {
         private static bool _routingForeground;
         private static bool _lastTaskbarGroupingRuntimeCleanup;
 
+        internal static void ResetForKernelBoot() {
+            _instances = null;
+            _generations = null;
+            _used = null;
+            _activeCount = 0;
+            _createdCount = 0;
+            _reusedCount = 0;
+            _activatedCount = 0;
+            _deactivatedCount = 0;
+            _suspendedCount = 0;
+            _resumedCount = 0;
+            _closeRequestCount = 0;
+            _closeCancellationCount = 0;
+            _lifecycleFailureCount = 0;
+            _invalidLifecycleRequestCount = 0;
+            _staleLifecycleHandleCount = 0;
+            _terminatedCount = 0;
+            _failedCount = 0;
+            _windowAttachCount = 0;
+            _windowDetachCount = 0;
+            _duplicateAttachCount = 0;
+            _staleOwnershipCount = 0;
+            _activeApplicationHandle = default(ApplicationInstanceHandle);
+            _routingForeground = false;
+            _lastTaskbarGroupingRuntimeCleanup = false;
+        }
+
         public static void Initialize() {
             if (_instances != null) return;
             _instances = new ApplicationInstance[Capacity];

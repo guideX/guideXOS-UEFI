@@ -165,6 +165,22 @@ namespace guideXOS.GUI {
         private static int _sameInstanceWindowSwitchCount;
         private static int _crossInstanceWindowSwitchCount;
 
+        internal static void ResetForKernelBoot() {
+            _entries = null;
+            _entryCount = 0;
+            _entriesCreated = 0;
+            _entriesRemoved = 0;
+            _entriesReused = 0;
+            _windowAttachCount = 0;
+            _windowDetachCount = 0;
+            _zeroWindowSuppressionCount = 0;
+            _staleOwnerCount = 0;
+            _multiWindowGroupCount = 0;
+            _maximumGroupSize = 0;
+            _sameInstanceWindowSwitchCount = 0;
+            _crossInstanceWindowSwitchCount = 0;
+        }
+
         public static int Capacity { get { return ApplicationInstanceRegistry.Capacity; } }
         public static int EntryCount { get { Initialize(); return _entryCount; } }
         internal static int DiagnosticEntryCount { get { return _entryCount; } }

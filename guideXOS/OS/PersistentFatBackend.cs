@@ -18,7 +18,6 @@ namespace guideXOS.OS {
     /// first-writable-disk policy.
     /// </summary>
     internal sealed class PersistentFatBackend {
-        internal static bool TraceLookupForDiagnostics;
         // Both root components fit the FAT 8.3 namespace used by this phase's
         // mounted filesystem implementation.
         internal const string Root = "apps/persist";
@@ -38,7 +37,6 @@ namespace guideXOS.OS {
         private readonly FAT _fat;
         private readonly Disk _disk;
         private readonly bool _identityMatched;
-        private readonly bool _traceTestOperations;
         private int _namespaceDerivations;
         private int _seedWritesPerformed;
         private string _verifiedFixtureSha256 = string.Empty;
@@ -79,11 +77,9 @@ namespace guideXOS.OS {
         internal string FixtureDiagnostic { get { return _fixtureDiagnostic; } }
         internal string LastMutationDiagnostic { get { return _lastMutationDiagnostic; } }
 
-        private PersistentFatBackend(Disk disk, bool identityMatched,
-                bool traceTestOperations = false) {
+        private PersistentFatBackend(Disk disk, bool identityMatched) {
             _disk = disk;
             _identityMatched = identityMatched;
-            _traceTestOperations = traceTestOperations;
             if (disk != null) _fat = new FAT(disk, false);
         }
 
@@ -116,11 +112,9 @@ namespace guideXOS.OS {
         }
 
         /// <summary>Test-only factory for a fault-injecting Disk proxy.</summary>
-        internal static PersistentFatBackend OpenForTesting(Disk disk,
-                bool traceOperations = false) {
+        internal static PersistentFatBackend OpenForTesting(Disk disk) {
             if (disk == null) return new PersistentFatBackend(null, false);
-            PersistentFatBackend backend = new PersistentFatBackend(disk, true,
-                traceOperations);
+            PersistentFatBackend backend = new PersistentFatBackend(disk, true);
             if (backend._fat == null || !backend._fat.IsMounted ||
                     (disk.Capabilities & DiskCapabilities.Readable) == 0) {
                 return new PersistentFatBackend(null, false);
@@ -130,8 +124,11 @@ namespace guideXOS.OS {
 
         internal static bool ApplicationIdEncodingIsInjective() {
             string[] ids = new string[] {
-                "gxos.builtin.file-explorer",
-                "gxos.builtin.disk-manager",
+                "gxos.builtin.calculator",
+                "gxos.builtin.files",
+                "gxos.builtin.notepad",
+                "gxos.builtin.diskmanager",
+                "gxos.builtin.console",
                 "selftest.phase10.persistent",
                 "app!#$%&'()+,-.;=@[]^_`{}~",
                 "id/with\\path:and\u0000control",
@@ -269,22 +266,9 @@ namespace guideXOS.OS {
             if (!IsValidIdentity(applicationId) ||
                     !ApplicationStoragePathRules.IsValid(relativePath))
                 return FatOperationResult.InvalidPath;
-            bool trace = TraceLookupForDiagnostics;
-            if (trace)
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=backend-path-begin");
             _namespaceDerivations++;
             string filePath = GetValueFilePath(applicationId, relativePath);
-            if (trace) {
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=backend-path-ready");
-                FAT.DiagnosticTracePathLookup = true;
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=backend-fat-begin");
-            }
-            FatOperationResult result = _fat.TryGetFileLength(filePath, out length);
-            if (trace) {
-                FAT.DiagnosticTracePathLookup = false;
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=backend-fat-returned");
-            }
-            return result;
+            return _fat.TryGetFileLength(filePath, out length);
         }
 
         internal FatOperationResult TryReadValue(string applicationId,
@@ -339,11 +323,7 @@ namespace guideXOS.OS {
             _namespaceDerivations++;
             string directory = GetValueDirectory(applicationId, relativePath);
             string filePath = directory + "/VALUE.BIN";
-            if (_traceTestOperations)
-                BootConsole.WriteLine("PHASE35P2_FAULT_TRACE=create-directory-begin");
             FatOperationResult result = _fat.CreateDirectory(directory);
-            if (_traceTestOperations)
-                BootConsole.WriteLine("PHASE35P2_FAULT_TRACE=create-directory-result=" + result.ToString());
             if (result != FatOperationResult.Success) {
                 _lastMutationDiagnostic = "create-directory=" +
                     ((byte)result).ToString() + ";componentIndex=" +
@@ -354,12 +334,8 @@ namespace guideXOS.OS {
                     ? result : syncAfterFailure;
             }
             List<FileInfo> parentEntries;
-            if (_traceTestOperations)
-                BootConsole.WriteLine("PHASE35P2_FAULT_TRACE=parent-enumerate-begin");
             FatOperationResult parentResult = _fat.TryGetFiles(directory,
                 MaxDirectoryEntries, out parentEntries);
-            if (_traceTestOperations)
-                BootConsole.WriteLine("PHASE35P2_FAULT_TRACE=parent-enumerate-result=" + parentResult.ToString());
             if (parentResult != FatOperationResult.Success) {
                 _lastMutationDiagnostic = "create-directory-verify=" +
                     ((byte)parentResult).ToString();
@@ -367,27 +343,15 @@ namespace guideXOS.OS {
             }
             DisposeEntries(parentEntries);
             byte[] copy = CopyBytes(value);
-            if (_traceTestOperations)
-                BootConsole.WriteLine("PHASE35P2_FAULT_TRACE=fat-write-begin");
             result = _fat.TryWriteAllBytes(filePath, copy);
-            if (_traceTestOperations)
-                BootConsole.WriteLine("PHASE35P2_FAULT_TRACE=fat-write-result=" + result.ToString());
             if (result != FatOperationResult.Success) {
                 _lastMutationDiagnostic = "write-file=" +
                     ((byte)result).ToString();
-                if (_traceTestOperations)
-                    BootConsole.WriteLine("PHASE35P2_FAULT_TRACE=failure-flush-begin");
                 FatOperationResult syncAfterFailure = _fat.TrySync();
-                if (_traceTestOperations)
-                    BootConsole.WriteLine("PHASE35P2_FAULT_TRACE=failure-flush-result=" + syncAfterFailure.ToString());
                 return syncAfterFailure == FatOperationResult.Success
                     ? result : syncAfterFailure;
             }
-            if (_traceTestOperations)
-                BootConsole.WriteLine("PHASE35P2_FAULT_TRACE=success-flush-begin");
             result = _fat.TrySync();
-            if (_traceTestOperations)
-                BootConsole.WriteLine("PHASE35P2_FAULT_TRACE=success-flush-result=" + result.ToString());
             _lastMutationDiagnostic = result == FatOperationResult.Success
                 ? "write-sync=success" : "write-sync=" + ((byte)result).ToString();
             return result;
@@ -404,37 +368,11 @@ namespace guideXOS.OS {
             _namespaceDerivations++;
             string filePath = GetValueFilePath(applicationId, relativePath);
             uint length;
-#if UEFI_DIAGNOSTIC_STORAGE35P2
-            bool traceDelete = relativePath == "stress.bin";
-            if (traceDelete)
-                BootConsole.WriteLine("PHASE35P2_DELETE_TRACE=get-length-begin");
-#endif
             FatOperationResult result = _fat.TryGetFileLength(filePath, out length);
-#if UEFI_DIAGNOSTIC_STORAGE35P2
-            if (traceDelete)
-                BootConsole.WriteLine("PHASE35P2_DELETE_TRACE=get-length=" + result.ToString());
-#endif
             if (result != FatOperationResult.Success) return result;
-#if UEFI_DIAGNOSTIC_STORAGE35P2
-            if (traceDelete)
-                BootConsole.WriteLine("PHASE35P2_DELETE_TRACE=fat-delete-begin");
-#endif
             result = _fat.TryDelete(filePath);
-#if UEFI_DIAGNOSTIC_STORAGE35P2
-            if (traceDelete)
-                BootConsole.WriteLine("PHASE35P2_DELETE_TRACE=fat-delete=" + result.ToString());
-#endif
             if (result != FatOperationResult.Success) return result;
-#if UEFI_DIAGNOSTIC_STORAGE35P2
-            if (traceDelete)
-                BootConsole.WriteLine("PHASE35P2_DELETE_TRACE=flush-begin");
-#endif
-            result = _fat.TrySync();
-#if UEFI_DIAGNOSTIC_STORAGE35P2
-            if (traceDelete)
-                BootConsole.WriteLine("PHASE35P2_DELETE_TRACE=flush=" + result.ToString());
-#endif
-            return result;
+            return _fat.TrySync();
         }
 
         internal FatOperationResult TryEnumerate(string applicationId,

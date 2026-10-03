@@ -49,9 +49,18 @@ namespace guideXOS.OS {
     /// </summary>
     public static class AppLaunchResolver {
         private static List<AppDescriptor> _descriptors;
+        private static string _lastSelfTestFailure;
 
         // Opt-in only.  Production does not emit resolver notifications.
         public static bool EnableResolutionDiagnostics;
+
+        internal static string LastSelfTestFailure { get { return _lastSelfTestFailure; } }
+
+        internal static void ResetForKernelBoot() {
+            _descriptors = null;
+            _lastSelfTestFailure = null;
+            EnableResolutionDiagnostics = false;
+        }
 
         public static void InitializeDefaultDescriptors() {
             if (_descriptors != null) return;
@@ -196,6 +205,7 @@ namespace guideXOS.OS {
             CheckFailure("gxos.builtin.notreal", ref passed, ref failed, ref failure);
 
             EmitSelfTestSummary("AppModelSmoke", passed, failed, failure);
+            _lastSelfTestFailure = failure;
             return failed == 0;
         }
 
@@ -261,6 +271,8 @@ namespace guideXOS.OS {
     /// </summary>
     public static class FileAssociationRegistry {
         private static List<FileAssociationDescriptor> _descriptors;
+
+        internal static void ResetForKernelBoot() { _descriptors = null; }
 
         public static void InitializeDefaultAssociations() {
             if (_descriptors != null) return;
@@ -470,6 +482,8 @@ namespace guideXOS.OS {
     /// </summary>
     public static class ShellObjectRegistry {
         private static List<ShellObjectDescriptor> _descriptors;
+
+        internal static void ResetForKernelBoot() { _descriptors = null; }
 
         public static void InitializeDefaultShellObjects() {
             if (_descriptors != null) return;

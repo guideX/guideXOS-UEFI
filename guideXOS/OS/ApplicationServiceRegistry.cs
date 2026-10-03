@@ -57,6 +57,16 @@ namespace guideXOS.OS {
         private static bool _lastClipboardResetSelfTestPassed;
         private static string _lastSelfTestFailure;
 
+        internal static void ResetForKernelBoot() {
+            // The allocator is reinitialized on firmware boot. Drop service
+            // objects from the previous kernel image without invoking them;
+            // their references and request contexts belong to the old heap.
+            _entries = null;
+            _access = null;
+            _registeredCount = 0;
+            _initialized = false;
+        }
+
         public static void Initialize() {
             if (_initialized) return;
 
@@ -1166,7 +1176,6 @@ namespace guideXOS.OS {
                         retained.Value.Bytes[0] != 1 ||
                         retained.Value.Bytes[1] != 2 ||
                         retained.Value.Bytes[2] != 3) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=begin");
                 if (!RunPersistentStorageSelfTest(context, access, storage))
                     return false;
 
@@ -1290,7 +1299,6 @@ namespace guideXOS.OS {
             _lastPersistentNamespaceSelfTestPassed =
                 PersistentFatBackend.ApplicationIdEncodingIsInjective();
             if (!_lastPersistentNamespaceSelfTestPassed) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=namespace-pass");
 
             if (!storage.PersistentBackendAvailable) {
                 ApplicationStorageRequest path = ApplicationStorageRequest.Create(
@@ -1331,7 +1339,6 @@ namespace guideXOS.OS {
                 storage.PersistentVolumeLabel == "GX35Q TEST" &&
                 storage.PersistentVolumeId == 0x35355131U;
             if (!_lastPersistentBackendSelfTestPassed) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fixture-backend-pass");
 
             ApplicationInstance owner = null;
             ApplicationInstance replacement = null;
@@ -1358,16 +1365,13 @@ namespace guideXOS.OS {
                         ApplicationStorageNamespace.Persistent,
                         PersistentFatBackend.FixturePath));
                 if (!fixtureExists.Succeeded || !fixtureExists.Value) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fixture-read-exists-pass");
 
                 if (!PersistentFailurePropagationSelfTest(ownerContext))
                     return false;
                 _lastPersistentFailurePropagationSelfTestPassed = true;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=failure-propagation-pass");
                 if (!PersistentDeleteContractSelfTest(access.Storage,
                         ownerContext)) return false;
                 _lastPersistentDeleteSelfTestPassed = true;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=delete-contract-pass");
 
                 bool verificationBoot = storage.PersistentSeedWritesPerformed == 0 &&
                     fixtureStatus == PersistentFixtureStatus.Verified;
@@ -1389,16 +1393,12 @@ namespace guideXOS.OS {
                 }
 
                 byte[] lifetime = new byte[] { 0x10, 0x20, 0x30, 0x40 };
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-write-request-begin");
                 ApplicationStorageWriteRequest lifetimeRequest =
                     ApplicationStorageWriteRequest.Create(
                         ApplicationStorageNamespace.Persistent,
                         "lifecycle.bin", lifetime);
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-write-request-ready");
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-write-begin");
                 if (!access.Storage.Write(ownerContext,
                         lifetimeRequest).Succeeded) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-write-pass");
                 staleOwnerContext = ownerContext;
                 if (!ApplicationInstanceRegistry.TryTerminate(owner,
                         "Phase 35P2 requester-exit persistence")) return false;
@@ -1411,7 +1411,6 @@ namespace guideXOS.OS {
                 if (staleResult.Code != ApplicationServiceResultCode.InvalidContext ||
                         storage.BackendCallCount != callsBeforeStale) return false;
                 _lastPersistentStaleContextSelfTestPassed = true;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=stale-context-pass");
 
                 bool replacementStarted = TryCreateServiceSelfTestInstance(
                     PersistentFatBackend.FixtureApplicationId, out replacement,
@@ -1425,49 +1424,35 @@ namespace guideXOS.OS {
                             "lifecycle.bin", 0, 16, lifetime, 0,
                             lifetime.Length, true)) return false;
                 _lastPersistentLifecycleSelfTestPassed = true;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=requester-replacement-pass");
 
                 if (!PersistentValueContractSelfTest(access.Storage,
                         replacementContext, storage)) return false;
                 _lastPersistentValueBoundsSelfTestPassed = true;
                 _lastPersistentOffsetSelfTestPassed = true;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=value-offset-boundaries-pass");
 
                 byte[] privateValue = new byte[] { 0xA1, 0xB2, 0xC3 };
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=private-write-begin");
                 if (!access.Storage.Write(replacementContext,
                         ApplicationStorageWriteRequest.Create(
                             ApplicationStorageNamespace.Persistent,
                             "private.bin", privateValue)).Succeeded) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=private-write-pass");
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-instance-begin");
                 bool otherStarted = TryCreateServiceSelfTestInstance(
                     "selftest.phase10.other", out other, out otherContext);
                 if (!otherStarted) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-instance-pass");
                 ApplicationStorageRequest privatePath =
                     ApplicationStorageRequest.Create(
                         ApplicationStorageNamespace.Persistent, "private.bin");
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-exists-begin");
                 ApplicationServiceResult<bool> otherPrivateExists =
                     access.Storage.Exists(otherContext, privatePath);
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-exists-returned");
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-read-begin");
                 ApplicationServiceResult<ApplicationStorageReadResult> otherPrivateRead =
                     access.Storage.Read(otherContext,
                         ApplicationStorageReadRequest.Create(
                             ApplicationStorageNamespace.Persistent,
                             "private.bin", 0, 16));
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-read-returned");
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-delete-begin");
                 ApplicationServiceResult otherPrivateDelete =
                     access.Storage.Delete(otherContext, privatePath);
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-delete-returned");
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-enumerate-begin");
                 ApplicationServiceResult<ApplicationStorageEntry[]> otherEntries =
                     access.Storage.Enumerate(otherContext,
                         ApplicationStorageNamespace.Persistent);
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-enumerate-returned");
                 if (!otherPrivateExists.Succeeded || otherPrivateExists.Value ||
                         otherPrivateRead.Code != ApplicationServiceResultCode.NotFound ||
                         otherPrivateDelete.Code != ApplicationServiceResultCode.NotFound ||
@@ -1477,7 +1462,6 @@ namespace guideXOS.OS {
                             PersistentFatBackend.FixturePath)) return false;
                 storage.RecordScopeRejectionDiagnostic();
                 _lastPersistentCrossScopeSelfTestPassed = true;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=cross-scope-pass");
 
                 if (!ApplicationInstanceRegistry.TryTerminate(other,
                         "Phase 35P2 cross-scope cleanup")) return false;
@@ -1498,14 +1482,11 @@ namespace guideXOS.OS {
                         ContainsPersistentEntry(ownEntries.Value, "only-temp.bin") ||
                         !IsSortedPersistentEntries(ownEntries.Value)) return false;
                 _lastPersistentEnumerateSelfTestPassed = true;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=enumerate-pass");
 
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=temporary-write-begin");
                 if (!access.Storage.Write(replacementContext,
                         ApplicationStorageWriteRequest.Create(
                             ApplicationStorageNamespace.Temporary,
                             "only-temp.bin", new byte[] { 0xEE })).Succeeded) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=temporary-write-pass");
                 ApplicationServiceResult<ApplicationStorageEntry[]> tempEntries =
                     access.Storage.Enumerate(replacementContext,
                         ApplicationStorageNamespace.Temporary);
@@ -1523,7 +1504,6 @@ namespace guideXOS.OS {
                     !ContainsPersistentEntry(persistentAfterTempWrite.Value,
                         "only-temp.bin");
                 if (!_lastPersistentTemporarySeparationSelfTestPassed) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=temporary-separation-pass");
 
                 if (!ApplicationInstanceRegistry.TryTerminate(replacement,
                         "Phase 35P2 App Model reset setup")) return false;
@@ -1550,122 +1530,33 @@ namespace guideXOS.OS {
                             PersistentFatBackend.MaxValueLength, fixture, 0,
                             fixture.Length, true)) return false;
                 _lastPersistentResetSelfTestPassed = true;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=app-model-reset-pass");
 
                 for (int i = 0; i < 25; i++) {
-                    bool traceEleventhIteration = i == 10;
-                    bool traceTwelfthIteration = i == 11;
-                    if (traceEleventhIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-11-begin");
-                    if (traceTwelfthIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-12-begin");
                     if (replacement != null) {
-                        if (traceEleventhIteration)
-                            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-11-terminate-begin");
-                        if (traceTwelfthIteration)
-                            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-12-terminate-begin");
                         if (!ApplicationInstanceRegistry.TryTerminate(replacement,
                                 "Phase 35P2 lifecycle stress replacement")) return false;
                         replacement = null;
-                        if (traceEleventhIteration)
-                            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-11-terminate-pass");
-                        if (traceTwelfthIteration)
-                            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-12-terminate-pass");
                     }
-                    if (traceEleventhIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-11-launch-begin");
-                    if (traceTwelfthIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-12-launch-begin");
                     bool stressStarted = TryCreateServiceSelfTestInstance(
                         PersistentFatBackend.FixtureApplicationId, out stress,
                         out stressContext);
-                    if (traceEleventhIteration)
-                        BootConsole.WriteLine(stressStarted
-                            ? "PHASE35P2_TEST_STAGE=lifecycle-iteration-11-launch-pass"
-                            : "PHASE35P2_TEST_STAGE=lifecycle-iteration-11-launch-failed");
-                    if (traceTwelfthIteration)
-                        BootConsole.WriteLine(stressStarted
-                            ? "PHASE35P2_TEST_STAGE=lifecycle-iteration-12-launch-pass"
-                            : "PHASE35P2_TEST_STAGE=lifecycle-iteration-12-launch-failed");
                     if (!stressStarted) return false;
-                    if (traceEleventhIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-11-exists-begin");
-                    if (traceTwelfthIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-12-exists-begin");
-                    if (traceTwelfthIteration) {
-                        CSharpApplicationStorageService.TracePersistentLookupForDiagnostics = true;
-                        PersistentFatBackend.TraceLookupForDiagnostics = true;
-                    }
-                    ApplicationServiceResult<bool> stressExists = stressStarted
-                        ? access.Storage.Exists(stressContext,
+                    ApplicationServiceResult<bool> stressExists =
+                        access.Storage.Exists(stressContext,
                             ApplicationStorageRequest.Create(
                                 ApplicationStorageNamespace.Persistent,
-                                PersistentFatBackend.FixturePath))
-                        : ApplicationServiceResult<bool>.Failure(
-                            ApplicationServiceResultCode.InvalidContext,
-                            "Stress instance unavailable");
-                    if (traceTwelfthIteration) {
-                        CSharpApplicationStorageService.TracePersistentLookupForDiagnostics = false;
-                        PersistentFatBackend.TraceLookupForDiagnostics = false;
-                        BootConsole.WriteLine("PHASE35P2_LOOKUP=stress-exists-returned");
-                    }
-                    bool stressExistsSucceeded = stressExists != null &&
-                        stressExists.Succeeded;
-                    if (traceTwelfthIteration)
-                        BootConsole.WriteLine("PHASE35P2_LOOKUP=stress-result-succeeded-read");
-                    bool stressExistsValue = stressExistsSucceeded &&
-                        stressExists.Value;
-                    if (traceTwelfthIteration) {
-                        BootConsole.WriteLine("PHASE35P2_LOOKUP=stress-result-value-read");
-                        BootConsole.WriteLine(stressExistsSucceeded
-                            ? "PHASE35P2_LOOKUP=stress-result-succeeded-true"
-                            : "PHASE35P2_LOOKUP=stress-result-succeeded-false");
-                        BootConsole.WriteLine(stressExistsValue
-                            ? "PHASE35P2_LOOKUP=stress-result-value-true"
-                            : "PHASE35P2_LOOKUP=stress-result-value-false");
-                    }
-                    if (!stressExistsSucceeded || !stressExistsValue) {
-                        if (traceTwelfthIteration)
-                            BootConsole.WriteLine("PHASE35P2_LOOKUP=stress-result-rejected");
-                        return false;
-                    }
-                    if (traceTwelfthIteration)
-                        BootConsole.WriteLine("PHASE35P2_LOOKUP=stress-result-accepted");
-                    if (traceEleventhIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-11-exists-pass");
-                    if (traceTwelfthIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-12-exists-pass");
-                    if (traceEleventhIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-11-read-begin");
-                    if (traceTwelfthIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-12-read-begin");
-                    bool stressRead = PersistentReadExact(access.Storage,
-                        stressContext, PersistentFatBackend.FixturePath, 0,
-                        PersistentFatBackend.MaxValueLength, fixture, 0,
-                        fixture.Length, true);
-                    if (!stressRead) return false;
-                    if (traceEleventhIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-11-read-pass");
-                    if (traceTwelfthIteration)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-iteration-12-read-pass");
+                                PersistentFatBackend.FixturePath));
+                    if (stressExists == null || !stressExists.Succeeded ||
+                            !stressExists.Value) return false;
+                    if (!PersistentReadExact(access.Storage, stressContext,
+                            PersistentFatBackend.FixturePath, 0,
+                            PersistentFatBackend.MaxValueLength, fixture, 0,
+                            fixture.Length, true)) return false;
                     replacement = stress;
                     replacementContext = stressContext;
                     stress = null;
                     stressContext = null;
-                    if (i == 0)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-stress-1-of-25");
-                    else if (i == 4)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-stress-5-of-25");
-                    else if (i == 9)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-stress-10-of-25");
-                    else if (i == 14)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-stress-15-of-25");
-                    else if (i == 19)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-stress-20-of-25");
-                    else if (i == 24)
-                        BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-stress-25-of-25");
                 }
-
                 string[] cleanupPaths = new string[] {
                     "lifecycle.bin", "private.bin", "empty.bin", "one.bin",
                     "replace.bin", "boundary.bin"
@@ -1684,28 +1575,21 @@ namespace guideXOS.OS {
                         !ContainsPersistentEntry(afterCleanup.Value,
                             PersistentFatBackend.FixturePath)) return false;
                 _lastPersistentLifecycleSelfTestPassed = true;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=lifecycle-stress-pass");
                 return true;
             } finally {
                 if (stress != null) ApplicationInstanceRegistry.TryTerminate(
                     stress, "Phase 35P2 stress cleanup");
                 if (other != null) {
-                    BootConsole.WriteLine("PHASE35P2_TEST_STAGE=cleanup-other-begin");
                     ApplicationInstanceRegistry.TryTerminate(
                         other, "Phase 35P2 other cleanup");
-                    BootConsole.WriteLine("PHASE35P2_TEST_STAGE=cleanup-other-pass");
                 }
                 if (replacement != null) {
-                    BootConsole.WriteLine("PHASE35P2_TEST_STAGE=cleanup-replacement-begin");
                     ApplicationInstanceRegistry.TryTerminate(
                         replacement, "Phase 35P2 replacement cleanup");
-                    BootConsole.WriteLine("PHASE35P2_TEST_STAGE=cleanup-replacement-pass");
                 }
                 if (owner != null) {
-                    BootConsole.WriteLine("PHASE35P2_TEST_STAGE=cleanup-owner-begin");
                     ApplicationInstanceRegistry.TryTerminate(
                         owner, "Phase 35P2 owner cleanup");
-                    BootConsole.WriteLine("PHASE35P2_TEST_STAGE=cleanup-owner-pass");
                 }
             }
         }
@@ -1738,7 +1622,6 @@ namespace guideXOS.OS {
                     emptyRead.Value == null || emptyRead.Value.BytesRead != 0 ||
                     emptyRead.Value.Bytes.Length != 0 || !emptyRead.Value.EndOfResource)
                 return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=value-empty-pass");
 
             byte[] oneByte = new byte[] { 0x7B };
             if (!storageService.Write(context,
@@ -1747,7 +1630,6 @@ namespace guideXOS.OS {
                         oneByte)).Succeeded ||
                     !PersistentReadExact(storageService, context, "one.bin", 0,
                         1, oneByte, 0, 1, true)) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=value-one-pass");
 
             byte[] sameSizeA = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
             byte[] sameSizeB = new byte[] { 8, 7, 6, 5, 4, 3, 2, 1 };
@@ -1761,7 +1643,6 @@ namespace guideXOS.OS {
                             sameSizeB)).Succeeded ||
                     !PersistentReadExact(storageService, context, "replace.bin", 0,
                         8, sameSizeB, 0, 8, true)) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=value-same-size-pass");
 
             byte[] shorter = new byte[] { 0x31, 0x32, 0x33 };
             if (!storageService.Write(context,
@@ -1770,7 +1651,6 @@ namespace guideXOS.OS {
                         shorter)).Succeeded ||
                     !PersistentReadExact(storageService, context, "replace.bin", 0,
                         8, shorter, 0, shorter.Length, true)) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=value-shorter-pass");
 
             byte[] longer = CreateStoragePattern(1024, 0x6D);
             if (!storageService.Write(context,
@@ -1780,28 +1660,20 @@ namespace guideXOS.OS {
                     !PersistentReadExact(storageService, context, "replace.bin", 0,
                         PersistentFatBackend.MaxValueLength, longer, 0,
                         longer.Length, true)) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=value-longer-pass");
 
             byte[] maximum = CreateStoragePattern(
                 ApplicationStorageWriteRequest.MaxPayloadLength, 0x93);
-            LogPersistentTestApicMapping("before-max-write");
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=value-max-write-begin");
             if (!storageService.Write(context,
                     ApplicationStorageWriteRequest.Create(
                         ApplicationStorageNamespace.Persistent, "boundary.bin",
                         maximum)).Succeeded) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=value-max-write-pass");
-            LogPersistentTestApicMapping("before-max-read");
             if (!PersistentReadExact(storageService, context, "boundary.bin", 0,
                         ApplicationStorageReadRequest.MaxChunkLength, maximum, 0,
                         maximum.Length, true)) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=value-max-read-zero-pass");
             if (!PersistentReadExact(storageService, context, "boundary.bin",
                     32768, 32768, maximum, 32768, 32768, true)) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=value-max-read-middle-pass");
             if (!PersistentReadExact(storageService, context, "boundary.bin",
                     65536, 1, maximum, 65536, 0, true)) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=value-max-read-end-pass");
 
             ApplicationServiceResult<ApplicationStorageReadResult> beyond =
                 storageService.Read(context,
@@ -1828,54 +1700,6 @@ namespace guideXOS.OS {
                 missingRead.Code == ApplicationServiceResultCode.NotFound;
         }
 
-        private static unsafe void LogPersistentTestApicMapping(string stage) {
-            const ulong apicAddress = 0xFEE00000UL;
-            ulong cr3 = Native.ReadCR3() & guideXOS.PageTable.PageMask;
-            ulong* pml4 = (ulong*)cr3;
-            ulong pml4e = pml4[(apicAddress >> 39) & 0x1FFUL];
-            ulong pdpte = 0;
-            ulong pde = 0;
-            ulong pte = 0;
-            ulong mappedPhysical = 0;
-            bool mapped = false;
-            if ((pml4e & 1UL) != 0) {
-                ulong* pdpt = (ulong*)(pml4e & guideXOS.PageTable.PageMask);
-                pdpte = pdpt[(apicAddress >> 30) & 0x1FFUL];
-                if ((pdpte & 1UL) != 0) {
-                    if ((pdpte & (1UL << 7)) != 0) {
-                        mappedPhysical = (pdpte & 0x000FFFFFC0000000UL) +
-                            (apicAddress & 0x3FFFFFFFUL);
-                        mapped = mappedPhysical == apicAddress;
-                    } else {
-                        ulong* pd = (ulong*)(pdpte & guideXOS.PageTable.PageMask);
-                        pde = pd[(apicAddress >> 21) & 0x1FFUL];
-                        if ((pde & 1UL) != 0) {
-                            if ((pde & (1UL << 7)) != 0) {
-                                mappedPhysical = (pde & 0x000FFFFFFFE00000UL) +
-                                    (apicAddress & 0x1FFFFFUL);
-                                mapped = mappedPhysical == apicAddress;
-                            } else {
-                                ulong* pt = (ulong*)(pde & guideXOS.PageTable.PageMask);
-                                pte = pt[(apicAddress >> 12) & 0x1FFUL];
-                                mappedPhysical = pte & guideXOS.PageTable.PageMask;
-                                mapped = (pte & 1UL) != 0 &&
-                                    mappedPhysical == apicAddress;
-                            }
-                        }
-                    }
-                }
-            }
-            BootConsole.WriteLine("PHASE35P2_APIC_MAP=" + stage +
-                ",cr3=" + (cr3 >> 12).ToString() +
-                ",mapped=" + (mapped ? "1" : "0") +
-                ",physical=" + mappedPhysical.ToString("X") +
-                ",pml4=" + (pml4e & 1UL).ToString() +
-                ",pdpte=" + (pdpte & 1UL).ToString() +
-                ",pdpteLarge=" + ((pdpte >> 7) & 1UL).ToString() +
-                ",pde=" + (pde & 1UL).ToString() +
-                ",large=" + ((pde >> 7) & 1UL).ToString() +
-                ",pte=" + (pte & 1UL).ToString());
-        }
 
         private static bool PersistentDeleteContractSelfTest(
                 ApplicationStorageService storageService,
@@ -1885,11 +1709,9 @@ namespace guideXOS.OS {
                     ApplicationStorageWriteRequest.Create(
                         ApplicationStorageNamespace.Persistent,
                         "deleteprobe.bin", value)).Succeeded) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=delete-write-initial-pass");
             ApplicationStorageRequest path = ApplicationStorageRequest.Create(
                 ApplicationStorageNamespace.Persistent, "deleteprobe.bin");
             if (!storageService.Delete(context, path).Succeeded) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=delete-existing-pass");
             ApplicationServiceResult<bool> afterDelete =
                 storageService.Exists(context, path);
             ApplicationServiceResult<ApplicationStorageReadResult> readAfterDelete =
@@ -1901,7 +1723,6 @@ namespace guideXOS.OS {
             if (!afterDelete.Succeeded || afterDelete.Value ||
                     readAfterDelete.Code != ApplicationServiceResultCode.NotFound ||
                     secondDelete.Code != ApplicationServiceResultCode.NotFound) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=delete-missing-pass");
 
             for (int i = 0; i < 3; i++) {
                 byte[] initial = new byte[] { (byte)i };
@@ -1910,24 +1731,16 @@ namespace guideXOS.OS {
                         ApplicationStorageWriteRequest.Create(
                             ApplicationStorageNamespace.Persistent, "stress.bin",
                             initial)).Succeeded) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=delete-stress-" +
-                    i.ToString() + "-initial-pass");
                 if (!storageService.Write(context,
                         ApplicationStorageWriteRequest.Create(
                             ApplicationStorageNamespace.Persistent, "stress.bin",
                             replacement)).Succeeded) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=delete-stress-" +
-                    i.ToString() + "-replacement-pass");
                 if (!PersistentReadExact(storageService, context, "stress.bin", 0,
                         4, replacement, 0, replacement.Length, true)) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=delete-stress-" +
-                    i.ToString() + "-read-pass");
                 if (!storageService.Delete(context,
                         ApplicationStorageRequest.Create(
                             ApplicationStorageNamespace.Persistent,
                             "stress.bin")).Succeeded) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=delete-stress-" +
-                    i.ToString() + "-delete-pass");
                 ApplicationServiceResult<bool> missing = storageService.Exists(
                     context, ApplicationStorageRequest.Create(
                         ApplicationStorageNamespace.Persistent, "stress.bin"));
@@ -1949,24 +1762,18 @@ namespace guideXOS.OS {
                 }
             }
             if (selected == null) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=faults-begin");
 
             // The existing fixture directory is already present. With the
             // Phase 35Q one-sector cluster image these writes fail in order
             // at FAT allocation, file data, then directory-entry update.
             int[] writeFailures = new int[] { 1, 3, 4 };
             for (int i = 0; i < writeFailures.Length; i++) {
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fault-write-" +
-                    writeFailures[i].ToString() + "-begin");
                 Storage35QProof.FaultInjectingDisk proxy =
                     new Storage35QProof.FaultInjectingDisk(selected,
                         writeFailures[i], false, false);
                 PersistentFatBackend backend =
-                    PersistentFatBackend.OpenForTesting(proxy,
-                        writeFailures[i] == 3);
+                    PersistentFatBackend.OpenForTesting(proxy);
                 if (!backend.IsAvailable) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fault-write-" +
-                    writeFailures[i].ToString() + "-mounted");
                 CSharpApplicationStorageService injected =
                     new CSharpApplicationStorageService(backend);
                 ApplicationServiceResult result = injected.Write(context,
@@ -1974,14 +1781,9 @@ namespace guideXOS.OS {
                         ApplicationStorageNamespace.Persistent,
                         PersistentFatBackend.FixturePath,
                         PersistentStorageFixture.CreateBytes()));
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fault-write-" +
-                    writeFailures[i].ToString() + "-returned=" +
-                    result.Code.ToString());
                 if (result.Code != ApplicationServiceResultCode.BackendFailure ||
                         proxy.WriteCalls < writeFailures[i] ||
                         injected.StorageIoFailureCount != 1) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fault-write-" +
-                    writeFailures[i].ToString() + "-pass");
             }
 
             int[] deleteFailures = new int[] { 1, 3 };
@@ -2001,8 +1803,6 @@ namespace guideXOS.OS {
                 if (result.Code != ApplicationServiceResultCode.BackendFailure ||
                         proxy.WriteCalls < deleteFailures[i] ||
                         injected.StorageIoFailureCount != 1) return false;
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fault-delete-" +
-                    deleteFailures[i].ToString() + "-pass");
             }
 
             Storage35QProof.FaultInjectingDisk flushProxy =
@@ -2017,7 +1817,6 @@ namespace guideXOS.OS {
                     new byte[] { 0x42 }));
             if (flushWrite.Code != ApplicationServiceResultCode.BackendFailure ||
                     flushService.FlushFailureCount != 1) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fault-flush-pass");
 
             Storage35QProof.FaultInjectingDisk readOnlyProxy =
                 new Storage35QProof.FaultInjectingDisk(selected, 0, false,
@@ -2042,7 +1841,6 @@ namespace guideXOS.OS {
                             ApplicationStorageNamespace.Persistent,
                             PersistentFatBackend.FixturePath)).Code !=
                         ApplicationServiceResultCode.ResourceUnavailable) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fault-readonly-pass");
 
             Storage35QProof.FaultInjectingDisk unavailableProxy =
                 new Storage35QProof.FaultInjectingDisk(selected, 0, false,
@@ -2070,7 +1868,6 @@ namespace guideXOS.OS {
                     unavailableService.Enumerate(context,
                         ApplicationStorageNamespace.Persistent).Code !=
                     ApplicationServiceResultCode.ResourceUnavailable) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fault-unavailable-pass");
 
             Storage35QProof.FaultInjectingDisk mountReadProxy =
                 new Storage35QProof.FaultInjectingDisk(selected, 0, false, true);
@@ -2083,7 +1880,6 @@ namespace guideXOS.OS {
                         ApplicationStorageNamespace.Persistent,
                         PersistentFatBackend.FixturePath, 0, 8)).Code !=
                     ApplicationServiceResultCode.ResourceUnavailable) return false;
-            BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fault-mount-read-pass");
 
             Storage35QProof.FaultInjectingDisk readProxy =
                 new Storage35QProof.FaultInjectingDisk(selected, 0, false,
@@ -2098,8 +1894,6 @@ namespace guideXOS.OS {
                         PersistentFatBackend.FixturePath, 0, 8)).Code ==
                     ApplicationServiceResultCode.BackendFailure &&
                 readService.StorageIoFailureCount == 1;
-            if (readFailurePassed)
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=fault-read-pass");
             return readFailurePassed;
         }
 
@@ -2282,39 +2076,22 @@ namespace guideXOS.OS {
         private static bool TryCreateServiceSelfTestInstance(string id,
                 out ApplicationInstance instance,
                 out ApplicationServiceContext context) {
-            bool traceOther = id == "selftest.phase10.other";
             instance = null;
             context = null;
             bool reused;
             LaunchResult failure;
-            if (traceOther)
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-launch-begin");
             bool began = ApplicationInstanceRegistry.TryBeginLaunch(
                     id, ApplicationInstancePolicy.MultiInstance,
                     LaunchRequest.ForAppId(id, null, null,
                         LaunchActivationIntent.NewInstance), out instance,
                     out reused, out failure);
-            if (traceOther)
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-launch-returned");
-            if (traceOther)
-                BootConsole.WriteLine(began
-                    ? "PHASE35P2_TEST_STAGE=other-launch-started"
-                    : "PHASE35P2_TEST_STAGE=other-launch-rejected");
             if (!began || instance == null) return false;
-            if (traceOther)
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-complete-begin");
             bool completed = ApplicationInstanceRegistry.TryCompleteLaunch(
                 instance, false, out failure);
-            if (traceOther)
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-complete-returned");
             if (!completed) return false;
             ApplicationServiceResult result;
-            if (traceOther)
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-context-begin");
             bool created = TryCreateContext(instance.Handle, out context,
                 out result);
-            if (traceOther)
-                BootConsole.WriteLine("PHASE35P2_TEST_STAGE=other-context-returned");
             return created && result.Succeeded;
         }
 
@@ -3358,6 +3135,25 @@ namespace guideXOS.OS {
                 if (ca != cb) return false;
             }
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds heap-backed App Model registries after a firmware reboot.
+    /// Persistent storage is intentionally not part of this reset.
+    /// </summary>
+    internal static class ApplicationModelBootState {
+        internal static void ResetForKernelBoot() {
+            AppLaunchResolver.ResetForKernelBoot();
+            FileAssociationRegistry.ResetForKernelBoot();
+            ShellObjectRegistry.ResetForKernelBoot();
+            ApplicationDescriptorRegistry.ResetForKernelBoot();
+            ApplicationAssociationRegistry.ResetForKernelBoot();
+            ApplicationInstanceRegistry.ResetForKernelBoot();
+            TaskbarApplicationEntryRegistry.ResetForKernelBoot();
+            ApplicationFactoryRegistry.ResetForKernelBoot();
+            AppModelCompatibilityDiagnostics.ResetForKernelBoot();
+            ApplicationServiceRegistry.ResetForKernelBoot();
         }
     }
 }

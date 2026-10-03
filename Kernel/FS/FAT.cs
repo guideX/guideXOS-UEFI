@@ -27,7 +27,6 @@ namespace guideXOS.FS {
     /// Supports read, write, create, delete, and format operations.
     /// </summary>
     internal unsafe class FAT : FileSystem {
-        internal static bool DiagnosticTracePathLookup;
         /// <summary>
         /// Fat Type
         /// </summary>
@@ -471,8 +470,6 @@ namespace guideXOS.FS {
                     traversed < maximumClusters) {
                 for (int i = 0; i < chain.Count; i++) {
                     if (chain[i] == c) {
-                        if (DiagnosticTracePathLookup)
-                            BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-chain-cycle");
                         _stickyIoResult = DiskIoResult.InvalidRange;
                         return chain;
                     }
@@ -491,8 +488,6 @@ namespace guideXOS.FS {
                     grown.Count = chain.Count;
                     chain = grown;
                     capacity = nextCapacity;
-                    if (DiagnosticTracePathLookup && chain.Count >= 256)
-                        BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-chain-grown-past-256");
                 }
                 chain.Add(c);
                 traversed++;
@@ -606,10 +601,15 @@ namespace guideXOS.FS {
         private string ComposeShortName(byte* name83) {
             int nameLen = 8; while (nameLen > 0 && name83[nameLen - 1] == (byte)' ') nameLen--;
             int extLen = 3; while (extLen > 0 && name83[8 + extLen - 1] == (byte)' ') extLen--;
-            string name = string.Empty;
-            for (int i = 0; i < nameLen; i++) name += ToChar(name83[i]);
-            if (extLen > 0) { name += "."; for (int i = 0; i < extLen; i++) name += ToChar(name83[8 + i]); }
-            return name;
+            int resultLength = nameLen + (extLen > 0 ? extLen + 1 : 0);
+            char[] chars = new char[resultLength];
+            for (int i = 0; i < nameLen; i++) chars[i] = (char)name83[i];
+            if (extLen > 0) {
+                chars[nameLen] = '.';
+                for (int i = 0; i < extLen; i++)
+                    chars[nameLen + 1 + i] = (char)name83[8 + i];
+            }
+            return new string(chars, 0, resultLength);
         }
 
         private static string AppendUtf16(string s, ushort ch) { if (ch == 0xFFFF || ch == 0x0000) return s; return s + (char)ch; }
@@ -664,85 +664,33 @@ namespace guideXOS.FS {
         }
 
         private DirResult FindPath(string path) {
-            bool traceLookup = DiagnosticTracePathLookup;
-            if (traceLookup)
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-findpath-enter");
             while (path.Length > 0 && path[0] == '/') path = path.Substring(1);
             if (path.Length == 0) return new DirResult { Found = true, IsDirectory = true, FirstCluster = _type == FatType.FAT32 ? _rootCluster : 0, Size = 0 };
             var parts = path.Split('/');
-            if (traceLookup)
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-parts-ready");
             uint current = _type == FatType.FAT32 ? _rootCluster : 0;
             uint finalSize = 0;
             bool finalIsDirectory = false;
             for (int i = 0; i < parts.Length; i++) {
-                if (traceLookup)
-                    BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-part-enter");
                 string part = parts[i]; bool last = i == parts.Length - 1; bool found = false;
-                if (traceLookup) {
-                    BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-part-name");
-                    BootConsole.WriteLine(part);
-                    if (part == "00730074" && current >= 2) {
-                        BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-target-parent=" + current.ToString());
-                        uint targetLba = FirstSectorOfCluster(current);
-                        byte[] uncachedSector = new byte[_bytesPerSec];
-                        DiskIoResult previousIo = _stickyIoResult;
-                        DiskIoResult uncachedResult;
-                        fixed (byte* pUncached = uncachedSector)
-                            uncachedResult = disk.ReadBlocks(targetLba, 1,
-                                pUncached, (ulong)uncachedSector.Length);
-                        _stickyIoResult = previousIo;
-                        bool uncachedNameFound = false;
-                        if (uncachedResult == DiskIoResult.Success) {
-                            for (int entryIndex = 0;
-                                    entryIndex < _bytesPerSec / 32; entryIndex++) {
-                                int entryOffset = entryIndex * 32;
-                                byte first = uncachedSector[entryOffset];
-                                if (first == 0) break;
-                                if (first == 0xE5 ||
-                                        uncachedSector[entryOffset + 11] == 0x0F)
-                                    continue;
-                                bool sameName = true;
-                                for (int nameIndex = 0; nameIndex < 8; nameIndex++) {
-                                    if (uncachedSector[entryOffset + nameIndex] !=
-                                            (byte)part[nameIndex]) {
-                                        sameName = false;
-                                        break;
-                                    }
-                                }
-                                if (sameName &&
-                                        uncachedSector[entryOffset + 11] == 0x10) {
-                                    uncachedNameFound = true;
-                                    break;
-                                }
-                            }
-                        }
-                        BootConsole.WriteLine(uncachedNameFound
-                            ? "PHASE35P2_LOOKUP=fat-uncached-entry-found"
-                            : "PHASE35P2_LOOKUP=fat-uncached-entry-missing");
-                    }
-                }
-                IterateDirectory(current, (name, isDir, clus, size) => { if (EqualsIgnoreCase(name, part)) { if (!last && !isDir) return true; found = true; current = clus; finalSize = size; finalIsDirectory = isDir; return false; } return true; });
-                if (traceLookup)
-                    BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-part-scanned");
-                if (!found) {
-                    if (traceLookup)
-                        BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-part-not-found");
-                    return new DirResult { Found = false };
-                }
+                IterateDirectory(current, (name, isDir, clus, size) => {
+                    if (!EqualsIgnoreCase(name, part)) return true;
+                    if (!last && !isDir) return true;
+                    found = true;
+                    current = clus;
+                    finalSize = size;
+                    finalIsDirectory = isDir;
+                    return false;
+                });
+                if (!found) return new DirResult { Found = false };
                 if (!last && current < 2 && _type == FatType.FAT32)
                     return new DirResult { Found = false };
                 string releasablePart = part;
                 parts[i] = null;
                 part = null;
                 releasablePart.Dispose();
-                releasablePart = null;
             }
-            if (traceLookup)
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-findpath-return");
             return new DirResult { Found = true, IsDirectory = finalIsDirectory, FirstCluster = current, Size = finalSize };
         }
-
         private struct EntryLoc { public bool Found; public ulong LBA; public int Index; public uint Cluster; public bool RootFixed; public DirEntry Entry; }
 
         private EntryLoc FindEntryLoc(uint dirCluster, string name, bool findFreeSlot, out bool exists) {
@@ -1128,12 +1076,7 @@ namespace guideXOS.FS {
             if (!StartOperation()) return LastOperationResult = FatOperationResult.NotMounted;
             if (string.IsNullOrEmpty(name))
                 return LastOperationResult = FatOperationResult.InvalidPath;
-            bool traceLookup = DiagnosticTracePathLookup;
-            if (traceLookup)
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-length-findpath-begin");
             DirResult result = FindPath(name);
-            if (traceLookup)
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=fat-length-findpath-returned");
             if (_stickyIoResult != DiskIoResult.Success)
                 return LastOperationResult = CurrentIoFailure(false);
             if (!result.Found) return LastOperationResult = FatOperationResult.NotFound;

@@ -178,6 +178,20 @@ namespace guideXOS.OS {
         private static int _typedExternalLaunches;
         private static int _typedShellActionLaunches;
 
+        internal static void ResetForKernelBoot() {
+            _bindings = null;
+            _count = 0;
+            _initialized = false;
+            _initializationFailure = null;
+            _factoryLaunches = 0;
+            _compatibilityFallbackLaunches = 0;
+            _factoryFailures = 0;
+            _reusedFactoryActivations = 0;
+            _factoryWindowsAttached = 0;
+            _typedExternalLaunches = 0;
+            _typedShellActionLaunches = 0;
+        }
+
         public static void Initialize() {
             if (_initialized) return;
             _bindings = new Binding[Capacity];

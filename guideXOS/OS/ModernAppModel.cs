@@ -569,6 +569,12 @@ namespace guideXOS.OS {
         private static bool _valid;
         private static string _validationFailure;
 
+        internal static void ResetForKernelBoot() {
+            _descriptors = null;
+            _valid = false;
+            _validationFailure = null;
+        }
+
         public static void Initialize() {
             if (_descriptors != null) return;
             _descriptors = new List<ApplicationDescriptor>();
@@ -972,6 +978,8 @@ namespace guideXOS.OS {
     public static class ApplicationAssociationRegistry {
         private static ApplicationAssociation[] _associations;
 
+        internal static void ResetForKernelBoot() { _associations = null; }
+
         private static void Initialize() {
             if (_associations != null) return;
             int count = FileAssociationRegistry.DescriptorCount;
@@ -1141,6 +1149,13 @@ namespace guideXOS.OS {
         private static int _modernTranslations;
         private static int _legacyBackendCalls;
         private static int _compatibilityFailures;
+
+        internal static void ResetForKernelBoot() {
+            _facadeCalls = 0;
+            _modernTranslations = 0;
+            _legacyBackendCalls = 0;
+            _compatibilityFailures = 0;
+        }
 
         public static int FacadeCalls { get { return _facadeCalls; } }
         public static int ModernTranslations { get { return _modernTranslations; } }

@@ -75,7 +75,6 @@ namespace guideXOS.OS {
 
     internal sealed class CSharpApplicationStorageService :
             ApplicationStorageService {
-        internal static bool TracePersistentLookupForDiagnostics;
         private const int MaxNamespaces = 32;
         private const int MaxEntriesPerNamespace = 64;
 
@@ -184,28 +183,17 @@ namespace guideXOS.OS {
         public override ApplicationServiceResult<bool> Exists(
                 ApplicationServiceContext context,
                 ApplicationStorageRequest request) {
-            bool tracePersistent = TracePersistentLookupForDiagnostics &&
-                request != null && request.Namespace ==
-                    ApplicationStorageNamespace.Persistent;
-            if (tracePersistent)
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=service-enter");
             ApplicationInstance instance;
             ApplicationServiceResult valid;
             if (!TryValidate(context, out instance, out valid)) {
-                if (tracePersistent)
-                    BootConsole.WriteLine("PHASE35P2_LOOKUP=service-context-rejected");
                 return ApplicationServiceResult<bool>.Failure(
                     valid.Code, valid.BoundedDiagnostic);
             }
-            if (tracePersistent)
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=service-context-validated");
             if (request == null || !request.IsValid) {
                 return ApplicationServiceResult<bool>.Failure(
                     ApplicationServiceResultCode.InvalidRequest,
                     "Storage path is invalid or exceeds its bound");
             }
-            if (tracePersistent)
-                BootConsole.WriteLine("PHASE35P2_LOOKUP=service-request-validated");
             if (request.Namespace == ApplicationStorageNamespace.Persistent) {
                 _backendCallCount++;
                 _persistentExistsCount++;
@@ -214,8 +202,6 @@ namespace guideXOS.OS {
                     ? FatOperationResult.MediaUnavailable
                     : _persistentBackend.TryGetValueLength(context.ApplicationId,
                         request.RelativePath, out length);
-                if (tracePersistent)
-                    BootConsole.WriteLine("PHASE35P2_LOOKUP=service-backend-returned");
                 if (persistent == FatOperationResult.NotFound) {
                     if (_persistentBackend == null) return PersistentFailure<bool>(persistent);
                     return ApplicationServiceResult<bool>.SuccessResult(false);
