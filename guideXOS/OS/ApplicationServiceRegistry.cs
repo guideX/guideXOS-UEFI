@@ -33,7 +33,7 @@ namespace guideXOS.OS {
         private static bool _lastResourceStorageSelfTestPassed;
         private static bool _lastResourceChunkSelfTestPassed;
         private static bool _lastStoragePathSelfTestPassed;
-        private static bool _lastPersistentUnavailableSelfTestPassed;
+        private static bool _lastPersistentAvailabilitySelfTestPassed;
         private static bool _lastPersistentBackendSelfTestPassed;
         private static bool _lastPersistentNamespaceSelfTestPassed;
         private static bool _lastPersistentCrossScopeSelfTestPassed;
@@ -82,7 +82,7 @@ namespace guideXOS.OS {
             _lastResourceStorageSelfTestPassed = false;
             _lastResourceChunkSelfTestPassed = false;
             _lastStoragePathSelfTestPassed = false;
-            _lastPersistentUnavailableSelfTestPassed = false;
+            _lastPersistentAvailabilitySelfTestPassed = false;
             _lastPersistentBackendSelfTestPassed = false;
             _lastPersistentNamespaceSelfTestPassed = false;
             _lastPersistentCrossScopeSelfTestPassed = false;
@@ -235,8 +235,8 @@ namespace guideXOS.OS {
             get { return _lastStoragePathSelfTestPassed; }
         }
 
-        public static bool LastPersistentUnavailableSelfTestPassed {
-            get { return _lastPersistentUnavailableSelfTestPassed; }
+        public static bool LastPersistentAvailabilitySelfTestPassed {
+            get { return _lastPersistentAvailabilitySelfTestPassed; }
         }
 
         internal static bool LastPersistentBackendSelfTestPassed {
@@ -345,6 +345,7 @@ namespace guideXOS.OS {
             if (!TryResolveHandle(handle, out instance, out result)) return false;
             if (!IsBoundedApplicationId(instance.DescriptorId)) {
                 _invalidContextRejections++;
+                if (result != null) result.Dispose();
                 result = ApplicationServiceResult.InvalidContextResult();
                 return false;
             }
@@ -363,12 +364,13 @@ namespace guideXOS.OS {
                 for (int i = 0; i < capabilityCount; i++) {
                     bounded[i] = capabilities[i];
                 }
+                capabilities.Dispose();
                 capabilities = bounded;
             }
 
             context = new ApplicationServiceContext(
                 instance.Handle, instance.DescriptorId, capabilities);
-            result = ApplicationServiceResult.SuccessResult();
+            capabilities.Dispose();
             return true;
         }
 
@@ -383,7 +385,6 @@ namespace guideXOS.OS {
                 return false;
             }
             access = _access;
-            result = ApplicationServiceResult.SuccessResult();
             return true;
         }
 
@@ -396,6 +397,7 @@ namespace guideXOS.OS {
                 access = null;
                 return false;
             }
+            if (result != null) result.Dispose();
             return TryGetAccess(context, out access, out result);
         }
 
@@ -787,7 +789,7 @@ namespace guideXOS.OS {
                 out ApplicationServiceResult result) {
             Initialize();
             instance = null;
-            result = ApplicationServiceResult.InvalidContextResult();
+            result = null;
             if (!ApplicationServiceNames.IsKnown(serviceId) ||
                     !IsRegistered(serviceId)) {
                 _invalidContextRejections++;
@@ -801,16 +803,19 @@ namespace guideXOS.OS {
             }
             if (context == null || !context.HasCapability(serviceId)) {
                 _invalidContextRejections++;
+                if (result != null) result.Dispose();
                 result = ApplicationServiceResult.InvalidContextResult();
                 return false;
             }
             if (!IsServiceStateAllowed(serviceId, instance.LifecycleState)) {
                 _invalidContextRejections++;
+                if (result != null) result.Dispose();
                 result = ApplicationServiceResult.Failure(
                     ApplicationServiceResultCode.InvalidContext,
                     "Application service is unavailable in this lifecycle state");
                 return false;
             }
+            if (result != null) result.Dispose();
             result = ApplicationServiceResult.SuccessResult();
             return true;
         }
@@ -821,9 +826,10 @@ namespace guideXOS.OS {
                 out ApplicationInstance instance,
                 out ApplicationServiceResult result) {
             instance = null;
-            result = ApplicationServiceResult.InvalidContextResult();
+            result = null;
             if (!ApplicationServiceNames.IsKnown(serviceId) ||
                     !IsRegistered(serviceId)) {
+                _invalidContextRejections++;
                 result = ApplicationServiceResult.Failure(
                     ApplicationServiceResultCode.Unsupported,
                     "Application service is not registered");
@@ -834,6 +840,7 @@ namespace guideXOS.OS {
             }
             if (context == null || !context.HasCapability(serviceId)) {
                 _invalidContextRejections++;
+                if (result != null) result.Dispose();
                 result = ApplicationServiceResult.InvalidContextResult();
                 return false;
             }
@@ -842,11 +849,13 @@ namespace guideXOS.OS {
                     instance.LifecycleState !=
                     ApplicationInstanceLifecycleState.Activated) {
                 _invalidContextRejections++;
+                if (result != null) result.Dispose();
                 result = ApplicationServiceResult.Failure(
                     ApplicationServiceResultCode.InvalidState,
                     "New interaction requires a running application");
                 return false;
             }
+            if (result != null) result.Dispose();
             result = ApplicationServiceResult.SuccessResult();
             return true;
         }
@@ -1069,7 +1078,7 @@ namespace guideXOS.OS {
 
             _lastResourceChunkSelfTestPassed = false;
             _lastStoragePathSelfTestPassed = false;
-            _lastPersistentUnavailableSelfTestPassed = false;
+            _lastPersistentAvailabilitySelfTestPassed = false;
             _lastStorageAppScopeSelfTestPassed = false;
             _lastStorageResetSelfTestPassed = false;
             ResetTemporaryStorageForAppModel();
@@ -1281,7 +1290,7 @@ namespace guideXOS.OS {
                 ApplicationServiceContext context,
                 ApplicationServiceAccess access,
                 CSharpApplicationStorageService storage) {
-            _lastPersistentUnavailableSelfTestPassed = false;
+            _lastPersistentAvailabilitySelfTestPassed = false;
             _lastPersistentBackendSelfTestPassed = false;
             _lastPersistentNamespaceSelfTestPassed = false;
             _lastPersistentCrossScopeSelfTestPassed = false;
@@ -1322,7 +1331,7 @@ namespace guideXOS.OS {
                     access.Storage.Enumerate(context,
                         ApplicationStorageNamespace.Persistent).Code ==
                         ApplicationServiceResultCode.ResourceUnavailable;
-                _lastPersistentUnavailableSelfTestPassed = unavailable;
+                _lastPersistentAvailabilitySelfTestPassed = unavailable;
 #if UEFI_DIAGNOSTIC_STORAGE35P2
                 return false;
 #else
@@ -1339,6 +1348,7 @@ namespace guideXOS.OS {
                 storage.PersistentVolumeLabel == "GX35Q TEST" &&
                 storage.PersistentVolumeId == 0x35355131U;
             if (!_lastPersistentBackendSelfTestPassed) return false;
+            _lastPersistentAvailabilitySelfTestPassed = true;
 
             ApplicationInstance owner = null;
             ApplicationInstance replacement = null;
@@ -2613,14 +2623,16 @@ namespace guideXOS.OS {
                 out ApplicationInstance instance,
                 out ApplicationServiceResult result) {
             instance = null;
-            result = ApplicationServiceResult.InvalidContextResult();
+            result = null;
             if (!ApplicationInstanceRegistry.TryGet(handle, out instance) ||
                     instance == null) {
                 _staleContextRejections++;
+                result = ApplicationServiceResult.InvalidContextResult();
                 return false;
             }
             if (IsCommonlyRejectedState(instance.LifecycleState)) {
                 _invalidContextRejections++;
+                result = ApplicationServiceResult.InvalidContextResult();
                 return false;
             }
             result = ApplicationServiceResult.SuccessResult();
@@ -2632,22 +2644,26 @@ namespace guideXOS.OS {
                 out ApplicationInstance instance,
                 out ApplicationServiceResult result) {
             instance = null;
-            result = ApplicationServiceResult.InvalidContextResult();
+            result = null;
             if (context == null || !context.IsValid) {
                 _invalidContextRejections++;
+                result = ApplicationServiceResult.InvalidContextResult();
                 return false;
             }
             if (!ApplicationInstanceRegistry.TryGet(context.InstanceHandle,
                     out instance) || instance == null) {
                 _staleContextRejections++;
+                result = ApplicationServiceResult.InvalidContextResult();
                 return false;
             }
             if (!TextEquals(instance.DescriptorId, context.ApplicationId)) {
                 _invalidContextRejections++;
+                result = ApplicationServiceResult.InvalidContextResult();
                 return false;
             }
             if (IsCommonlyRejectedState(instance.LifecycleState)) {
                 _invalidContextRejections++;
+                result = ApplicationServiceResult.InvalidContextResult();
                 return false;
             }
             result = ApplicationServiceResult.SuccessResult();

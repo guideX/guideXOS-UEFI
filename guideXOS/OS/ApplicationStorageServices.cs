@@ -1,5 +1,6 @@
 using System;
 using guideXOS.FS;
+using guideXOS.Misc;
 
 namespace guideXOS.OS {
     internal static class ApplicationResourceKeyRules {
@@ -97,6 +98,10 @@ namespace guideXOS.OS {
         private int _backendCallCount;
         private int _persistentExistsCount;
         private int _persistentReadCount;
+        private int _persistentSuccessfulReadCount;
+        private int _lastPersistentReadResultStage;
+        private int _lastPersistentReadFatResult;
+        private int _failedReadRequestCount;
         private int _persistentWriteCount;
         private int _persistentDeleteCount;
         private int _persistentEnumerateCount;
@@ -164,6 +169,16 @@ namespace guideXOS.OS {
         }
         internal int PersistentExistsCount { get { return _persistentExistsCount; } }
         internal int PersistentReadCount { get { return _persistentReadCount; } }
+        internal int PersistentSuccessfulReadCount {
+            get { return _persistentSuccessfulReadCount; }
+        }
+        internal int LastPersistentReadResultStage {
+            get { return _lastPersistentReadResultStage; }
+        }
+        internal int LastPersistentReadFatResult {
+            get { return _lastPersistentReadFatResult; }
+        }
+        internal int FailedReadRequestCount { get { return _failedReadRequestCount; } }
         internal int PersistentWriteCount { get { return _persistentWriteCount; } }
         internal int PersistentDeleteCount { get { return _persistentDeleteCount; } }
         internal int PersistentEnumerateCount { get { return _persistentEnumerateCount; } }
@@ -218,13 +233,20 @@ namespace guideXOS.OS {
         public override ApplicationServiceResult<ApplicationStorageReadResult>
                 Read(ApplicationServiceContext context,
                     ApplicationStorageReadRequest request) {
+            _lastPersistentReadResultStage = -1;
             ApplicationInstance instance;
             ApplicationServiceResult valid;
             if (!TryValidate(context, out instance, out valid)) {
-                return ApplicationServiceResult<ApplicationStorageReadResult>.Failure(
-                    valid.Code, valid.BoundedDiagnostic);
+                _failedReadRequestCount++;
+                ApplicationServiceResult<ApplicationStorageReadResult> failure =
+                    ApplicationServiceResult<ApplicationStorageReadResult>.Failure(
+                        valid.Code, valid.BoundedDiagnostic);
+                if (valid != null) valid.Dispose();
+                return failure;
             }
+            if (valid != null) valid.Dispose();
             if (request == null || !request.IsValid) {
+                _failedReadRequestCount++;
                 return ApplicationServiceResult<ApplicationStorageReadResult>.Failure(
                     ApplicationServiceResultCode.InvalidRequest,
                     "Storage read request is invalid or exceeds its bound");
@@ -232,6 +254,8 @@ namespace guideXOS.OS {
             if (request.Namespace == ApplicationStorageNamespace.Persistent) {
                 _backendCallCount++;
                 _persistentReadCount++;
+                _lastPersistentReadResultStage = 0;
+                _lastPersistentReadFatResult = -1;
                 byte[] persistentBytes = null;
                 int persistentRead = 0;
                 bool persistentEnd = false;
@@ -241,23 +265,68 @@ namespace guideXOS.OS {
                         request.RelativePath, request.Offset,
                         request.MaximumBytes, out persistentBytes,
                         out persistentRead, out persistentEnd);
+                _lastPersistentReadFatResult = (int)persistent;
                 if (persistent != FatOperationResult.Success)
+                {
+                    if (persistentBytes != null) persistentBytes.Dispose();
+                    _failedReadRequestCount++;
                     return PersistentFailure<ApplicationStorageReadResult>(persistent);
-                return ApplicationServiceResult<ApplicationStorageReadResult>.SuccessResult(
+                }
+                _persistentSuccessfulReadCount++;
+                _lastPersistentReadResultStage = 1;
+                if (persistentBytes == null) {
+                    Ring3Abi.Phase35DiagnosticMarker(
+                        "P35_DIAG_PERSISTENT_SUCCESS_NULL_BYTES=1");
+                    return ApplicationServiceResult<
+                        ApplicationStorageReadResult>.Failure(
+                            ApplicationServiceResultCode.BackendFailure,
+                            "Persistent backend returned a null value");
+                }
+                ApplicationStorageReadResult readValue =
                     ApplicationStorageReadResult.Create(request.RelativePath,
                         request.Offset, persistentBytes, persistentRead,
-                        persistentEnd));
+                        persistentEnd);
+                persistentBytes.Dispose();
+                if (readValue == null) {
+                    Ring3Abi.Phase35DiagnosticMarker(
+                        "P35_DIAG_READ_VALUE_ALLOCATION_NULL=1");
+                    return ApplicationServiceResult<
+                        ApplicationStorageReadResult>.Failure(
+                            ApplicationServiceResultCode.BackendFailure,
+                        "Persistent read result allocation failed");
+                }
+                _lastPersistentReadResultStage = 2;
+                ApplicationServiceResult<ApplicationStorageReadResult> result =
+                    ApplicationServiceResult<ApplicationStorageReadResult>
+                        .SuccessResult(readValue);
+                if (result == null || result.Value == null) {
+                    if (readValue != null) {
+                        if (readValue.Bytes != null) readValue.Bytes.Dispose();
+                        readValue.Dispose();
+                    }
+                    Ring3Abi.Phase35DiagnosticMarker(result == null
+                        ? "P35_DIAG_SERVICE_RESULT_ALLOCATION_NULL=1"
+                        : "P35_DIAG_SERVICE_RESULT_VALUE_NULL=1");
+                    return ApplicationServiceResult<
+                        ApplicationStorageReadResult>.Failure(
+                            ApplicationServiceResultCode.BackendFailure,
+                            "Persistent service result allocation failed");
+                }
+                _lastPersistentReadResultStage = 3;
+                return result;
             }
             StorageNamespace storage = FindNamespace(context.ApplicationId);
             StorageEntry entry = storage == null ? null : FindEntry(storage,
                 request.RelativePath);
             if (entry == null) {
+                _failedReadRequestCount++;
                 return ApplicationServiceResult<ApplicationStorageReadResult>.Failure(
                     ApplicationServiceResultCode.NotFound,
                     "Application storage entry was not found");
             }
             long length = entry.Bytes.Length;
             if (request.Offset > length) {
+                _failedReadRequestCount++;
                 return ApplicationServiceResult<ApplicationStorageReadResult>.Failure(
                     ApplicationServiceResultCode.InvalidRequest,
                     "Storage read offset is outside the entry");

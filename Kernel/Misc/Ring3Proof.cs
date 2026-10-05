@@ -63,11 +63,46 @@ namespace guideXOS.Misc {
         }
 
         private static void NumberMarker(string label, int value) {
-            Marker(label + value.ToString());
+            if (label != null) {
+                for (int i = 0; i < label.Length; i++)
+                    Native.Out8(0x3F8, (byte)label[i]);
+            }
+            ulong magnitude;
+            if (value < 0) {
+                Native.Out8(0x3F8, (byte)'-');
+                magnitude = (ulong)(-(long)value);
+            } else {
+                magnitude = (ulong)value;
+            }
+            WriteUnsignedMarkerValue(magnitude);
+            Native.Out8(0x3F8, (byte)'\n');
+        }
+
+        private static void NumberMarker(string label, ulong value) {
+            if (label != null) {
+                for (int i = 0; i < label.Length; i++)
+                    Native.Out8(0x3F8, (byte)label[i]);
+            }
+            WriteUnsignedMarkerValue(value);
+            Native.Out8(0x3F8, (byte)'\n');
+        }
+
+        private static void WriteUnsignedMarkerValue(ulong magnitude) {
+            char* digits = stackalloc char[20];
+            int count = 0;
+            do {
+                digits[count++] = (char)('0' + (int)(magnitude % 10));
+                magnitude /= 10;
+            } while (magnitude != 0);
+            while (count > 0)
+                Native.Out8(0x3F8, (byte)digits[--count]);
         }
 
         private static void HexMarker(string label, ulong value) {
-            Marker(label);
+            if (label != null) {
+                for (int i = 0; i < label.Length; i++)
+                    Native.Out8(0x3F8, (byte)label[i]);
+            }
             for (int shift = 60; shift >= 0; shift -= 4) {
                 int nibble = (int)((value >> shift) & 0xFUL);
                 Native.Out8(0x3F8,

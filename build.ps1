@@ -36,7 +36,7 @@
 .PARAMETER UefiDiagnosticMode
     Optional UEFI regression build variant: Tiny, FirstFrame, Frames, Input,
     InputStress, ContextMenu, Png, Font, Background, BackgroundRotation,
-    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Phase27, Ring3Phase28, Ring3Phase29, Ring3Phase30, Ring3Phase31, Ring3Phase32, Ring3Phase33, Ring3Phase34, Ring3Direct, Storage35Q, Storage35P2, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
+    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Phase27, Ring3Phase28, Ring3Phase29, Ring3Phase30, Ring3Phase31, Ring3Phase32, Ring3Phase33, Ring3Phase34, Ring3Phase35, Ring3Phase35R2, Ring3Direct, Storage35Q, Storage35P2, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
     WidgetOnlyClock, WidgetOnlyMonitor, or WidgetOnlyUptime
 
 .EXAMPLE
@@ -60,7 +60,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'CleanupStress', 'StartMenuStress', 'ForegroundStress', 'FaultBytesProbe', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Phase33', 'Ring3Phase34', 'Ring3Direct', 'Storage35Q', 'Storage35P2', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
+  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'CleanupStress', 'StartMenuStress', 'ForegroundStress', 'FaultBytesProbe', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Phase33', 'Ring3Phase34', 'Ring3Phase35', 'Ring3Phase35R2', 'Ring3Direct', 'Storage35Q', 'Storage35P2', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
     [string]$UefiDiagnosticMode = ''
 )
 
@@ -505,6 +505,18 @@ if (-not $SkipRamdisk) {
         if ($LASTEXITCODE -ne 0) { throw "Phase 34 managed resource build failed: $LASTEXITCODE" }
         & $phase34Stage -BuildRoot $phase34BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
         if ($LASTEXITCODE -ne 0) { throw "Phase 34 image staging failed: $LASTEXITCODE" }
+    }
+
+    $phase35Build = Join-Path $RootDir "Tools\Phase35\build_phase35_managed_persistent_read.ps1"
+    $phase35Stage = Join-Path $RootDir "Tools\Phase35\stage_phase35_image.ps1"
+    $phase35BuildRoot = Join-Path $RootDir "out\dotnet\phase35-managed-persistent-read"
+    if ((Test-Path -LiteralPath $phase35Build) -and
+        (Test-Path -LiteralPath $phase35Stage)) {
+        Write-Info "Building the Phase 35 managed Persistent-read proof..."
+        & $phase35Build
+        if ($LASTEXITCODE -ne 0) { throw "Phase 35 managed Persistent-read build failed: $LASTEXITCODE" }
+        & $phase35Stage -BuildRoot $phase35BuildRoot -RamdiskSource (Join-Path $RamdiskSrc "Native")
+        if ($LASTEXITCODE -ne 0) { throw "Phase 35 image staging failed: $LASTEXITCODE" }
     }
 }
 

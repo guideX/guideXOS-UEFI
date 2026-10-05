@@ -483,6 +483,11 @@ namespace guideXOS.OS {
             return false;
         }
 
+        public override void Dispose() {
+            if (_capabilities != null) _capabilities.Dispose();
+            base.Dispose();
+        }
+
         internal static bool IsBoundedText(string value, int maxLength,
                                            bool allowEmpty = true) {
             return value != null && value.Length <= maxLength &&
@@ -864,10 +869,13 @@ namespace guideXOS.OS {
             RelativePath = relativePath ?? string.Empty;
             Offset = offset;
             MaximumBytes = maximumBytes;
-            IsValid = ApplicationStorageRequest.Create(space, RelativePath).IsValid &&
+            ApplicationStorageRequest pathRequest =
+                ApplicationStorageRequest.Create(space, RelativePath);
+            IsValid = pathRequest.IsValid &&
                       offset >= 0 && maximumBytes > 0 &&
                       maximumBytes <= MaxChunkLength &&
                       offset <= long.MaxValue - maximumBytes;
+            pathRequest.Dispose();
         }
 
         public ApplicationStorageNamespace Namespace { get; private set; }

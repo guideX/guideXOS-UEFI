@@ -78,6 +78,15 @@ namespace guideXOS.Misc {
                 bootInfo->Reserved[0], memoryHandoff->KernelSpanBytes);
             Allocator.ReserveAddressRange((IntPtr)0x4000000,
                 bootInfo->Reserved[1], memoryHandoff->KernelSpanBytes);
+            // The bootloader's EfiLoaderData pages remain live after
+            // ExitBootServices. Keep the kernel allocator from reusing the
+            // ramdisk range: RdskFS reads its entries in place for the whole
+            // session, including later managed-image admission.
+            if (bootInfo->HasRamdisk && bootInfo->RamdiskBase != 0 &&
+                    bootInfo->RamdiskSize != 0) {
+                Allocator.ReserveAddressRange((IntPtr)0x4000000,
+                    bootInfo->RamdiskBase, bootInfo->RamdiskSize);
+            }
             const int maxBootPageTablePages = 2048;
             ulong* bootPageTablePages = memoryHandoff->PageTablePages;
             int reservedPageTableCount = 0;
@@ -99,6 +108,12 @@ namespace guideXOS.Misc {
                 memoryHandoff->KernelSpanBytes.ToString());
             BootConsole.WriteLine("[ALLOCATOR] Reserved boot page-table pages=" +
                 reservedPageTableCount.ToString());
+            if (bootInfo->HasRamdisk && bootInfo->RamdiskBase != 0 &&
+                    bootInfo->RamdiskSize != 0) {
+                BootConsole.WriteLine("[ALLOCATOR] Reserved ramdisk range=" +
+                    bootInfo->RamdiskBase.ToString("X") + ",bytes=" +
+                    bootInfo->RamdiskSize.ToString());
+            }
 #endif
 
             BootConsole.WriteLine("[MOD] INITIALIZE");
@@ -112,7 +127,7 @@ namespace guideXOS.Misc {
             // immediately above, so InitializeModules now has its required
             // object-storage owner before any managed static is used.
             StartupCodeHelpers.InitializeModules(modulesPtr);
-#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE35 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
             Allocator.InitializeInvalidFreeDiagnostics();
 #endif
             BootConsole.WriteLine("[NATIVEAOT] modules initialized");
@@ -397,6 +412,12 @@ namespace guideXOS.Misc {
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
                 Ring3Proof.SchedulePhase34();
                 BootConsole.WriteLine("PHASE34_QUEUED_FOR_SCHEDULER=1");
+            }
+#endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                Ring3Proof.SchedulePhase35();
+                BootConsole.WriteLine("PHASE35_QUEUED_FOR_SCHEDULER=1");
             }
 #endif
 

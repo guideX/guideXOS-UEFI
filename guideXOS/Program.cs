@@ -1535,7 +1535,7 @@ unsafe class Program {
                 _uefiMultiFrameStartTicks.ToString());
 
             int uefiFrame = 0;
-#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26 || UEFI_DIAGNOSTIC_RING3_PHASE27 || UEFI_DIAGNOSTIC_RING3_PHASE28 || UEFI_DIAGNOSTIC_RING3_PHASE29 || UEFI_DIAGNOSTIC_RING3_PHASE30 || UEFI_DIAGNOSTIC_RING3_PHASE31 || UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE33 || UEFI_DIAGNOSTIC_RING3_PHASE34
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26 || UEFI_DIAGNOSTIC_RING3_PHASE27 || UEFI_DIAGNOSTIC_RING3_PHASE28 || UEFI_DIAGNOSTIC_RING3_PHASE29 || UEFI_DIAGNOSTIC_RING3_PHASE30 || UEFI_DIAGNOSTIC_RING3_PHASE31 || UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE33 || UEFI_DIAGNOSTIC_RING3_PHASE34 || UEFI_DIAGNOSTIC_RING3_PHASE35
             bool ring3SchedulingEnabled = false;
 #endif
             for (;;) {
@@ -1557,7 +1557,7 @@ unsafe class Program {
                         HaltAfterUefiContinuous();
                         return;
                     }
-#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26 || UEFI_DIAGNOSTIC_RING3_PHASE27 || UEFI_DIAGNOSTIC_RING3_PHASE28 || UEFI_DIAGNOSTIC_RING3_PHASE29 || UEFI_DIAGNOSTIC_RING3_PHASE30 || UEFI_DIAGNOSTIC_RING3_PHASE31 || UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE33 || UEFI_DIAGNOSTIC_RING3_PHASE34
+#if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26 || UEFI_DIAGNOSTIC_RING3_PHASE27 || UEFI_DIAGNOSTIC_RING3_PHASE28 || UEFI_DIAGNOSTIC_RING3_PHASE29 || UEFI_DIAGNOSTIC_RING3_PHASE30 || UEFI_DIAGNOSTIC_RING3_PHASE31 || UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE33 || UEFI_DIAGNOSTIC_RING3_PHASE34 || UEFI_DIAGNOSTIC_RING3_PHASE35
                     if (!ring3SchedulingEnabled && uefiFrame == 1) {
                         // Establish one real desktop frame first so the
                         // scheduler's bootstrap context contains the normal
@@ -2154,8 +2154,8 @@ unsafe class Program {
                 SerialBreadcrumb("PHASE10_STORAGE_PATH_CONFINEMENT_OK=" +
                     (ApplicationServiceRegistry.LastStoragePathSelfTestPassed
                         ? "1" : "0"));
-                SerialBreadcrumb("PHASE10_STORAGE_PERSISTENT_UNAVAILABLE_OK=" +
-                    (ApplicationServiceRegistry.LastPersistentUnavailableSelfTestPassed
+                SerialBreadcrumb("PHASE10_STORAGE_PERSISTENT_AVAILABILITY_OK=" +
+                    (ApplicationServiceRegistry.LastPersistentAvailabilitySelfTestPassed
                         ? "1" : "0"));
                 SerialBreadcrumb("PHASE10_STORAGE_APP_SCOPE_OK=" +
                     (ApplicationServiceRegistry.LastStorageAppScopeSelfTestPassed
@@ -2274,6 +2274,15 @@ unsafe class Program {
             failure = "EXCEPTION";
         }
 
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+        if (failure == null) {
+            // The App Model diagnostic owns the UEFI dispatch path in this
+            // combined Phase 35 configuration. Start the queued Ring 3 proof
+            // after its checks finish, before entering the terminal HLT loop.
+            ThreadPool.EnableScheduling();
+            SerialBreadcrumb("APP_MODEL_SCHEDULING_ENABLED=1");
+        }
+#endif
         if (failure == null) SerialBreadcrumb("APP_MODEL_COMPLETE");
         else SerialBreadcrumb("APP_MODEL_FAIL=" + failure);
         SerialBreadcrumb("APP_MODEL_HALT_ENTER");

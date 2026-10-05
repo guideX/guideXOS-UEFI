@@ -20,6 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Phase34"))
 from phase34_flags import PHASE34_FLAGS  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Phase35"))
+from phase35_flags import PHASE35_FLAGS  # noqa: E402
 
 
 VARIANT_MASK = 0xFFFFF800
@@ -72,6 +74,14 @@ PAYLOADS = (
     Payload("Phase34", "stale-owner", "guideXOS.Phase34ResourceStaleOwnerProof", "phase34-managed-resource-read-build.json", "stale-owner", PHASE34_FLAGS["stale-owner"], "FlagPhase34StaleOwner"),
     Payload("Phase34", "cross-scope", "guideXOS.Phase34ResourceCrossScopeProof", "phase34-managed-resource-read-build.json", "cross-scope", PHASE34_FLAGS["cross-scope"], "FlagPhase34CrossScope"),
     Payload("Phase34", "malformed", "guideXOS.Phase34ResourceMalformedProof", "phase34-managed-resource-read-build.json", "malformed", PHASE34_FLAGS["malformed"], "FlagPhase34Malformed"),
+    Payload("Phase35", "success", "guideXOS.Phase35ManagedPersistentReadProof", "phase35-managed-persistent-read-build.json", "success", PHASE35_FLAGS["success"], "FlagPhase35Success"),
+    Payload("Phase35", "failfast", "guideXOS.Phase35PersistentReadFailFastProof", "phase35-managed-persistent-read-build.json", "failfast", PHASE35_FLAGS["failfast"], "FlagPhase35FailFast"),
+    Payload("Phase35", "stale-owner", "guideXOS.Phase35PersistentReadStaleOwnerProof", "phase35-managed-persistent-read-build.json", "stale-owner", PHASE35_FLAGS["stale-owner"], "FlagPhase35StaleOwner"),
+    Payload("Phase35", "cross-scope", "guideXOS.Phase35PersistentReadCrossScopeProof", "phase35-managed-persistent-read-build.json", "cross-scope", PHASE35_FLAGS["cross-scope"], "FlagPhase35CrossScope"),
+    Payload("Phase35", "malformed", "guideXOS.Phase35PersistentReadMalformedProof", "phase35-managed-persistent-read-build.json", "malformed", PHASE35_FLAGS["malformed"], "FlagPhase35Malformed"),
+    Payload("Phase35", "no-read", "guideXOS.Phase35NoReadProof", "phase35-managed-persistent-read-build.json", "no-read", PHASE35_FLAGS["no-read"], "FlagPhase35NoRead"),
+    Payload("Phase35", "one-read", "guideXOS.Phase35OneReadProof", "phase35-managed-persistent-read-build.json", "one-read", PHASE35_FLAGS["one-read"], "FlagPhase35OneRead"),
+    Payload("Phase35", "two-read", "guideXOS.Phase35TwoReadProof", "phase35-managed-persistent-read-build.json", "two-read", PHASE35_FLAGS["two-read"], "FlagPhase35TwoRead"),
 )
 
 
@@ -136,7 +146,7 @@ def read_generated_kernel_hashes(source: Path) -> dict[int, str]:
     """Read generated identities so post-build audits verify the compiled input."""
     text = source.read_text(encoding="utf-8-sig")
     pattern = re.compile(
-        r"// Phase(?:29|30|31|32|33|34) [\w-]+: ([0-9A-Fa-f]{64})\s+"
+        r"// Phase(?:29|30|31|32|33|34|35) [\w-]+: ([0-9A-Fa-f]{64})\s+"
         r"case 0x([0-9A-Fa-f]{8})U:"
     )
     found: dict[int, str] = {}
@@ -166,6 +176,7 @@ def read_build_payloads(root: Path) -> dict[tuple[str, str], dict]:
             "Phase32": "phase32-managed-open-document",
             "Phase33": "phase33-managed-shell-action",
             "Phase34": "phase34-managed-resource-read",
+            "Phase35": "phase35-managed-persistent-read",
         }[payload.phase] / payload.record_name
         if not record.is_file():
             raise ValueError(f"Build record is missing: {record}")

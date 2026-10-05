@@ -129,6 +129,9 @@
 .PARAMETER Ring3Phase34
     Run the managed scoped Phase 10 resource read proof.
 
+.PARAMETER Ring3Phase35
+    Run the managed app-local Persistent read proof.
+
 .PARAMETER Ring3Direct
     Run the retained synchronous Phase 13 CPL3 regression selector.
 
@@ -193,6 +196,7 @@ param(
     [switch]$Ring3Phase32,
     [switch]$Ring3Phase33,
     [switch]$Ring3Phase34,
+    [switch]$Ring3Phase35,
     [switch]$Ring3Direct,
     [Alias('Input')]
     [switch]$NativeInput,
@@ -243,6 +247,7 @@ $selectorCount = @(
     $(if ($Ring3Phase32) { 1 } else { 0 }),
     $(if ($Ring3Phase33) { 1 } else { 0 }),
     $(if ($Ring3Phase34) { 1 } else { 0 }),
+    $(if ($Ring3Phase35) { 1 } else { 0 }),
     $(if ($Ring3Direct) { 1 } else { 0 }),
     $(if ($NativeInput) { 1 } else { 0 }),
     $(if ($NativeInputStress) { 1 } else { 0 }),
@@ -273,7 +278,7 @@ if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $Background -and -not $BackgroundRotation -and
     -not $AppModel -and -not $AppRuntime -and -not $CleanupStress -and
     -not $StartMenuStress -and -not $ForegroundStress -and -not $Ring3 -and
-    -not $Ring3Phase15 -and -not $Ring3Phase25 -and -not $Ring3Phase26 -and -not $Ring3Phase27 -and -not $Ring3Phase28 -and -not $Ring3Phase29 -and -not $Ring3Phase30 -and -not $Ring3Phase31 -and -not $Ring3Phase32 -and -not $Ring3Phase33 -and -not $Ring3Phase34 -and
+    -not $Ring3Phase15 -and -not $Ring3Phase25 -and -not $Ring3Phase26 -and -not $Ring3Phase27 -and -not $Ring3Phase28 -and -not $Ring3Phase29 -and -not $Ring3Phase30 -and -not $Ring3Phase31 -and -not $Ring3Phase32 -and -not $Ring3Phase33 -and -not $Ring3Phase34 -and -not $Ring3Phase35 -and
     -not $Ring3Direct -and
     -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
     -not $ContextMenuSoak -and -not $TaskbarSoak -and -not $Widget -and
@@ -329,6 +334,8 @@ if ($Tiny) {
     $diagnosticMode = 'Ring3Phase33'
 } elseif ($Ring3Phase34) {
     $diagnosticMode = 'Ring3Phase34'
+} elseif ($Ring3Phase35) {
+    $diagnosticMode = 'Ring3Phase35'
 } elseif ($Ring3Direct) {
     $diagnosticMode = 'Ring3Direct'
 } elseif ($Frames -gt 0) {
@@ -348,7 +355,7 @@ if ($Tiny) {
 }
 $isWidgetValidation = $diagnosticMode -in @('Widget', 'WidgetStress', 'WidgetSoak')
 $isAppModelValidation = $diagnosticMode -eq 'AppModel'
-$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Ring3', 'Ring3Phase15', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Phase33', 'Ring3Phase34', 'Ring3Direct', 'Widget', 'WidgetStress')
+$isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Ring3', 'Ring3Phase15', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Phase33', 'Ring3Phase34', 'Ring3Phase35', 'Ring3Direct', 'Widget', 'WidgetStress')
 $isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu', 'ForegroundStress')
 $isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress', 'StartMenuStress', 'ForegroundStress')
 $isStartMenuStressValidation = $diagnosticMode -eq 'StartMenuStress'
@@ -385,6 +392,7 @@ $diagnosticCompletionMarker = switch ($diagnosticMode) {
     'Ring3Phase32' { 'RING3_PHASE32_COMPLETE=1'; break }
     'Ring3Phase33' { 'RING3_PHASE33_COMPLETE=1'; break }
     'Ring3Phase34' { 'RING3_PHASE34_COMPLETE=1'; break }
+    'Ring3Phase35' { 'RING3_PHASE35_COMPLETE=1'; break }
     'Ring3Direct' { 'RING3_PROOF_RETURNED_TO_ENTRYPOINT=1'; break }
     'Widget' { 'WIDGET_COMPLETE'; break }
     'WidgetStress' { 'WIDGET_STRESS_COMPLETE'; break }
@@ -397,6 +405,9 @@ if ($WidgetSoak -and $TimeoutSeconds -lt 720) {
 }
 if ($Ring3Phase34 -and $TimeoutSeconds -lt 900) {
     $TimeoutSeconds = 900
+}
+if ($Ring3Phase35 -and $TimeoutSeconds -lt 1800) {
+    $TimeoutSeconds = 1800
 }
 if ($TaskbarSoak) {
     $Continuous = $true
@@ -2881,8 +2892,8 @@ if ($isAppModelValidation) {
         '(?m)^PHASE10_RESOURCE_CHUNK_SELFTEST_OK=1$').Count
     $phase10StoragePathSelfTest = [regex]::Matches($finalContent,
         '(?m)^PHASE10_STORAGE_PATH_CONFINEMENT_OK=1$').Count
-    $phase10PersistentUnavailableSelfTest = [regex]::Matches($finalContent,
-        '(?m)^PHASE10_STORAGE_PERSISTENT_UNAVAILABLE_OK=1$').Count
+    $phase10PersistentAvailabilitySelfTest = [regex]::Matches($finalContent,
+        '(?m)^PHASE10_STORAGE_PERSISTENT_AVAILABILITY_OK=1$').Count
     $phase10StorageScopeSelfTest = [regex]::Matches($finalContent,
         '(?m)^PHASE10_STORAGE_APP_SCOPE_OK=1$').Count
     $phase10StorageResetSelfTest = [regex]::Matches($finalContent,
@@ -2946,7 +2957,7 @@ if ($isAppModelValidation) {
         $phase10ResourceStorageSelfTest -ge 1 -and
         $phase10ResourceChunkSelfTest -ge 1 -and
         $phase10StoragePathSelfTest -ge 1 -and
-        $phase10PersistentUnavailableSelfTest -ge 1 -and
+        $phase10PersistentAvailabilitySelfTest -ge 1 -and
         $phase10StorageScopeSelfTest -ge 1 -and
         $phase10StorageResetSelfTest -ge 1 -and
         $phase11ClipboardContract -ge 1 -and
@@ -2980,7 +2991,7 @@ if ($isAppModelValidation) {
         phase10ResourceStorageSelfTest = $phase10ResourceStorageSelfTest
         phase10ResourceChunkSelfTest = $phase10ResourceChunkSelfTest
         phase10StoragePathSelfTest = $phase10StoragePathSelfTest
-        phase10PersistentUnavailableSelfTest = $phase10PersistentUnavailableSelfTest
+        phase10PersistentAvailabilitySelfTest = $phase10PersistentAvailabilitySelfTest
         phase10StorageScopeSelfTest = $phase10StorageScopeSelfTest
         phase10StorageResetSelfTest = $phase10StorageResetSelfTest
         phase11ClipboardContract = $phase11ClipboardContract

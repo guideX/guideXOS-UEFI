@@ -303,16 +303,27 @@ namespace guideXOS.Misc {
             string prefix = phase27 ? "Native/guideXOS.Phase27Bootstrap" :
                 (phase26 ? "Native/guideXOS.Phase26Bootstrap" :
                     "Native/guideXOS.Phase25Bootstrap");
-            byte[] image = File.ReadAllBytes(prefix + ".bin");
-            byte[] descriptor = File.ReadAllBytes(prefix + ".gxbi");
-            if (image == null || descriptor == null) {
-                failure = phase27 ? "PHASE27_BOOTSTRAP_NOT_STAGED" :
-                    (phase26 ? "PHASE26_BOOTSTRAP_NOT_STAGED" :
-                        "PHASE25_BOOTSTRAP_NOT_STAGED");
-                return false;
+            string imagePath = prefix + ".bin";
+            string descriptorPath = prefix + ".gxbi";
+            byte[] image = null;
+            byte[] descriptor = null;
+            try {
+                image = File.ReadAllBytes(imagePath);
+                descriptor = File.ReadAllBytes(descriptorPath);
+                if (image == null || descriptor == null) {
+                    failure = phase27 ? "PHASE27_BOOTSTRAP_NOT_STAGED" :
+                        (phase26 ? "PHASE26_BOOTSTRAP_NOT_STAGED" :
+                            "PHASE25_BOOTSTRAP_NOT_STAGED");
+                    return false;
+                }
+                return TryCreate(space, image, descriptor, phase26, phase27,
+                    out bootstrap, out failure);
+            } finally {
+                if (image != null) image.Dispose();
+                if (descriptor != null) descriptor.Dispose();
+                imagePath.Dispose();
+                descriptorPath.Dispose();
             }
-            return TryCreate(space, image, descriptor, phase26, phase27,
-                             out bootstrap, out failure);
         }
 
         internal static bool TryCreate(AddressSpace space, byte[] image,
@@ -340,9 +351,13 @@ namespace guideXOS.Misc {
             failure = null;
             NativeBootstrapDescriptor descriptor;
             if (!NativeBootstrapDescriptorReader.TryRead(descriptorBytes,
-                    out descriptor, out failure) ||
-                !NativeBootstrapDescriptorReader.TryValidate(descriptor, image,
-                    phase26, phase27, out failure)) return false;
+                    out descriptor, out failure)) return false;
+            if (!NativeBootstrapDescriptorReader.TryValidate(descriptor, image,
+                    phase26, phase27, out failure)) {
+                if (descriptor.Sha256 != null) descriptor.Sha256.Dispose();
+                descriptor.Dispose();
+                return false;
+            }
 
             bootstrap = new NativeBootstrapImage {
                 Space = space,
@@ -353,6 +368,7 @@ namespace guideXOS.Misc {
                 ulong physical = (ulong)Allocator.Allocate(NativeBootstrapContract.PageSize);
                 if (physical == 0) {
                     bootstrap.Cleanup();
+                    bootstrap.Dispose();
                     bootstrap = null;
                     failure = "PAGE_ALLOC_FAILED";
                     return false;
@@ -374,6 +390,7 @@ namespace guideXOS.Misc {
                     Allocator.Free((IntPtr)physical, "NativeBootstrap");
                     NativeBootstrapDiagnostics.PagesReclaimed++;
                     bootstrap.Cleanup();
+                    bootstrap.Dispose();
                     bootstrap = null;
                     failure = "PAGE_MAP_FAILED";
                     return false;
@@ -398,6 +415,14 @@ namespace guideXOS.Misc {
                 Marker("PHASE25_BOOTSTRAP_RECLAIMED=1");
             }
             Space = null;
+            if (PhysicalPages != null) {
+                PhysicalPages.Dispose();
+                PhysicalPages = null;
+            }
+            if (Descriptor != null) {
+                if (Descriptor.Sha256 != null) Descriptor.Sha256.Dispose();
+                Descriptor.Dispose();
+            }
             Descriptor = null;
             return true;
         }

@@ -58,20 +58,32 @@ namespace guideXOS.FS {
         /// <param name="name"></param>
         /// <returns></returns>
         public static byte[] ReadAllBytes(string name) {
-            BootConsole.WriteLine("[File.ReadAllBytes] Called for: " + name);
+            string calledMessage = "[File.ReadAllBytes] Called for: " + name;
+            BootConsole.WriteLine(calledMessage);
+            calledMessage.Dispose();
             
             if (Instance == null) {
                 BootConsole.WriteLine("[File.ReadAllBytes] ERROR: Instance is NULL!");
                 return null;
             }
             
-            BootConsole.WriteLine("[File.ReadAllBytes] FS Type: " + Instance.FileSystemType.ToString());
+            string fileSystemType = Instance.FileSystemType.ToString();
+            string fileSystemMessage = "[File.ReadAllBytes] FS Type: " +
+                fileSystemType;
+            BootConsole.WriteLine(fileSystemMessage);
+            fileSystemMessage.Dispose();
+            fileSystemType.Dispose();
             
             // Use type flag instead of 'as' casts (more reliable in bare-metal)
             try {
                 byte[] result = Instance.ReadAllBytes(name);
                 if (result != null) {
-                    BootConsole.WriteLine("[File.ReadAllBytes] Success, size: " + result.Length.ToString());
+                    string size = result.Length.ToString();
+                    string successMessage =
+                        "[File.ReadAllBytes] Success, size: " + size;
+                    BootConsole.WriteLine(successMessage);
+                    successMessage.Dispose();
+                    size.Dispose();
                 } else {
                     BootConsole.WriteLine("[File.ReadAllBytes] Returned NULL");
                 }

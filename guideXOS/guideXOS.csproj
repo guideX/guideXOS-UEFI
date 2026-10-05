@@ -120,6 +120,12 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3Phase34'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE34</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3Phase35'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE35;UEFI_DIAGNOSTIC_APP_MODEL;UEFI_DIAGNOSTIC_STORAGE35P2</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3Phase35R2'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE35;UEFI_DIAGNOSTIC_RING3_PHASE35R2_MATRIX;UEFI_DIAGNOSTIC_APP_MODEL;UEFI_DIAGNOSTIC_STORAGE35P2</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Storage35Q'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_STORAGE35Q</DefineConstants>
 	</PropertyGroup>
@@ -356,5 +362,6 @@
 	  <Compile Include="obj\ManagedArtifactIdentities.g.cs" />
 	  <Compile Include="..\Kernel\Misc\Ring3ProofPhase33.cs" />
 	  <Compile Include="..\Kernel\Misc\Ring3ProofPhase34.cs" />
+	  <Compile Include="..\Kernel\Misc\Ring3ProofPhase35.cs" />
 	</ItemGroup>
 </Project>

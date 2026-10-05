@@ -371,6 +371,44 @@ namespace GuideXos
         }
     }
 
+    // Phase 10 result values plus the Ring 3 buffer validation result. The
+    // service result values match ApplicationServiceResultCode; InvalidBuffer
+    // is produced by the dedicated Ring 3 transport before service dispatch.
+    public enum GuideXosStorageResultCode : uint
+    {
+        Success = 0,
+        InvalidContext = 1,
+        InvalidRequest = 2,
+        NotFound = 3,
+        ResourceUnavailable = 4,
+        PermissionDenied = 5,
+        Unsupported = 6,
+        Conflict = 7,
+        Cancelled = 8,
+        InvalidState = 9,
+        UnsupportedTarget = 10,
+        BackendFailure = 11,
+        InvalidBuffer = 12,
+    }
+
+    /// <summary>
+    /// Reads a value from the current application's Persistent storage scope.
+    /// The returned byte array is an independent managed copy.
+    /// </summary>
+    public static class GuideXosStorage
+    {
+        public const int MaxRelativePathLength = 192;
+        public const int MaxPathSegmentLength = 64;
+        public const int MaxValueLength = 64 * 1024;
+
+        public static GuideXosResult TryReadBytes(string path,
+            out byte[] value, out GuideXosStorageResultCode result)
+        {
+            return GuideXosInternalAbi.TryReadPersistentBytes(path,
+                out value, out result);
+        }
+    }
+
     /// <summary>
     /// Typed wrapper over the existing Phase 9 Shell application-ID launch.
     /// The application ID is bounded in UTF-16 code units and copied before

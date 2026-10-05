@@ -54,6 +54,7 @@ $common = @(
     '-p:PublishAot=true',
     '-p:SelfContained=true',
     '-p:IlcUseEnvironmentalTools=true',
+    '-p:UseSharedCompilation=false',
     "-p:Phase23LinkMap=$mapPath",
     "-p:CppLinker=$($linker.FullName)",
     "-p:CppLibCreator=$($libCreator.FullName)",

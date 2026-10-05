@@ -148,6 +148,36 @@ namespace GuideXos
         internal uint Reserved;
     }
 
+    // This record is consumed only by the dedicated Ring 3 Persistent Read
+    // operation. The syscall, rather than a caller-selected service ID,
+    // defines its meaning. It carries no application or backend authority.
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct GuideXosPersistentReadRequestWire
+    {
+        internal uint StructureVersion;
+        internal uint OperationId;
+        internal uint RequestLength;
+        internal uint PathLength;
+        internal uint DataCapacity;
+        internal uint ResponseCapacity;
+        internal uint Reserved;
+        internal ulong ResponseBuffer;
+        internal ulong DataBuffer;
+        internal ulong Offset;
+        internal fixed byte Path[GuideXosStorage.MaxRelativePathLength * 2];
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct GuideXosPersistentReadResponseWire
+    {
+        internal uint StructureVersion;
+        internal uint Size;
+        internal uint ResultCode;
+        internal uint BytesRead;
+        internal uint EndOfValue;
+        internal uint Reserved;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct GuideXosIdentityWire
     {
@@ -184,7 +214,7 @@ namespace GuideXos
         private const uint ResourcesService = 8;
         private const uint ResourceMetadataOperation = 1;
         private const uint ResourceReadOperation = 2;
-
+        private const uint PersistentReadOperation = 1;
         [DllImport("*", EntryPoint = "guidexos_pal_abi_version",
             CallingConvention = CallingConvention.Cdecl)]
         private static extern ulong InvokeAbiVersion();
@@ -197,6 +227,11 @@ namespace GuideXos
         [DllImport("*", EntryPoint = "guidexos_pal_service_request",
             CallingConvention = CallingConvention.Cdecl)]
         private static extern ulong InvokeServiceRequest(
+            ulong request, ulong requestLength);
+
+        [DllImport("*", EntryPoint = "guidexos_pal_persistent_storage_read",
+            CallingConvention = CallingConvention.Cdecl)]
+        private static extern ulong InvokePersistentStorageRead(
             ulong request, ulong requestLength);
 
         [DllImport("*", EntryPoint = "guidexos_pal_monotonic_ticks",
@@ -486,6 +521,311 @@ namespace GuideXos
 
             data = copy;
             return new GuideXosResult(GuideXosStatus.Success);
+        }
+
+        internal static GuideXosResult TryReadPersistentBytes(
+            string path, out byte[] value,
+            out GuideXosStorageResultCode storageResult)
+        {
+            value = Array.Empty<byte>();
+            storageResult = GuideXosStorageResultCode.InvalidRequest;
+            if (!IsValidPersistentPath(path))
+                return new GuideXosResult(GuideXosStatus.InvalidArgument);
+
+            GuideXosResult compatible = RequireCompatible();
+            if (compatible.Failed)
+                return compatible;
+
+#if GUIDEXOS_PHASE35_MALFORMED
+            storageResult = GuideXosStorageResultCode.InvalidRequest;
+            return RunMalformedPersistentReadProof()
+                ? new GuideXosResult(GuideXosStatus.InvalidArgument)
+                : new GuideXosResult(GuideXosStatus.ValidationFailed);
+#else
+
+#if GUIDEXOS_PHASE35_SUCCESS
+            if (!_phase35RawBoundsVerified)
+            {
+                if (!RunPersistentReadBoundsProof())
+                {
+                    storageResult = GuideXosStorageResultCode.BackendFailure;
+                    return new GuideXosResult(GuideXosStatus.ValidationFailed);
+                }
+                _phase35RawBoundsVerified = true;
+            }
+#endif
+
+            // Keep the bounded transfer buffer on this invocation's stack.
+            // This avoids large-object-heap churn and has no shared mutable
+            // state when multiple application threads read at once.
+            byte* scratch = stackalloc byte[GuideXosStorage.MaxValueLength];
+            GuideXosPersistentReadResponseWire response;
+            GuideXosResult transport = InvokePersistentStorageReadRequest(path,
+                scratch, GuideXosStorage.MaxValueLength, out response);
+            if (transport.Failed)
+            {
+                storageResult = MapStorageTransportResult(transport.Status);
+                return transport;
+            }
+            if (!IsValidPersistentReadResponse(response))
+            {
+                storageResult = GuideXosStorageResultCode.BackendFailure;
+                return new GuideXosResult(GuideXosStatus.ValidationFailed);
+            }
+
+            storageResult = (GuideXosStorageResultCode)response.ResultCode;
+            if (storageResult != GuideXosStorageResultCode.Success)
+            {
+                if (response.BytesRead != 0 || response.EndOfValue != 0)
+                {
+                    storageResult = GuideXosStorageResultCode.BackendFailure;
+                    return new GuideXosResult(GuideXosStatus.ValidationFailed);
+                }
+                return new GuideXosResult(GuideXosStatus.Success);
+            }
+
+            if (response.BytesRead > GuideXosStorage.MaxValueLength ||
+                response.EndOfValue > 1)
+            {
+                storageResult = GuideXosStorageResultCode.BackendFailure;
+                return new GuideXosResult(GuideXosStatus.ValidationFailed);
+            }
+
+            // The backend bounds values to 64 KiB, so a successful
+            // full-capacity read must represent the complete value.
+            if (response.EndOfValue == 0)
+            {
+                storageResult = GuideXosStorageResultCode.ResourceUnavailable;
+                return new GuideXosResult(GuideXosStatus.Success);
+            }
+
+            if (response.BytesRead == 0)
+            {
+                value = Array.Empty<byte>();
+                return new GuideXosResult(GuideXosStatus.Success);
+            }
+
+            byte[] exact;
+            try
+            {
+                exact = new byte[(int)response.BytesRead];
+            }
+            catch (OutOfMemoryException)
+            {
+                storageResult = GuideXosStorageResultCode.ResourceUnavailable;
+                return new GuideXosResult(GuideXosStatus.Success);
+            }
+            for (int i = 0; i < exact.Length; i++)
+                exact[i] = scratch[i];
+            value = exact;
+            return new GuideXosResult(GuideXosStatus.Success);
+#endif
+        }
+
+        private static GuideXosResult InvokePersistentStorageReadRequest(
+            string path, byte* dataBuffer, uint dataCapacity,
+            out GuideXosPersistentReadResponseWire response)
+        {
+            GuideXosPersistentReadRequestWire request = default;
+            GuideXosPersistentReadResponseWire local = default;
+            request.StructureVersion = AbiVersion;
+            request.OperationId = PersistentReadOperation;
+            request.RequestLength = (uint)sizeof(
+                GuideXosPersistentReadRequestWire);
+            request.PathLength = (uint)path.Length;
+            request.DataCapacity = dataCapacity;
+            request.ResponseCapacity = (uint)sizeof(
+                GuideXosPersistentReadResponseWire);
+            request.DataBuffer = (ulong)(nuint)dataBuffer;
+            request.Offset = 0;
+
+            byte* pathBytes = request.Path;
+            for (int i = 0; i < path.Length; i++)
+            {
+                char unit = path[i];
+                pathBytes[(i * 2) + 0] = (byte)unit;
+                pathBytes[(i * 2) + 1] = (byte)(unit >> 8);
+            }
+
+            GuideXosPersistentReadRequestWire* requestPointer = &request;
+            GuideXosPersistentReadResponseWire* responsePointer = &local;
+            request.ResponseBuffer = (ulong)(nuint)responsePointer;
+            ulong raw = InvokePersistentStorageRead(
+                (ulong)(nuint)requestPointer,
+                (ulong)sizeof(GuideXosPersistentReadRequestWire));
+            response = local;
+            return MapStatus(raw);
+        }
+
+#if GUIDEXOS_PHASE35_SUCCESS
+        private static bool _phase35RawBoundsVerified;
+
+        // Internal proof only: exercise the kernel's partial-read contract
+        // once per process. The public API continues to use a 64-KiB buffer.
+        private static bool RunPersistentReadBoundsProof()
+        {
+            byte* exact = stackalloc byte[32];
+            byte* shortBuffer = stackalloc byte[31];
+            GuideXosPersistentReadResponseWire exactResponse;
+            GuideXosPersistentReadResponseWire shortResponse;
+            GuideXosResult exactResult;
+            GuideXosResult shortResult;
+            exactResult = InvokePersistentStorageReadRequest(
+                "state.bin", exact, 32, out exactResponse);
+            shortResult = InvokePersistentStorageReadRequest(
+                "state.bin", shortBuffer, 31, out shortResponse);
+            bool valid = !(exactResult.Failed || shortResult.Failed ||
+                !IsValidPersistentReadResponse(exactResponse) ||
+                !IsValidPersistentReadResponse(shortResponse) ||
+                exactResponse.ResultCode != (uint)
+                    GuideXosStorageResultCode.Success ||
+                exactResponse.BytesRead != 32 || exactResponse.EndOfValue != 1 ||
+                shortResponse.ResultCode != (uint)
+                    GuideXosStorageResultCode.Success ||
+                shortResponse.BytesRead != 31 || shortResponse.EndOfValue != 0);
+            for (int i = 0; valid && i < 32; i++)
+                if (exact[i] != (byte)(0x35 + i)) valid = false;
+            for (int i = 0; valid && i < 31; i++)
+                if (shortBuffer[i] != (byte)(0x35 + i)) valid = false;
+            return valid;
+        }
+#endif
+
+#if GUIDEXOS_PHASE35_MALFORMED
+        private static bool RunMalformedPersistentReadProof()
+        {
+            byte* scratch = stackalloc byte[64];
+            bool valid;
+            ulong wrongSize = InvokeMalformedPersistentRead(
+                "state.bin", scratch, (ulong)(nuint)scratch, 32, 0);
+            ulong invalidOperation = InvokeMalformedPersistentRead(
+                "state.bin", scratch, (ulong)(nuint)scratch, 32, 1);
+            ulong inconsistentLength = InvokeMalformedPersistentRead(
+                "state.bin", scratch, (ulong)(nuint)scratch, 32, 2);
+            ulong invalidCapacity = InvokeMalformedPersistentRead(
+                "state.bin", scratch, (ulong)(nuint)scratch, 0, 3);
+            ulong invalidPath = InvokeMalformedPersistentRead(
+                "../state.bin", scratch, (ulong)(nuint)scratch, 32, 4);
+            ulong unmappedDestination = InvokeMalformedPersistentRead(
+                "state.bin", scratch, 0x0000600000000000UL, 32, 5);
+            ulong overflowDestination = InvokeMalformedPersistentRead(
+                "state.bin", scratch, 0xFFFFFFFFFFFFFFF0UL, 32, 6);
+            valid = wrongSize == InvalidRequest &&
+                invalidOperation == InvalidRequest &&
+                inconsistentLength == InvalidRequest &&
+                invalidCapacity == InvalidRequest &&
+                invalidPath == InvalidRequest &&
+                unmappedDestination == InvalidPointer &&
+                overflowDestination == InvalidPointer;
+            return valid;
+        }
+
+        // mutation selects a deliberately malformed field. Each call still
+        // enters only the dedicated Persistent-read syscall.
+        private static ulong InvokeMalformedPersistentRead(string path,
+                byte* data, ulong dataAddress, uint capacity, int mutation)
+        {
+            GuideXosPersistentReadRequestWire request = default;
+            GuideXosPersistentReadResponseWire response = default;
+            request.StructureVersion = AbiVersion;
+            request.OperationId = PersistentReadOperation;
+            request.RequestLength = (uint)sizeof(
+                GuideXosPersistentReadRequestWire);
+            request.PathLength = (uint)path.Length;
+            request.DataCapacity = capacity;
+            request.ResponseCapacity = (uint)sizeof(
+                GuideXosPersistentReadResponseWire);
+            request.DataBuffer = dataAddress;
+            request.Offset = 0;
+            byte* pathBytes = request.Path;
+            for (int i = 0; i < path.Length; i++)
+            {
+                pathBytes[i * 2] = (byte)path[i];
+                pathBytes[(i * 2) + 1] = (byte)(path[i] >> 8);
+            }
+            GuideXosPersistentReadRequestWire* requestPointer = &request;
+            GuideXosPersistentReadResponseWire* responsePointer = &response;
+            request.ResponseBuffer = (ulong)(nuint)responsePointer;
+            ulong requestLength = (ulong)sizeof(
+                GuideXosPersistentReadRequestWire);
+            switch (mutation)
+            {
+                case 0: requestLength--; break;
+                case 1: request.OperationId = 99; break;
+                case 2: request.PathLength--; break;
+                case 3: break;
+                case 4: break;
+                case 5: break;
+                case 6: break;
+            }
+            return InvokePersistentStorageRead(
+                (ulong)(nuint)requestPointer, requestLength);
+        }
+#endif
+
+        private static bool IsValidPersistentReadResponse(
+            GuideXosPersistentReadResponseWire response)
+        {
+            return response.StructureVersion == AbiVersion &&
+                response.Size == (uint)sizeof(
+                    GuideXosPersistentReadResponseWire) &&
+                response.ResultCode <= (uint)
+                    GuideXosStorageResultCode.BackendFailure &&
+                response.Reserved == 0;
+        }
+
+        private static GuideXosStorageResultCode MapStorageTransportResult(
+            GuideXosStatus status)
+        {
+            switch (status)
+            {
+                case GuideXosStatus.InvalidBuffer:
+                    return GuideXosStorageResultCode.InvalidBuffer;
+                case GuideXosStatus.InvalidArgument:
+                    return GuideXosStorageResultCode.InvalidRequest;
+                case GuideXosStatus.InvalidState:
+                    return GuideXosStorageResultCode.InvalidContext;
+                case GuideXosStatus.Unsupported:
+                    return GuideXosStorageResultCode.Unsupported;
+                case GuideXosStatus.ResourceUnavailable:
+                    return GuideXosStorageResultCode.ResourceUnavailable;
+                default:
+                    return GuideXosStorageResultCode.BackendFailure;
+            }
+        }
+
+        private static bool IsValidPersistentPath(string value)
+        {
+            if (string.IsNullOrEmpty(value) ||
+                value.Length > GuideXosStorage.MaxRelativePathLength ||
+                value[0] == '/' || value[0] == '\\' ||
+                value.IndexOf(':') >= 0)
+                return false;
+
+            int segmentStart = 0;
+            for (int i = 0; i <= value.Length; i++)
+            {
+                bool separator = i == value.Length || value[i] == '/' ||
+                    value[i] == '\\';
+                if (!separator)
+                {
+                    char c = value[i];
+                    if (c < 32 || c == 127 || c == '<' || c == '>' ||
+                        c == '"' || c == '|' || c == '?' || c == '*')
+                        return false;
+                    continue;
+                }
+
+                int segmentLength = i - segmentStart;
+                if (segmentLength <= 0 || segmentLength >
+                    GuideXosStorage.MaxPathSegmentLength ||
+                    (segmentLength == 1 && value[segmentStart] == '.') ||
+                    (segmentLength == 2 && value[segmentStart] == '.' &&
+                     value[segmentStart + 1] == '.'))
+                    return false;
+                segmentStart = i + 1;
+            }
+            return true;
         }
 
         private static GuideXosResult InvokeResourceRequest(

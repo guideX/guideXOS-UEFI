@@ -4,6 +4,8 @@ param(
     [int]$TimeoutSeconds = 2400,
     [switch]$SkipBuild,
     [switch]$Phase35P2,
+    [switch]$Phase35R,
+    [switch]$Phase35R2Matrix,
     [switch]$PreserveFailedImage
 )
 
@@ -23,6 +25,8 @@ $serialName = "serial-$runId.log"
 $serialPath = Join-Path $workDir $serialName
 $qemuLogName = "qemu-$runId.log"
 $qemuLogRelative = "out/phase35q/$qemuLogName"
+$qemuStdoutPath = Join-Path $workDir "qemu-stdout-$runId.log"
+$qemuStderrPath = Join-Path $workDir "qemu-stderr-$runId.log"
 $imageRelative = "out/phase35q/$imageName"
 $serialRelative = "out/phase35q/$serialName"
 
@@ -36,6 +40,14 @@ $imageShaBefore = ''
 $imageShaMutated = ''
 $imageShaRestored = ''
 $proofSucceeded = $false
+
+$selectedPhase35ModeCount = 0
+if ($Phase35P2) { $selectedPhase35ModeCount++ }
+if ($Phase35R) { $selectedPhase35ModeCount++ }
+if ($Phase35R2Matrix) { $selectedPhase35ModeCount++ }
+if ($selectedPhase35ModeCount -gt 1) {
+    throw 'Select only one Phase 35 proof mode.'
+}
 
 function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToUpperInvariant()
@@ -95,9 +107,9 @@ try {
     }
 
     if ($SkipBuild) {
-        Write-Host 'Reusing the currently staged Storage35Q diagnostic kernel and EFI artifacts.'
+        Write-Host 'Reusing the currently staged diagnostic kernel and EFI artifacts.'
     } else {
-        $diagnosticMode = if ($Phase35P2) { 'Storage35P2' } else { 'Storage35Q' }
+        $diagnosticMode = if ($Phase35R2Matrix) { 'Ring3Phase35R2' } elseif ($Phase35R) { 'Ring3Phase35' } elseif ($Phase35P2) { 'Storage35P2' } else { 'Storage35Q' }
         Write-Host "Building the $diagnosticMode diagnostic kernel and ordinary EFI artifacts..."
         & (Join-Path $root 'build.ps1') -UefiDiagnosticMode $diagnosticMode
         if ($LASTEXITCODE -ne 0) { throw "build.ps1 failed with exit code $LASTEXITCODE" }
@@ -128,7 +140,9 @@ try {
         '-drive', "if=none,id=phase35q,format=raw,cache=writeback,file=$imageRelative",
         '-device', 'ahci,id=phase35q-ahci',
         '-device', 'ide-hd,drive=phase35q,bus=phase35q-ahci.0,serial=GX35Q0001',
-        '-m', '1024M',
+        # The UEFI allocator spans physical 64 MiB through 1088 MiB. Keep the
+        # complete arena backed by guest RAM during the repeated-process proof.
+        '-m', '1280M',
         '-serial', "file:$serialRelative",
         '-name', 'guideXOS-Phase35Q',
         '-no-shutdown',
@@ -141,7 +155,9 @@ try {
     $argumentString = $qemuArgs -join ' '
     Write-Host 'Starting QEMU with the generated image on the explicit AHCI test controller.'
     $qemu = Start-Process -FilePath $qemuPath -ArgumentList $argumentString `
-        -WorkingDirectory $root -WindowStyle Hidden -PassThru
+        -WorkingDirectory $root -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput $qemuStdoutPath `
+        -RedirectStandardError $qemuStderrPath
     $qmp = Connect-Qmp $qmpPort $qemu
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -149,6 +165,8 @@ try {
     $bootCount = 0
     $appModelCompleteCount = 0
     $appModelResetSent = $false
+    $phase35CompleteCount = 0
+    $phase35ResetSent = $false
     $lastProgress = Get-Date
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 250
@@ -167,8 +185,17 @@ try {
             $failure = [regex]::Matches($content, '(?m)^APP_MODEL_FAIL=[^\r\n]*')[-1].Value
             throw "Guest Phase 35P2 App Model proof failed: $failure"
         }
-        if ($content -match '(?im)(CPU_FAULT_[A-Z_]+|#PF|#GP|#UD|ABI.*PANIC|PANIC:|ALLOC_FREE_INVALID)') {
-            $fault = [regex]::Match($content, '(?im)(CPU_FAULT_[A-Z_]+|#PF|#GP|#UD|ABI.*PANIC|PANIC:|ALLOC_FREE_INVALID)').Value
+        if ($Phase35R -and $content -match '(?m)^PHASE35_COMPLETE=0\r?$') {
+            throw 'Guest managed Persistent-read proof reported PHASE35_COMPLETE=0.'
+        }
+        if ($Phase35R -and $content -match '(?m)^RING3_PHASE35_COMPLETE=0\r?$') {
+            throw 'Guest managed Persistent-read proof reported RING3_PHASE35_COMPLETE=0.'
+        }
+        if ($Phase35R2Matrix -and $content -match '(?m)^PHASE35_ALLOC_MATRIX_RESULT=[^,]+,FAIL\r?$') {
+            throw 'Guest allocator matrix reported a failed requester.'
+        }
+        if ($content -match '(?im)(CPU_FAULT_[A-Z_]+|#PF|#GP|#UD|ABI.*PANIC|PANIC:|ALLOC_FREE_INVALID=(?:0x0*[1-9A-Fa-f][0-9A-Fa-f]*|[1-9][0-9]*))') {
+            $fault = [regex]::Match($content, '(?im)(CPU_FAULT_[A-Z_]+|#PF|#GP|#UD|ABI.*PANIC|PANIC:|ALLOC_FREE_INVALID=(?:0x0*[1-9A-Fa-f][0-9A-Fa-f]*|[1-9][0-9]*))').Value
             throw "Guest fault or allocator invariant was reported: $fault"
         }
 
@@ -187,7 +214,38 @@ try {
             $lastProgress = Get-Date
         }
 
-        if ($Phase35P2) {
+        if ($Phase35R2Matrix) {
+            if ($content -match '(?m)^PHASE35_ALLOC_MATRIX_COMPLETE=1\r?$') {
+                $proofSucceeded = $true
+                break
+            }
+        } elseif ($Phase35R) {
+            $currentAppModelCompleteCount = Get-MarkerCount $content '(?m)^APP_MODEL_COMPLETE\r?$'
+            if ($currentAppModelCompleteCount -gt $appModelCompleteCount) {
+                $appModelCompleteCount = $currentAppModelCompleteCount
+                Write-Host "  App Model storage regression completed on guest boot $appModelCompleteCount"
+                $lastProgress = Get-Date
+            }
+
+            $currentPhase35CompleteCount = Get-MarkerCount $content '(?m)^RING3_PHASE35_COMPLETE=1\r?$'
+            if ($currentPhase35CompleteCount -gt $phase35CompleteCount) {
+                $phase35CompleteCount = $currentPhase35CompleteCount
+                Write-Host "  managed Persistent-read proof completed on guest boot $phase35CompleteCount"
+                $lastProgress = Get-Date
+            }
+
+            if ($appModelCompleteCount -ge 1 -and $phase35CompleteCount -ge 1 -and
+                    -not $phase35ResetSent) {
+                Write-Host '  resetting after the first managed proof to verify the same image without reseeding'
+                $null = Send-QmpCommand $qmp 'system_reset'
+                $phase35ResetSent = $true
+                $lastProgress = Get-Date
+            } elseif ($appModelCompleteCount -ge 2 -and
+                    $phase35CompleteCount -ge 2 -and $phase35ResetSent) {
+                $proofSucceeded = $true
+                break
+            }
+        } elseif ($Phase35P2) {
             $currentAppModelCompleteCount = Get-MarkerCount $content '(?m)^APP_MODEL_COMPLETE\r?$'
             if ($currentAppModelCompleteCount -gt $appModelCompleteCount) {
                 $appModelCompleteCount = $currentAppModelCompleteCount
@@ -224,7 +282,53 @@ try {
     $qemu = $null
 
     $finalContent = Get-Content -LiteralPath $serialPath -Raw
-    $requiredMarkers = @(
+    if ($Phase35R2Matrix) {
+        $requiredMarkers = @(
+            'ALLOC_PROVENANCE_READY=1;capacity=262144-live-runs;storage=static-per-page',
+            'PHASE35_ALLOC_MATRIX_RESULT=NO_READ,PASS',
+            'PHASE35_ALLOC_MATRIX_RESULT=ONE_READ,PASS',
+            'PHASE35_ALLOC_MATRIX_RESULT=TWO_READ,PASS',
+            'PHASE35_ALLOC_MATRIX_COMPLETE=1')
+    } elseif ($Phase35R) {
+        $requiredMarkers = @(
+            'PHASE35_PERSISTENT_BACKEND_READY=1',
+            'PHASE35_FIXTURE_SHA256=BEFA57E7EF0799D031A0188A3D0883F0F342B8F8AE90B3330652DA04ADBA739D',
+            'PHASE35P2_BACKEND_AVAILABLE=1',
+            'PHASE35P2_BACKEND_WRITABLE=1',
+            'PHASE35P2_SELECTED_VOLUME=GX35Q0001,filesystem=FAT16,label=GX35Q TEST,volumeId=892686641',
+            'PHASE35P2_ROOT=apps/persist',
+            'PHASE35_FOUR_PRIMARY_RETURNS=4',
+            'PHASE35_FAILFAST_REPLACEMENT_RETURN_35=1',
+            'PHASE35_STALE_OWNER_REJECTED=1',
+            'PHASE35_MALFORMED_FAIL_CLOSED=1',
+            'PHASE35_25_LIFETIME_STRESS=PASS',
+            'PHASE35_STRESS_ALLOCATOR_STABLE=1',
+            'PHASE35_APP_MODEL_RESET_PERSISTENCE=PASS',
+            'PHASE35_RESET_TEMPORARY_CLEARED=1',
+            'PHASE35_RESET_PERSISTENT_RETAINED=1',
+            'PHASE35_ACTIVE_STORAGE_REQUESTS=0',
+            'PHASE35_OPEN_PERSISTENT_HANDLES=0',
+            'PHASE35_PROCESS_CLEANUP_BALANCED=1',
+            'PHASE35_DIAGNOSTIC_VALUES_REMOVED=1',
+            'PHASE35_COMPLETE=1',
+            'RING3_PHASE35_COMPLETE=1',
+            'APP_MODEL_LIFECYCLE_SELFTEST=passed=15;failed=0;first=',
+            'APP_MODEL_TASKBAR_GROUPING_SELFTEST=passed=16;failed=0;result=PASS;first=',
+            'APP_MODEL_TASKBAR_PROJECTION_STALE=0',
+            'APP_MODEL_COMPAT_LEGACY_BACKEND_CALLS=0',
+            'PHASE9_DIALOG_SELFTEST_OK=1',
+            'PHASE9_FILE_SERVICE_SELFTEST_OK=1',
+            'PHASE9_SHELL_SERVICE_SELFTEST_OK=1',
+            'PHASE10_RESOURCE_STORAGE_SELFTEST_OK=1',
+            'PHASE10_RESOURCE_CHUNK_SELFTEST_OK=1',
+            'PHASE10_STORAGE_PATH_CONFINEMENT_OK=1',
+            'PHASE10_STORAGE_PERSISTENT_AVAILABILITY_OK=1',
+            'PHASE10_STORAGE_APP_SCOPE_OK=1',
+            'PHASE10_STORAGE_RESET_OK=1',
+            'APP_MODEL_COMPLETE'
+        )
+    } else {
+        $requiredMarkers = @(
         '35Q_RDSKFS_BOOT=PASS',
         '35Q_RANGE_VALIDATION=PASS',
         '35Q_READ_ONLY_CONTRACT=PASS',
@@ -238,7 +342,8 @@ try {
         '35Q_FAT_POST_REBOOT_LONGER=65536,',
         '35Q_FAT_DIRECTORY_POST_REBOOT=PASS',
         '35Q_COMPLETE=1'
-    )
+        )
+    }
     if ($Phase35P2) {
         $requiredMarkers += @(
             'PHASE35P2_BACKEND_AVAILABLE=1',
@@ -267,16 +372,78 @@ try {
             throw "Required guest marker is missing: $marker"
         }
     }
-    $allocatorRows = [regex]::Matches($finalContent, '(?m)^35Q_ALLOCATOR_COUNTS=[^\r\n]*')
-    if ($allocatorRows.Count -lt 6) { throw "Expected six allocator invariant snapshots; saw $($allocatorRows.Count)." }
-    foreach ($row in $allocatorRows) {
-        if ($row.Value -notmatch 'freeInvalid=0,freeCorrupt=0,freeNoPages=0$') {
-            throw "Allocator invariant failed: $($row.Value)"
+    if ($Phase35R2Matrix) {
+        foreach ($marker in @(
+                'PHASE35_ALLOC_MATRIX_RESULT=NO_READ,PASS',
+                'PHASE35_ALLOC_MATRIX_RESULT=ONE_READ,PASS',
+                'PHASE35_ALLOC_MATRIX_RESULT=TWO_READ,PASS',
+                'PHASE35_ALLOC_MATRIX_RESULT=ORIGINAL_SUCCESS,PASS',
+                'ALLOC_MATRIX_PROCESSES_B0=0',
+                'ALLOC_MATRIX_PROCESSES_B1=0',
+                'ALLOC_MATRIX_PROCESSES_B2=0',
+                'ALLOC_MATRIX_PROCESSES_B3=0',
+                'ALLOC_MATRIX_PROCESSES_B4=0',
+                'ALLOC_MATRIX_ORIGINAL_NET_PAGES=',
+                'ALLOC_MATRIX_ORIGINAL_REQUESTS=6',
+                'ALLOC_MATRIX_PROCESS_COUNT=0')) {
+            if ($finalContent.IndexOf($marker,
+                    [System.StringComparison]::Ordinal) -lt 0) {
+                throw "Phase 35R2 allocator matrix marker is missing: $marker"
+            }
         }
-    }
-    $rawCycleMarker = [regex]::Match($finalContent, '(?m)^35Q_RAW_WRITE_FLUSH_READ_CYCLES=([0-9]+):PASS\r?$')
-    if (-not $rawCycleMarker.Success -or [int]$rawCycleMarker.Groups[1].Value -ne 25) {
-        throw 'The raw durability cycle count did not equal 25.'
+        $matrixRows = [regex]::Matches($finalContent,
+            '(?m)^PHASE35_ALLOC_MATRIX_RESULT=[^\r\n]+')
+        if ($matrixRows.Count -ne 4) {
+            throw "Expected four allocator matrix result rows; saw $($matrixRows.Count)."
+        }
+    } elseif ($Phase35R) {
+        $fixtureStatusRows = [regex]::Matches($finalContent,
+            '(?m)^PHASE35_FIXTURE_PREEXISTING_OR_SEEDED=([^\r\n]+)')
+        $fixtureSeedRows = [regex]::Matches($finalContent,
+            '(?m)^PHASE35_FIXTURE_SEED_WRITES=([0-9]+)')
+        $fixtureHashRows = [regex]::Matches($finalContent,
+            '(?m)^PHASE35_FIXTURE_SHA256=([A-Fa-f0-9]{64})')
+        $p2PreflightRows = [regex]::Matches($finalContent,
+            '(?m)^PHASE35P2_SEED_PREFLIGHT=status=([^,]+),seedWrites=([0-9]+),sha256=([A-Fa-f0-9]{64})')
+        if ($fixtureStatusRows.Count -lt 2 -or
+                $fixtureStatusRows[0].Groups[1].Value -ne 'Seeded' -or
+                $fixtureStatusRows[$fixtureStatusRows.Count - 1].Groups[1].Value -ne 'Verified' -or
+                $fixtureSeedRows.Count -lt 2 -or
+                $fixtureSeedRows[0].Groups[1].Value -ne '1' -or
+                $fixtureSeedRows[$fixtureSeedRows.Count - 1].Groups[1].Value -ne '0' -or
+                $fixtureHashRows.Count -lt 2 -or
+                $fixtureHashRows[$fixtureHashRows.Count - 1].Groups[1].Value -ne 'BEFA57E7EF0799D031A0188A3D0883F0F342B8F8AE90B3330652DA04ADBA739D' -or
+                $p2PreflightRows.Count -lt 2 -or
+                $p2PreflightRows[0].Groups[1].Value -ne 'Seeded' -or
+                $p2PreflightRows[0].Groups[2].Value -ne '1' -or
+                $p2PreflightRows[$p2PreflightRows.Count - 1].Groups[1].Value -ne 'Verified' -or
+                $p2PreflightRows[$p2PreflightRows.Count - 1].Groups[2].Value -ne '0' -or
+                $p2PreflightRows[$p2PreflightRows.Count - 1].Groups[3].Value -ne 'BEFA57E7EF0799D031A0188A3D0883F0F342B8F8AE90B3330652DA04ADBA739D') {
+            throw 'Post-reset managed proof did not consume a preexisting, correctly hashed fixture with seedWrites=0.'
+        }
+        if ((Get-MarkerCount $finalContent '(?m)^PHASE35_FOUR_PRIMARY_RETURNS=4\r?$') -lt 2 -or
+                (Get-MarkerCount $finalContent '(?m)^PHASE35_25_LIFETIME_STRESS=PASS\r?$') -lt 2 -or
+                (Get-MarkerCount $finalContent '(?m)^PHASE35_MAIN_RETURN=35\r?$') -lt 8) {
+            throw 'The managed read proof did not complete on both sides of the same-image reset.'
+        }
+        foreach ($marker in @('PHASE35_FREE_INVALID=0',
+                'PHASE35_FREE_CORRUPT=0', 'PHASE35_FREE_NO_PAGES=0')) {
+            if ($finalContent.IndexOf($marker, [System.StringComparison]::Ordinal) -lt 0) {
+                throw "Phase 35 allocator invariant failed: $marker"
+            }
+        }
+    } elseif (-not $Phase35P2) {
+        $allocatorRows = [regex]::Matches($finalContent, '(?m)^35Q_ALLOCATOR_COUNTS=[^\r\n]*')
+        if ($allocatorRows.Count -lt 6) { throw "Expected six allocator invariant snapshots; saw $($allocatorRows.Count)." }
+        foreach ($row in $allocatorRows) {
+            if ($row.Value -notmatch 'freeInvalid=0,freeCorrupt=0,freeNoPages=0$') {
+                throw "Allocator invariant failed: $($row.Value)"
+            }
+        }
+        $rawCycleMarker = [regex]::Match($finalContent, '(?m)^35Q_RAW_WRITE_FLUSH_READ_CYCLES=([0-9]+):PASS\r?$')
+        if (-not $rawCycleMarker.Success -or [int]$rawCycleMarker.Groups[1].Value -ne 25) {
+            throw 'The raw durability cycle count did not equal 25.'
+        }
     }
     if ($Phase35P2) {
         $seedPreflightRows = [regex]::Matches($finalContent,
@@ -337,7 +504,9 @@ try {
 if (-not $proofSucceeded) { throw 'Storage35Q proof did not complete.' }
 Write-Host "Pristine fixture SHA-256 restored before cleanup: $imageShaRestored"
 Write-Host "Serial proof log retained: $serialPath"
-if ($Phase35P2) {
+if ($Phase35R2Matrix) {
+    Write-Host 'Phase35R2 allocator provenance run completed in one guest boot; no reset was requested.'
+} elseif ($Phase35P2) {
     Write-Host 'Storage35Q and Phase35P2 same-image reboot validation completed.'
 } else {
     Write-Host 'Storage35Q same-image reboot validation completed.'

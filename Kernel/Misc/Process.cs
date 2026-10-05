@@ -54,7 +54,7 @@ namespace guideXOS.Misc {
     public unsafe class AddressSpace {
         public ulong* Pml4;
         public ulong RootPhysical => (ulong)Pml4 & PageTable.PageMask;
-        private readonly ulong[] _ownedPageTables = new ulong[32];
+        private readonly ulong[] _ownedPageTables = new ulong[512];
         private int _ownedPageTableCount;
         private bool _released;
 
@@ -106,6 +106,7 @@ namespace guideXOS.Misc {
                 _ownedPageTables[i] = 0;
             }
             _ownedPageTableCount = 0;
+            if (_ownedPageTables != null) _ownedPageTables.Dispose();
             if (Pml4 != null) {
                 Allocator.Free((IntPtr)Pml4, "Process");
                 Pml4 = null;
@@ -369,6 +370,19 @@ namespace guideXOS.Misc {
                 out process, out failure);
         }
 
+        internal static bool TryCreateManagedPersistentReadEntry(
+                ulong owningApplicationInstance, int payloadKind,
+                out Ring3Process process, out string failure) {
+            if (payloadKind < 1 || payloadKind > 8) {
+                process = null;
+                failure = "PHASE35_INVALID_PAYLOAD_KIND";
+                return false;
+            }
+            return TryCreateManagedBootstrap(owningApplicationInstance, false,
+                true, false, false, 0, 0, 0, 0, payloadKind + 13,
+                out process, out failure);
+        }
+
         private static bool TryCreateManagedBootstrap(
             ulong owningApplicationInstance, bool deliberateFault, bool phase26,
             out Ring3Process process, out string failure) {
@@ -513,7 +527,15 @@ namespace guideXOS.Misc {
                 if (!candidate.Space.MapUser(UserStackStart + offset,
                                              candidate._userStackPhysical + offset,
                                              writable: true, executable: false)) {
-                    failure = "USER_STACK_MAP_FAILED";
+                    failure = "USER_STACK_MAP_FAILED;offset=0x" +
+                        offset.ToString("X") + ";ownedPageTables=" +
+                        candidate.Space.OwnedPageTableCount.ToString() +
+                        ";memoryInUse=" + Allocator.MemoryInUse.ToString() +
+                        ";pageTablesCreated=" +
+                        Ring3ProcessDiagnostics.PageTablesCreated.ToString() +
+                        ";pageTablesReclaimed=" +
+                        Ring3ProcessDiagnostics.PageTablesReclaimed.ToString() +
+                        ";freeNoPages=" + Allocator.FreeFailNoPages.ToString();
                     candidate.Cleanup();
                     return false;
                 }
@@ -534,6 +556,14 @@ namespace guideXOS.Misc {
                 (ulong)sizeof(IDT.RegistersStack));
             candidate.UserThread.Stack->rs.rdi =
                 ManagedImageContract.StartupBlockAddress;
+            if (candidate.ManagedImage.IsPhase35 && generation >= 18) {
+                HexMarker("PHASE35_DIAG_INITIAL_RIP=0x",
+                    candidate.UserThread.Stack->irs.rip);
+                HexMarker("PHASE35_DIAG_MANAGED_ENTRY=0x",
+                    candidate.ManagedImage.ManagedEntryAddress);
+                HexMarker("PHASE35_DIAG_BOOTSTRAP_ENTRY=0x",
+                    candidate.NativeBootstrap.EntryAddress);
+            }
             if (deliberateFault && !candidate.ManagedImage.SetBootstrapFaultMode()) {
                 failure = "FAULT_MODE_SETUP_FAILED";
                 candidate.Cleanup();
@@ -744,7 +774,9 @@ namespace guideXOS.Misc {
             get {
                 int expectedReturn = 42;
                 if (ManagedImage != null) {
-                    if (ManagedImage.IsPhase34FailFast) expectedReturn = -1;
+                    if (ManagedImage.IsPhase35FailFast) expectedReturn = -1;
+                    else if (ManagedImage.IsPhase35) expectedReturn = 35;
+                    else if (ManagedImage.IsPhase34FailFast) expectedReturn = -1;
                     else if (ManagedImage.IsPhase34) expectedReturn = 34;
                     else if (ManagedImage.IsPhase33FailFast) expectedReturn = -1;
                     else if (ManagedImage.IsPhase33) expectedReturn = 33;
@@ -780,6 +812,10 @@ namespace guideXOS.Misc {
             if (State == Ring3ProcessState.Exited ||
                 State == Ring3ProcessState.Failed) return;
             TimerPreemptions++;
+            if (ManagedImage != null && ManagedImage.IsPhase35 &&
+                    Handle.Generation >= 18 && TimerPreemptions <= 2 &&
+                    stack != null)
+                HexMarker("PHASE35_DIAG_PREEMPT_RIP=0x", stack->irs.rip);
             if (ManagedImage != null && ManagedImage.IsPhase26 &&
                 TimerPreemptions <= 12 && stack != null)
                 HexMarker("PHASE26_PREEMPT_RSP=0x", stack->irs.rsp);
@@ -797,6 +833,11 @@ namespace guideXOS.Misc {
 
         internal void RecordSchedulerDispatch() {
             SchedulerDispatches++;
+            if (ManagedImage != null && ManagedImage.IsPhase35 &&
+                    Handle.Generation >= 18 && SchedulerDispatches <= 2 &&
+                    UserThread != null && UserThread.Stack != null)
+                HexMarker("PHASE35_DIAG_DISPATCH_RIP=0x",
+                    UserThread.Stack->irs.rip);
             ulong activeCr3 = Native.ReadCR3() & PageTable.PageMask;
             SchedulerCr3Valid = Space != null && activeCr3 == Space.RootPhysical;
             SchedulerRsp0Valid = UserThread != null &&
@@ -817,7 +858,7 @@ namespace guideXOS.Misc {
                 Marker(SchedulerRsp0Valid ?
                     "RING3_TSS_RSP0_UPDATED=1" :
                     "RING3_TSS_RSP0_UPDATED=0");
-            } else {
+            } else if (SchedulerDispatches == 2) {
                 Marker("RING3_USER_THREAD_RESUMED=1");
                 if (SchedulerCr3Valid) Marker("RING3_RESUME_CR3_VALID=1");
                 if (SchedulerRsp0Valid) Marker("RING3_RESUME_RSP0_VALID=1");
@@ -844,6 +885,13 @@ namespace guideXOS.Misc {
                 Cr2 = cr2,
                 State = Ring3ProcessState.Failed
             };
+            if (process.ManagedImage != null &&
+                    process.ManagedImage.IsPhase35) {
+                HexMarker("PHASE35_DIAG_FAULT_GENERATION=0x",
+                    process.Handle.Generation);
+                HexMarker("PHASE35_DIAG_FAULT_SAVED_RIP=0x",
+                    process.UserThread.Stack->irs.rip);
+            }
             process.UserThread.Terminated = true;
             Marker("RING3_FAULT_ENTERED_CPL=3");
             HexMarker("RING3_FAULT_VECTOR=0x", (ulong)vector);
@@ -945,19 +993,23 @@ namespace guideXOS.Misc {
                 userThread.KernelStackSize = 0;
                 userThread.KernelStackTop = 0;
                 UserThread = null;
+                userThread.Dispose();
                 Marker(!remains ? "RING3_STALE_USER_THREADS=0" :
                     "RING3_STALE_USER_THREADS=1");
             }
             if (NativeBootstrap != null) {
                 NativeBootstrap.Cleanup();
+                NativeBootstrap.Dispose();
                 NativeBootstrap = null;
             }
             if (ManagedImage != null) {
                 ManagedImage.Cleanup();
+                ManagedImage.Dispose();
                 ManagedImage = null;
             }
             if (Space != null) {
                 Space.Release();
+                Space.Dispose();
                 Space = null;
             }
             if (_userCodePhysical != 0) {

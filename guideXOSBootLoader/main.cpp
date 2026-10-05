@@ -476,6 +476,27 @@ static void DiscoverAcpiForLoader(
             (AcpiSdtHeaderForLoader*)(UINTN)tableAddress;
         AcpiRecordTableForLoader(discovery, tableAddress, tableLength);
 
+        // DSDT is referenced by the FADT and is not an XSDT/RSDT entry.
+        // Map it separately so the kernel can parse AML after switching away
+        // from the UEFI page tables, including when firmware places ACPI data
+        // above the first GiB of guest RAM.
+        if (AcpiSignatureIs(table, "FACP")) {
+            EFI_PHYSICAL_ADDRESS dsdtAddress = 0;
+            if (tableLength >= 44) {
+                dsdtAddress = *(UINT32*)((UINT8*)table + 40);
+            }
+            if (dsdtAddress == 0 && tableLength >= 148) {
+                dsdtAddress = *(UINT64*)((UINT8*)table + 140);
+            }
+
+            UINT32 dsdtLength = 0;
+            if (AcpiHeaderIsSaneForLoader(dsdtAddress, &dsdtLength) &&
+                AcpiSignatureIs(
+                    (AcpiSdtHeaderForLoader*)(UINTN)dsdtAddress, "DSDT")) {
+                AcpiRecordTableForLoader(discovery, dsdtAddress, dsdtLength);
+            }
+        }
+
         if (!AcpiSignatureIs(table, "MCFG")) continue;
 
         const UINTN fixedMcfgSize = sizeof(AcpiMcfgHeaderForLoader);

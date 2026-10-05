@@ -74,6 +74,16 @@ namespace guideXOS.Misc {
         internal const uint FlagPhase34Malformed =
             FlagPhase31InvalidTarget | FlagPhase31Oversize |
             FlagPhase32OpenDocument | FlagPhase32FailFast;
+        // Phase 35R identities occupy the remaining deterministic high-bit
+        // combinations and continue using the phase32Kind dispatch slot.
+        internal const uint FlagPhase35Success = 0xFE000000U;
+        internal const uint FlagPhase35FailFast = 0xDE000000U;
+        internal const uint FlagPhase35StaleOwner = 0xEE000000U;
+        internal const uint FlagPhase35CrossScope = 0xF6000000U;
+        internal const uint FlagPhase35Malformed = 0xFA000000U;
+        internal const uint FlagPhase35NoRead = 0xFC000000U;
+        internal const uint FlagPhase35OneRead = 0xF4000000U;
+        internal const uint FlagPhase35TwoRead = 0xEC000000U;
         internal const byte Read = 1;
         internal const byte Write = 2;
         internal const byte Execute = 4;
@@ -311,13 +321,13 @@ namespace guideXOS.Misc {
         }
 
         private static void HexMarker(string prefix, ulong value) {
-            const string digits = "0123456789ABCDEF";
-            char[] text = new char[16];
-            for (int i = 15; i >= 0; i--) {
-                text[i] = digits[(int)(value & 0xFUL)];
-                value >>= 4;
+            Marker(prefix);
+            for (int shift = 60; shift >= 0; shift -= 4) {
+                int nibble = (int)((value >> shift) & 0xFUL);
+                Native.Out8(0x3F8, (byte)(nibble < 10 ? '0' + nibble :
+                    'A' + nibble - 10));
             }
-            Marker(prefix + new string(text));
+            Native.Out8(0x3F8, (byte)'\n');
         }
 
         private static ushort U16(byte[] data, int offset) {
@@ -737,6 +747,7 @@ namespace guideXOS.Misc {
         // Keep the reservation table bounded, but large enough that those
         // independent PAL allocations cannot be confused with heap exhaustion.
         private VmReservation[] _vmReservations = new VmReservation[256];
+        private const int MaxVmPages = 65536;
         private VmPage[] _vmPages = new VmPage[16384];
 
         private struct VmReservation {
@@ -756,6 +767,27 @@ namespace guideXOS.Misc {
         private static ulong AlignUp(ulong value) {
             return (value + ManagedImageContract.PageSize - 1) &
                    ~(ManagedImageContract.PageSize - 1);
+        }
+
+        private bool EnsureVmPageCapacity(int minimumCapacity) {
+            if (minimumCapacity <= 0 || minimumCapacity > MaxVmPages)
+                return false;
+            if (_vmPages.Length >= minimumCapacity) return true;
+
+            int capacity = _vmPages.Length;
+            while (capacity < minimumCapacity) {
+                if (capacity > MaxVmPages / 2) {
+                    capacity = MaxVmPages;
+                    break;
+                }
+                capacity *= 2;
+            }
+            VmPage[] expanded = new VmPage[capacity];
+            for (int i = 0; i < _vmPages.Length; i++)
+                expanded[i] = _vmPages[i];
+            _vmPages.Dispose();
+            _vmPages = expanded;
+            return true;
         }
 
         private static void Marker(string text) {
@@ -981,9 +1013,14 @@ namespace guideXOS.Misc {
             process = null;
             failure = null;
             ManagedImageDescriptor descriptor;
-            if (!ManagedImageDescriptorReader.TryRead(descriptorBytes, out descriptor, out failure) ||
-                !ManagedImageDescriptorReader.TryValidate(descriptor, image, out failure))
+            if (!ManagedImageDescriptorReader.TryRead(descriptorBytes,
+                    out descriptor, out failure))
                 return false;
+            if (!ManagedImageDescriptorReader.TryValidate(descriptor, image,
+                    out failure)) {
+                DisposeDescriptor(descriptor);
+                return false;
+            }
             process = new ManagedImageProcess {
                 Descriptor = descriptor,
                 Sections = descriptor.Sections,
@@ -1010,6 +1047,7 @@ namespace guideXOS.Misc {
                 !process.WriteTlsIndex() ||
                 !process.WriteRuntimeState()) {
                 process.Cleanup();
+                process.Dispose();
                 process = null;
                 if (failure == null) failure = "MAPPING_FAILED";
                 return false;
@@ -1039,6 +1077,21 @@ namespace guideXOS.Misc {
             Marker("PHASE24_CRT_EXECUTED=0");
             Marker("PHASE24_MANAGED_ENTRY_READY=0");
             return true;
+        }
+
+        private static void DisposeDescriptor(ManagedImageDescriptor descriptor) {
+            if (descriptor == null) return;
+            if (descriptor.Sections != null) {
+                for (int i = 0; i < descriptor.Sections.Length; i++) {
+                    ManagedImageSection section = descriptor.Sections[i];
+                    if (section == null) continue;
+                    if (section.Name != null) section.Name.Dispose();
+                    section.Dispose();
+                }
+                descriptor.Sections.Dispose();
+            }
+            if (descriptor.Sha256 != null) descriptor.Sha256.Dispose();
+            descriptor.Dispose();
         }
 
         internal static bool TryCreateFromRamdisk(ulong ownerApplication,
@@ -1199,22 +1252,41 @@ namespace guideXOS.Misc {
             if (phase32Kind == 11) prefix = "Native/guideXOS.Phase34ResourceStaleOwnerProof";
             if (phase32Kind == 12) prefix = "Native/guideXOS.Phase34ResourceCrossScopeProof";
             if (phase32Kind == 13) prefix = "Native/guideXOS.Phase34ResourceMalformedProof";
-            byte[] image = File.ReadAllBytes(prefix + ".exe");
-            byte[] descriptor = File.ReadAllBytes(prefix + ".gxmi");
-            if (image == null || descriptor == null) {
-                failure = phase32Kind != 0 ? "PHASE32_IMAGE_NOT_STAGED" :
-                    (phase31Kind != 0 ? "PHASE31_IMAGE_NOT_STAGED" :
-                    (phase30Kind != 0 ? "PHASE30_IMAGE_NOT_STAGED" :
-                    (phase29Kind != 0 ? "PHASE29_IMAGE_NOT_STAGED" :
-                    (phase28Kind != 0 ? "PHASE28_IMAGE_NOT_STAGED" :
-                    (phase27 ? "PHASE27_IMAGE_NOT_STAGED" :
-                    (phase26 ? "PHASE26_IMAGE_NOT_STAGED" :
-                        "PHASE24_IMAGE_NOT_STAGED"))))));
-                return false;
+            if (phase32Kind == 14) prefix = "Native/guideXOS.Phase35ManagedPersistentReadProof";
+            if (phase32Kind == 15) prefix = "Native/guideXOS.Phase35PersistentReadFailFastProof";
+            if (phase32Kind == 16) prefix = "Native/guideXOS.Phase35PersistentReadStaleOwnerProof";
+            if (phase32Kind == 17) prefix = "Native/guideXOS.Phase35PersistentReadCrossScopeProof";
+            if (phase32Kind == 18) prefix = "Native/guideXOS.Phase35PersistentReadMalformedProof";
+            if (phase32Kind == 19) prefix = "Native/guideXOS.Phase35NoReadProof";
+            if (phase32Kind == 20) prefix = "Native/guideXOS.Phase35OneReadProof";
+            if (phase32Kind == 21) prefix = "Native/guideXOS.Phase35TwoReadProof";
+            string imagePath = prefix + ".exe";
+            string descriptorPath = prefix + ".gxmi";
+            byte[] image = null;
+            byte[] descriptor = null;
+            try {
+                image = File.ReadAllBytes(imagePath);
+                descriptor = File.ReadAllBytes(descriptorPath);
+                if (image == null || descriptor == null) {
+                    failure = phase32Kind != 0 ? "PHASE32_IMAGE_NOT_STAGED" :
+                        (phase31Kind != 0 ? "PHASE31_IMAGE_NOT_STAGED" :
+                        (phase30Kind != 0 ? "PHASE30_IMAGE_NOT_STAGED" :
+                        (phase29Kind != 0 ? "PHASE29_IMAGE_NOT_STAGED" :
+                        (phase28Kind != 0 ? "PHASE28_IMAGE_NOT_STAGED" :
+                        (phase27 ? "PHASE27_IMAGE_NOT_STAGED" :
+                        (phase26 ? "PHASE26_IMAGE_NOT_STAGED" :
+                            "PHASE24_IMAGE_NOT_STAGED"))))));
+                    return false;
+                }
+                return TryCreate(image, descriptor, ownerApplication,
+                    generation, sharedSpace, nativeBootstrapAddress,
+                    out process, out failure);
+            } finally {
+                if (image != null) image.Dispose();
+                if (descriptor != null) descriptor.Dispose();
+                imagePath.Dispose();
+                descriptorPath.Dispose();
             }
-            return TryCreate(image, descriptor, ownerApplication, generation,
-                             sharedSpace, nativeBootstrapAddress,
-                             out process, out failure);
         }
 
         internal ulong ManagedEntryAddress => Descriptor == null ? 0UL :
@@ -1363,6 +1435,20 @@ namespace guideXOS.Misc {
         internal bool IsPhase34Malformed => Descriptor != null &&
             (Descriptor.Flags & 0xFFFFF800U) ==
                 ManagedImageContract.FlagPhase34Malformed;
+
+        internal bool IsPhase35 => Descriptor != null &&
+            ((Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35Success ||
+             (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35FailFast ||
+             (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35StaleOwner ||
+             (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35CrossScope ||
+             (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35Malformed ||
+             (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35NoRead ||
+             (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35OneRead ||
+             (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35TwoRead);
+
+        internal bool IsPhase35FailFast => Descriptor != null &&
+            (Descriptor.Flags & 0xFFFFF800U) ==
+                ManagedImageContract.FlagPhase35FailFast;
 
         internal bool TryAuthorizeEntry(ulong rip,
                                         bool allowManagedEntryResume = false) {
@@ -1592,8 +1678,12 @@ namespace guideXOS.Misc {
                 size == 0) return -1;
             size = AlignUp(size);
             if (FindReservation(address, size) < 0) return -1;
+            ulong pageCount = size / ManagedImageContract.PageSize;
+            if (pageCount == 0 || pageCount > (ulong)MaxVmPages ||
+                !EnsureVmPageCapacity((int)pageCount)) return -1;
             ulong end = address + size;
-            int[] added = new int[_vmPages.Length];
+            int[] added = new int[(int)pageCount];
+            try {
             int addedCount = 0;
             for (ulong pageAddress = address; pageAddress < end;
                  pageAddress += ManagedImageContract.PageSize) {
@@ -1608,7 +1698,12 @@ namespace guideXOS.Misc {
                 for (int i = 0; i < _vmPages.Length; i++) {
                     if (!_vmPages[i].Active) { slot = i; break; }
                 }
-                if (slot < 0) break;
+                if ((uint)slot >= (uint)_vmPages.Length) {
+                    int oldLength = _vmPages.Length;
+                    if (!EnsureVmPageCapacity(oldLength + 1)) break;
+                    slot = oldLength;
+                }
+                if ((uint)addedCount >= (uint)added.Length) break;
                 ulong physical = (ulong)Allocator.Allocate(ManagedImageContract.PageSize);
                 if (physical == 0) break;
                 Native.Stosb((void*)physical, 0, ManagedImageContract.PageSize);
@@ -1621,7 +1716,8 @@ namespace guideXOS.Misc {
                 _vmPages[slot].Physical = physical;
                 _vmPages[slot].Writable = writable;
                 _vmPages[slot].Executable = executable;
-                added[addedCount++] = slot;
+                added[addedCount] = slot;
+                addedCount++;
             }
             ulong committedEnd = address + (ulong)addedCount *
                 ManagedImageContract.PageSize;
@@ -1646,6 +1742,9 @@ namespace guideXOS.Misc {
             for (int i = 0; i < addedCount; i++)
                 ManagedImageDiagnostics.VmPagesCreated++;
             return 0;
+            } finally {
+                added.Dispose();
+            }
         }
 
         internal int TryVmProtect(ulong address, ulong size, uint protection) {
@@ -1788,14 +1887,47 @@ namespace guideXOS.Misc {
                 }
             }
             ImagePageCount = 0;
+            if (ImagePhysicalPages != null) {
+                ImagePhysicalPages.Dispose();
+                ImagePhysicalPages = null;
+            }
             Free(ref StartupPhysical);
             Free(ref RuntimePhysical);
             Free(ref GsPhysical);
             Free(ref TlsVectorPhysical);
             Free(ref FlsPhysical);
             FreeTlsBlock();
+            if (TlsBlockPhysicalPages != null) {
+                TlsBlockPhysicalPages.Dispose();
+                TlsBlockPhysicalPages = null;
+            }
+            if (_vmReservations != null) {
+                _vmReservations.Dispose();
+                _vmReservations = null;
+            }
+            if (_vmPages != null) {
+                _vmPages.Dispose();
+                _vmPages = null;
+            }
+            if (Descriptor != null) {
+                ManagedImageSection[] sections = Descriptor.Sections;
+                if (sections != null) {
+                    for (int i = 0; i < sections.Length; i++) {
+                        ManagedImageSection section = sections[i];
+                        if (section == null) continue;
+                        if (section.Name != null) section.Name.Dispose();
+                        section.Dispose();
+                    }
+                    sections.Dispose();
+                }
+                if (Descriptor.Sha256 != null) Descriptor.Sha256.Dispose();
+                Descriptor.Dispose();
+                Descriptor = null;
+                Sections = null;
+            }
             if (Space != null && OwnsAddressSpace) {
                 Space.Release();
+                Space.Dispose();
             }
             Space = null;
             if (IsMapped) {

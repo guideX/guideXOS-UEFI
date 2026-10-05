@@ -27,4 +27,10 @@
   <PropertyGroup Condition="'$(Phase34Mode)' == 'Malformed'">
     <DefineConstants>$(DefineConstants);GUIDEXOS_PHASE34_MALFORMED</DefineConstants>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Phase35Mode)' == 'Success'">
+    <DefineConstants>$(DefineConstants);GUIDEXOS_PHASE35_SUCCESS</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Phase35Mode)' == 'Malformed'">
+    <DefineConstants>$(DefineConstants);GUIDEXOS_PHASE35_MALFORMED</DefineConstants>
+  </PropertyGroup>
 </Project>

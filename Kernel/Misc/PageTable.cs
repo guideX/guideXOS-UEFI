@@ -163,6 +163,8 @@ namespace guideXOS {
                 return p;
             }
 
+            if (allocations != null && allocationCount >= allocations.Length)
+                return null;
             ulong* page = (ulong*)Allocator.Allocate(0x1000);
             if (page == null) return null;
             Native.Stosb(page, 0, 0x1000);

@@ -1,4 +1,5 @@
 using guideXOS.FS;
+using guideXOS.Misc;
 using guideXOS.Kernel.Drivers;
 using guideXOS.Misc;
 using System.Collections.Generic;
@@ -268,7 +269,11 @@ namespace guideXOS.OS {
                 return FatOperationResult.InvalidPath;
             _namespaceDerivations++;
             string filePath = GetValueFilePath(applicationId, relativePath);
-            return _fat.TryGetFileLength(filePath, out length);
+            try {
+                return _fat.TryGetFileLength(filePath, out length);
+            } finally {
+                filePath.Dispose();
+            }
         }
 
         internal FatOperationResult TryReadValue(string applicationId,
@@ -285,10 +290,29 @@ namespace guideXOS.OS {
 
             _namespaceDerivations++;
             string filePath = GetValueFilePath(applicationId, relativePath);
+            try {
             uint fileLength;
+            Ring3Abi.Phase35DiagnosticOwnerBytes(
+                "PHASE35_DIAG_READ_BEFORE_FAT_LENGTH=0x");
             FatOperationResult result = _fat.TryGetFileLength(filePath,
                 out fileLength);
-            if (result != FatOperationResult.Success) return result;
+            Ring3Abi.Phase35DiagnosticOwnerBytes(
+                "PHASE35_DIAG_READ_AFTER_FAT_LENGTH=0x");
+            if (result != FatOperationResult.Success) {
+                Ring3Abi.Phase35DiagnosticMarker(
+                    "P35_DIAG_FAT_LENGTH_FAILED=1");
+                Ring3Abi.Phase35DiagnosticValueMarker(
+                    "P35_DIAG_FAT_LENGTH_RESULT=", (ulong)(byte)result);
+                Ring3Abi.Phase35DiagnosticValueMarker(
+                    "P35_DIAG_FAT_LENGTH_VALUE=", fileLength);
+                Ring3Abi.Phase35DiagnosticMarker(
+                    "P35_DIAG_APPLICATION_ID=" + applicationId);
+                Ring3Abi.Phase35DiagnosticMarker(
+                    "P35_DIAG_RELATIVE_PATH=" + relativePath);
+                Ring3Abi.Phase35DiagnosticMarker(
+                    "P35_DIAG_FILE_PATH=" + filePath);
+                return result;
+            }
             if (fileLength > MaxValueLength) return FatOperationResult.EntryLimitExceeded;
             if (offset > fileLength) return FatOperationResult.InvalidRange;
             if (offset == fileLength) {
@@ -302,12 +326,35 @@ namespace guideXOS.OS {
                 ? maximumBytes : (int)remaining;
             bytes = new byte[bytesRead];
             int actualBytesRead;
+            Ring3Abi.Phase35DiagnosticOwnerBytes(
+                "PHASE35_DIAG_READ_BEFORE_FAT_RANGE=0x");
             result = _fat.TryReadRange(filePath, offset, bytes, 0, bytesRead,
                 out actualBytesRead, out endOfValue);
-            if (result != FatOperationResult.Success) return result;
+            Ring3Abi.Phase35DiagnosticOwnerBytes(
+                "PHASE35_DIAG_READ_AFTER_FAT_RANGE=0x");
+            if (result != FatOperationResult.Success) {
+                Ring3Abi.Phase35DiagnosticMarker(
+                    "P35_DIAG_FAT_RANGE_FAILED=1");
+                Ring3Abi.Phase35DiagnosticValueMarker(
+                    "P35_DIAG_FAT_RANGE_RESULT=", (ulong)(byte)result);
+                Ring3Abi.Phase35DiagnosticValueMarker(
+                    "P35_DIAG_FAT_RANGE_BYTES=", (ulong)(uint)actualBytesRead);
+                Ring3Abi.Phase35DiagnosticValueMarker(
+                    "P35_DIAG_FAT_FILE_LENGTH=", fileLength);
+                Ring3Abi.Phase35DiagnosticMarker(
+                    "P35_DIAG_APPLICATION_ID=" + applicationId);
+                Ring3Abi.Phase35DiagnosticMarker(
+                    "P35_DIAG_RELATIVE_PATH=" + relativePath);
+                Ring3Abi.Phase35DiagnosticMarker(
+                    "P35_DIAG_FILE_PATH=" + filePath);
+                return result;
+            }
             if (actualBytesRead != bytesRead)
                 return FatOperationResult.ReadFailure;
             return FatOperationResult.Success;
+            } finally {
+                filePath.Dispose();
+            }
         }
 
         internal FatOperationResult TryWriteValue(string applicationId,
@@ -461,41 +508,92 @@ namespace guideXOS.OS {
         }
 
         private static string GetValueFilePath(string applicationId, string relativePath) {
-            return GetValueDirectory(applicationId, relativePath) + "/VALUE.BIN";
+            int length = ValueDirectoryLength(applicationId, relativePath) + 10;
+            char[] path = new char[length];
+            int offset = WriteValueDirectory(path, 0, applicationId,
+                relativePath);
+            offset = CopyText("/VALUE.BIN", path, offset);
+            string valuePath = new string(path, 0, offset);
+            path.Dispose();
+            return valuePath;
         }
 
         private static string GetValueDirectory(string applicationId, string relativePath) {
-            return GetApplicationDirectory(applicationId) + "/" +
-                EncodeLengthDirectory('P', relativePath.Length) +
-                EncodeUtf16Chunks(relativePath);
+            char[] path = new char[ValueDirectoryLength(applicationId,
+                relativePath)];
+            int offset = WriteValueDirectory(path, 0, applicationId,
+                relativePath);
+            return new string(path, 0, offset);
         }
 
         private static string GetApplicationDirectory(string applicationId) {
-            return Root + "/" + EncodeLengthDirectory('A', applicationId.Length) +
-                EncodeUtf16Chunks(applicationId);
+            char[] path = new char[ApplicationDirectoryLength(applicationId)];
+            int offset = WriteApplicationDirectory(path, 0, applicationId);
+            return new string(path, 0, offset);
         }
 
-        private static string EncodeLengthDirectory(char prefix, int length) {
-            string result = string.Empty + prefix;
+        private static int ApplicationDirectoryLength(string applicationId) {
+            return Root.Length + 1 + 5 + EncodedUtf16Length(applicationId.Length);
+        }
+
+        private static int ValueDirectoryLength(string applicationId,
+                string relativePath) {
+            return ApplicationDirectoryLength(applicationId) + 1 + 5 +
+                EncodedUtf16Length(relativePath.Length);
+        }
+
+        private static int EncodedUtf16Length(int codeUnitCount) {
+            return ((codeUnitCount + 1) / 2) * 9;
+        }
+
+        private static int WriteValueDirectory(char[] destination, int offset,
+                string applicationId, string relativePath) {
+            offset = WriteApplicationDirectory(destination, offset,
+                applicationId);
+            destination[offset++] = '/';
+            offset = WriteLengthDirectory(destination, offset, 'P',
+                relativePath.Length);
+            return WriteUtf16Chunks(destination, offset, relativePath);
+        }
+
+        private static int WriteApplicationDirectory(char[] destination,
+                int offset, string applicationId) {
+            offset = CopyText(Root, destination, offset);
+            destination[offset++] = '/';
+            offset = WriteLengthDirectory(destination, offset, 'A',
+                applicationId.Length);
+            return WriteUtf16Chunks(destination, offset, applicationId);
+        }
+
+        private static int WriteLengthDirectory(char[] destination, int offset,
+                char prefix, int length) {
+            destination[offset++] = prefix;
             for (int shift = 12; shift >= 0; shift -= 4)
-                result += HexDigit((length >> shift) & 0xF);
-            return result;
+                destination[offset++] = HexDigit((length >> shift) & 0xF);
+            return offset;
         }
 
-        private static string EncodeUtf16Chunks(string value) {
-            string result = string.Empty;
+        private static int WriteUtf16Chunks(char[] destination, int offset,
+                string value) {
             for (int start = 0; start < value.Length; start += 2) {
-                result += "/";
+                destination[offset++] = '/';
                 for (int unit = 0; unit < 2; unit++) {
                     int index = start + unit;
                     ushort codeUnit = index < value.Length ? value[index] : (ushort)0;
-                    result += HexDigit((codeUnit >> 12) & 0xF);
-                    result += HexDigit((codeUnit >> 8) & 0xF);
-                    result += HexDigit((codeUnit >> 4) & 0xF);
-                    result += HexDigit(codeUnit & 0xF);
+                    destination[offset++] = HexDigit((codeUnit >> 12) & 0xF);
+                    destination[offset++] = HexDigit((codeUnit >> 8) & 0xF);
+                    destination[offset++] = HexDigit((codeUnit >> 4) & 0xF);
+                    destination[offset++] = HexDigit(codeUnit & 0xF);
                 }
             }
-            return result;
+            return offset;
+        }
+
+        private static int CopyText(string source, char[] destination,
+                int offset) {
+            for (int i = 0; i < source.Length; i++)
+                destination[offset++] = source[i];
+            return offset;
         }
 
         private static bool TryParseLengthDirectory(string name, char prefix,

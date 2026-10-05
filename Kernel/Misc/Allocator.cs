@@ -60,6 +60,15 @@ abstract unsafe class Allocator {
     /// Current OwnerID
     /// </summary>
     public static int CurrentOwnerId = 0; // 0 = kernel/unknown
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+    internal static ulong CurrentOwnerGeneration;
+    internal static byte CurrentAllocationLabel;
+    private const int DiagnosticRunCapacity = 16384;
+    private static ulong _allocationSequence;
+    private static ulong _diagnosticSnapshotSequence;
+    private static ulong _freeSequence;
+    private static ulong _diagnosticRunRecordsDropped;
+#endif
     
     // Simplified owner tracking - replace Dictionary with parallel arrays
     private const int MAX_OWNERS = 1024; // Support up to 1024 concurrent windows/owners
@@ -109,6 +118,25 @@ abstract unsafe class Allocator {
         /// Owners
         /// </summary>
         public fixed int Owners[NumPages]; // owner id at run start page
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+        public fixed ulong DiagnosticRunIds[16384];
+        public fixed ulong DiagnosticRunAddresses[16384];
+        public fixed ulong DiagnosticRunPages[16384];
+        public fixed ulong DiagnosticRunOwnerGenerations[16384];
+        public fixed ulong DiagnosticRunCallerHashes[16384];
+        public fixed ulong DiagnosticRunFreeSequences[16384];
+        public fixed int DiagnosticRunOwnerIds[16384];
+        public fixed int DiagnosticRunCallerLines[16384];
+        public fixed byte DiagnosticRunTags[16384];
+        public fixed byte DiagnosticRunCallerLabels[16384];
+        public fixed uint DiagnosticPageRunSlots[NumPages];
+        public fixed ulong DiagnosticPageOwnerGenerations[NumPages];
+        public fixed ulong DiagnosticPageAllocationSequences[NumPages];
+        public fixed byte DiagnosticPageCallerLabels[NumPages];
+        public fixed byte DiagnosticBaselineOccupiedPages[NumPages];
+        public fixed ulong DiagnosticBaselineRunIds[NumPages];
+        public fixed uint DiagnosticBaselineRunPages[NumPages];
+#endif
     }
     /// <summary>
     /// Info
@@ -239,7 +267,7 @@ abstract unsafe class Allocator {
     /// Free Fail Corrupt Run
     /// </summary>
     private static ulong _freeFailCorruptRun = 0;
-#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE35 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
     private const int FreeInvalidLogCapacity = 16;
     private static IntPtr[] _freeInvalidLoggedPointers;
     private static string[] _freeInvalidLoggedCallers;
@@ -281,7 +309,7 @@ abstract unsafe class Allocator {
         }
     }
 
-#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE35 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
     // Called after NativeAOT GC statics have been initialized. Allocator.Initialize
     // runs earlier during UEFI startup, so managed reference fields assigned there
     // would be cleared when InitializeModules prepares the GC static bases.
@@ -291,6 +319,9 @@ abstract unsafe class Allocator {
         _freeInvalidLoggedCount = 0;
         _freeInvalidLoggerUnavailableReported = false;
         SerialWriteFreeInvalidText("ALLOC_INVALID_LOG_READY;capacity=16\n");
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+        SerialWriteFreeInvalidText("ALLOC_PROVENANCE_READY=1;capacity=262144-live-runs;storage=static-per-page\n");
+#endif
     }
 #endif
 
@@ -313,13 +344,13 @@ abstract unsafe class Allocator {
             
             if (p < 0 || p >= NumPages) { // guard invalid start index
                 _freeFailInvalidPtr++;
-#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE35 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
                 LogInvalidFreeOnce(intPtr, caller, callerAddress);
 #endif
                 return 0;
             }
             
-            ulong pages = _Info.Pages[p];
+                ulong pages = _Info.Pages[p];
             
             if (pages != 0 && pages != PageSignature) {
                 // Corruption guard: run length must fit inside array
@@ -335,8 +366,11 @@ abstract unsafe class Allocator {
                 
                 // Owner accounting (do BEFORE clearing pages)
                 int owner = _Info.Owners[p];
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                RecordDiagnosticFree((int)p);
+#endif
                 
-                if (owner != 0) {
+                if (owner > 0) {
                     // Find owner in array and decrement - with safety bounds check
                     bool found = false;
                     for (int i = 0; i < _ownerCount && i < MAX_OWNERS; i++) {
@@ -359,6 +393,12 @@ abstract unsafe class Allocator {
                     ulong idx = (ulong)p + i;
                     if (idx >= (ulong)NumPages) break; // extra safety
                     _Info.Pages[idx] = 0;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                    _Info.DiagnosticPageRunSlots[idx] = 0;
+                    _Info.DiagnosticPageOwnerGenerations[idx] = 0;
+                    _Info.DiagnosticPageAllocationSequences[idx] = 0;
+                    _Info.DiagnosticPageCallerLabels[idx] = 0;
+#endif
                 }
                 
                 _freeSuccessCount++; // Track successful frees
@@ -369,7 +409,7 @@ abstract unsafe class Allocator {
             return 0;
         }
     }
-#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
+#if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE35 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
     private static void LogInvalidFreeOnce(IntPtr pointer, string caller,
                                           ulong callerAddress) {
         if (_freeInvalidLoggedPointers == null ||
@@ -444,7 +484,8 @@ abstract unsafe class Allocator {
     /// </summary>
     /// <param name="size"></param>
     /// <returns></returns>
-    internal static unsafe IntPtr Allocate(ulong size) => Allocate(size, AllocTag.Unknown);
+    internal static unsafe IntPtr Allocate(ulong size) =>
+        Allocate(size, AllocTag.Unknown);
     /// <summary>
     /// Suspicious Size
     /// </summary>
@@ -460,6 +501,8 @@ abstract unsafe class Allocator {
     /// <param name="tag"></param>
     /// <returns></returns>
     internal static unsafe IntPtr Allocate(ulong size, AllocTag tag) {
+        string callerFile = "";
+        int callerLine = 0;
         lock (_sync) {
             if (size == 0) size = 1;
             // Overflow / corruption guard: reject absurd sizes silently (return null) instead of panicking
@@ -489,7 +532,7 @@ abstract unsafe class Allocator {
             // Owner accounting with simple array lookup
             int owner = CurrentOwnerId; 
             _Info.Owners[i] = owner;
-            if (owner != 0) {
+            if (owner > 0) {
                 int ownerIdx = FindOrAddOwner(owner);
                 if (ownerIdx >= 0 && ownerIdx < MAX_OWNERS) {
                     _ownerPages[ownerIdx] += pages;
@@ -498,9 +541,251 @@ abstract unsafe class Allocator {
                 // This is okay - allocation proceeds, just won't be in owner tracking
             }
             
-            long baseAddr = (long)_Info.Start; long offset = (long)(i * PageSize); return new IntPtr((void*)(baseAddr + offset));
+            long baseAddr = (long)_Info.Start; long offset = (long)(i * PageSize);
+            IntPtr allocation = new IntPtr((void*)(baseAddr + offset));
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            RecordDiagnosticAllocation((ulong)allocation, pages, t, owner,
+                callerFile, callerLine);
+#endif
+            return allocation;
         }
     }
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+    private static ulong CallerFileHash(string path) {
+        ulong hash = 14695981039346656037UL;
+        if (path == null) return hash;
+        for (int i = 0; i < path.Length; i++) {
+            hash ^= path[i];
+            hash *= 1099511628211UL;
+        }
+        return hash;
+    }
+
+    private static void RecordDiagnosticAllocation(ulong address,
+            ulong pages, byte tag, int owner, string callerFile,
+            int callerLine) {
+        ulong id = ++_allocationSequence;
+        int slot = (int)((id - 1) % DiagnosticRunCapacity);
+        if (_Info.DiagnosticRunIds[slot] != 0 &&
+                _Info.DiagnosticRunFreeSequences[slot] == 0)
+            _diagnosticRunRecordsDropped++;
+        _Info.DiagnosticRunIds[slot] = id;
+        _Info.DiagnosticRunAddresses[slot] = address;
+        _Info.DiagnosticRunPages[slot] = pages;
+        _Info.DiagnosticRunOwnerGenerations[slot] =
+            owner == 0 ? 0UL : CurrentOwnerGeneration;
+        _Info.DiagnosticRunCallerHashes[slot] = CallerFileHash(callerFile);
+        _Info.DiagnosticRunFreeSequences[slot] = 0;
+        _Info.DiagnosticRunOwnerIds[slot] = owner;
+        _Info.DiagnosticRunCallerLines[slot] = callerLine;
+        _Info.DiagnosticRunTags[slot] = tag;
+        _Info.DiagnosticRunCallerLabels[slot] = CurrentAllocationLabel;
+        for (ulong page = 0; page < pages; page++)
+            _Info.DiagnosticPageRunSlots[(address - (ulong)_Info.Start) /
+                PageSize + page] = (uint)(slot + 1);
+        ulong firstPage = (address - (ulong)_Info.Start) / PageSize;
+        for (ulong page = 0; page < pages; page++) {
+            ulong pageIndex = firstPage + page;
+            _Info.DiagnosticPageOwnerGenerations[pageIndex] =
+                owner == 0 ? 0UL : CurrentOwnerGeneration;
+            _Info.DiagnosticPageAllocationSequences[pageIndex] = id;
+            _Info.DiagnosticPageCallerLabels[pageIndex] =
+                CurrentAllocationLabel;
+        }
+    }
+
+    private static void RecordDiagnosticFree(int page) {
+        uint storedSlot = _Info.DiagnosticPageRunSlots[page];
+        if (storedSlot == 0) return;
+        int slot = (int)storedSlot - 1;
+        if (slot >= 0 && slot < DiagnosticRunCapacity &&
+                _Info.DiagnosticRunAddresses[slot] ==
+                    (ulong)_Info.Start + (ulong)page * PageSize &&
+                _Info.DiagnosticRunFreeSequences[slot] == 0)
+            _Info.DiagnosticRunFreeSequences[slot] = ++_freeSequence;
+    }
+
+    internal static ulong DiagnosticAllocationSequence =>
+        _allocationSequence;
+    internal static ulong DiagnosticSnapshotSequence =>
+        _diagnosticSnapshotSequence;
+
+    internal static void CaptureDiagnosticRunBaseline() {
+        lock (_sync) {
+            CaptureDiagnosticRunBaselineNoLock();
+        }
+    }
+
+    private static void CaptureDiagnosticRunBaselineNoLock() {
+        for (ulong page = 0; page < (ulong)NumPages; page++) {
+            _Info.DiagnosticBaselineOccupiedPages[page] = 0;
+            _Info.DiagnosticBaselineRunIds[page] = 0;
+            _Info.DiagnosticBaselineRunPages[page] = 0;
+        }
+        for (ulong page = 0; page < (ulong)NumPages;) {
+            ulong pages = _Info.Pages[page];
+            if (pages == 0 || pages == PageSignature) { page++; continue; }
+            if (pages > (ulong)NumPages - page) break;
+            _Info.DiagnosticBaselineOccupiedPages[page] = 1;
+            _Info.DiagnosticBaselineRunIds[page] =
+                _Info.DiagnosticPageAllocationSequences[page];
+            _Info.DiagnosticBaselineRunPages[page] = (uint)pages;
+            page += pages;
+        }
+        _diagnosticSnapshotSequence = _allocationSequence;
+    }
+
+    internal static void DumpDiagnosticRunsSince(ulong sequence) {
+        lock (_sync) {
+            int emitted = 0;
+            ulong total = 0;
+            ulong retainedPages = 0;
+            for (ulong page = 0; page < (ulong)NumPages;) {
+                ulong pages = _Info.Pages[page];
+                if (pages == 0 || pages == PageSignature) { page++; continue; }
+                if (pages > (ulong)NumPages - page) break;
+                ulong id = _Info.DiagnosticPageAllocationSequences[page];
+                ulong baselineId = _Info.DiagnosticBaselineRunIds[page];
+                if (id <= sequence && id == baselineId &&
+                        _Info.DiagnosticBaselineOccupiedPages[page] != 0) {
+                    page += pages;
+                    continue;
+                }
+                total++;
+                retainedPages += pages;
+                if (emitted >= 256) { page += pages; continue; }
+                emitted++;
+                SerialWriteFreeInvalidText("PHASE35_ALLOC_RUN;id=0x");
+                SerialWriteFreeInvalidHex(id);
+                SerialWriteFreeInvalidText(";start=0x");
+                SerialWriteFreeInvalidHex((ulong)_Info.Start +
+                    page * PageSize);
+                SerialWriteFreeInvalidText(";pages=0x");
+                SerialWriteFreeInvalidHex(pages);
+                SerialWriteFreeInvalidText(";owner=0x");
+                SerialWriteFreeInvalidHex(unchecked((ulong)
+                    _Info.Owners[page]));
+                SerialWriteFreeInvalidText(";generation=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticPageOwnerGenerations[page]);
+                SerialWriteFreeInvalidText(";tag=0x");
+                SerialWriteFreeInvalidHex(_Info.Tags[page]);
+                SerialWriteFreeInvalidText(";callerLabel=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticPageCallerLabels[page]);
+                SerialWriteFreeInvalidText(";freed=0x0000000000000000");
+                Native.Out8(0x3F8, (byte)'\n');
+                page += pages;
+            }
+            ulong freedBaselineRuns = 0;
+            ulong freedBaselinePages = 0;
+            for (ulong page = 0; page < (ulong)NumPages; page++) {
+                ulong baselineId = _Info.DiagnosticBaselineRunIds[page];
+                uint baselinePages = _Info.DiagnosticBaselineRunPages[page];
+                if (baselinePages == 0) continue;
+                ulong currentPages = _Info.Pages[page];
+                if (currentPages == baselinePages &&
+                        _Info.DiagnosticPageAllocationSequences[page] ==
+                            baselineId) continue;
+                freedBaselineRuns++;
+                freedBaselinePages += baselinePages;
+                SerialWriteFreeInvalidText("PHASE35_ALLOC_BASELINE_RUN_FREED;id=0x");
+                SerialWriteFreeInvalidHex(baselineId);
+                SerialWriteFreeInvalidText(";start=0x");
+                SerialWriteFreeInvalidHex((ulong)_Info.Start +
+                    page * PageSize);
+                SerialWriteFreeInvalidText(";pages=0x");
+                SerialWriteFreeInvalidHex((ulong)baselinePages);
+                Native.Out8(0x3F8, (byte)'\n');
+            }
+            SerialWriteFreeInvalidText("PHASE35_ALLOC_RUN_DUMP;emitted=0x");
+            SerialWriteFreeInvalidHex((ulong)emitted);
+            SerialWriteFreeInvalidText(";total=0x");
+            SerialWriteFreeInvalidHex(total);
+            SerialWriteFreeInvalidText(";truncated=0x");
+            SerialWriteFreeInvalidHex(total > (ulong)emitted ? 1UL : 0UL);
+            SerialWriteFreeInvalidText(";retainedPages=0x");
+            SerialWriteFreeInvalidHex(retainedPages);
+            SerialWriteFreeInvalidText(";freedBaselineRuns=0x");
+            SerialWriteFreeInvalidHex(freedBaselineRuns);
+            SerialWriteFreeInvalidText(";freedBaselinePages=0x");
+            SerialWriteFreeInvalidHex(freedBaselinePages);
+            SerialWriteFreeInvalidText(";netPages=0x");
+            SerialWriteFreeInvalidHex(retainedPages >= freedBaselinePages ?
+                retainedPages - freedBaselinePages : 0UL);
+            Native.Out8(0x3F8, (byte)'\n');
+        }
+    }
+
+    internal static ulong GetDiagnosticLiveRunCount() {
+        lock (_sync) {
+            ulong count = 0;
+            for (ulong page = 0; page < (ulong)NumPages;) {
+                ulong run = _Info.Pages[page];
+                if (run == 0 || run == PageSignature) { page++; continue; }
+                if (run > (ulong)NumPages - page) break;
+                count++;
+                page += run;
+            }
+            return count;
+        }
+    }
+
+    internal static ulong DumpDiagnosticSnapshot(int label) {
+        lock (_sync) {
+            SerialWriteFreeInvalidText("PHASE35_ALLOC_SNAPSHOT;label=");
+            SerialWriteFreeInvalidHex((ulong)label);
+            SerialWriteFreeInvalidText(";bytes=0x");
+            SerialWriteFreeInvalidHex(MemoryInUse);
+            SerialWriteFreeInvalidText(";runs=0x");
+            SerialWriteFreeInvalidHex(GetDiagnosticLiveRunCount());
+            SerialWriteFreeInvalidText(";owners=0x");
+            SerialWriteFreeInvalidHex((ulong)_ownerCount);
+            ulong freePages = 0;
+            for (int page = 0; page < NumPages; page++)
+                if (_Info.Pages[page] == 0) freePages++;
+            SerialWriteFreeInvalidText(";freePages=0x");
+            SerialWriteFreeInvalidHex(freePages);
+            Native.Out8(0x3F8, (byte)'\n');
+            for (int tag = 0; tag < (int)AllocTag.Count; tag++) {
+                ulong bytes = _Info.TagLivePages[tag] * PageSize;
+                if (bytes == 0) continue;
+                SerialWriteFreeInvalidText("PHASE35_ALLOC_TAG;label=0x");
+                SerialWriteFreeInvalidHex((ulong)label);
+                SerialWriteFreeInvalidText(";tag=0x");
+                SerialWriteFreeInvalidHex((ulong)tag);
+                SerialWriteFreeInvalidText(";bytes=0x");
+                SerialWriteFreeInvalidHex(bytes);
+                Native.Out8(0x3F8, (byte)'\n');
+            }
+            for (int ownerIndex = 0; ownerIndex < _ownerCount &&
+                    ownerIndex < MAX_OWNERS; ownerIndex++) {
+                ulong pages = 0;
+                for (ulong page = 0; page < (ulong)NumPages;) {
+                    ulong run = _Info.Pages[page];
+                    if (run == 0 || run == PageSignature) {
+                        page++;
+                        continue;
+                    }
+                    if (run > (ulong)NumPages - page) break;
+                    if (_Info.Owners[page] == _ownerIds[ownerIndex])
+                        pages += run;
+                    page += run;
+                }
+                SerialWriteFreeInvalidText("PHASE35_ALLOC_OWNER;label=0x");
+                SerialWriteFreeInvalidHex((ulong)label);
+                SerialWriteFreeInvalidText(";owner=0x");
+                SerialWriteFreeInvalidHex(unchecked((ulong)
+                    _ownerIds[ownerIndex]));
+                SerialWriteFreeInvalidText(";pages=0x");
+                SerialWriteFreeInvalidHex(pages);
+                Native.Out8(0x3F8, (byte)'\n');
+            }
+            CaptureDiagnosticRunBaselineNoLock();
+            return MemoryInUse;
+        }
+    }
+#endif
     /// <summary>
     /// Reallocate (camel-case) is expected by other code (stdlib, API)
     /// </summary>
@@ -550,6 +835,34 @@ abstract unsafe class Allocator {
     internal static unsafe void MemoryCopy(IntPtr dst, IntPtr src, ulong size) { Native.Movsb((void*)dst, (void*)src, size); }
     
     public static ulong GetTagBytes(AllocTag tag) { return _Info.TagLivePages[(int)tag] * PageSize; }
+
+    internal static void GetLiveRunBucketBytes(out ulong onePage,
+            out ulong twoToSixteenPages, out ulong seventeenTo256Pages,
+            out ulong bucket257To2048Pages, out ulong over2048Pages) {
+        onePage = 0;
+        twoToSixteenPages = 0;
+        seventeenTo256Pages = 0;
+        bucket257To2048Pages = 0;
+        over2048Pages = 0;
+        lock (_sync) {
+            ulong page = 0;
+            while (page < (ulong)NumPages) {
+                ulong run = _Info.Pages[page];
+                if (run == 0 || run == PageSignature) {
+                    page++;
+                    continue;
+                }
+                if (run > (ulong)NumPages - page) break;
+                ulong bytes = run * PageSize;
+                if (run == 1) onePage += bytes;
+                else if (run <= 16) twoToSixteenPages += bytes;
+                else if (run <= 256) seventeenTo256Pages += bytes;
+                else if (run <= 2048) bucket257To2048Pages += bytes;
+                else over2048Pages += bytes;
+                page += run;
+            }
+        }
+    }
     
     public static ulong GetOwnerBytes(int ownerId) {
         if (ownerId == 0) return 0UL;
@@ -578,6 +891,22 @@ abstract unsafe class Allocator {
             return pages * PageSize;
         }
     }
+
+    internal static ulong GetDiagnosticOwnerBytes(int ownerId) {
+        if (ownerId >= 0) return 0UL;
+        lock (_sync) {
+            ulong pages = 0;
+            for (int i = 0; i < NumPages; i++) {
+                ulong run = _Info.Pages[i];
+                if (run == 0 || run == PageSignature) continue;
+                if (run > (ulong)NumPages - (ulong)i) break;
+                if (_Info.Owners[i] == ownerId) pages += run;
+                i += (int)(run - 1);
+            }
+            return pages * PageSize;
+        }
+    }
+
     /// <summary>
     /// Snapshot structure for owner accounting (avoids depending on generic KeyValuePair in low-level kernel code)
     /// </summary>

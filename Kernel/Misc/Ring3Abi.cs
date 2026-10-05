@@ -142,6 +142,34 @@ namespace guideXOS.Misc {
         public uint Reserved;
     }
 
+    // Operation 7 is semantically "read my Persistent value". The record
+    // contains only a fixed relative path and caller-owned output buffers; it
+    // cannot choose a namespace, AppId, service operation, or backend.
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct Ring3PersistentReadRequest {
+        public uint StructureVersion;
+        public uint OperationId;
+        public uint RequestLength;
+        public uint PathLength;
+        public uint DataCapacity;
+        public uint ResponseCapacity;
+        public uint Reserved;
+        public ulong ResponseBuffer;
+        public ulong DataBuffer;
+        public ulong Offset;
+        public fixed byte Path[ApplicationStorageRequest.MaxRelativePathLength * 2];
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct Ring3PersistentReadResponse {
+        public uint StructureVersion;
+        public uint Size;
+        public uint ResultCode;
+        public uint BytesRead;
+        public uint EndOfValue;
+        public uint Reserved;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal struct Ring3ApplicationIdentityResponse {
         public uint StructureVersion;
@@ -163,6 +191,7 @@ namespace guideXOS.Misc {
         internal const ulong ValidateWrite = 4;
         internal const ulong ServiceRequest = 5;
         internal const ulong ApplicationIdentity = 6;
+        internal const ulong PersistentStorageRead = 7;
         internal const ulong VmReserve = 0x20;
         internal const ulong VmCommit = 0x21;
         internal const ulong VmProtect = 0x22;
@@ -210,6 +239,7 @@ namespace guideXOS.Misc {
             (uint)ApplicationServiceId.Resources;
         internal const uint ResourceMetadataOperation = 1;
         internal const uint ResourceReadOperation = 2;
+        internal const uint PersistentReadOperation = 1;
         private const string Phase33ShellObjectId =
             "gxos.shell.computerfiles";
 
@@ -220,6 +250,23 @@ namespace guideXOS.Misc {
             Native.Out8(0x3F8, (byte)'\n');
         }
 
+        internal static void Phase35DiagnosticMarker(string text) {
+            Marker(text);
+        }
+
+        internal static void Phase35DiagnosticValueMarker(string label,
+                ulong value) {
+            HexMarker(label, value);
+        }
+
+        internal static void Phase35DiagnosticOwnerBytes(string label) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            int ownerId = Allocator.CurrentOwnerId;
+            if (ownerId < 0)
+                HexMarker(label, Allocator.GetDiagnosticOwnerBytes(ownerId));
+#endif
+        }
+
         private static void HexMarker(string label, ulong value) {
             Marker(label);
             for (int shift = 60; shift >= 0; shift -= 4) {
@@ -228,6 +275,12 @@ namespace guideXOS.Misc {
                     'A' + nibble - 10));
             }
             Native.Out8(0x3F8, (byte)'\n');
+        }
+
+        internal static int DiagnosticAllocatorOwnerId(
+                Ring3ProcessHandle handle) {
+            ulong folded = handle.Value ^ (handle.Value >> 32);
+            return -((int)((uint)folded & 0x3FFFFFFFU) + 1);
         }
 
         internal static void Dispatch(IDT.IDTStackGeneric* stack) {
@@ -248,6 +301,23 @@ namespace guideXOS.Misc {
             process.MarkRunning();
             ulong operation = stack->rs.rax;
             HexMarker("RING3_OPERATION=0x", operation);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            int previousAllocatorOwner = Allocator.CurrentOwnerId;
+            ulong previousOwnerGeneration =
+                Allocator.CurrentOwnerGeneration;
+            byte previousAllocationLabel = Allocator.CurrentAllocationLabel;
+            int diagnosticAllocatorOwner =
+                DiagnosticAllocatorOwnerId(process.Handle);
+            bool trackProcessAllocations = process.ManagedImage != null &&
+                process.ManagedImage.IsPhase35;
+            if (trackProcessAllocations) {
+                Allocator.CurrentOwnerId = diagnosticAllocatorOwner;
+                Allocator.CurrentOwnerGeneration = process.Handle.Value;
+                Allocator.CurrentAllocationLabel = operation ==
+                    PersistentStorageRead ? (byte)2 :
+                    (operation == ServiceRequest ? (byte)3 : (byte)1);
+            }
+#endif
             switch (operation) {
                 case Ping:
                     stack->rs.rax = AbiVersion;
@@ -280,6 +350,11 @@ namespace guideXOS.Misc {
 
                 case ServiceRequest:
                     stack->rs.rax = DispatchServiceRequest(process,
+                        stack->rs.rdi, stack->rs.rsi);
+                    break;
+
+                case PersistentStorageRead:
+                    stack->rs.rax = DispatchPersistentStorageRead(process,
                         stack->rs.rdi, stack->rs.rsi);
                     break;
 
@@ -409,6 +484,23 @@ namespace guideXOS.Misc {
                     Marker("RING3_INVALID_OPERATION_REJECTED=1");
                     break;
             }
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            if (trackProcessAllocations &&
+                    (operation == ServiceRequest ||
+                     operation == PersistentStorageRead ||
+                     operation == ApplicationIdentity ||
+                     operation == VmReserve || operation == VmCommit)) {
+                HexMarker("PHASE35_DIAG_ALLOCATOR_OPERATION=0x", operation);
+                HexMarker("PHASE35_DIAG_ALLOCATOR_OWNER_BYTES=0x",
+                    Allocator.GetDiagnosticOwnerBytes(
+                        diagnosticAllocatorOwner));
+            }
+            if (trackProcessAllocations) {
+                Allocator.CurrentOwnerId = previousAllocatorOwner;
+                Allocator.CurrentOwnerGeneration = previousOwnerGeneration;
+                Allocator.CurrentAllocationLabel = previousAllocationLabel;
+            }
+#endif
             HexMarker("RING3_OPERATION_RESULT=0x", stack->rs.rax);
         }
 
@@ -951,6 +1043,333 @@ namespace guideXOS.Misc {
                 response.BytesRead.ToString());
             Marker("RING3_RESOURCE_RESPONSE_COPIED_OUT=1");
             return Success;
+        }
+
+        private static ulong DispatchPersistentStorageRead(
+                Ring3Process process, ulong requestPointer,
+                ulong requestLength) {
+            Marker("RING3_PERSISTENT_READ_ABI_ENTERED=1");
+            if (requestLength != (ulong)sizeof(Ring3PersistentReadRequest)) {
+                Marker("RING3_PERSISTENT_READ_BAD_RECORD_SIZE=1");
+                return InvalidRequest;
+            }
+            if (process == null || process.Space == null ||
+                process.Space.Pml4 == null ||
+                !PageTable.ValidateReadableUserRange(process.Space.Pml4,
+                    requestPointer, requestLength)) {
+                Marker("RING3_PERSISTENT_READ_INVALID_REQUEST_POINTER=1");
+                return InvalidPointer;
+            }
+
+            Ring3PersistentReadRequest request =
+                default(Ring3PersistentReadRequest);
+            Native.Movsb(&request, (void*)requestPointer,
+                (ulong)sizeof(Ring3PersistentReadRequest));
+            Marker("RING3_PERSISTENT_READ_REQUEST_COPIED_IN=1");
+            string relativePath;
+            if (!TryValidatePersistentReadRequest(&request,
+                    out relativePath)) {
+                Marker("RING3_PERSISTENT_READ_MALFORMED_REQUEST=1");
+                return InvalidRequest;
+            }
+            Phase35DiagnosticOwnerBytes(
+                "PHASE35_DIAG_READ_AFTER_REQUEST_VALIDATION=0x");
+
+            ApplicationServiceContext context = null;
+            ApplicationServiceAccess access = null;
+            ApplicationServiceResult contextResult = null;
+            ApplicationInstance requester = null;
+            ApplicationStorageReadRequest readRequest = null;
+            ApplicationServiceResult<ApplicationStorageReadResult> read = null;
+            ApplicationStorageReadResult value = null;
+            try {
+
+            if (!PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                    request.ResponseBuffer, request.ResponseCapacity)) {
+                Marker("RING3_PERSISTENT_READ_INVALID_RESPONSE_BUFFER=1");
+                return InvalidPointer;
+            }
+            if (!PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                    request.DataBuffer, request.DataCapacity)) {
+                Marker("RING3_PERSISTENT_READ_INVALID_DATA_BUFFER=1");
+                return InvalidPointer;
+            }
+            ulong responseEnd = request.ResponseBuffer +
+                request.ResponseCapacity;
+            ulong dataEnd = request.DataBuffer + request.DataCapacity;
+            if (request.ResponseBuffer < dataEnd &&
+                    request.DataBuffer < responseEnd) {
+                Marker("RING3_PERSISTENT_READ_OVERLAPPING_OUTPUTS=1");
+                return InvalidRequest;
+            }
+
+            if (!TryResolvePersistentStorageAccess(process, out context,
+                    out access, out contextResult, out requester)) {
+                Marker("RING3_PERSISTENT_READ_AUTHORITY_REJECTED=1");
+                return MapServiceResult(contextResult);
+            }
+            Phase35DiagnosticOwnerBytes(
+                "PHASE35_DIAG_READ_AFTER_AUTHORITY=0x");
+
+            readRequest = ApplicationStorageReadRequest.Create(
+                    ApplicationStorageNamespace.Persistent, relativePath,
+                    0, (int)request.DataCapacity);
+            read = access.Storage.Read(context, readRequest);
+            Phase35DiagnosticOwnerBytes(
+                "PHASE35_DIAG_READ_AFTER_SERVICE=0x");
+            Ring3PersistentReadResponse response =
+                default(Ring3PersistentReadResponse);
+            response.StructureVersion = (uint)AbiVersion;
+            response.Size = (uint)sizeof(Ring3PersistentReadResponse);
+            if (!read.Succeeded || read.Value == null) {
+                HexMarker("RING3_PERSISTENT_READ_DIAG_CODE=",
+                    (ulong)(uint)read.Code);
+                HexMarker("RING3_PERSISTENT_READ_DIAG_SUCCEEDED=",
+                    read.Succeeded ? 1UL : 0UL);
+                HexMarker("RING3_PERSISTENT_READ_DIAG_NULL_VALUE=",
+                    read.Value == null ? 1UL : 0UL);
+                CSharpApplicationStorageService storageDiagnostics =
+                    access.Storage as CSharpApplicationStorageService;
+                HexMarker("RING3_PERSISTENT_READ_DIAG_SERVICE_TYPE=",
+                    storageDiagnostics == null ? 0UL : 1UL);
+                HexMarker("RING3_PERSISTENT_READ_DIAG_SERVICE_READS=",
+                    storageDiagnostics == null ? 0UL :
+                    (ulong)(uint)storageDiagnostics.PersistentReadCount);
+                HexMarker("RING3_PERSISTENT_READ_DIAG_FAT_RESULT=",
+                    storageDiagnostics == null ? 0UL :
+                    (ulong)(uint)storageDiagnostics.
+                        LastPersistentReadFatResult);
+                HexMarker("RING3_PERSISTENT_READ_DIAG_SERVICE_STAGE=",
+                    storageDiagnostics == null ? 0UL :
+                    (ulong)(uint)storageDiagnostics.
+                        LastPersistentReadResultStage);
+                response.ResultCode = (uint)(read.Succeeded
+                    ? ApplicationServiceResultCode.BackendFailure : read.Code);
+                WritePersistentReadResponse(request.ResponseBuffer,
+                    &response);
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_PERSISTENT_READ_TYPED_RESULT=" +
+                    response.ResultCode.ToString());
+                Marker("RING3_PERSISTENT_READ_RESPONSE_COPIED_OUT=1");
+                return Success;
+            }
+
+            value = read.Value;
+            if (value.RelativePath != relativePath ||
+                value.Offset != 0 || value.Bytes == null ||
+                value.BytesRead < 0 || value.BytesRead != value.Bytes.Length ||
+                (uint)value.BytesRead > request.DataCapacity) {
+                response.ResultCode = (uint)
+                    ApplicationServiceResultCode.BackendFailure;
+                WritePersistentReadResponse(request.ResponseBuffer,
+                    &response);
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_PERSISTENT_READ_SERVICE_RESULT_REJECTED=1");
+                return Success;
+            }
+
+            if (request.DataCapacity ==
+                    ApplicationStorageReadRequest.MaxChunkLength &&
+                !value.EndOfResource) {
+                response.ResultCode = (uint)
+                    ApplicationServiceResultCode.ResourceUnavailable;
+                WritePersistentReadResponse(request.ResponseBuffer,
+                    &response);
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_PERSISTENT_READ_MAXIMUM_TRUNCATION_REJECTED=1");
+                return Success;
+            }
+            if (!value.EndOfResource &&
+                    (uint)value.BytesRead != request.DataCapacity) {
+                response.ResultCode = (uint)
+                    ApplicationServiceResultCode.BackendFailure;
+                WritePersistentReadResponse(request.ResponseBuffer,
+                    &response);
+                process.RecordServiceRequestSuccess();
+                Marker("RING3_PERSISTENT_READ_PARTIAL_RANGE_REJECTED=1");
+                return Success;
+            }
+
+            if (value.BytesRead != 0) {
+                fixed (byte* source = value.Bytes) {
+                    Native.Movsb((void*)request.DataBuffer, source,
+                        (ulong)value.BytesRead);
+                }
+            }
+            Phase35DiagnosticOwnerBytes(
+                "PHASE35_DIAG_READ_AFTER_DATA_COPY=0x");
+            response.ResultCode = (uint)ApplicationServiceResultCode.Success;
+            response.BytesRead = (uint)value.BytesRead;
+            response.EndOfValue = value.EndOfResource ? 1U : 0U;
+            WritePersistentReadResponse(request.ResponseBuffer, &response);
+            process.RecordServiceRequestSuccess();
+            Marker("RING3_PERSISTENT_READ_BACKEND_DISPATCHED=1");
+            Marker("RING3_PERSISTENT_READ_DATA_COPIED_TO_CALLER=1");
+            Marker("RING3_PERSISTENT_READ_BYTES=" +
+                response.BytesRead.ToString());
+            Marker("RING3_PERSISTENT_READ_END=" +
+                response.EndOfValue.ToString());
+            Marker("RING3_PERSISTENT_READ_RESPONSE_COPIED_OUT=1");
+            return Success;
+            } finally {
+                if (value != null && value.Bytes != null)
+                    value.Bytes.Dispose();
+                if (value != null) value.Dispose();
+                if (read != null) read.Dispose();
+                if (readRequest != null) readRequest.Dispose();
+                if (contextResult != null) contextResult.Dispose();
+                if (context != null) context.Dispose();
+                if (relativePath != null) relativePath.Dispose();
+            }
+        }
+
+        private static bool TryValidatePersistentReadRequest(
+                Ring3PersistentReadRequest* request, out string relativePath) {
+            relativePath = null;
+            if (request == null) return false;
+            if (request->StructureVersion != AbiVersion ||
+                request->OperationId != PersistentReadOperation ||
+                request->RequestLength != sizeof(Ring3PersistentReadRequest))
+                return false;
+            if (request->PathLength == 0 || request->PathLength >
+                    ApplicationStorageRequest.MaxRelativePathLength)
+                return false;
+            if (request->DataCapacity == 0 || request->DataCapacity >
+                    ApplicationStorageReadRequest.MaxChunkLength)
+                return false;
+            if (request->ResponseCapacity !=
+                    (uint)sizeof(Ring3PersistentReadResponse))
+                return false;
+            if (request->ResponseBuffer == 0 || request->DataBuffer == 0) {
+                return false;
+            }
+            if (request->Offset != 0 || request->Reserved != 0) {
+                return false;
+            }
+
+            char[] characters = new char[(int)request->PathLength];
+            byte* pathBytes = request->Path;
+            for (int i = 0; i < characters.Length; i++) {
+                characters[i] = (char)(pathBytes[i * 2] |
+                    ((uint)pathBytes[(i * 2) + 1] << 8));
+            }
+            int paddingStart = characters.Length * 2;
+            for (int i = paddingStart;
+                    i < ApplicationStorageRequest.MaxRelativePathLength * 2;
+                    i++) {
+                if (pathBytes[i] != 0) {
+                    characters.Dispose();
+                    return false;
+                }
+            }
+
+            relativePath = new string(characters);
+            characters.Dispose();
+            if (!ApplicationStoragePathRules.IsValid(relativePath)) {
+                relativePath.Dispose();
+                relativePath = null;
+                return false;
+            }
+            return true;
+        }
+
+        private static bool TryResolvePersistentStorageAccess(
+                Ring3Process process, out ApplicationServiceContext context,
+                out ApplicationServiceAccess access,
+                out ApplicationServiceResult result,
+                out ApplicationInstance requester) {
+            context = null;
+            access = null;
+            requester = null;
+            result = null;
+            if (process == null) {
+                result = ApplicationServiceResult.InvalidContextResult();
+                return false;
+            }
+
+            Marker("RING3_PERSISTENT_READ_PROCESS_IDENTITY_DERIVED=1");
+            ApplicationInstanceHandle owner =
+                ApplicationInstanceHandle.FromValue(
+                    process.OwningApplicationInstance);
+            if (!owner.IsValid ||
+                !ApplicationInstanceRegistry.TryGet(owner, out requester) ||
+                requester == null) {
+                Marker("RING3_PERSISTENT_READ_OWNER_REJECTED=1");
+                result = ApplicationServiceResult.InvalidContextResult();
+                return false;
+            }
+            Marker("RING3_PERSISTENT_READ_APP_MODEL_OWNER_DERIVED=1");
+
+            if (!ApplicationServiceRegistry.TryCreateContext(owner,
+                    out context, out result)) {
+                Marker("RING3_PERSISTENT_READ_CONTEXT_DERIVATION_FAILED=1");
+                return false;
+            }
+            ApplicationInstance resolved = null;
+            ApplicationServiceResult validationResult = null;
+            bool contextMatchesOwner = context != null &&
+                context.ApplicationId == requester.DescriptorId &&
+                requester.ApplicationId == requester.DescriptorId;
+            bool contextValidated = contextMatchesOwner &&
+                ApplicationServiceRegistry.TryValidateContext(context,
+                    ApplicationServiceId.Storage, out resolved,
+                    out validationResult) && resolved == requester;
+            if (result != null) result.Dispose();
+            result = validationResult;
+            if (!contextValidated) {
+                if (result == null)
+                    result = ApplicationServiceResult.InvalidContextResult();
+                Marker("RING3_PERSISTENT_READ_CONTEXT_REJECTED=1");
+                return false;
+            }
+
+            ApplicationServiceResult accessResult;
+            bool accessAvailable = ApplicationServiceRegistry.TryGetAccess(
+                context, out access, out accessResult) && access != null &&
+                access.Storage != null;
+            if (result != null) result.Dispose();
+            result = accessResult;
+            if (!accessAvailable) {
+                if (result == null)
+                    result = ApplicationServiceResult.InvalidContextResult();
+                Marker("RING3_PERSISTENT_READ_STORAGE_ACCESS_MISSING=1");
+                return false;
+            }
+            if (requester.LifecycleState !=
+                    ApplicationInstanceLifecycleState.Running &&
+                requester.LifecycleState !=
+                    ApplicationInstanceLifecycleState.Activated) {
+                if (result != null) result.Dispose();
+                result = ApplicationServiceResult.Failure(
+                    ApplicationServiceResultCode.InvalidContext,
+                    "Persistent read requires a running application");
+                Marker("RING3_PERSISTENT_READ_LIFECYCLE_REJECTED=1");
+                return false;
+            }
+            Marker("RING3_PERSISTENT_READ_SERVICE_CONTEXT_DERIVED=1");
+            Marker("RING3_PERSISTENT_READ_APP_ID_DERIVED=1");
+            return true;
+        }
+
+        private static void WritePersistentReadResponse(ulong destination,
+                Ring3PersistentReadResponse* response) {
+            Native.Movsb((void*)destination, response,
+                (ulong)sizeof(Ring3PersistentReadResponse));
+        }
+
+        internal static ulong ValidatePersistentReadRequestForPhase35Proof(
+                Ring3PersistentReadRequest* request) {
+            string ignored;
+            return TryValidatePersistentReadRequest(request, out ignored)
+                ? Success : InvalidRequest;
+        }
+
+        internal static bool ValidatePersistentReadBufferForPhase35Proof(
+                Ring3Process process, ulong address, ulong length) {
+            return process != null && process.Space != null &&
+                process.Space.Pml4 != null &&
+                PageTable.ValidateWritableUserRange(process.Space.Pml4,
+                    address, length);
         }
 
         private static bool TryValidateResourceRequest(
