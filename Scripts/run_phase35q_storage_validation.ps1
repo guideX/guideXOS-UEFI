@@ -382,8 +382,8 @@ try {
                 'ALLOC_MATRIX_PROCESSES_B1=0',
                 'ALLOC_MATRIX_PROCESSES_B2=0',
                 'ALLOC_MATRIX_PROCESSES_B3=0',
-                'ALLOC_MATRIX_PROCESSES_B4=0',
-                'ALLOC_MATRIX_ORIGINAL_NET_PAGES=',
+                'ALLOC_MATRIX_ORIGINAL_FIRST_PROCESSES=0',
+                'ALLOC_MATRIX_ORIGINAL_FIRST_NET_PAGES=',
                 'ALLOC_MATRIX_ORIGINAL_REQUESTS=6',
                 'ALLOC_MATRIX_PROCESS_COUNT=0')) {
             if ($finalContent.IndexOf($marker,
@@ -395,6 +395,15 @@ try {
             '(?m)^PHASE35_ALLOC_MATRIX_RESULT=[^\r\n]+')
         if ($matrixRows.Count -ne 4) {
             throw "Expected four allocator matrix result rows; saw $($matrixRows.Count)."
+        }
+        $originalFirst = $finalContent.IndexOf(
+            'ALLOC_MATRIX_BEGIN=ORIGINAL_SUCCESS_FIRST',
+            [System.StringComparison]::Ordinal)
+        $noReadFirst = $finalContent.IndexOf(
+            'ALLOC_MATRIX_BEGIN=NO_READ',
+            [System.StringComparison]::Ordinal)
+        if ($originalFirst -lt 0 -or $noReadFirst -le $originalFirst) {
+            throw 'Fresh boot did not run the original payload before allocator controls.'
         }
     } elseif ($Phase35R) {
         $fixtureStatusRows = [regex]::Matches($finalContent,

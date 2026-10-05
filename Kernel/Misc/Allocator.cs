@@ -63,6 +63,21 @@ abstract unsafe class Allocator {
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
     internal static ulong CurrentOwnerGeneration;
     internal static byte CurrentAllocationLabel;
+    internal static ulong CurrentDiagnosticRequest;
+    internal static bool DiagnosticProvenanceEnabled = true;
+    internal enum DiagnosticAllocationSite : byte {
+        Unclassified = 0,
+        PageTableWalk = 1,
+        ManagedVmCommit = 2,
+        KernelApiAllocate = 3,
+        KernelApiReadAllBytes = 4,
+        KernelApiReallocate = 5,
+        NativeRuntimeMalloc = 6,
+        NativeRuntimeRealloc = 7,
+        NativeRuntimeCalloc = 8,
+        NativeRuntimeKmalloc = 9,
+        NativeRuntimeKcalloc = 10
+    }
     private const int DiagnosticRunCapacity = 16384;
     private static ulong _allocationSequence;
     private static ulong _diagnosticSnapshotSequence;
@@ -129,6 +144,11 @@ abstract unsafe class Allocator {
         public fixed int DiagnosticRunCallerLines[16384];
         public fixed byte DiagnosticRunTags[16384];
         public fixed byte DiagnosticRunCallerLabels[16384];
+        public fixed byte DiagnosticRunAllocationSites[16384];
+        public fixed ulong DiagnosticRunVirtualAddresses[16384];
+        public fixed ulong DiagnosticRunCr3[16384];
+        public fixed ulong DiagnosticRunRequestedSizes[16384];
+        public fixed ulong DiagnosticRunCallerAddresses[16384];
         public fixed uint DiagnosticPageRunSlots[NumPages];
         public fixed ulong DiagnosticPageOwnerGenerations[NumPages];
         public fixed ulong DiagnosticPageAllocationSequences[NumPages];
@@ -367,7 +387,8 @@ abstract unsafe class Allocator {
                 // Owner accounting (do BEFORE clearing pages)
                 int owner = _Info.Owners[p];
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
-                RecordDiagnosticFree((int)p);
+                if (DiagnosticProvenanceEnabled)
+                    RecordDiagnosticFree((int)p);
 #endif
                 
                 if (owner > 0) {
@@ -478,6 +499,81 @@ abstract unsafe class Allocator {
             Native.Out8(0x3F8, c);
         }
     }
+
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+    // Called by the kernel CoreLib RhpNewArray override after it has initialized
+    // the object header. This records only bounded scalar metadata and emits
+    // fixed text; it does not ask the runtime to format a managed type name.
+    internal static void RecordRhpNewArrayAllocation(IntPtr objectAddress,
+            ulong eeType, ulong componentType, uint baseSize,
+            ushort componentSize, int length, ushort arrayType,
+            ushort componentElementType, bool componentIsObject,
+            bool isString, byte rank, ulong objectBytes) {
+        if (!DiagnosticProvenanceEnabled || objectAddress == IntPtr.Zero)
+            return;
+        if (CurrentDiagnosticRequest == 0)
+            return;
+
+        ulong address = (ulong)objectAddress;
+        lock (_sync) {
+            if (address < (ulong)_Info.Start || address >=
+                    (ulong)_Info.Start + MemorySize)
+                return;
+            ulong page = (address - (ulong)_Info.Start) / PageSize;
+            uint encodedSlot = _Info.DiagnosticPageRunSlots[page];
+            if (encodedSlot == 0) return;
+            int slot = (int)encodedSlot - 1;
+            ulong id = _Info.DiagnosticRunIds[slot];
+            if (id == 0 || _Info.DiagnosticRunAddresses[slot] != address)
+                return;
+
+            byte classification = 0; // unknown EEType
+            if (arrayType == 0x18 && componentElementType == 0x05 &&
+                    componentSize == 1) classification = 1; // byte[]
+            else if (arrayType == 0x18 && componentElementType == 0x03 &&
+                    componentSize == 2) classification = 2; // char[]
+            else if (arrayType == 0x18 && componentIsObject &&
+                    componentSize == 8) classification = 3; // object[]
+            else if (arrayType == 0x18 && componentElementType >= 0x02 &&
+                    componentElementType <= 0x0F) classification = 4; // primitive[]
+            else if (arrayType == 0x18) classification = 5; // other array
+            else if (isString) classification = 6; // string
+
+            SerialWriteFreeInvalidText("PHASE35_RHP_NEW_ARRAY;request=0x");
+            SerialWriteFreeInvalidHex(CurrentDiagnosticRequest);
+            SerialWriteFreeInvalidText(";id=0x");
+            SerialWriteFreeInvalidHex(id);
+            SerialWriteFreeInvalidText(";object=0x");
+            SerialWriteFreeInvalidHex(address);
+            SerialWriteFreeInvalidText(";eeType=0x");
+            SerialWriteFreeInvalidHex(eeType);
+            SerialWriteFreeInvalidText(";componentType=0x");
+            SerialWriteFreeInvalidHex(componentType);
+            SerialWriteFreeInvalidText(";arrayType=0x");
+            SerialWriteFreeInvalidHex(arrayType);
+            SerialWriteFreeInvalidText(";componentTypeCode=0x");
+            SerialWriteFreeInvalidHex(componentElementType);
+            SerialWriteFreeInvalidText(";componentSize=0x");
+            SerialWriteFreeInvalidHex(componentSize);
+            SerialWriteFreeInvalidText(";length=0x");
+            SerialWriteFreeInvalidHex(unchecked((ulong)length));
+            SerialWriteFreeInvalidText(";baseSize=0x");
+            SerialWriteFreeInvalidHex(baseSize);
+            SerialWriteFreeInvalidText(";objectBytes=0x");
+            SerialWriteFreeInvalidHex(objectBytes);
+            SerialWriteFreeInvalidText(";rank=0x");
+            SerialWriteFreeInvalidHex(rank);
+            SerialWriteFreeInvalidText(";class=0x");
+            SerialWriteFreeInvalidHex(classification);
+            SerialWriteFreeInvalidText(";generation=0x");
+            SerialWriteFreeInvalidHex(CurrentOwnerGeneration);
+            SerialWriteFreeInvalidText(";helperReturn=0x");
+            SerialWriteFreeInvalidHex(
+                _Info.DiagnosticRunCallerAddresses[slot]);
+            Native.Out8(0x3F8, (byte)'\n');
+        }
+    }
+#endif
 #endif
     /// <summary>
     /// Allocate
@@ -501,8 +597,51 @@ abstract unsafe class Allocator {
     /// <param name="tag"></param>
     /// <returns></returns>
     internal static unsafe IntPtr Allocate(ulong size, AllocTag tag) {
+        return Allocate(size, tag,
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            DiagnosticAllocationSite.Unclassified,
+#endif
+            0, 0);
+    }
+
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+    internal static unsafe IntPtr Allocate(ulong size,
+            DiagnosticAllocationSite site, ulong virtualAddress = 0,
+            ulong cr3 = 0, ulong callerAddress = 0) =>
+        Allocate(size, AllocTag.Unknown, site, virtualAddress, cr3,
+            callerAddress);
+
+    internal static unsafe IntPtr Reallocate(IntPtr intPtr, ulong size,
+            DiagnosticAllocationSite site) {
+        if (intPtr == IntPtr.Zero) return Allocate(size, site);
+        if (size == 0) {
+            Free(intPtr, "Allocator.Reallocate");
+            return IntPtr.Zero;
+        }
+        long page = GetPageIndexStart(intPtr);
+        if (page == -1) return intPtr;
+        ulong pages = size > PageSize ?
+            (size / PageSize) + ((size % PageSize) != 0 ? 1UL : 0) : 1UL;
+        if (_Info.Pages[page] == pages) return intPtr;
+        byte tag = _Info.Tags[page];
+        IntPtr replacement = Allocate(size, (AllocTag)tag, site, 0, 0);
+        if (replacement == IntPtr.Zero) return intPtr;
+        ulong oldBytes = _Info.Pages[page] * PageSize;
+        ulong copyLength = size < oldBytes ? size : oldBytes;
+        MemoryCopy(replacement, intPtr, copyLength);
+        Free(intPtr, "Allocator.Reallocate");
+        return replacement;
+    }
+#endif
+
+    private static unsafe IntPtr Allocate(ulong size, AllocTag tag,
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            DiagnosticAllocationSite site,
+#endif
+            ulong virtualAddress, ulong cr3, ulong callerAddress = 0) {
         string callerFile = "";
         int callerLine = 0;
+        ulong requestedSize = size;
         lock (_sync) {
             if (size == 0) size = 1;
             // Overflow / corruption guard: reject absurd sizes silently (return null) instead of panicking
@@ -544,8 +683,20 @@ abstract unsafe class Allocator {
             long baseAddr = (long)_Info.Start; long offset = (long)(i * PageSize);
             IntPtr allocation = new IntPtr((void*)(baseAddr + offset));
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
+            if (site == DiagnosticAllocationSite.NativeRuntimeMalloc ||
+                    site == DiagnosticAllocationSite.NativeRuntimeRealloc ||
+                    site == DiagnosticAllocationSite.NativeRuntimeCalloc ||
+                    site == DiagnosticAllocationSite.NativeRuntimeKmalloc ||
+                    site == DiagnosticAllocationSite.NativeRuntimeKcalloc ||
+                    site == DiagnosticAllocationSite.KernelApiAllocate ||
+                    site == DiagnosticAllocationSite.KernelApiReadAllBytes ||
+                    site == DiagnosticAllocationSite.KernelApiReallocate) {
+                virtualAddress = (ulong)allocation;
+                cr3 = Native.ReadCR3() & ~0xFFFUL;
+            }
             RecordDiagnosticAllocation((ulong)allocation, pages, t, owner,
-                callerFile, callerLine);
+                callerFile, callerLine, site, virtualAddress, cr3,
+                requestedSize, callerAddress);
 #endif
             return allocation;
         }
@@ -563,7 +714,10 @@ abstract unsafe class Allocator {
 
     private static void RecordDiagnosticAllocation(ulong address,
             ulong pages, byte tag, int owner, string callerFile,
-            int callerLine) {
+            int callerLine, DiagnosticAllocationSite site,
+            ulong virtualAddress, ulong cr3, ulong requestedSize,
+            ulong callerAddress) {
+        if (!DiagnosticProvenanceEnabled) return;
         ulong id = ++_allocationSequence;
         int slot = (int)((id - 1) % DiagnosticRunCapacity);
         if (_Info.DiagnosticRunIds[slot] != 0 &&
@@ -580,6 +734,11 @@ abstract unsafe class Allocator {
         _Info.DiagnosticRunCallerLines[slot] = callerLine;
         _Info.DiagnosticRunTags[slot] = tag;
         _Info.DiagnosticRunCallerLabels[slot] = CurrentAllocationLabel;
+        _Info.DiagnosticRunAllocationSites[slot] = (byte)site;
+        _Info.DiagnosticRunVirtualAddresses[slot] = virtualAddress;
+        _Info.DiagnosticRunCr3[slot] = cr3;
+        _Info.DiagnosticRunRequestedSizes[slot] = requestedSize;
+        _Info.DiagnosticRunCallerAddresses[slot] = callerAddress;
         for (ulong page = 0; page < pages; page++)
             _Info.DiagnosticPageRunSlots[(address - (ulong)_Info.Start) /
                 PageSize + page] = (uint)(slot + 1);
@@ -636,6 +795,7 @@ abstract unsafe class Allocator {
     }
 
     internal static void DumpDiagnosticRunsSince(ulong sequence) {
+        if (!DiagnosticProvenanceEnabled) return;
         lock (_sync) {
             int emitted = 0;
             ulong total = 0;
@@ -673,6 +833,21 @@ abstract unsafe class Allocator {
                 SerialWriteFreeInvalidText(";callerLabel=0x");
                 SerialWriteFreeInvalidHex(
                     _Info.DiagnosticPageCallerLabels[page]);
+                SerialWriteFreeInvalidText(";site=0x");
+                SerialWriteFreeInvalidHex(_Info.DiagnosticRunAllocationSites[
+                    (int)((id - 1) % DiagnosticRunCapacity)]);
+                SerialWriteFreeInvalidText(";virtual=0x");
+                SerialWriteFreeInvalidHex(_Info.DiagnosticRunVirtualAddresses[
+                    (int)((id - 1) % DiagnosticRunCapacity)]);
+                SerialWriteFreeInvalidText(";cr3=0x");
+                SerialWriteFreeInvalidHex(_Info.DiagnosticRunCr3[
+                    (int)((id - 1) % DiagnosticRunCapacity)]);
+                SerialWriteFreeInvalidText(";requestBytes=0x");
+                SerialWriteFreeInvalidHex(_Info.DiagnosticRunRequestedSizes[
+                    (int)((id - 1) % DiagnosticRunCapacity)]);
+                SerialWriteFreeInvalidText(";callerAddress=0x");
+                SerialWriteFreeInvalidHex(_Info.DiagnosticRunCallerAddresses[
+                    (int)((id - 1) % DiagnosticRunCapacity)]);
                 SerialWriteFreeInvalidText(";freed=0x0000000000000000");
                 Native.Out8(0x3F8, (byte)'\n');
                 page += pages;
@@ -714,6 +889,158 @@ abstract unsafe class Allocator {
             SerialWriteFreeInvalidHex(retainedPages >= freedBaselinePages ?
                 retainedPages - freedBaselinePages : 0UL);
             Native.Out8(0x3F8, (byte)'\n');
+
+            DumpDiagnosticLiveRhpArraysNoLock(sequence);
+        }
+    }
+
+    private static void DumpDiagnosticLiveRhpArraysNoLock(ulong sequence) {
+        int emitted = 0;
+        for (ulong page = 0; page < (ulong)NumPages;) {
+            ulong pages = _Info.Pages[page];
+            if (pages == 0 || pages == PageSignature) { page++; continue; }
+            if (pages > (ulong)NumPages - page) break;
+            ulong id = _Info.DiagnosticPageAllocationSequences[page];
+            if (id <= sequence) { page += pages; continue; }
+            int slot = (int)((id - 1) % DiagnosticRunCapacity);
+            if (id != 0 && _Info.DiagnosticRunIds[slot] == id &&
+                    _Info.DiagnosticRunAllocationSites[slot] ==
+                        (byte)DiagnosticAllocationSite.NativeRuntimeMalloc) {
+                ulong address = (ulong)_Info.Start + page * PageSize;
+                ulong eeTypeAddress = *(ulong*)address;
+                // Kernel PE and EEType data share the fixed image range. This
+                // bounds the probe before interpreting arbitrary malloc data.
+                if (eeTypeAddress >= 0x10000000UL &&
+                        eeTypeAddress < 0x11000000UL) {
+                    Internal.Runtime.EEType* eeType =
+                        (Internal.Runtime.EEType*)eeTypeAddress;
+                    if (eeType->IsArray || eeType->IsString) {
+                        if (emitted < 256) {
+                            emitted++;
+                            DumpRhpArrayMetadataNoLock(address, id, eeType);
+                        }
+                    }
+                }
+            }
+            page += pages;
+        }
+        SerialWriteFreeInvalidText("PHASE35_RHP_ARRAY_LIVE_DUMP;emitted=0x");
+        SerialWriteFreeInvalidHex((ulong)emitted);
+        SerialWriteFreeInvalidText(";truncated=0x");
+        SerialWriteFreeInvalidHex(emitted >= 256 ? 1UL : 0UL);
+        Native.Out8(0x3F8, (byte)'\n');
+    }
+
+    private static void DumpRhpArrayMetadataNoLock(ulong address, ulong id,
+            Internal.Runtime.EEType* eeType) {
+        Internal.Runtime.EEType* componentType = eeType->RelatedParameterType;
+        ushort componentCode = componentType == null ? (ushort)0 :
+            (ushort)componentType->ElementType;
+        bool componentIsObject = componentType != null &&
+            Internal.Runtime.EEType.WellKnownEETypes.IsSystemObject(
+                componentType);
+        byte classification = 0;
+        if (eeType->IsArray && eeType->IsSzArray && componentCode == 0x05 &&
+                eeType->ComponentSize == 1) classification = 1;
+        else if (eeType->IsArray && eeType->IsSzArray &&
+                componentCode == 0x03 && eeType->ComponentSize == 2)
+            classification = 2;
+        else if (eeType->IsArray && eeType->IsSzArray && componentIsObject &&
+                eeType->ComponentSize == 8) classification = 3;
+        else if (eeType->IsArray && eeType->IsSzArray &&
+                componentCode >= 0x02 && componentCode <= 0x0F)
+            classification = 4;
+        else if (eeType->IsArray) classification = 5;
+        else if (eeType->IsString) classification = 6;
+
+        int length = *(int*)(address + sizeof(ulong));
+        ulong objectBytes = eeType->BaseSize +
+            (ulong)length * eeType->ComponentSize;
+        objectBytes = (objectBytes + 7UL) & ~7UL;
+        int slot = (int)((id - 1) % DiagnosticRunCapacity);
+        SerialWriteFreeInvalidText("PHASE35_RHP_ARRAY_LIVE;id=0x");
+        SerialWriteFreeInvalidHex(id);
+        SerialWriteFreeInvalidText(";object=0x");
+        SerialWriteFreeInvalidHex(address);
+        SerialWriteFreeInvalidText(";eeType=0x");
+        SerialWriteFreeInvalidHex((ulong)eeType);
+        SerialWriteFreeInvalidText(";componentType=0x");
+        SerialWriteFreeInvalidHex((ulong)componentType);
+        SerialWriteFreeInvalidText(";arrayType=0x");
+        SerialWriteFreeInvalidHex((ushort)eeType->ElementType);
+        SerialWriteFreeInvalidText(";componentTypeCode=0x");
+        SerialWriteFreeInvalidHex(componentCode);
+        SerialWriteFreeInvalidText(";componentSize=0x");
+        SerialWriteFreeInvalidHex(eeType->ComponentSize);
+        SerialWriteFreeInvalidText(";length=0x");
+        SerialWriteFreeInvalidHex(unchecked((ulong)length));
+        SerialWriteFreeInvalidText(";baseSize=0x");
+        SerialWriteFreeInvalidHex(eeType->BaseSize);
+        SerialWriteFreeInvalidText(";objectBytes=0x");
+        SerialWriteFreeInvalidHex(objectBytes);
+        SerialWriteFreeInvalidText(";rank=0x");
+        SerialWriteFreeInvalidHex(eeType->IsArray ?
+            (ulong)eeType->ArrayRank : 0UL);
+        SerialWriteFreeInvalidText(";class=0x");
+        SerialWriteFreeInvalidHex(classification);
+        SerialWriteFreeInvalidText(";callerAddress=0x");
+        SerialWriteFreeInvalidHex(_Info.DiagnosticRunCallerAddresses[slot]);
+        SerialWriteFreeInvalidText(";owner=0x");
+        SerialWriteFreeInvalidHex(unchecked((ulong)_Info.DiagnosticRunOwnerIds[slot]));
+        SerialWriteFreeInvalidText(";generation=0x");
+        SerialWriteFreeInvalidHex(
+            _Info.DiagnosticRunOwnerGenerations[slot]);
+        Native.Out8(0x3F8, (byte)'\n');
+    }
+
+    internal static void DumpDiagnosticRequestAllocations(ulong request,
+            ulong firstSequence, ulong lastSequence) {
+        if (!DiagnosticProvenanceEnabled) return;
+        lock (_sync) {
+            for (ulong id = firstSequence; id <= lastSequence; id++) {
+                int slot = (int)((id - 1) % DiagnosticRunCapacity);
+                if (_Info.DiagnosticRunIds[slot] != id) continue;
+                ulong address = _Info.DiagnosticRunAddresses[slot];
+                ulong page = (address - (ulong)_Info.Start) / PageSize;
+                bool live = page < (ulong)NumPages &&
+                    _Info.DiagnosticPageAllocationSequences[page] == id &&
+                    _Info.Pages[page] == _Info.DiagnosticRunPages[slot];
+                SerialWriteFreeInvalidText("PHASE35_READ_ALLOC;request=0x");
+                SerialWriteFreeInvalidHex(request);
+                SerialWriteFreeInvalidText(";id=0x");
+                SerialWriteFreeInvalidHex(id);
+                SerialWriteFreeInvalidText(";physical=0x");
+                SerialWriteFreeInvalidHex(address);
+                SerialWriteFreeInvalidText(";pages=0x");
+                SerialWriteFreeInvalidHex(_Info.DiagnosticRunPages[slot]);
+                SerialWriteFreeInvalidText(";owner=0x");
+                SerialWriteFreeInvalidHex(unchecked((ulong)
+                    _Info.DiagnosticRunOwnerIds[slot]));
+                SerialWriteFreeInvalidText(";generation=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunOwnerGenerations[slot]);
+                SerialWriteFreeInvalidText(";site=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunAllocationSites[slot]);
+                SerialWriteFreeInvalidText(";callerLabel=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunCallerLabels[slot]);
+                SerialWriteFreeInvalidText(";virtual=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunVirtualAddresses[slot]);
+                SerialWriteFreeInvalidText(";cr3=0x");
+                SerialWriteFreeInvalidHex(_Info.DiagnosticRunCr3[slot]);
+                SerialWriteFreeInvalidText(";requestBytes=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunRequestedSizes[slot]);
+                SerialWriteFreeInvalidText(";callerAddress=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunCallerAddresses[slot]);
+                SerialWriteFreeInvalidText(";freeSequence=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunFreeSequences[slot]);
+                SerialWriteFreeInvalidText(live ? ";live=1\n" : ";live=0\n");
+            }
         }
     }
 
@@ -781,7 +1108,8 @@ abstract unsafe class Allocator {
                 SerialWriteFreeInvalidHex(pages);
                 Native.Out8(0x3F8, (byte)'\n');
             }
-            CaptureDiagnosticRunBaselineNoLock();
+            if (DiagnosticProvenanceEnabled)
+                CaptureDiagnosticRunBaselineNoLock();
             return MemoryInUse;
         }
     }

@@ -82,6 +82,21 @@ namespace Internal.Runtime.CompilerHelpers {
             b += sizeof(IntPtr);
             MemCpy(b, (byte*)(&length), sizeof(int));
 
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            EEType* componentType = pEEType->RelatedParameterType;
+            bool componentIsObject = componentType != null &&
+                EEType.WellKnownEETypes.IsSystemObject(componentType);
+            Allocator.RecordRhpNewArrayAllocation(data,
+                (ulong)pEEType, (ulong)componentType, pEEType->BaseSize,
+                pEEType->ComponentSize, length,
+                (ushort)pEEType->ElementType,
+                componentType == null ? (ushort)0 :
+                    (ushort)componentType->ElementType,
+                componentIsObject, pEEType->IsString,
+                pEEType->IsArray ? (byte)pEEType->ArrayRank : (byte)0,
+                size);
+#endif
+
             return obj;
         }
 

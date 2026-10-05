@@ -58,6 +58,15 @@ ReadFreeCallerReturnAddress:
     mov rax, [rsp + 0x90]
     ret
 
+; Called from the NativeRuntimeMalloc diagnostic wrapper. The current wrapper
+; saves eight registers and reserves 0x58 bytes; its caller return address
+; (the call from RhpNewArray) is at [rsp+0xA0] in this helper frame. Keep in
+; sync with the disassembled malloc wrapper.
+global ReadMallocCallerReturnAddress
+ReadMallocCallerReturnAddress:
+    mov rax, [rsp + 0xA0]
+    ret
+
 ; This deliberately faults only from the opt-in FaultBytesProbe diagnostic.
 ; The reported RIP is the UD2 below, with recognizable register sentinels.
 global TriggerFaultBytesProbe

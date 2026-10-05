@@ -1704,7 +1704,15 @@ namespace guideXOS.Misc {
                     slot = oldLength;
                 }
                 if ((uint)addedCount >= (uint)added.Length) break;
-                ulong physical = (ulong)Allocator.Allocate(ManagedImageContract.PageSize);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                ulong physical = (ulong)Allocator.Allocate(
+                    ManagedImageContract.PageSize,
+                    Allocator.DiagnosticAllocationSite.ManagedVmCommit,
+                    pageAddress, Space.RootPhysical);
+#else
+                ulong physical = (ulong)Allocator.Allocate(
+                    ManagedImageContract.PageSize);
+#endif
                 if (physical == 0) break;
                 Native.Stosb((void*)physical, 0, ManagedImageContract.PageSize);
                 if (!Space.MapUser(pageAddress, physical, writable, executable)) {

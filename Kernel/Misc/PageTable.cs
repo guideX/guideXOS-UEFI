@@ -150,7 +150,12 @@ namespace guideXOS {
                 if (user && allocations != null &&
                     (directory[entry] & 0b100UL) == 0) {
                     if (allocationCount >= allocations.Length) return null;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                    ulong* clone = (ulong*)Allocator.Allocate(0x1000,
+                        Allocator.DiagnosticAllocationSite.PageTableWalk);
+#else
                     ulong* clone = (ulong*)Allocator.Allocate(0x1000);
+#endif
                     if (clone == null) return null;
                     Native.Movsb(clone, (void*)(directory[entry] & PageMask), 0x1000);
                     allocations[allocationCount++] = (ulong)clone;
@@ -165,7 +170,12 @@ namespace guideXOS {
 
             if (allocations != null && allocationCount >= allocations.Length)
                 return null;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            ulong* page = (ulong*)Allocator.Allocate(0x1000,
+                Allocator.DiagnosticAllocationSite.PageTableWalk);
+#else
             ulong* page = (ulong*)Allocator.Allocate(0x1000);
+#endif
             if (page == null) return null;
             Native.Stosb(page, 0, 0x1000);
             if (allocations != null && allocationCount < allocations.Length)

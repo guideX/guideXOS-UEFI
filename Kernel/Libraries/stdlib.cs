@@ -11,6 +11,10 @@ namespace guideXOS.Kernel.Libraries {
         [DllImport("*")]
         private static extern ulong ReadFreeCallerReturnAddress();
 #endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+        [DllImport("*")]
+        private static extern ulong ReadMallocCallerReturnAddress();
+#endif
 
         /// <summary>
         /// Malloc
@@ -19,7 +23,13 @@ namespace guideXOS.Kernel.Libraries {
         /// <returns></returns>
         [RuntimeExport("malloc")]
         public static void* malloc(ulong size) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            return (void*)Allocator.Allocate(size,
+                Allocator.DiagnosticAllocationSite.NativeRuntimeMalloc,
+                0, 0, ReadMallocCallerReturnAddress());
+#else
             return (void*)Allocator.Allocate(size);
+#endif
         }
         /// <summary>
         /// Free
@@ -42,7 +52,12 @@ namespace guideXOS.Kernel.Libraries {
         /// <returns></returns>
         [RuntimeExport("realloc")]
         public static void* realloc(void* ptr, ulong size) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            return (void*)Allocator.Reallocate((System.IntPtr)ptr, size,
+                Allocator.DiagnosticAllocationSite.NativeRuntimeRealloc);
+#else
             return (void*)Allocator.Reallocate((System.IntPtr)ptr, size);
+#endif
         }
         /// <summary>
         /// Calloc
@@ -52,7 +67,12 @@ namespace guideXOS.Kernel.Libraries {
         /// <returns></returns>
         [RuntimeExport("calloc")]
         public static void* calloc(ulong num, ulong size) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            void* ptr = (void*)Allocator.Allocate(num * size,
+                Allocator.DiagnosticAllocationSite.NativeRuntimeCalloc);
+#else
             void* ptr = (void*)Allocator.Allocate(num * size);
+#endif
             Native.Stosb(ptr, 0, num * size);
             return ptr;
         }
@@ -63,7 +83,12 @@ namespace guideXOS.Kernel.Libraries {
         /// <returns></returns>
         [RuntimeExport("kmalloc")]
         public static void* kmalloc(ulong size) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            return (void*)Allocator.Allocate(size,
+                Allocator.DiagnosticAllocationSite.NativeRuntimeKmalloc);
+#else
             return (void*)Allocator.Allocate(size);
+#endif
         }
         /// <summary>
         /// Kfree
@@ -91,7 +116,12 @@ namespace guideXOS.Kernel.Libraries {
         /// <returns></returns>
         [RuntimeExport("kcalloc")]
         public static void* kcalloc(ulong num, ulong size) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            void* ptr = (void*)Allocator.Allocate(num * size,
+                Allocator.DiagnosticAllocationSite.NativeRuntimeKcalloc);
+#else
             void* ptr = (void*)Allocator.Allocate(num * size);
+#endif
             Native.Stosb(ptr, 0, num * size);
             return ptr;
         }

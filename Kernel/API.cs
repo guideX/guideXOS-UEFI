@@ -197,7 +197,12 @@ namespace guideXOS {
         public static void API_ReadAllBytes(string name, ulong* length, byte** data) {
             byte[] buffer = File.ReadAllBytes(name);
 
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            *data = (byte*)Allocator.Allocate((ulong)buffer.Length,
+                Allocator.DiagnosticAllocationSite.KernelApiReadAllBytes);
+#else
             *data = (byte*)Allocator.Allocate((ulong)buffer.Length);
+#endif
             *length = (ulong)buffer.Length;
             fixed (byte* p = buffer) Native.Movsb(*data, p, *length);
 
@@ -222,7 +227,12 @@ namespace guideXOS {
 
         public static nint API_Allocate(ulong size) {
             //Debug.WriteLine($"API_Allocate {size}");
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            return Allocator.Allocate(size,
+                Allocator.DiagnosticAllocationSite.KernelApiAllocate);
+#else
             return Allocator.Allocate(size);
+#endif
         }
 
         public static ulong API_Free(nint ptr) {
@@ -231,6 +241,10 @@ namespace guideXOS {
         }
 
         public static nint API_Reallocate(nint intPtr, ulong size) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            if (intPtr == 0) return Allocator.Allocate(size,
+                Allocator.DiagnosticAllocationSite.KernelApiReallocate);
+#endif
             return Allocator.Reallocate(intPtr, size);
         }
 

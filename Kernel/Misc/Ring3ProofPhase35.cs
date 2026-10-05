@@ -388,9 +388,10 @@ namespace guideXOS.Misc {
                 else
                     HexMarker("PHASE35_DIAG_CLEANUP_GROWTH=0x",
                         memoryAfterCleanup - memoryBeforeCleanup);
-                HexMarker("PHASE35_DIAG_SYSCALL_OWNER_REMAINING=0x",
-                    Allocator.GetDiagnosticOwnerBytes(
-                        Ring3Abi.DiagnosticAllocatorOwnerId(oldHandle)));
+                if (Allocator.DiagnosticProvenanceEnabled)
+                    HexMarker("PHASE35_DIAG_SYSCALL_OWNER_REMAINING=0x",
+                        Allocator.GetDiagnosticOwnerBytes(
+                            Ring3Abi.DiagnosticAllocatorOwnerId(oldHandle)));
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
                 HexMarker("DIAG_PROCESS_HANDLE=0x", oldHandle.Value);
                 HexMarker("DIAG_PROCESS_GENERATION=0x",
@@ -851,8 +852,36 @@ namespace guideXOS.Misc {
                 return;
             }
             ulong b0 = Allocator.DumpDiagnosticSnapshot(0);
+            HexMarker("ALLOC_MATRIX_B0_PROVENANCE_SEQUENCE=",
+                Allocator.DiagnosticAllocationSequence);
             NumberMarker("ALLOC_MATRIX_PROCESSES_B0=",
                 Ring3ProcessTable.LiveCount);
+            Phase35Marker("ALLOC_MATRIX_BEGIN=ORIGINAL_SUCCESS_FIRST");
+            bool originalResumed;
+            int originalExitCode;
+            Ring3ProcessHandle originalHandle;
+            bool originalPass = RunOnePhase35Lifetime(1,
+                _owner.Handle.Value, 6, out originalHandle,
+                out originalResumed, out originalExitCode,
+                out int originalRequests) && originalResumed &&
+                originalExitCode == 35 && originalRequests == 6;
+            ulong originalSnapshot = Allocator.DumpDiagnosticSnapshot(1);
+            HexMarker("ALLOC_MATRIX_ORIGINAL_FIRST_PROVENANCE_SEQUENCE=",
+                Allocator.DiagnosticAllocationSequence);
+            NumberMarker("ALLOC_MATRIX_ORIGINAL_FIRST_PROCESSES=",
+                Ring3ProcessTable.LiveCount);
+            NumberMarker("ALLOC_MATRIX_ORIGINAL_FIRST_NET_PAGES=",
+                originalSnapshot >= b0 ?
+                    (originalSnapshot - b0) / Allocator.PageSize : 0);
+            NumberMarker("ALLOC_MATRIX_ORIGINAL_REQUESTS=",
+                originalRequests);
+            Phase35Marker(originalPass ?
+                "ALLOC_MATRIX_RESULT=ORIGINAL_SUCCESS,PASS" :
+                "ALLOC_MATRIX_RESULT=ORIGINAL_SUCCESS,FAIL");
+            Phase35Marker("ALLOC_MATRIX_END=ORIGINAL_SUCCESS_FIRST");
+            _phase35AllocatorMatrixPrevious = originalSnapshot;
+            Allocator.DiagnosticProvenanceEnabled = false;
+            Phase35Marker("ALLOC_MATRIX_DETAILED_PROVENANCE=OFF");
             for (int i = 0; i < 3; i++) {
                 int payloadKind = 6 + i;
                 int requests = i;
@@ -873,8 +902,7 @@ namespace guideXOS.Misc {
                     Ring3ProcessTable.LiveCount);
                 else NumberMarker("ALLOC_MATRIX_PROCESSES_B3=",
                     Ring3ProcessTable.LiveCount);
-                ulong baseline = i == 0 ? b0 :
-                    _phase35AllocatorMatrixPrevious;
+                ulong baseline = _phase35AllocatorMatrixPrevious;
                 NumberMarker("ALLOC_MATRIX_NET_PAGES=",
                     now >= baseline ? (now - baseline) / Allocator.PageSize : 0);
                 _phase35AllocatorMatrixPrevious = now;
@@ -892,28 +920,6 @@ namespace guideXOS.Misc {
                 else Phase35Marker("ALLOC_MATRIX_END=TWO_READ");
                 if (!pass) break;
             }
-            Phase35Marker("ALLOC_MATRIX_BEGIN=ORIGINAL_SUCCESS");
-            bool originalResumed;
-            int originalExitCode;
-            Ring3ProcessHandle originalHandle;
-            bool originalPass = RunOnePhase35Lifetime(1,
-                _owner.Handle.Value, 6, out originalHandle,
-                out originalResumed, out originalExitCode,
-                out int originalRequests) && originalResumed &&
-                originalExitCode == 35 && originalRequests == 6;
-            ulong b4 = Allocator.DumpDiagnosticSnapshot(4);
-            NumberMarker("ALLOC_MATRIX_PROCESSES_B4=",
-                Ring3ProcessTable.LiveCount);
-            ulong originalBaseline = _phase35AllocatorMatrixPrevious;
-            NumberMarker("ALLOC_MATRIX_ORIGINAL_NET_PAGES=",
-                b4 >= originalBaseline ?
-                    (b4 - originalBaseline) / Allocator.PageSize : 0);
-            NumberMarker("ALLOC_MATRIX_ORIGINAL_REQUESTS=",
-                originalRequests);
-            Phase35Marker(originalPass ?
-                "ALLOC_MATRIX_RESULT=ORIGINAL_SUCCESS,PASS" :
-                "ALLOC_MATRIX_RESULT=ORIGINAL_SUCCESS,FAIL");
-            Phase35Marker("ALLOC_MATRIX_END=ORIGINAL_SUCCESS");
             CleanupOwner();
             NumberMarker("ALLOC_MATRIX_PROCESS_COUNT=",
                 Ring3ProcessTable.LiveCount);

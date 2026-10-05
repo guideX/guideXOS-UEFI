@@ -248,3 +248,145 @@ work was performed. The protected failure image still hashes to
 associated protected log was left in place. Starting and ending root HEAD
 remain `07721246d63634a94b919715cc66be8c3dc5a67a` on `main` tracking
 `origin/main`.
+
+## Phase 35R3 allocator provenance (2026-10-04)
+
+R3 preserved the original payload as the first requester after backend/fixture
+setup on a fresh VM boot. The run log is
+`out/phase35q/serial-c7c497ef03b241f18fdf765c98a7f307.log` (SHA-256
+`D93EC34D646A474BAA67DE245969CBF3316F4B40F67464C64A7CB6C943FC3D14`). The
+pre-launch allocator snapshot recorded bytes/runs/owner and tag totals and
+provenance sequence `0x2B64B`; after original-payload cleanup the sequence was
+`0x2C9EF`. The completed matrix reported an empty process table, zero live
+address spaces, and zero live page tables after each requester cleanup.
+
+### Original-first request reconciliation
+
+The payload entered `PersistentRead` exactly six times. `READ_REQ` sequences
+1–6 each have a matching completion marker in this fresh run; the earlier
+unmatched-end anomaly did not recur. Five returned success (including the
+empty-value read); request 3 returned `NotFound` (service result code 3).
+The retained allocation records reconcile as follows:
+
+| Request | Payload path / result | Data destination / capacity | Offset / path length | Allocator events | Freed before return | Retained after return / cleanup | Retained sizes (bytes) |
+|---:|---|---|---|---:|---:|---:|---|
+| 1 | `state.bin`, success, 32 bytes, end | `0x7FFF007FFDC0` / 32 | 0 / 9 | 401 | 397 | 4 / 4 | 32, 88, 24, 80 |
+| 2 | `state.bin`, success, 31 bytes, not end | `0x7FFF007FFDA0` / 31 | 0 / 9 | 401 | 397 | 4 / 4 | 32, 88, 24, 80 |
+| 3 | `missing.phase35`, NotFound | `0x7FFF007EFE60` / 65,536 | 0 / 15 | 338 | 332 | 6 / 6 | 128, 104, 528, 128, 24, 96 |
+| 4 | `state.bin`, success, 32 bytes, end | `0x7FFF007EFE60` / 65,536 | 0 / 9 | 401 | 397 | 4 / 4 | 32, 88, 24, 80 |
+| 5 | `state.bin`, success, 32 bytes, end | `0x7FFF007EFE60` / 65,536 | 0 / 9 | 401 | 397 | 4 / 4 | 32, 88, 24, 80 |
+| 6 | `empty.bin`, empty success, end | `0x7FFF007EFE60` / 65,536 | 0 / 9 | 213 | 209 | 4 / 4 | 24, 80, 24, 80 |
+| **Total** | | | | **2,155** | **2,129** | **26 / 26** | |
+
+The request-record markers contain buffer pointers/capacities, offset and
+path length, but do not print path text. The path identities above are inferred
+from the payload source and sequence; the serial result markers independently
+show request 3 as NotFound and request 6 as a zero-byte end-of-value success.
+
+All 26 retained allocations are one-page runs with owner `-1`, generation /
+process handle `0x0000000100000001`, tag 0, caller label 2, runtime site 6,
+and caller return address `0x100110D1`. Their request-time CR3 was
+`0x7A5A000`; each returned allocator address was both the recorded physical
+and virtual address. Physical runs by request were:
+
+| Request | Retained physical addresses |
+|---:|---|
+| 1 | `0x8582000–0x8585000` |
+| 2 | `0x8586000–0x8589000` |
+| 3, NotFound | `0x857F000`, `0x8581000`, `0x858A000`, `0x8580000`, `0x858C000`, `0x858D000` |
+| 4 | `0x8590000–0x8593000` |
+| 5 | `0x8594000–0x8597000` |
+| 6 | `0x85A8000–0x85AB000` |
+
+The two owner-0 interval runs are `0x7A52000` (requested size 56) and
+`0x7A55000` (requested size 40); both are one page, tag 0, caller label 0,
+runtime site 6, CR3 `0x4E4AF000`, caller return address `0x100110D1`.
+
+Thus the fresh original-first run disproves “every entered request retains
+exactly four pages.” The one `NotFound` transaction retained six pages. The
+other five transactions retained four each. The final allocator delta is 28
+pages: those 26 request-attributed pages plus two owner-0 pages created during
+the measurement interval. `2 + (6 × 4) = 26`, so `2 + 4N` does not fit this
+six-entry workload. The measured reconciliation is `2 + (5 × 4) + 6 = 28`.
+The two additional runs have the same `NativeRuntimeMalloc`/`RhpNewArray`
+provenance described below, but their precise global initialization role is
+not established.
+
+### Producer and physical role
+
+All 26 requester-attributed retained runs are one-page allocations at the
+same explicit allocator category, `NativeRuntimeMalloc` (diagnostic site 6),
+reached through `stdlib.malloc` → `Allocator.Allocate`. The captured runtime
+caller return address is `0x100110D1`, immediately after the `malloc` call in
+the disassembled NativeAOT `RhpNewArray` helper. Requested object sizes vary;
+the four successful-read survivor sizes are 32/88/24/80 bytes. This identifies
+the physical role as page-backed NativeAOT managed array objects allocated
+through `RhpNewArray`; it is not a user data page, page-table page, pinned
+caller buffer, FAT sector buffer, or 64-KiB SDK scratch mapping. The C# array
+creation callsites and object-reference roots are not yet identified.
+
+Each request-time record has `virtual == physical`, was observed under the
+requester CR3, and carries the synthetic diagnostic owner derived from
+process handle/generation `0x0000000100000001` (owner `-1`). The two extra
+owner-0 runs were observed under kernel CR3 `0x4E4AF000`. After cleanup the
+requester CR3 and its address space are destroyed, so the recorded mapping
+does not establish the page's post-cleanup mapping in the active kernel root.
+No post-disposal translation was captured. All request runs have
+`freeSequence=0` at the request boundary and final snapshot.
+
+This attribution is deliberately narrower than a production ownership claim:
+the negative owner and generation are R3 diagnostic labels installed while
+dispatching this syscall. `Allocator.Free` updates ordinary owner accounting
+only for positive owners, and there is no allocator sweep by requester
+generation in `Ring3Process.Cleanup`. Process cleanup releases its known
+stacks, bootstrap/image allocations, tracked VM pages, address space and page
+tables; it cannot prove that NativeAOT array objects are unreachable or that
+the GC has released them. The syscall `finally` disposes the result bytes,
+result, service result, read request, context result, context and decoded path.
+The event trace shows 2,129 request-local allocations freed before return,
+while the 26 survivors receive no allocator free. Root reachability/GC
+collection and the intended lifetime of each survivor remain unproven, so
+there is no exact missing production cleanup path yet.
+
+### Controls and limits
+
+After preserving the original-first result, detailed event recording and
+requester-owner labeling were disabled while allocator page totals remained
+active. On that same warm boot, the no-read, one-read and two-read controls
+added 0, 4 and 8 pages. The slope therefore survives this event-recording
+disable switch. It does not replace independent fresh boots for each control.
+The earlier fresh-boot R2 matrix had a no-read first-requester delta of 2
+pages, then one-read 4 and two-read 8; the R3 diagnostics-off no-read delta is
+0 because it followed the original-first run. Three-read was not run. The
+standalone raw exact-buffer, standalone missing-value, malformed raw and
+locally rejected controls were not run. The original-first embedded NotFound
+request left six pages, not four.
+
+The protected historical 34-page log was located by its supplied hash at
+`out/phase35q/serial-54cc23f555eb4f44a093057c8f413ac1.log`. It contains 196
+`RING3_PERSISTENT_READ_ABI_ENTERED` markers and 156 end markers across the
+entire mixed proof run, plus aggregate service counters. It has no request
+sequence tied to the specific 34-page requester lifetime, so those aggregate
+counts cannot reconstruct that lifetime's request count. Historical 34 pages
+cannot be exactly reconciled because per-request provenance did not exist.
+The original failure log and image hashes remain unchanged, as does the
+protected R2 serial log hash `6390CA311402A8A8F9A6193A48C9F18D678A0B4009A93B2A5D421EB051033D45`.
+
+### R3 outcome
+
+Outcome F. The measured allocation path is NativeAOT managed-array allocation
+through `RhpNewArray` and `stdlib.malloc`, but the individual C# arrays, GC
+roots/collection state, post-disposal mapping state and precise intended
+lifetime are unresolved. No production teardown was changed. Independent
+fresh 1/2/3-read boots, fresh diagnostics-off baselines, raw/malformed/local
+reject cases, same-process repetition, GC/root analysis, post-disposal mapping
+translation, five/25/100-lifetime slopes, fragmentation/8-MiB allocation,
+and allocator/fault-counter closeout remain open. Phase 35R acceptance,
+artifact closure, regressions, ordinary full build and Phase 36 remain gated.
+
+During this R3 investigation, root HEAD started and ended at
+`5fac894f3b70ab10491710fd8ea414a4d1f6a4ca`, branch `main`, tracking
+`origin/main`, ahead/behind `0/0`. The outer worktree contains the Phase 35R
+source and this report as uncommitted work. The nested `out/rt` checkout
+remains detached at `9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3` with its prior
+dirty state preserved.
