@@ -82,6 +82,7 @@ PAYLOADS = (
     Payload("Phase35", "no-read", "guideXOS.Phase35NoReadProof", "phase35-managed-persistent-read-build.json", "no-read", PHASE35_FLAGS["no-read"], "FlagPhase35NoRead"),
     Payload("Phase35", "one-read", "guideXOS.Phase35OneReadProof", "phase35-managed-persistent-read-build.json", "one-read", PHASE35_FLAGS["one-read"], "FlagPhase35OneRead"),
     Payload("Phase35", "two-read", "guideXOS.Phase35TwoReadProof", "phase35-managed-persistent-read-build.json", "two-read", PHASE35_FLAGS["two-read"], "FlagPhase35TwoRead"),
+    Payload("Phase35", "not-found", "guideXOS.Phase35NotFoundProof", "phase35-managed-persistent-read-build.json", "not-found", PHASE35_FLAGS["not-found"], "FlagPhase35NotFound"),
 )
 
 

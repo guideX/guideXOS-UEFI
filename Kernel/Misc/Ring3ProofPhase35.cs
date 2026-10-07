@@ -288,15 +288,27 @@ namespace guideXOS.Misc {
             resumed = false;
             observedExitCode = int.MinValue;
             serviceRequests = -1;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+            ulong previousDiagnosticLifetime =
+                Allocator.BeginDiagnosticLifetime();
+#endif
             Native.Cli();
             ulong memoryBeforeCreate = Allocator.MemoryInUse;
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
+            ulong diagnosticRequestBefore = Allocator.LastDiagnosticRequest;
 #if UEFI_DIAGNOSTIC_RING3_PHASE35R2_MATRIX
             ulong allocationSequenceBefore =
                 Allocator.DiagnosticSnapshotSequence;
 #else
             Allocator.CaptureDiagnosticRunBaseline();
             ulong allocationSequenceBefore = Allocator.DiagnosticAllocationSequence;
+#endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+            HexMarker("R9_B0_BYTES=0x", Allocator.MemoryInUse);
+            HexMarker("R9_B0_LIVE_PAGES=0x",
+                Allocator.MemoryInUse / Allocator.PageSize);
+            HexMarker("R9_LIFETIME_ID=0x",
+                Allocator.CurrentDiagnosticLifetime);
 #endif
 #endif
             string failure;
@@ -309,6 +321,10 @@ namespace guideXOS.Misc {
                     failure = "PROCESS_CREATE_FAILED_WITHOUT_REASON";
                 Phase35Marker("PROCESS_CREATE_FAILED=1");
                 Phase35Marker("PROCESS_CREATE_REJECTED=" + failure);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+                Allocator.RestoreDiagnosticLifetime(
+                    previousDiagnosticLifetime);
+#endif
                 return false;
             }
 
@@ -341,12 +357,13 @@ namespace guideXOS.Misc {
             serviceRequests = process.ServiceRequestsSucceeded;
             observedExitCode = process.ExitCode;
             bool failFast = payloadKind == 2;
+            int requiredRequests = payloadKind == 9 ? 1 : expectedRequests;
             bool mainResult = failFast
-                ? observedExitCode == -1 && serviceRequests == expectedRequests
+                ? observedExitCode == -1 && serviceRequests == requiredRequests
                 : process.BootstrapResultSucceeded &&
                     process.BootstrapReturnCode == 35 &&
                     observedExitCode == 35 &&
-                    serviceRequests == expectedRequests;
+                    serviceRequests == requiredRequests;
             bool state = process.State == Ring3ProcessState.Exiting ||
                 process.State == Ring3ProcessState.Exited;
             ulong processCr3 = process.Space == null ? 0UL :
@@ -354,6 +371,12 @@ namespace guideXOS.Misc {
             ulong processApplicationInstance =
                 process.OwningApplicationInstance;
             Ring3ProcessState terminalState = process.State;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+            HexMarker("R9_B1_BYTES=0x", Allocator.MemoryInUse);
+            HexMarker("R9_B1_LIVE_PAGES=0x",
+                Allocator.MemoryInUse / Allocator.PageSize);
+            Allocator.DumpDiagnosticLiveRunsSince(allocationSequenceBefore, 1);
+#endif
             ulong memoryBeforeCleanup = Allocator.MemoryInUse;
             bool clean = process.Cleanup();
             ulong memoryAfterCleanup = Allocator.MemoryInUse;
@@ -420,11 +443,37 @@ namespace guideXOS.Misc {
                 clean && stale;
             process.Dispose();
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+            HexMarker("R9_B2_BYTES=0x", Allocator.MemoryInUse);
+            HexMarker("R9_B2_LIVE_PAGES=0x",
+                Allocator.MemoryInUse / Allocator.PageSize);
+            HexMarker("R9_B2_MINUS_B0_PAGES=0x",
+                Allocator.MemoryInUse >= memoryBeforeCreate ?
+                    (Allocator.MemoryInUse - memoryBeforeCreate) /
+                        Allocator.PageSize : 0UL);
+            Allocator.DumpDiagnosticLiveRunsSince(allocationSequenceBefore, 2);
+            Allocator.DumpDiagnosticHelperTotalsSince(
+                allocationSequenceBefore, 2);
+#endif
+            ulong diagnosticRequestAfter = Allocator.LastDiagnosticRequest;
+            ulong processCleanupRequest = 0;
+            for (ulong request = diagnosticRequestBefore + 1;
+                    request <= diagnosticRequestAfter; request++) {
+                processCleanupRequest = request;
+                Allocator.DumpStringLedger(request, 3);
+            }
+            if (processCleanupRequest != 0) {
+                NumberMarker("PHASE35_POST_PROCESS_CLEANUP_REQUEST=",
+                    (int)processCleanupRequest);
+            }
             if (diagnoseLifetime) {
                 Phase35Marker("DIAG_ALLOC_RUNS_BEGIN=1");
                 Allocator.DumpDiagnosticRunsSince(allocationSequenceBefore);
                 Phase35Marker("DIAG_ALLOC_RUNS_END=1");
             }
+#endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+            Allocator.RestoreDiagnosticLifetime(previousDiagnosticLifetime);
 #endif
             return result;
         }
@@ -577,6 +626,10 @@ namespace guideXOS.Misc {
             if (setupOwner) CleanupOwner();
             Phase35Marker(backend ? "PERSISTENT_BACKEND_READY=1" :
                 "PERSISTENT_BACKEND_READY=0");
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+            RunPhase35RetainedRunLedger(backend);
+            return;
+#endif
 #if UEFI_DIAGNOSTIC_RING3_PHASE35R2_MATRIX
             RunPhase35AllocatorMatrix(backend);
             return;
@@ -840,6 +893,81 @@ namespace guideXOS.Misc {
             Native.Sti();
         }
 
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+        private static void RunPhase35RetainedRunLedger(bool backend) {
+            bool ownerReady = backend && TryCreatePhase35Owner(
+                Phase35ApplicationId, out ApplicationServiceContext context,
+                out ApplicationServiceAccess access);
+            if (!ownerReady) {
+                Phase35Marker("R9_RUN_LEDGER_SETUP=FAIL");
+                Native.Sti();
+                return;
+            }
+
+            ulong owner = _owner.Handle.Value;
+            int readsBefore = _phase35Storage.PersistentReadCount;
+            int successesBefore =
+                _phase35Storage.PersistentSuccessfulReadCount;
+            int failuresBefore = _phase35Storage.FailedReadRequestCount;
+            Phase35Marker("R9_DIAGNOSTIC_MODE=RING3PHASE35R9");
+            Phase35Marker("R9_RUN_LEDGER_READY=1");
+            Phase35Marker("R9_CAPTURE=STRESS_EQUIVALENT");
+            ulong b0 = Allocator.MemoryInUse;
+            bool first = RunOnePhase35Lifetime(1, owner, 6,
+                out Ring3ProcessHandle firstHandle, out bool firstResumed,
+                out int firstExit, out int firstRequests);
+            ulong b2 = Allocator.MemoryInUse;
+            NumberMarker("R9_STRESS_REQUESTS=", firstRequests);
+            NumberMarker("R9_STRESS_READ_ENTRIES=",
+                _phase35Storage.PersistentReadCount - readsBefore);
+            NumberMarker("R9_STRESS_SUCCESSFUL_READS=",
+                _phase35Storage.PersistentSuccessfulReadCount - successesBefore);
+            NumberMarker("R9_STRESS_NOTFOUND_OR_ERRORS=",
+                _phase35Storage.FailedReadRequestCount - failuresBefore);
+            HexMarker("R9_B0_PAGES=0x", b0 / Allocator.PageSize);
+            HexMarker("R9_B2_PAGES=0x", b2 / Allocator.PageSize);
+            HexMarker("R9_DELTA_PAGES=0x",
+                b2 >= b0 ? (b2 - b0) / Allocator.PageSize : 0UL);
+            Phase35Marker(first && firstResumed && firstExit == 35 ?
+                "R9_STRESS_EQUIVALENT_PASS=1" :
+                "R9_STRESS_EQUIVALENT_PASS=0");
+
+            Phase35Marker("R9_REPEAT=IDENTICAL");
+            bool second = RunOnePhase35Lifetime(1, owner, 6,
+                out Ring3ProcessHandle secondHandle,
+                out bool secondResumed, out int secondExit,
+                out int secondRequests);
+            Phase35Marker(second && secondResumed && secondExit == 35 &&
+                secondRequests == firstRequests ? "R9_REPEAT_PASS=1" :
+                "R9_REPEAT_PASS=0");
+
+            bool noRead = RunOnePhase35Lifetime(6, owner, 0,
+                out Ring3ProcessHandle noReadHandle,
+                out bool noReadResumed, out int noReadExit,
+                out int noReadRequests);
+            Phase35Marker(noRead && noReadResumed && noReadExit == 35 &&
+                noReadRequests == 0 ? "R9_NO_READ_PASS=1" :
+                "R9_NO_READ_PASS=0");
+            bool oneRead = RunOnePhase35Lifetime(7, owner, 1,
+                out Ring3ProcessHandle oneReadHandle,
+                out bool oneReadResumed, out int oneReadExit,
+                out int oneReadRequests);
+            Phase35Marker(oneRead && oneReadResumed && oneReadExit == 35 &&
+                oneReadRequests == 1 ? "R9_ONE_READ_PASS=1" :
+                "R9_ONE_READ_PASS=0");
+            bool notFound = RunOnePhase35Lifetime(9, owner, 1,
+                out Ring3ProcessHandle missingHandle,
+                out bool missingResumed, out int missingExit,
+                out int missingRequests);
+            Phase35Marker(notFound && missingResumed && missingExit == 35 &&
+                missingRequests == 1 ? "R9_NOT_FOUND_PASS=1" :
+                "R9_NOT_FOUND_PASS=0");
+            CleanupOwner();
+            Phase35Marker("R9_RUN_LEDGER_COMPLETE=1");
+            Native.Sti();
+        }
+#endif
+
 #if UEFI_DIAGNOSTIC_RING3_PHASE35R2_MATRIX
         private static void RunPhase35AllocatorMatrix(bool backend) {
             ApplicationServiceContext context;
@@ -856,51 +984,31 @@ namespace guideXOS.Misc {
                 Allocator.DiagnosticAllocationSequence);
             NumberMarker("ALLOC_MATRIX_PROCESSES_B0=",
                 Ring3ProcessTable.LiveCount);
-            Phase35Marker("ALLOC_MATRIX_BEGIN=ORIGINAL_SUCCESS_FIRST");
-            bool originalResumed;
-            int originalExitCode;
-            Ring3ProcessHandle originalHandle;
-            bool originalPass = RunOnePhase35Lifetime(1,
-                _owner.Handle.Value, 6, out originalHandle,
-                out originalResumed, out originalExitCode,
-                out int originalRequests) && originalResumed &&
-                originalExitCode == 35 && originalRequests == 6;
-            ulong originalSnapshot = Allocator.DumpDiagnosticSnapshot(1);
-            HexMarker("ALLOC_MATRIX_ORIGINAL_FIRST_PROVENANCE_SEQUENCE=",
-                Allocator.DiagnosticAllocationSequence);
-            NumberMarker("ALLOC_MATRIX_ORIGINAL_FIRST_PROCESSES=",
-                Ring3ProcessTable.LiveCount);
-            NumberMarker("ALLOC_MATRIX_ORIGINAL_FIRST_NET_PAGES=",
-                originalSnapshot >= b0 ?
-                    (originalSnapshot - b0) / Allocator.PageSize : 0);
-            NumberMarker("ALLOC_MATRIX_ORIGINAL_REQUESTS=",
-                originalRequests);
-            Phase35Marker(originalPass ?
-                "ALLOC_MATRIX_RESULT=ORIGINAL_SUCCESS,PASS" :
-                "ALLOC_MATRIX_RESULT=ORIGINAL_SUCCESS,FAIL");
-            Phase35Marker("ALLOC_MATRIX_END=ORIGINAL_SUCCESS_FIRST");
-            _phase35AllocatorMatrixPrevious = originalSnapshot;
-            Allocator.DiagnosticProvenanceEnabled = false;
-            Phase35Marker("ALLOC_MATRIX_DETAILED_PROVENANCE=OFF");
-            for (int i = 0; i < 3; i++) {
+            _phase35AllocatorMatrixPrevious = b0;
+            Phase35Marker("ALLOC_MATRIX_DETAILED_PROVENANCE=ON");
+            for (int i = 0; i < 4; i++) {
                 int payloadKind = 6 + i;
-                int requests = i;
+                int requests = i == 3 ? 1 : i;
                 if (i == 0) Phase35Marker("ALLOC_MATRIX_BEGIN=NO_READ");
                 else if (i == 1) Phase35Marker("ALLOC_MATRIX_BEGIN=ONE_READ");
-                else Phase35Marker("ALLOC_MATRIX_BEGIN=TWO_READ");
+                else if (i == 2) Phase35Marker("ALLOC_MATRIX_BEGIN=TWO_READ");
+                else Phase35Marker("ALLOC_MATRIX_BEGIN=NOT_FOUND");
                 bool resumed;
                 int exitCode;
                 Ring3ProcessHandle handle;
                 bool pass = RunOnePhase35Lifetime(payloadKind,
                     _owner.Handle.Value, requests, out handle, out resumed,
                     out exitCode, out int observedRequests) && resumed &&
-                    exitCode == 35 && observedRequests == requests;
+                    exitCode == 35 &&
+                    observedRequests == (i == 3 ? 1 : requests);
                 ulong now = Allocator.DumpDiagnosticSnapshot(i + 1);
                 if (i == 0) NumberMarker("ALLOC_MATRIX_PROCESSES_B1=",
                     Ring3ProcessTable.LiveCount);
                 else if (i == 1) NumberMarker("ALLOC_MATRIX_PROCESSES_B2=",
                     Ring3ProcessTable.LiveCount);
-                else NumberMarker("ALLOC_MATRIX_PROCESSES_B3=",
+                else if (i == 2) NumberMarker("ALLOC_MATRIX_PROCESSES_B3=",
+                    Ring3ProcessTable.LiveCount);
+                else NumberMarker("ALLOC_MATRIX_PROCESSES_B4=",
                     Ring3ProcessTable.LiveCount);
                 ulong baseline = _phase35AllocatorMatrixPrevious;
                 NumberMarker("ALLOC_MATRIX_NET_PAGES=",
@@ -912,12 +1020,16 @@ namespace guideXOS.Misc {
                 else if (i == 1) Phase35Marker(pass ?
                     "ALLOC_MATRIX_RESULT=ONE_READ,PASS" :
                     "ALLOC_MATRIX_RESULT=ONE_READ,FAIL");
-                else Phase35Marker(pass ?
+                else if (i == 2) Phase35Marker(pass ?
                     "ALLOC_MATRIX_RESULT=TWO_READ,PASS" :
                     "ALLOC_MATRIX_RESULT=TWO_READ,FAIL");
+                else Phase35Marker(pass ?
+                    "ALLOC_MATRIX_RESULT=NOT_FOUND,PASS" :
+                    "ALLOC_MATRIX_RESULT=NOT_FOUND,FAIL");
                 if (i == 0) Phase35Marker("ALLOC_MATRIX_END=NO_READ");
                 else if (i == 1) Phase35Marker("ALLOC_MATRIX_END=ONE_READ");
-                else Phase35Marker("ALLOC_MATRIX_END=TWO_READ");
+                else if (i == 2) Phase35Marker("ALLOC_MATRIX_END=TWO_READ");
+                else Phase35Marker("ALLOC_MATRIX_END=NOT_FOUND");
                 if (!pass) break;
             }
             CleanupOwner();

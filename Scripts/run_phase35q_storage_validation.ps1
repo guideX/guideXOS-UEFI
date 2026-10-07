@@ -3,9 +3,11 @@ param(
     [ValidateRange(60, 7200)]
     [int]$TimeoutSeconds = 2400,
     [switch]$SkipBuild,
+    [switch]$UseFreshlyBuiltKernel,
     [switch]$Phase35P2,
     [switch]$Phase35R,
     [switch]$Phase35R2Matrix,
+    [switch]$Phase35R9Ledger,
     [switch]$PreserveFailedImage
 )
 
@@ -21,7 +23,7 @@ $imagePath = Join-Path $workDir $imageName
 $baselinePath = Join-Path $workDir "durable-$runId.baseline.img"
 $varsPath = Join-Path $workDir "ovmf-vars-$runId.fd"
 $codePath = Join-Path $workDir "ovmf-code-$runId.fd"
-$serialName = "serial-$runId.log"
+    $serialName = "serial-$runId.log"
 $serialPath = Join-Path $workDir $serialName
 $qemuLogName = "qemu-$runId.log"
 $qemuLogRelative = "out/phase35q/$qemuLogName"
@@ -45,6 +47,7 @@ $selectedPhase35ModeCount = 0
 if ($Phase35P2) { $selectedPhase35ModeCount++ }
 if ($Phase35R) { $selectedPhase35ModeCount++ }
 if ($Phase35R2Matrix) { $selectedPhase35ModeCount++ }
+if ($Phase35R9Ledger) { $selectedPhase35ModeCount++ }
 if ($selectedPhase35ModeCount -gt 1) {
     throw 'Select only one Phase 35 proof mode.'
 }
@@ -106,10 +109,20 @@ try {
         throw 'QEMU EDK2 firmware images were not found under C:\Program Files\qemu\share.'
     }
 
-    if ($SkipBuild) {
+    if ($SkipBuild -and $UseFreshlyBuiltKernel) {
+        throw 'Select either SkipBuild or UseFreshlyBuiltKernel, not both.'
+    }
+    if ($UseFreshlyBuiltKernel) {
+        $kernelPath = Join-Path $root 'ESP\kernel.elf'
+        if (-not (Test-Path -LiteralPath $kernelPath)) {
+            throw "Freshly built diagnostic kernel is absent: $kernelPath"
+        }
+        $kernelHash = Get-Sha256 $kernelPath
+        Write-Host "Using the explicitly rebuilt and staged diagnostic kernel: SHA-256 $kernelHash"
+    } elseif ($SkipBuild) {
         Write-Host 'Reusing the currently staged diagnostic kernel and EFI artifacts.'
     } else {
-        $diagnosticMode = if ($Phase35R2Matrix) { 'Ring3Phase35R2' } elseif ($Phase35R) { 'Ring3Phase35' } elseif ($Phase35P2) { 'Storage35P2' } else { 'Storage35Q' }
+        $diagnosticMode = if ($Phase35R9Ledger) { 'Ring3Phase35R9' } elseif ($Phase35R2Matrix) { 'Ring3Phase35R2' } elseif ($Phase35R) { 'Ring3Phase35' } elseif ($Phase35P2) { 'Storage35P2' } else { 'Storage35Q' }
         Write-Host "Building the $diagnosticMode diagnostic kernel and ordinary EFI artifacts..."
         & (Join-Path $root 'build.ps1') -UefiDiagnosticMode $diagnosticMode
         if ($LASTEXITCODE -ne 0) { throw "build.ps1 failed with exit code $LASTEXITCODE" }
@@ -118,6 +131,12 @@ try {
         -not (Test-Path -LiteralPath (Join-Path $root 'ESP\kernel.elf'))) {
         throw 'The Storage35Q build did not stage the EFI boot image and kernel.'
     }
+    $kernelPath = Join-Path $root 'ESP\kernel.elf'
+    $ramdiskPath = Join-Path $root 'ramdisk.img'
+    $kernelHash = Get-Sha256 $kernelPath
+    $ramdiskHash = Get-Sha256 $ramdiskPath
+    Write-Host "Diagnostic kernel SHA-256: $kernelHash"
+    Write-Host "Diagnostic ramdisk SHA-256: $ramdiskHash"
 
     Copy-Item -LiteralPath $qemuCodeSource -Destination $codePath
     Copy-Item -LiteralPath $qemuVarsSource -Destination $varsPath
@@ -219,6 +238,11 @@ try {
                 $proofSucceeded = $true
                 break
             }
+        } elseif ($Phase35R9Ledger) {
+            if ($content -match '(?m)^PHASE35_R9_RUN_LEDGER_COMPLETE=1\r?$') {
+                $proofSucceeded = $true
+                break
+            }
         } elseif ($Phase35R) {
             $currentAppModelCompleteCount = Get-MarkerCount $content '(?m)^APP_MODEL_COMPLETE\r?$'
             if ($currentAppModelCompleteCount -gt $appModelCompleteCount) {
@@ -282,12 +306,55 @@ try {
     $qemu = $null
 
     $finalContent = Get-Content -LiteralPath $serialPath -Raw
-    if ($Phase35R2Matrix) {
+    if ($Phase35R9Ledger) {
+        $lifetimeMatch = [regex]::Match($finalContent,
+            '(?m)^R9_LIFETIME_ID=0x([0-9A-Fa-f]+)\r?$')
+        $deltaMatch = [regex]::Match($finalContent,
+            '(?m)^R9_B2_MINUS_B0_PAGES=0x([0-9A-Fa-f]+)\r?$')
+        if (-not $lifetimeMatch.Success -or -not $deltaMatch.Success) {
+            throw 'R9 did not emit its first-lifetime identity and B2-B0 delta.'
+        }
+        $lifetimeId = $lifetimeMatch.Groups[1].Value.TrimStart('0')
+        if ([string]::IsNullOrEmpty($lifetimeId)) { $lifetimeId = '0' }
+        $runPattern = '(?m)^R9_RUN;phase=0*2;[^\r\n]*;pages=0x([0-9A-Fa-f]+);' +
+            '[^\r\n]*;lifetime=0x0*' + [regex]::Escape($lifetimeId) +
+            ';[^\r\n]*$'
+        $runRows = [regex]::Matches($finalContent, $runPattern)
+        $accountedPages = [UInt64]0
+        foreach ($row in $runRows) {
+            $accountedPages += [Convert]::ToUInt64(
+                $row.Groups[1].Value, 16)
+        }
+        $measuredPages = [Convert]::ToUInt64(
+            $deltaMatch.Groups[1].Value, 16)
+        $unexplainedPages = if ($measuredPages -gt $accountedPages) {
+            $measuredPages - $accountedPages
+        } else { [UInt64]0 }
+        $overAccountedPages = if ($accountedPages -gt $measuredPages) {
+            $accountedPages - $measuredPages
+        } else { [UInt64]0 }
+        Write-Host "R9 first lifetime: measuredPages=$measuredPages accountedPages=$accountedPages unexplainedPages=$unexplainedPages overAccountedPages=$overAccountedPages retainedRuns=$($runRows.Count)"
+        if ($accountedPages -ne $measuredPages) {
+            Write-Host 'R9_ACCOUNTING=INCOMPLETE'
+        } else {
+            Write-Host 'R9_ACCOUNTING=RECONCILED'
+        }
+        $requiredMarkers = @(
+            'PHASE35_PERSISTENT_BACKEND_READY=1',
+            'PHASE35_R9_RUN_LEDGER_READY=1',
+            'PHASE35_R9_STRESS_EQUIVALENT_PASS=1',
+            'PHASE35_R9_REPEAT_PASS=1',
+            'PHASE35_R9_NO_READ_PASS=1',
+            'PHASE35_R9_ONE_READ_PASS=1',
+            'PHASE35_R9_NOT_FOUND_PASS=1',
+            'PHASE35_R9_RUN_LEDGER_COMPLETE=1')
+    } elseif ($Phase35R2Matrix) {
         $requiredMarkers = @(
             'ALLOC_PROVENANCE_READY=1;capacity=262144-live-runs;storage=static-per-page',
             'PHASE35_ALLOC_MATRIX_RESULT=NO_READ,PASS',
             'PHASE35_ALLOC_MATRIX_RESULT=ONE_READ,PASS',
             'PHASE35_ALLOC_MATRIX_RESULT=TWO_READ,PASS',
+            'PHASE35_ALLOC_MATRIX_RESULT=NOT_FOUND,PASS',
             'PHASE35_ALLOC_MATRIX_COMPLETE=1')
     } elseif ($Phase35R) {
         $requiredMarkers = @(
@@ -361,7 +428,6 @@ try {
             'PHASE35P2_FAILURE_PROPAGATION=PASS',
             'PHASE35P2_ENUMERATE=PASS',
             'PHASE35P2_RESET=PASS',
-            'PHASE35P2_REBOOT_DELETE=PASS',
             'PHASE35P2_TEMPORARY_SEPARATION=PASS',
             'PHASE35P2_TEMPORARY_RESET=PASS',
             'APP_MODEL_COMPLETE'
@@ -377,14 +443,12 @@ try {
                 'PHASE35_ALLOC_MATRIX_RESULT=NO_READ,PASS',
                 'PHASE35_ALLOC_MATRIX_RESULT=ONE_READ,PASS',
                 'PHASE35_ALLOC_MATRIX_RESULT=TWO_READ,PASS',
-                'PHASE35_ALLOC_MATRIX_RESULT=ORIGINAL_SUCCESS,PASS',
+                'PHASE35_ALLOC_MATRIX_RESULT=NOT_FOUND,PASS',
                 'ALLOC_MATRIX_PROCESSES_B0=0',
                 'ALLOC_MATRIX_PROCESSES_B1=0',
                 'ALLOC_MATRIX_PROCESSES_B2=0',
-                'ALLOC_MATRIX_PROCESSES_B3=0',
-                'ALLOC_MATRIX_ORIGINAL_FIRST_PROCESSES=0',
-                'ALLOC_MATRIX_ORIGINAL_FIRST_NET_PAGES=',
-                'ALLOC_MATRIX_ORIGINAL_REQUESTS=6',
+            'ALLOC_MATRIX_PROCESSES_B3=0',
+            'ALLOC_MATRIX_PROCESSES_B4=0',
                 'ALLOC_MATRIX_PROCESS_COUNT=0')) {
             if ($finalContent.IndexOf($marker,
                     [System.StringComparison]::Ordinal) -lt 0) {
@@ -394,16 +458,13 @@ try {
         $matrixRows = [regex]::Matches($finalContent,
             '(?m)^PHASE35_ALLOC_MATRIX_RESULT=[^\r\n]+')
         if ($matrixRows.Count -ne 4) {
-            throw "Expected four allocator matrix result rows; saw $($matrixRows.Count)."
+            throw "Expected four isolated allocator matrix rows; saw $($matrixRows.Count)."
         }
-        $originalFirst = $finalContent.IndexOf(
-            'ALLOC_MATRIX_BEGIN=ORIGINAL_SUCCESS_FIRST',
-            [System.StringComparison]::Ordinal)
         $noReadFirst = $finalContent.IndexOf(
             'ALLOC_MATRIX_BEGIN=NO_READ',
             [System.StringComparison]::Ordinal)
-        if ($originalFirst -lt 0 -or $noReadFirst -le $originalFirst) {
-            throw 'Fresh boot did not run the original payload before allocator controls.'
+        if ($noReadFirst -lt 0) {
+            throw 'Fresh boot did not begin with the isolated no-read requester.'
         }
     } elseif ($Phase35R) {
         $fixtureStatusRows = [regex]::Matches($finalContent,
@@ -470,8 +531,12 @@ try {
                 $finalContent -notmatch '(?m)^PHASE35P2_FIXTURE=selftest\.phase10\.persistent/state\.bin,status=Verified,seedWrites=0\r?$') {
             throw 'The fixture was not seeded once and verified without reseeding after reboot.'
         }
-        if ($finalContent -notmatch '(?m)^PHASE35P2_REBOOT_DELETE=PASS\r?$') {
-            throw 'The explicit Persistent Delete was not observed as absent after reboot.'
+        $rebootDeleteRows = [regex]::Matches($finalContent,
+            '(?m)^PHASE35P2_REBOOT_DELETE=(PASS|FAIL)\r?$')
+        if ($rebootDeleteRows.Count -ne 2 -or
+                $rebootDeleteRows[0].Groups[1].Value -ne 'FAIL' -or
+                $rebootDeleteRows[1].Groups[1].Value -ne 'PASS') {
+            throw 'Persistent Delete must be absent after reboot: expected FAIL on the seed boot and PASS on the verification boot.'
         }
     }
 
@@ -513,7 +578,9 @@ try {
 if (-not $proofSucceeded) { throw 'Storage35Q proof did not complete.' }
 Write-Host "Pristine fixture SHA-256 restored before cleanup: $imageShaRestored"
 Write-Host "Serial proof log retained: $serialPath"
-if ($Phase35R2Matrix) {
+if ($Phase35R9Ledger) {
+    Write-Host 'Phase35R9 retained-run capture completed in one guest boot; no reset was requested.'
+} elseif ($Phase35R2Matrix) {
     Write-Host 'Phase35R2 allocator provenance run completed in one guest boot; no reset was requested.'
 } elseif ($Phase35P2) {
     Write-Host 'Storage35Q and Phase35P2 same-image reboot validation completed.'

@@ -373,13 +373,14 @@ namespace guideXOS.Misc {
         internal static bool TryCreateManagedPersistentReadEntry(
                 ulong owningApplicationInstance, int payloadKind,
                 out Ring3Process process, out string failure) {
-            if (payloadKind < 1 || payloadKind > 8) {
+            if (payloadKind < 1 || payloadKind > 9) {
                 process = null;
                 failure = "PHASE35_INVALID_PAYLOAD_KIND";
                 return false;
             }
             return TryCreateManagedBootstrap(owningApplicationInstance, false,
-                true, false, false, 0, 0, 0, 0, payloadKind + 13,
+                true, false, false, 0, 0, 0, 0,
+                payloadKind == 9 ? 22 : payloadKind + 13,
                 out process, out failure);
         }
 

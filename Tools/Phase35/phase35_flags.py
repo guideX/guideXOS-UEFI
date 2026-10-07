@@ -9,4 +9,5 @@ PHASE35_FLAGS = {
     "no-read": 0xFC000000,
     "one-read": 0xF4000000,
     "two-read": 0xEC000000,
+    "not-found": 0xE4000000,
 }

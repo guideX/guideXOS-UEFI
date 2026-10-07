@@ -67,12 +67,26 @@ namespace System {
             EETypePtr et = EETypePtr.EETypePtrOf<string>();
 
             char* start = ptr + index;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            uint previousDiagnosticStringSite =
+                Allocator.CurrentDiagnosticStringSite;
+            if (previousDiagnosticStringSite == 0)
+                Allocator.CurrentDiagnosticStringSite = 401;
+#endif
             object data = StartupCodeHelpers.RhpNewArray(et.Value, length);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            Allocator.CurrentDiagnosticStringSite =
+                previousDiagnosticStringSite;
+#endif
             string s = Unsafe.As<object, string>(ref data);
 
             fixed (char* c = &s._firstChar) {
                 memcpy((byte*)c, (byte*)start, (ulong)length * sizeof(char));
                 c[length] = '\0';
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                Allocator.RecordStringContent(
+                    Unsafe.As<string, IntPtr>(ref s), c, length);
+#endif
             }
 
             return s;

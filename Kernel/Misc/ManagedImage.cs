@@ -84,6 +84,7 @@ namespace guideXOS.Misc {
         internal const uint FlagPhase35NoRead = 0xFC000000U;
         internal const uint FlagPhase35OneRead = 0xF4000000U;
         internal const uint FlagPhase35TwoRead = 0xEC000000U;
+        internal const uint FlagPhase35NotFound = 0xE4000000U;
         internal const byte Read = 1;
         internal const byte Write = 2;
         internal const byte Execute = 4;
@@ -1260,6 +1261,7 @@ namespace guideXOS.Misc {
             if (phase32Kind == 19) prefix = "Native/guideXOS.Phase35NoReadProof";
             if (phase32Kind == 20) prefix = "Native/guideXOS.Phase35OneReadProof";
             if (phase32Kind == 21) prefix = "Native/guideXOS.Phase35TwoReadProof";
+            if (phase32Kind == 22) prefix = "Native/guideXOS.Phase35NotFoundProof";
             string imagePath = prefix + ".exe";
             string descriptorPath = prefix + ".gxmi";
             byte[] image = null;
@@ -1268,14 +1270,28 @@ namespace guideXOS.Misc {
                 image = File.ReadAllBytes(imagePath);
                 descriptor = File.ReadAllBytes(descriptorPath);
                 if (image == null || descriptor == null) {
-                    failure = phase32Kind != 0 ? "PHASE32_IMAGE_NOT_STAGED" :
-                        (phase31Kind != 0 ? "PHASE31_IMAGE_NOT_STAGED" :
-                        (phase30Kind != 0 ? "PHASE30_IMAGE_NOT_STAGED" :
-                        (phase29Kind != 0 ? "PHASE29_IMAGE_NOT_STAGED" :
-                        (phase28Kind != 0 ? "PHASE28_IMAGE_NOT_STAGED" :
-                        (phase27 ? "PHASE27_IMAGE_NOT_STAGED" :
-                        (phase26 ? "PHASE26_IMAGE_NOT_STAGED" :
-                            "PHASE24_IMAGE_NOT_STAGED"))))));
+                    if (phase32Kind >= 14 && phase32Kind <= 22)
+                        failure = "PHASE35_IMAGE_NOT_STAGED";
+                    else if (phase32Kind >= 9 && phase32Kind <= 13)
+                        failure = "PHASE34_IMAGE_NOT_STAGED";
+                    else if (phase32Kind >= 4 && phase32Kind <= 8)
+                        failure = "PHASE33_IMAGE_NOT_STAGED";
+                    else if (phase32Kind != 0)
+                        failure = "PHASE32_IMAGE_NOT_STAGED";
+                    else if (phase31Kind != 0)
+                        failure = "PHASE31_IMAGE_NOT_STAGED";
+                    else if (phase30Kind != 0)
+                        failure = "PHASE30_IMAGE_NOT_STAGED";
+                    else if (phase29Kind != 0)
+                        failure = "PHASE29_IMAGE_NOT_STAGED";
+                    else if (phase28Kind != 0)
+                        failure = "PHASE28_IMAGE_NOT_STAGED";
+                    else if (phase27)
+                        failure = "PHASE27_IMAGE_NOT_STAGED";
+                    else if (phase26)
+                        failure = "PHASE26_IMAGE_NOT_STAGED";
+                    else
+                        failure = "PHASE24_IMAGE_NOT_STAGED";
                     return false;
                 }
                 return TryCreate(image, descriptor, ownerApplication,
@@ -1444,7 +1460,8 @@ namespace guideXOS.Misc {
              (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35Malformed ||
              (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35NoRead ||
              (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35OneRead ||
-             (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35TwoRead);
+             (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35TwoRead ||
+             (Descriptor.Flags & 0xFFFFF800U) == ManagedImageContract.FlagPhase35NotFound);
 
         internal bool IsPhase35FailFast => Descriptor != null &&
             (Descriptor.Flags & 0xFFFFF800U) ==

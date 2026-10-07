@@ -18,6 +18,13 @@ internal static class Program
         first = null;
         System.GC.Collect();
         return passed ? 35 : 42;
+#elif GUIDEXOS_PHASE35_NOT_FOUND
+        GuideXosResult missing = GuideXosStorage.TryReadBytes(
+            "missing.phase35r6", out byte[] missingData,
+            out GuideXosStorageResultCode missingCode);
+        return missing.Succeeded &&
+               missingCode == GuideXosStorageResultCode.NotFound &&
+               IsEmpty(missingData) ? 35 : 54;
 #elif GUIDEXOS_PHASE35_FAILFAST
         return ReadFixture() ? FailFast() : 43;
 #elif GUIDEXOS_PHASE35_STALE_OWNER

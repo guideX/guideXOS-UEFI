@@ -48,6 +48,10 @@ namespace System {
             // allocator run. Static/frozen strings and interior GC objects are
             // ignored; resource-owning types still release resources in overrides.
             var obj = this;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            Allocator.RecordManagedObjectDispose(
+                Unsafe.As<object, IntPtr>(ref obj));
+#endif
             Allocator.FreeManagedObjectIfAllocatorRun(
                 Unsafe.As<object, IntPtr>(ref obj));
         }

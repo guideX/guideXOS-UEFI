@@ -64,7 +64,23 @@ abstract unsafe class Allocator {
     internal static ulong CurrentOwnerGeneration;
     internal static byte CurrentAllocationLabel;
     internal static ulong CurrentDiagnosticRequest;
+    internal static ulong CurrentDiagnosticLifetime;
+    internal static ulong LastDiagnosticRequest;
     internal static bool DiagnosticProvenanceEnabled = true;
+    // Phase 35R6 uses a pre-sized managed record array containing only scalar
+    // values. Recording never constructs strings; labels are fixed literals.
+    internal static uint CurrentDiagnosticStringSite;
+    private const int StringLedgerCapacity = 4096;
+    private struct StringLedgerRecord {
+        internal ulong Address, Run, RequestedBytes, Request, AllocatorSequence;
+        internal ulong CreationReturn, DisposeCount, DisposeSite, ContentHash;
+        internal ulong FreeAttemptCount, FreeResult;
+        internal uint Length, CreationSite;
+        internal bool Live, GuardAccepted, ExactRunStart, HasContentHash;
+    }
+    private static StringLedgerRecord[] _stringLedger;
+    private static int _stringLedgerCount;
+    private static ulong _stringLedgerDropped;
     internal enum DiagnosticAllocationSite : byte {
         Unclassified = 0,
         PageTableWalk = 1,
@@ -83,6 +99,7 @@ abstract unsafe class Allocator {
     private static ulong _diagnosticSnapshotSequence;
     private static ulong _freeSequence;
     private static ulong _diagnosticRunRecordsDropped;
+    private static ulong _diagnosticLifetimeSequence;
 #endif
     
     // Simplified owner tracking - replace Dictionary with parallel arrays
@@ -149,6 +166,11 @@ abstract unsafe class Allocator {
         public fixed ulong DiagnosticRunCr3[16384];
         public fixed ulong DiagnosticRunRequestedSizes[16384];
         public fixed ulong DiagnosticRunCallerAddresses[16384];
+        public fixed ulong DiagnosticRunRequesterIds[16384];
+        public fixed ulong DiagnosticRunLifetimeIds[16384];
+        public fixed uint DiagnosticRunCreationSites[16384];
+        public fixed byte DiagnosticRunManagedHelpers[16384];
+        public fixed ulong DiagnosticRunEETypeAddresses[16384];
         public fixed uint DiagnosticPageRunSlots[NumPages];
         public fixed ulong DiagnosticPageOwnerGenerations[NumPages];
         public fixed ulong DiagnosticPageAllocationSequences[NumPages];
@@ -322,10 +344,26 @@ abstract unsafe class Allocator {
     internal static ulong FreeManagedObjectIfAllocatorRun(IntPtr pointer) {
         lock (_sync) {
             long page = GetPageIndexStart(pointer);
-            if (page < 0 || page >= NumPages) return 0;
+            if (page < 0 || page >= NumPages) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                RecordStringDisposeGuard(pointer, false, 1);
+#endif
+                return 0;
+            }
             ulong pages = _Info.Pages[page];
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            bool accepted = pages != 0 && pages != PageSignature;
+            RecordStringDisposeGuard(pointer, accepted,
+                pages == PageSignature ? 3UL : (pages == 0 ? 2UL :
+                (accepted ? 0UL : 4UL)));
+            if (!accepted) return 0;
+            ulong result = Free(pointer, "Object.Dispose");
+            RecordStringFreeResult(pointer, result);
+            return result;
+#else
             if (pages == 0 || pages == PageSignature) return 0;
             return Free(pointer, "Object.Dispose");
+#endif
         }
     }
 
@@ -340,6 +378,12 @@ abstract unsafe class Allocator {
         _freeInvalidLoggerUnavailableReported = false;
         SerialWriteFreeInvalidText("ALLOC_INVALID_LOG_READY;capacity=16\n");
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
+        _stringLedger = new StringLedgerRecord[StringLedgerCapacity];
+        _stringLedgerCount = 0;
+        _stringLedgerDropped = 0;
+        CurrentDiagnosticStringSite = 0;
+        SerialWriteFreeInvalidText("STRING_LEDGER_READY=1\n");
+        SerialWriteFreeInvalidText("STRING_LEDGER_VERSION=R6-1\n");
         SerialWriteFreeInvalidText("ALLOC_PROVENANCE_READY=1;capacity=262144-live-runs;storage=static-per-page\n");
 #endif
     }
@@ -511,8 +555,6 @@ abstract unsafe class Allocator {
             bool isString, byte rank, ulong objectBytes) {
         if (!DiagnosticProvenanceEnabled || objectAddress == IntPtr.Zero)
             return;
-        if (CurrentDiagnosticRequest == 0)
-            return;
 
         ulong address = (ulong)objectAddress;
         lock (_sync) {
@@ -526,52 +568,277 @@ abstract unsafe class Allocator {
             ulong id = _Info.DiagnosticRunIds[slot];
             if (id == 0 || _Info.DiagnosticRunAddresses[slot] != address)
                 return;
+            _Info.DiagnosticRunCreationSites[slot] =
+                CurrentDiagnosticStringSite;
+            _Info.DiagnosticRunManagedHelpers[slot] = 1;
+            _Info.DiagnosticRunEETypeAddresses[slot] = eeType;
 
-            byte classification = 0; // unknown EEType
-            if (arrayType == 0x18 && componentElementType == 0x05 &&
-                    componentSize == 1) classification = 1; // byte[]
-            else if (arrayType == 0x18 && componentElementType == 0x03 &&
-                    componentSize == 2) classification = 2; // char[]
-            else if (arrayType == 0x18 && componentIsObject &&
-                    componentSize == 8) classification = 3; // object[]
-            else if (arrayType == 0x18 && componentElementType >= 0x02 &&
-                    componentElementType <= 0x0F) classification = 4; // primitive[]
-            else if (arrayType == 0x18) classification = 5; // other array
-            else if (isString) classification = 6; // string
+            uint stringSite = CurrentDiagnosticStringSite;
+            if (isString && stringSite == 0) stringSite = 402;
+            if (isString) {
+                _Info.DiagnosticRunCreationSites[slot] = stringSite;
+            }
+            if (isString && CurrentDiagnosticRequest != 0)
+                RecordStringCreationNoLock(address, objectBytes,
+                    unchecked((uint)length), CurrentDiagnosticRequest,
+                    stringSite, id,
+                    _Info.DiagnosticRunCallerAddresses[slot]);
 
-            SerialWriteFreeInvalidText("PHASE35_RHP_NEW_ARRAY;request=0x");
-            SerialWriteFreeInvalidHex(CurrentDiagnosticRequest);
-            SerialWriteFreeInvalidText(";id=0x");
-            SerialWriteFreeInvalidHex(id);
-            SerialWriteFreeInvalidText(";object=0x");
-            SerialWriteFreeInvalidHex(address);
-            SerialWriteFreeInvalidText(";eeType=0x");
-            SerialWriteFreeInvalidHex(eeType);
-            SerialWriteFreeInvalidText(";componentType=0x");
-            SerialWriteFreeInvalidHex(componentType);
-            SerialWriteFreeInvalidText(";arrayType=0x");
-            SerialWriteFreeInvalidHex(arrayType);
-            SerialWriteFreeInvalidText(";componentTypeCode=0x");
-            SerialWriteFreeInvalidHex(componentElementType);
-            SerialWriteFreeInvalidText(";componentSize=0x");
-            SerialWriteFreeInvalidHex(componentSize);
-            SerialWriteFreeInvalidText(";length=0x");
-            SerialWriteFreeInvalidHex(unchecked((ulong)length));
-            SerialWriteFreeInvalidText(";baseSize=0x");
-            SerialWriteFreeInvalidHex(baseSize);
-            SerialWriteFreeInvalidText(";objectBytes=0x");
-            SerialWriteFreeInvalidHex(objectBytes);
-            SerialWriteFreeInvalidText(";rank=0x");
-            SerialWriteFreeInvalidHex(rank);
-            SerialWriteFreeInvalidText(";class=0x");
-            SerialWriteFreeInvalidHex(classification);
-            SerialWriteFreeInvalidText(";generation=0x");
-            SerialWriteFreeInvalidHex(CurrentOwnerGeneration);
-            SerialWriteFreeInvalidText(";helperReturn=0x");
-            SerialWriteFreeInvalidHex(
-                _Info.DiagnosticRunCallerAddresses[slot]);
+        }
+    }
+
+    internal static void RecordRhpNewFastAllocation(IntPtr objectAddress,
+            ulong eeTypeAddress) {
+        if (!DiagnosticProvenanceEnabled || objectAddress == IntPtr.Zero)
+            return;
+        ulong address = (ulong)objectAddress;
+        lock (_sync) {
+            if (address < (ulong)_Info.Start || address >=
+                    (ulong)_Info.Start + MemorySize) return;
+            ulong page = (address - (ulong)_Info.Start) / PageSize;
+            uint encodedSlot = _Info.DiagnosticPageRunSlots[page];
+            if (encodedSlot == 0) return;
+            int slot = (int)encodedSlot - 1;
+            if (_Info.DiagnosticRunIds[slot] == 0 ||
+                    _Info.DiagnosticRunAddresses[slot] != address) return;
+            _Info.DiagnosticRunManagedHelpers[slot] = 2;
+            _Info.DiagnosticRunCreationSites[slot] =
+                CurrentDiagnosticStringSite;
+            _Info.DiagnosticRunEETypeAddresses[slot] = eeTypeAddress;
+        }
+    }
+
+    private static void RecordStringCreationNoLock(ulong address,
+            ulong bytes, uint length, ulong request, uint site, ulong runId,
+            ulong caller) {
+        if (_stringLedger == null) return;
+        for (int i = 0; i < _stringLedgerCount; i++) {
+            if (_stringLedger[i].Address == address)
+                _stringLedger[i].Live = false;
+        }
+        int index = -1;
+        for (int i = 0; i < _stringLedgerCount; i++) {
+            if (_stringLedger[i].Address == 0) {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0) {
+            if (_stringLedgerCount >= StringLedgerCapacity) {
+                _stringLedgerDropped++;
+                return;
+            }
+            index = _stringLedgerCount++;
+        }
+        _stringLedger[index] = new StringLedgerRecord {
+            Address = address, Run = address, RequestedBytes = bytes,
+            Length = length, Request = request, CreationSite = site,
+            CreationReturn = caller, AllocatorSequence = runId, Live = true
+        };
+        SerialWriteFreeInvalidText("STRING_CREATE;request=0x");
+        SerialWriteFreeInvalidHex(request);
+        SerialWriteFreeInvalidText(";address=0x");
+        SerialWriteFreeInvalidHex(address);
+        SerialWriteFreeInvalidText(";run=0x");
+        SerialWriteFreeInvalidHex(address);
+        SerialWriteFreeInvalidText(";bytes=0x");
+        SerialWriteFreeInvalidHex(bytes);
+        SerialWriteFreeInvalidText(";length=0x");
+        SerialWriteFreeInvalidHex(length);
+        SerialWriteFreeInvalidText(";site=0x");
+        SerialWriteFreeInvalidHex(site);
+        SerialWriteFreeInvalidText(";allocSeq=0x");
+        SerialWriteFreeInvalidHex(runId);
+        SerialWriteFreeInvalidText(";return=0x");
+        SerialWriteFreeInvalidHex(caller);
+        Native.Out8(0x3F8, (byte)'\n');
+    }
+
+    internal static void RecordManagedObjectDispose(IntPtr pointer) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+        lock (_sync) {
+            if (_stringLedger == null) return;
+            for (int i = _stringLedgerCount - 1; i >= 0; i--) {
+                ref StringLedgerRecord record = ref _stringLedger[i];
+                if (record.Address != (ulong)pointer) continue;
+                record.DisposeCount++;
+                record.DisposeSite = CurrentDiagnosticStringSite;
+                SerialWriteFreeInvalidText("STRING_DISPOSE;request=0x");
+                SerialWriteFreeInvalidHex(record.Request);
+                SerialWriteFreeInvalidText(";address=0x");
+                SerialWriteFreeInvalidHex(record.Address);
+                SerialWriteFreeInvalidText(";allocSeq=0x");
+                SerialWriteFreeInvalidHex(record.AllocatorSequence);
+                SerialWriteFreeInvalidText(";site=0x");
+                SerialWriteFreeInvalidHex(record.DisposeSite);
+                SerialWriteFreeInvalidText(";count=0x");
+                SerialWriteFreeInvalidHex(record.DisposeCount);
+                Native.Out8(0x3F8, (byte)'\n');
+                return;
+            }
+        }
+#endif
+    }
+
+    private static void RecordStringDisposeGuard(IntPtr pointer,
+            bool accepted, ulong reason) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+        if (_stringLedger == null) return;
+        for (int i = _stringLedgerCount - 1; i >= 0; i--) {
+            ref StringLedgerRecord record = ref _stringLedger[i];
+            if (record.Address != (ulong)pointer) continue;
+            record.GuardAccepted = accepted;
+            long page = GetPageIndexStart(pointer);
+            uint slot = page >= 0 && page < NumPages ?
+                _Info.DiagnosticPageRunSlots[page] : 0;
+            record.ExactRunStart = slot != 0 &&
+                _Info.DiagnosticRunAddresses[slot - 1] == record.Address;
+            SerialWriteFreeInvalidText("STRING_FREE_GUARD;request=0x");
+            SerialWriteFreeInvalidHex(record.Request);
+            SerialWriteFreeInvalidText(";address=0x");
+            SerialWriteFreeInvalidHex(record.Address);
+            SerialWriteFreeInvalidText(";allocSeq=0x");
+            SerialWriteFreeInvalidHex(record.AllocatorSequence);
+            SerialWriteFreeInvalidText(";run=0x");
+            SerialWriteFreeInvalidHex(record.Run);
+            SerialWriteFreeInvalidText(";accepted=0x");
+            SerialWriteFreeInvalidHex(accepted ? 1UL : 0UL);
+            SerialWriteFreeInvalidText(";exactRun=0x");
+            SerialWriteFreeInvalidHex(record.ExactRunStart ? 1UL : 0UL);
+            SerialWriteFreeInvalidText(";reason=0x");
+            SerialWriteFreeInvalidHex(reason);
+            Native.Out8(0x3F8, (byte)'\n');
+            return;
+        }
+#endif
+    }
+
+    private static void RecordStringFreeResult(IntPtr pointer, ulong result) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+        if (_stringLedger == null) return;
+        for (int i = _stringLedgerCount - 1; i >= 0; i--) {
+            ref StringLedgerRecord record = ref _stringLedger[i];
+            if (record.Address != (ulong)pointer) continue;
+            record.FreeAttemptCount++;
+            record.FreeResult = result;
+            record.Live = result == 0;
+            SerialWriteFreeInvalidText("STRING_FREE;request=0x");
+            SerialWriteFreeInvalidHex(record.Request);
+            SerialWriteFreeInvalidText(";address=0x");
+            SerialWriteFreeInvalidHex(record.Address);
+            SerialWriteFreeInvalidText(";allocSeq=0x");
+            SerialWriteFreeInvalidHex(record.AllocatorSequence);
+            SerialWriteFreeInvalidText(";run=0x");
+            SerialWriteFreeInvalidHex(record.Run);
+            SerialWriteFreeInvalidText(";result=0x");
+            SerialWriteFreeInvalidHex(result);
+            Native.Out8(0x3F8, (byte)'\n');
+            // Keep completed records until their slot is reused. The request
+            // snapshot runs after cleanup and still needs the old address.
+            return;
+        }
+#endif
+    }
+
+    internal static void RecordStringContent(IntPtr pointer, char* content,
+            int length) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+        if (_stringLedger == null || content == null || length < 0) return;
+        ulong hash = 14695981039346656037UL;
+        for (int i = 0; i < length; i++) {
+            hash ^= content[i];
+            hash *= 1099511628211UL;
+        }
+        for (int i = _stringLedgerCount - 1; i >= 0; i--) {
+            ref StringLedgerRecord record = ref _stringLedger[i];
+            if (record.Address != (ulong)pointer || !record.Live) continue;
+            record.ContentHash = hash;
+            record.HasContentHash = true;
+            SerialWriteFreeInvalidText("STRING_VALUE;request=0x");
+            SerialWriteFreeInvalidHex(record.Request);
+            SerialWriteFreeInvalidText(";address=0x");
+            SerialWriteFreeInvalidHex(record.Address);
+            SerialWriteFreeInvalidText(";hash=0x");
+            SerialWriteFreeInvalidHex(hash);
+            Native.Out8(0x3F8, (byte)'\n');
+            return;
+        }
+#endif
+    }
+
+    internal static void DumpStringLedger(ulong request, ulong stage) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+        if (_stringLedger == null) return;
+        lock (_sync) {
+            ulong live = 0;
+            for (int i = 0; i < _stringLedgerCount; i++) {
+                ref StringLedgerRecord record = ref _stringLedger[i];
+                if (record.Address == 0) continue;
+                if (record.Request != request) {
+                    if (stage == 3 && !record.Live) record.Address = 0;
+                    continue;
+                }
+                long page = GetPageIndexStart((IntPtr)record.Address);
+                uint slot = page >= 0 && page < NumPages ?
+                    _Info.DiagnosticPageRunSlots[page] : 0;
+                bool isLive = slot != 0 && _Info.Pages[page] != 0 &&
+                    _Info.Pages[page] != PageSignature &&
+                    _Info.DiagnosticRunAddresses[slot - 1] == record.Address &&
+                    _Info.DiagnosticRunIds[slot - 1] ==
+                        record.AllocatorSequence;
+                for (int later = i + 1; later < _stringLedgerCount; later++) {
+                    if (_stringLedger[later].Address == record.Address) {
+                        isLive = false;
+                        break;
+                    }
+                }
+                record.Live = isLive;
+                if (!isLive) {
+                    // Keep the record through both request and post-process
+                    // snapshots. Once the post-process snapshot has been
+                    // emitted, a completed record can safely release its
+                    // bounded ledger slot for later requester lifetimes.
+                    if (stage == 3) record.Address = 0;
+                    continue;
+                }
+                live++;
+                SerialWriteFreeInvalidText("STRING_LIVE;request=0x");
+                SerialWriteFreeInvalidHex(request);
+                SerialWriteFreeInvalidText(";stage=0x");
+                SerialWriteFreeInvalidHex(stage);
+                SerialWriteFreeInvalidText(";address=0x");
+                SerialWriteFreeInvalidHex(record.Address);
+                SerialWriteFreeInvalidText(";run=0x");
+                SerialWriteFreeInvalidHex(record.Run);
+                SerialWriteFreeInvalidText(";bytes=0x");
+                SerialWriteFreeInvalidHex(record.RequestedBytes);
+                SerialWriteFreeInvalidText(";length=0x");
+                SerialWriteFreeInvalidHex(record.Length);
+                SerialWriteFreeInvalidText(";site=0x");
+                SerialWriteFreeInvalidHex(record.CreationSite);
+                SerialWriteFreeInvalidText(";allocSeq=0x");
+                SerialWriteFreeInvalidHex(record.AllocatorSequence);
+                SerialWriteFreeInvalidText(";hash=0x");
+                SerialWriteFreeInvalidHex(record.ContentHash);
+                SerialWriteFreeInvalidText(";dispose=0x");
+                SerialWriteFreeInvalidHex(record.DisposeCount);
+                SerialWriteFreeInvalidText(";freeAttempts=0x");
+                SerialWriteFreeInvalidHex(record.FreeAttemptCount);
+                SerialWriteFreeInvalidText(";freeResult=0x");
+                SerialWriteFreeInvalidHex(record.FreeResult);
+                Native.Out8(0x3F8, (byte)'\n');
+            }
+            SerialWriteFreeInvalidText("STRING_LIVE_COUNT;request=0x");
+            SerialWriteFreeInvalidHex(request);
+            SerialWriteFreeInvalidText(";stage=0x");
+            SerialWriteFreeInvalidHex(stage);
+            SerialWriteFreeInvalidText(";count=0x");
+            SerialWriteFreeInvalidHex(live);
+            SerialWriteFreeInvalidText(";dropped=0x");
+            SerialWriteFreeInvalidHex(_stringLedgerDropped);
             Native.Out8(0x3F8, (byte)'\n');
         }
+#endif
     }
 #endif
 #endif
@@ -739,6 +1006,8 @@ abstract unsafe class Allocator {
         _Info.DiagnosticRunCr3[slot] = cr3;
         _Info.DiagnosticRunRequestedSizes[slot] = requestedSize;
         _Info.DiagnosticRunCallerAddresses[slot] = callerAddress;
+        _Info.DiagnosticRunRequesterIds[slot] = CurrentDiagnosticRequest;
+        _Info.DiagnosticRunLifetimeIds[slot] = CurrentDiagnosticLifetime;
         for (ulong page = 0; page < pages; page++)
             _Info.DiagnosticPageRunSlots[(address - (ulong)_Info.Start) /
                 PageSize + page] = (uint)(slot + 1);
@@ -766,6 +1035,14 @@ abstract unsafe class Allocator {
 
     internal static ulong DiagnosticAllocationSequence =>
         _allocationSequence;
+    internal static ulong BeginDiagnosticLifetime() {
+        ulong previous = CurrentDiagnosticLifetime;
+        CurrentDiagnosticLifetime = ++_diagnosticLifetimeSequence;
+        return previous;
+    }
+    internal static void RestoreDiagnosticLifetime(ulong previous) {
+        CurrentDiagnosticLifetime = previous;
+    }
     internal static ulong DiagnosticSnapshotSequence =>
         _diagnosticSnapshotSequence;
 
@@ -797,7 +1074,6 @@ abstract unsafe class Allocator {
     internal static void DumpDiagnosticRunsSince(ulong sequence) {
         if (!DiagnosticProvenanceEnabled) return;
         lock (_sync) {
-            int emitted = 0;
             ulong total = 0;
             ulong retainedPages = 0;
             for (ulong page = 0; page < (ulong)NumPages;) {
@@ -813,43 +1089,6 @@ abstract unsafe class Allocator {
                 }
                 total++;
                 retainedPages += pages;
-                if (emitted >= 256) { page += pages; continue; }
-                emitted++;
-                SerialWriteFreeInvalidText("PHASE35_ALLOC_RUN;id=0x");
-                SerialWriteFreeInvalidHex(id);
-                SerialWriteFreeInvalidText(";start=0x");
-                SerialWriteFreeInvalidHex((ulong)_Info.Start +
-                    page * PageSize);
-                SerialWriteFreeInvalidText(";pages=0x");
-                SerialWriteFreeInvalidHex(pages);
-                SerialWriteFreeInvalidText(";owner=0x");
-                SerialWriteFreeInvalidHex(unchecked((ulong)
-                    _Info.Owners[page]));
-                SerialWriteFreeInvalidText(";generation=0x");
-                SerialWriteFreeInvalidHex(
-                    _Info.DiagnosticPageOwnerGenerations[page]);
-                SerialWriteFreeInvalidText(";tag=0x");
-                SerialWriteFreeInvalidHex(_Info.Tags[page]);
-                SerialWriteFreeInvalidText(";callerLabel=0x");
-                SerialWriteFreeInvalidHex(
-                    _Info.DiagnosticPageCallerLabels[page]);
-                SerialWriteFreeInvalidText(";site=0x");
-                SerialWriteFreeInvalidHex(_Info.DiagnosticRunAllocationSites[
-                    (int)((id - 1) % DiagnosticRunCapacity)]);
-                SerialWriteFreeInvalidText(";virtual=0x");
-                SerialWriteFreeInvalidHex(_Info.DiagnosticRunVirtualAddresses[
-                    (int)((id - 1) % DiagnosticRunCapacity)]);
-                SerialWriteFreeInvalidText(";cr3=0x");
-                SerialWriteFreeInvalidHex(_Info.DiagnosticRunCr3[
-                    (int)((id - 1) % DiagnosticRunCapacity)]);
-                SerialWriteFreeInvalidText(";requestBytes=0x");
-                SerialWriteFreeInvalidHex(_Info.DiagnosticRunRequestedSizes[
-                    (int)((id - 1) % DiagnosticRunCapacity)]);
-                SerialWriteFreeInvalidText(";callerAddress=0x");
-                SerialWriteFreeInvalidHex(_Info.DiagnosticRunCallerAddresses[
-                    (int)((id - 1) % DiagnosticRunCapacity)]);
-                SerialWriteFreeInvalidText(";freed=0x0000000000000000");
-                Native.Out8(0x3F8, (byte)'\n');
                 page += pages;
             }
             ulong freedBaselineRuns = 0;
@@ -864,21 +1103,9 @@ abstract unsafe class Allocator {
                             baselineId) continue;
                 freedBaselineRuns++;
                 freedBaselinePages += baselinePages;
-                SerialWriteFreeInvalidText("PHASE35_ALLOC_BASELINE_RUN_FREED;id=0x");
-                SerialWriteFreeInvalidHex(baselineId);
-                SerialWriteFreeInvalidText(";start=0x");
-                SerialWriteFreeInvalidHex((ulong)_Info.Start +
-                    page * PageSize);
-                SerialWriteFreeInvalidText(";pages=0x");
-                SerialWriteFreeInvalidHex((ulong)baselinePages);
-                Native.Out8(0x3F8, (byte)'\n');
             }
-            SerialWriteFreeInvalidText("PHASE35_ALLOC_RUN_DUMP;emitted=0x");
-            SerialWriteFreeInvalidHex((ulong)emitted);
-            SerialWriteFreeInvalidText(";total=0x");
+            SerialWriteFreeInvalidText("PHASE35_ALLOC_RUN_TOTALS;count=0x");
             SerialWriteFreeInvalidHex(total);
-            SerialWriteFreeInvalidText(";truncated=0x");
-            SerialWriteFreeInvalidHex(total > (ulong)emitted ? 1UL : 0UL);
             SerialWriteFreeInvalidText(";retainedPages=0x");
             SerialWriteFreeInvalidHex(retainedPages);
             SerialWriteFreeInvalidText(";freedBaselineRuns=0x");
@@ -890,8 +1117,172 @@ abstract unsafe class Allocator {
                 retainedPages - freedBaselinePages : 0UL);
             Native.Out8(0x3F8, (byte)'\n');
 
-            DumpDiagnosticLiveRhpArraysNoLock(sequence);
         }
+    }
+
+    // Emits numeric-only rows from the fixed run ledger. This does not allocate
+    // managed memory and is bounded by the allocator's fixed run capacity.
+    internal static ulong DumpDiagnosticLiveRunsSince(ulong sequence,
+            int snapshot) {
+        if (!DiagnosticProvenanceEnabled) return 0;
+        lock (_sync) return DumpDiagnosticLiveRunsSinceNoLock(sequence,
+            snapshot);
+    }
+
+    internal static void DumpDiagnosticHelperTotalsSince(ulong sequence,
+            int snapshot) {
+        if (!DiagnosticProvenanceEnabled) return;
+        lock (_sync) {
+            for (byte helper = 0; helper <= 2; helper++) {
+                ulong allocations = 0, frees = 0, survivors = 0, pages = 0;
+                for (ulong id = sequence + 1; id <= _allocationSequence; id++) {
+                    int slot = (int)((id - 1) % DiagnosticRunCapacity);
+                    if (_Info.DiagnosticRunIds[slot] != id ||
+                            _Info.DiagnosticRunManagedHelpers[slot] != helper)
+                        continue;
+                    allocations++;
+                    if (_Info.DiagnosticRunFreeSequences[slot] != 0) frees++;
+                    ulong address = _Info.DiagnosticRunAddresses[slot];
+                    ulong page = (address - (ulong)_Info.Start) / PageSize;
+                    bool live = page < (ulong)NumPages &&
+                        _Info.DiagnosticPageAllocationSequences[page] == id &&
+                        _Info.Pages[page] == _Info.DiagnosticRunPages[slot];
+                    if (live) {
+                        survivors++;
+                        pages += _Info.DiagnosticRunPages[slot];
+                    }
+                }
+                SerialWriteFreeInvalidText("R9_HELPER;phase=");
+                SerialWriteFreeInvalidHex((ulong)snapshot);
+                SerialWriteFreeInvalidText(";helper=0x");
+                SerialWriteFreeInvalidHex(helper);
+                SerialWriteFreeInvalidText(";allocations=0x");
+                SerialWriteFreeInvalidHex(allocations);
+                SerialWriteFreeInvalidText(";frees=0x");
+                SerialWriteFreeInvalidHex(frees);
+                SerialWriteFreeInvalidText(";survivors=0x");
+                SerialWriteFreeInvalidHex(survivors);
+                SerialWriteFreeInvalidText(";pages=0x");
+                SerialWriteFreeInvalidHex(pages);
+                Native.Out8(0x3F8, (byte)'\n');
+            }
+        }
+    }
+
+    private static ulong DumpDiagnosticLiveRunsSinceNoLock(ulong sequence,
+            int snapshot) {
+        ulong count = 0;
+        ulong pagesTotal = 0;
+        for (ulong page = 0; page < (ulong)NumPages;) {
+            ulong pages = _Info.Pages[page];
+            if (pages == 0 || pages == PageSignature) { page++; continue; }
+            if (pages > (ulong)NumPages - page) break;
+            ulong id = _Info.DiagnosticPageAllocationSequences[page];
+            int slot = id == 0 ? -1 : (int)((id - 1) % DiagnosticRunCapacity);
+            if (id > sequence && slot >= 0 &&
+                    _Info.DiagnosticRunIds[slot] == id &&
+                    _Info.DiagnosticRunAddresses[slot] ==
+                        (ulong)_Info.Start + page * PageSize &&
+                    _Info.DiagnosticRunPages[slot] == pages) {
+                count++;
+                pagesTotal += pages;
+                SerialWriteFreeInvalidText("R9_RUN;phase=");
+                SerialWriteFreeInvalidHex((ulong)snapshot);
+                SerialWriteFreeInvalidText(";id=0x");
+                SerialWriteFreeInvalidHex(id);
+                SerialWriteFreeInvalidText(";address=0x");
+                SerialWriteFreeInvalidHex(_Info.DiagnosticRunAddresses[slot]);
+                SerialWriteFreeInvalidText(";pages=0x");
+                SerialWriteFreeInvalidHex(pages);
+                SerialWriteFreeInvalidText(";bytes=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunRequestedSizes[slot]);
+                SerialWriteFreeInvalidText(";tag=0x");
+                SerialWriteFreeInvalidHex(_Info.DiagnosticRunTags[slot]);
+                SerialWriteFreeInvalidText(";class=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunAllocationSites[slot]);
+                SerialWriteFreeInvalidText(";managedHelper=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunManagedHelpers[slot]);
+                SerialWriteFreeInvalidText(";creationSite=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunCreationSites[slot]);
+                SerialWriteFreeInvalidText(";callerLabel=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunCallerLabels[slot]);
+                SerialWriteFreeInvalidText(";owner=0x");
+                SerialWriteFreeInvalidHex(unchecked((ulong)
+                    _Info.DiagnosticRunOwnerIds[slot]));
+                SerialWriteFreeInvalidText(";generation=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunOwnerGenerations[slot]);
+                SerialWriteFreeInvalidText(";requester=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunRequesterIds[slot]);
+                SerialWriteFreeInvalidText(";lifetime=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunLifetimeIds[slot]);
+                SerialWriteFreeInvalidText(";caller=0x");
+                SerialWriteFreeInvalidHex(
+                    _Info.DiagnosticRunCallerAddresses[slot]);
+                ulong managedObject = 0;
+                ulong eeTypeAddress = 0;
+                ulong typeClass = 0;
+                ulong managedLength = 0;
+                ulong managedObjectBytes = 0;
+                if (_Info.DiagnosticRunManagedHelpers[slot] != 0) {
+                    managedObject = _Info.DiagnosticRunAddresses[slot];
+                    ulong candidate =
+                        _Info.DiagnosticRunEETypeAddresses[slot];
+                    if (candidate >= 0x10000000UL &&
+                            candidate < 0x11000000UL) {
+                        Internal.Runtime.EEType* eeType =
+                            (Internal.Runtime.EEType*)candidate;
+                        eeTypeAddress = candidate;
+                        if (eeType->IsString) typeClass = 1;
+                        else if (eeType->IsArray) typeClass = 2;
+                        else typeClass = 3;
+                        if (eeType->IsString || eeType->IsArray) {
+                            int length = *(int*)(managedObject +
+                                (ulong)sizeof(ulong));
+                            managedLength = unchecked((ulong)length);
+                            managedObjectBytes = eeType->BaseSize +
+                                unchecked((ulong)length) *
+                                eeType->ComponentSize;
+                            managedObjectBytes = (managedObjectBytes + 7UL) &
+                                ~7UL;
+                        } else {
+                            managedObjectBytes = eeType->BaseSize;
+                        }
+                    }
+                    eeTypeAddress = candidate;
+                }
+                SerialWriteFreeInvalidText(";managedObject=0x");
+                SerialWriteFreeInvalidHex(managedObject);
+                SerialWriteFreeInvalidText(";eeType=0x");
+                SerialWriteFreeInvalidHex(eeTypeAddress);
+                SerialWriteFreeInvalidText(";typeClass=0x");
+                SerialWriteFreeInvalidHex(typeClass);
+                SerialWriteFreeInvalidText(";managedLength=0x");
+                SerialWriteFreeInvalidHex(managedLength);
+                SerialWriteFreeInvalidText(";managedBytes=0x");
+                SerialWriteFreeInvalidHex(managedObjectBytes);
+                Native.Out8(0x3F8, (byte)'\n');
+            }
+            page += pages;
+        }
+        SerialWriteFreeInvalidText("R9_RUN_TOTAL;phase=");
+        SerialWriteFreeInvalidHex((ulong)snapshot);
+        SerialWriteFreeInvalidText(";lifetime=0x");
+        SerialWriteFreeInvalidHex(CurrentDiagnosticLifetime);
+        SerialWriteFreeInvalidText(";count=0x");
+        SerialWriteFreeInvalidHex(count);
+        SerialWriteFreeInvalidText(";pages=0x");
+        SerialWriteFreeInvalidHex(pagesTotal);
+        Native.Out8(0x3F8, (byte)'\n');
+        if (snapshot == 2) DumpDiagnosticLiveRhpArraysNoLock(sequence);
+        return pagesTotal;
     }
 
     private static void DumpDiagnosticLiveRhpArraysNoLock(ulong sequence) {
@@ -996,6 +1387,13 @@ abstract unsafe class Allocator {
     internal static void DumpDiagnosticRequestAllocations(ulong request,
             ulong firstSequence, ulong lastSequence) {
         if (!DiagnosticProvenanceEnabled) return;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+        // The R2 matrix needs bounded aggregate and string-lifetime counters.
+        // Per-allocation address rows overwhelm the finite serial capture and
+        // prevent the guest harness from observing matrix completion. Keep
+        // this disabled for every Phase 35 diagnostic mode.
+        return;
+#else
         lock (_sync) {
             for (ulong id = firstSequence; id <= lastSequence; id++) {
                 int slot = (int)((id - 1) % DiagnosticRunCapacity);
@@ -1042,6 +1440,7 @@ abstract unsafe class Allocator {
                 SerialWriteFreeInvalidText(live ? ";live=1\n" : ";live=0\n");
             }
         }
+#endif
     }
 
     internal static ulong GetDiagnosticLiveRunCount() {

@@ -58,6 +58,9 @@ namespace Internal.Runtime.CompilerHelpers {
             var obj = Unsafe.As<IntPtr, object>(ref data);
             MemSet((byte*)data, 0, (int)size);
             *(IntPtr*)data = (IntPtr)pEEType;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            Allocator.RecordRhpNewFastAllocation(data, (ulong)pEEType);
+#endif
 
             return obj;
         }

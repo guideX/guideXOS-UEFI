@@ -28,6 +28,7 @@ $baseNames = @{
     'no-read' = 'guideXOS.Phase35NoReadProof'
     'one-read' = 'guideXOS.Phase35OneReadProof'
     'two-read' = 'guideXOS.Phase35TwoReadProof'
+    'not-found' = 'guideXOS.Phase35NotFoundProof'
 }
 New-Item -ItemType Directory -Force -Path $RamdiskSource | Out-Null
 

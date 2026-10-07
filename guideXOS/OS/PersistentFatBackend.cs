@@ -272,7 +272,13 @@ namespace guideXOS.OS {
             try {
                 return _fat.TryGetFileLength(filePath, out length);
             } finally {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                Allocator.CurrentDiagnosticStringSite = 202;
+#endif
                 filePath.Dispose();
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                Allocator.CurrentDiagnosticStringSite = 0;
+#endif
             }
         }
 
@@ -353,7 +359,13 @@ namespace guideXOS.OS {
                 return FatOperationResult.ReadFailure;
             return FatOperationResult.Success;
             } finally {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                Allocator.CurrentDiagnosticStringSite = 202;
+#endif
                 filePath.Dispose();
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                Allocator.CurrentDiagnosticStringSite = 0;
+#endif
             }
         }
 
@@ -513,7 +525,14 @@ namespace guideXOS.OS {
             int offset = WriteValueDirectory(path, 0, applicationId,
                 relativePath);
             offset = CopyText("/VALUE.BIN", path, offset);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            uint previousSite = Allocator.CurrentDiagnosticStringSite;
+            Allocator.CurrentDiagnosticStringSite = 201;
+#endif
             string valuePath = new string(path, 0, offset);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            Allocator.CurrentDiagnosticStringSite = previousSite;
+#endif
             path.Dispose();
             return valuePath;
         }

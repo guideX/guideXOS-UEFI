@@ -281,6 +281,21 @@ namespace guideXOS.Misc {
             Native.Out8(0x3F8, (byte)'\n');
         }
 
+        private static unsafe void DecimalMarker(string label, uint value) {
+            if (label != null) {
+                for (int i = 0; i < label.Length; i++)
+                    Native.Out8(0x3F8, (byte)label[i]);
+            }
+            byte* digits = stackalloc byte[10];
+            int count = 0;
+            do {
+                digits[count++] = (byte)('0' + value % 10U);
+                value /= 10U;
+            } while (value != 0 && count < 10);
+            while (count != 0) Native.Out8(0x3F8, digits[--count]);
+            Native.Out8(0x3F8, (byte)'\n');
+        }
+
         internal static int DiagnosticAllocatorOwnerId(
                 Ring3ProcessHandle handle) {
             ulong folded = handle.Value ^ (handle.Value >> 32);
@@ -1059,6 +1074,8 @@ namespace guideXOS.Misc {
             ulong allocationSequenceBefore = 0;
             ulong previousDiagnosticRequest =
                 Allocator.CurrentDiagnosticRequest;
+            uint previousDiagnosticStringSite =
+                Allocator.CurrentDiagnosticStringSite;
             if (Allocator.DiagnosticProvenanceEnabled) {
                 readSequence = ++_persistentReadDiagnosticSequence;
                 allocationSequenceBefore =
@@ -1089,6 +1106,10 @@ namespace guideXOS.Misc {
                 (ulong)sizeof(Ring3PersistentReadRequest));
             Marker("RING3_PERSISTENT_READ_REQUEST_COPIED_IN=1");
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
+            if (Allocator.DiagnosticProvenanceEnabled)
+                Allocator.CurrentDiagnosticRequest = readSequence;
+#endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
             if (Allocator.DiagnosticProvenanceEnabled) {
                 HexMarker("READ_REQ_DESTINATION=", request.DataBuffer);
                 HexMarker("READ_REQ_CAPACITY=", request.DataCapacity);
@@ -1102,6 +1123,9 @@ namespace guideXOS.Misc {
             if (!TryValidatePersistentReadRequest(&request,
                     out relativePath)) {
                 Marker("RING3_PERSISTENT_READ_MALFORMED_REQUEST=1");
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                Allocator.CurrentDiagnosticRequest = previousDiagnosticRequest;
+#endif
                 return InvalidRequest;
             }
             Phase35DiagnosticOwnerBytes(
@@ -1115,11 +1139,6 @@ namespace guideXOS.Misc {
             ApplicationServiceResult<ApplicationStorageReadResult> read = null;
             ApplicationStorageReadResult value = null;
             try {
-
-#if UEFI_DIAGNOSTIC_RING3_PHASE35
-            if (Allocator.DiagnosticProvenanceEnabled)
-                Allocator.CurrentDiagnosticRequest = readSequence;
-#endif
 
             if (!PageTable.ValidateWritableUserRange(process.Space.Pml4,
                     request.ResponseBuffer, request.ResponseCapacity)) {
@@ -1242,10 +1261,10 @@ namespace guideXOS.Misc {
             process.RecordServiceRequestSuccess();
             Marker("RING3_PERSISTENT_READ_BACKEND_DISPATCHED=1");
             Marker("RING3_PERSISTENT_READ_DATA_COPIED_TO_CALLER=1");
-            Marker("RING3_PERSISTENT_READ_BYTES=" +
-                response.BytesRead.ToString());
-            Marker("RING3_PERSISTENT_READ_END=" +
-                response.EndOfValue.ToString());
+            DecimalMarker("RING3_PERSISTENT_READ_BYTES=",
+                response.BytesRead);
+            DecimalMarker("RING3_PERSISTENT_READ_END=",
+                response.EndOfValue);
             Marker("RING3_PERSISTENT_READ_RESPONSE_COPIED_OUT=1");
             return Success;
             } finally {
@@ -1256,7 +1275,12 @@ namespace guideXOS.Misc {
                 if (readRequest != null) readRequest.Dispose();
                 if (contextResult != null) contextResult.Dispose();
                 if (context != null) context.Dispose();
-                if (relativePath != null) relativePath.Dispose();
+                if (relativePath != null) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                    Allocator.CurrentDiagnosticStringSite = 102;
+#endif
+                    relativePath.Dispose();
+                }
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
                 if (Allocator.DiagnosticProvenanceEnabled) {
                     ulong allocationSequenceAfter =
@@ -1265,10 +1289,14 @@ namespace guideXOS.Misc {
                     Allocator.DumpDiagnosticRequestAllocations(readSequence,
                         allocationSequenceBefore + 1,
                         allocationSequenceAfter);
+                    Allocator.LastDiagnosticRequest = readSequence;
+                    Allocator.DumpStringLedger(readSequence, 1);
                     HexMarker("READ_REQ_COMPLETE=", readSequence);
                 }
                 Allocator.CurrentDiagnosticRequest =
                     previousDiagnosticRequest;
+                Allocator.CurrentDiagnosticStringSite =
+                    previousDiagnosticStringSite;
 #endif
             }
         }
@@ -1313,7 +1341,13 @@ namespace guideXOS.Misc {
                 }
             }
 
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            Allocator.CurrentDiagnosticStringSite = 101;
+#endif
             relativePath = new string(characters);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            Allocator.CurrentDiagnosticStringSite = 0;
+#endif
             characters.Dispose();
             if (!ApplicationStoragePathRules.IsValid(relativePath)) {
                 relativePath.Dispose();

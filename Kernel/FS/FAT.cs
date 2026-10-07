@@ -821,6 +821,10 @@ namespace guideXOS.FS {
 
         private DirResult FindPath(string path) {
             if (path == null) return new DirResult { Found = false };
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            uint previousStringSite = Allocator.CurrentDiagnosticStringSite;
+            Allocator.CurrentDiagnosticStringSite = 301;
+#endif
             string splitPath = path;
             bool ownsSplitPath = false;
             try {
@@ -864,6 +868,9 @@ namespace guideXOS.FS {
                 }
             } finally {
                 if (ownsSplitPath) splitPath.Dispose();
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+                Allocator.CurrentDiagnosticStringSite = previousStringSite;
+#endif
             }
         }
         private struct EntryLoc { public bool Found; public ulong LBA; public int Index; public uint Cluster; public bool RootFixed; public DirEntry Entry; }

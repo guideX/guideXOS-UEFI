@@ -112,10 +112,11 @@ $allModes = @(
     [ordered]@{ Name = 'malformed'; Mode = 'Malformed'; Result = 35 },
     [ordered]@{ Name = 'no-read'; Mode = 'NoRead'; Result = 35 },
     [ordered]@{ Name = 'one-read'; Mode = 'OneRead'; Result = 35 },
-    [ordered]@{ Name = 'two-read'; Mode = 'TwoRead'; Result = 35 }
+    [ordered]@{ Name = 'two-read'; Mode = 'TwoRead'; Result = 35 },
+    [ordered]@{ Name = 'not-found'; Mode = 'NotFound'; Result = 35 }
 )
 $modes = if ($Phase35R2MatrixOnly) {
-    @($allModes | Where-Object { $_.Name -in @('no-read', 'one-read', 'two-read') })
+    @($allModes | Where-Object { $_.Name -in @('no-read', 'one-read', 'two-read', 'not-found') })
 } else { $allModes }
 
 . (Join-Path $PSScriptRoot '..\ManagedArtifacts\Normalize-PeTimestamps.ps1')

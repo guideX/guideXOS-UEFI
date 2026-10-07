@@ -43,6 +43,9 @@
   <PropertyGroup Condition="'$(Phase35Mode)' == 'TwoRead'">
     <DefineConstants>$(DefineConstants);GUIDEXOS_PHASE35_TWO_READ</DefineConstants>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Phase35Mode)' == 'NotFound'">
+    <DefineConstants>$(DefineConstants);GUIDEXOS_PHASE35_NOT_FOUND</DefineConstants>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Phase35Mode)' == 'StaleOwner'">
     <DefineConstants>$(DefineConstants);GUIDEXOS_PHASE35_STALE_OWNER</DefineConstants>
   </PropertyGroup>
