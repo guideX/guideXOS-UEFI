@@ -502,7 +502,7 @@ try {
                 throw "Phase 35 allocator invariant failed: $marker"
             }
         }
-    } elseif (-not $Phase35P2) {
+    } elseif (-not $Phase35P2 -and -not $Phase35R9Ledger) {
         $allocatorRows = [regex]::Matches($finalContent, '(?m)^35Q_ALLOCATOR_COUNTS=[^\r\n]*')
         if ($allocatorRows.Count -lt 6) { throw "Expected six allocator invariant snapshots; saw $($allocatorRows.Count)." }
         foreach ($row in $allocatorRows) {

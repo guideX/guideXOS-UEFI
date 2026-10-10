@@ -311,12 +311,26 @@ namespace guideXOS.OS {
                     "P35_DIAG_FAT_LENGTH_RESULT=", (ulong)(byte)result);
                 Ring3Abi.Phase35DiagnosticValueMarker(
                     "P35_DIAG_FAT_LENGTH_VALUE=", fileLength);
-                Ring3Abi.Phase35DiagnosticMarker(
-                    "P35_DIAG_APPLICATION_ID=" + applicationId);
-                Ring3Abi.Phase35DiagnosticMarker(
-                    "P35_DIAG_RELATIVE_PATH=" + relativePath);
-                Ring3Abi.Phase35DiagnosticMarker(
-                    "P35_DIAG_FILE_PATH=" + filePath);
+                string applicationIdMessage =
+                    "P35_DIAG_APPLICATION_ID=" + applicationId;
+                try {
+                    Ring3Abi.Phase35DiagnosticMarker(applicationIdMessage);
+                } finally {
+                    applicationIdMessage.Dispose();
+                }
+                string relativePathMessage =
+                    "P35_DIAG_RELATIVE_PATH=" + relativePath;
+                try {
+                    Ring3Abi.Phase35DiagnosticMarker(relativePathMessage);
+                } finally {
+                    relativePathMessage.Dispose();
+                }
+                string filePathMessage = "P35_DIAG_FILE_PATH=" + filePath;
+                try {
+                    Ring3Abi.Phase35DiagnosticMarker(filePathMessage);
+                } finally {
+                    filePathMessage.Dispose();
+                }
                 return result;
             }
             if (fileLength > MaxValueLength) return FatOperationResult.EntryLimitExceeded;
@@ -347,12 +361,26 @@ namespace guideXOS.OS {
                     "P35_DIAG_FAT_RANGE_BYTES=", (ulong)(uint)actualBytesRead);
                 Ring3Abi.Phase35DiagnosticValueMarker(
                     "P35_DIAG_FAT_FILE_LENGTH=", fileLength);
-                Ring3Abi.Phase35DiagnosticMarker(
-                    "P35_DIAG_APPLICATION_ID=" + applicationId);
-                Ring3Abi.Phase35DiagnosticMarker(
-                    "P35_DIAG_RELATIVE_PATH=" + relativePath);
-                Ring3Abi.Phase35DiagnosticMarker(
-                    "P35_DIAG_FILE_PATH=" + filePath);
+                string applicationIdMessage =
+                    "P35_DIAG_APPLICATION_ID=" + applicationId;
+                try {
+                    Ring3Abi.Phase35DiagnosticMarker(applicationIdMessage);
+                } finally {
+                    applicationIdMessage.Dispose();
+                }
+                string relativePathMessage =
+                    "P35_DIAG_RELATIVE_PATH=" + relativePath;
+                try {
+                    Ring3Abi.Phase35DiagnosticMarker(relativePathMessage);
+                } finally {
+                    relativePathMessage.Dispose();
+                }
+                string filePathMessage = "P35_DIAG_FILE_PATH=" + filePath;
+                try {
+                    Ring3Abi.Phase35DiagnosticMarker(filePathMessage);
+                } finally {
+                    filePathMessage.Dispose();
+                }
                 return result;
             }
             if (actualBytesRead != bytesRead)

@@ -4,6 +4,8 @@ namespace GuideXos.Phase35ManagedPersistentReadProof;
 
 internal static class Program
 {
+    private const string MissingKey = "missing.phase35";
+
     internal static int Main()
     {
 #if GUIDEXOS_PHASE35_NO_READ
@@ -20,7 +22,7 @@ internal static class Program
         return passed ? 35 : 42;
 #elif GUIDEXOS_PHASE35_NOT_FOUND
         GuideXosResult missing = GuideXosStorage.TryReadBytes(
-            "missing.phase35r6", out byte[] missingData,
+            MissingKey, out byte[] missingData,
             out GuideXosStorageResultCode missingCode);
         return missing.Succeeded &&
                missingCode == GuideXosStorageResultCode.NotFound &&
@@ -128,7 +130,7 @@ internal static class Program
     private static int CheckMissing()
     {
         GuideXosResult result = GuideXosStorage.TryReadBytes(
-            "missing.phase35", out byte[] bytes,
+            MissingKey, out byte[] bytes,
             out GuideXosStorageResultCode code);
         if (!result.Succeeded) return 50 + (int)result.Status;
         if (code != GuideXosStorageResultCode.NotFound)

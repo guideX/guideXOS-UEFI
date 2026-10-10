@@ -1204,8 +1204,15 @@ namespace guideXOS.Misc {
                 WritePersistentReadResponse(request.ResponseBuffer,
                     &response);
                 process.RecordServiceRequestSuccess();
-                Marker("RING3_PERSISTENT_READ_TYPED_RESULT=" +
-                    response.ResultCode.ToString());
+                string typedResult = response.ResultCode.ToString();
+                string typedResultMessage =
+                    "RING3_PERSISTENT_READ_TYPED_RESULT=" + typedResult;
+                try {
+                    Marker(typedResultMessage);
+                } finally {
+                    typedResultMessage.Dispose();
+                    typedResult.Dispose();
+                }
                 Marker("RING3_PERSISTENT_READ_RESPONSE_COPIED_OUT=1");
                 return Success;
             }

@@ -369,6 +369,7 @@ namespace guideXOS.OS {
     public sealed class ApplicationServiceResult {
         public const int MaxDiagnosticLength = 192;
 
+        private bool _ownsBoundedDiagnostic;
         public ApplicationServiceResultCode Code { get; private set; }
         public string BoundedDiagnostic { get; private set; }
         public bool Succeeded {
@@ -376,9 +377,14 @@ namespace guideXOS.OS {
         }
 
         private ApplicationServiceResult(ApplicationServiceResultCode code,
-                                         string diagnostic) {
+                                         string diagnostic,
+                                         bool ownsBoundedDiagnostic = false) {
             Code = code;
             BoundedDiagnostic = BoundDiagnostic(diagnostic);
+            _ownsBoundedDiagnostic = ownsBoundedDiagnostic;
+            if (ownsBoundedDiagnostic && diagnostic != null &&
+                    !ReferenceEquals(diagnostic, BoundedDiagnostic))
+                diagnostic.Dispose();
         }
 
         public static ApplicationServiceResult SuccessResult() {
@@ -401,6 +407,21 @@ namespace guideXOS.OS {
             return new ApplicationServiceResult(code, diagnostic);
         }
 
+        internal static ApplicationServiceResult FailureOwnedDiagnostic(
+                ApplicationServiceResultCode code, string diagnostic) {
+            return new ApplicationServiceResult(code, diagnostic, true);
+        }
+
+        public override void Dispose() {
+            if (_ownsBoundedDiagnostic) {
+                string diagnostic = BoundedDiagnostic;
+                BoundedDiagnostic = null;
+                _ownsBoundedDiagnostic = false;
+                if (diagnostic != null) diagnostic.Dispose();
+            }
+            base.Dispose();
+        }
+
         internal static string BoundDiagnostic(string diagnostic) {
             if (string.IsNullOrEmpty(diagnostic) ||
                     diagnostic.Length <= MaxDiagnosticLength) return diagnostic;
@@ -413,6 +434,7 @@ namespace guideXOS.OS {
     /// when Succeeded is true; failure results never expose backend objects.
     /// </summary>
     public sealed class ApplicationServiceResult<T> {
+        private bool _ownsBoundedDiagnostic;
         public ApplicationServiceResultCode Code { get; private set; }
         public T Value { get; private set; }
         public string BoundedDiagnostic { get; private set; }
@@ -421,10 +443,15 @@ namespace guideXOS.OS {
         }
 
         private ApplicationServiceResult(ApplicationServiceResultCode code,
-                                         T value, string diagnostic) {
+                                         T value, string diagnostic,
+                                         bool ownsBoundedDiagnostic = false) {
             Code = code;
             Value = value;
             BoundedDiagnostic = ApplicationServiceResult.BoundDiagnostic(diagnostic);
+            _ownsBoundedDiagnostic = ownsBoundedDiagnostic;
+            if (ownsBoundedDiagnostic && diagnostic != null &&
+                    !ReferenceEquals(diagnostic, BoundedDiagnostic))
+                diagnostic.Dispose();
         }
 
         public static ApplicationServiceResult<T> SuccessResult(T value) {
@@ -435,6 +462,22 @@ namespace guideXOS.OS {
         public static ApplicationServiceResult<T> Failure(
                 ApplicationServiceResultCode code, string diagnostic) {
             return new ApplicationServiceResult<T>(code, default(T), diagnostic);
+        }
+
+        internal static ApplicationServiceResult<T> FailureOwnedDiagnostic(
+                ApplicationServiceResultCode code, string diagnostic) {
+            return new ApplicationServiceResult<T>(code, default(T),
+                diagnostic, true);
+        }
+
+        public override void Dispose() {
+            if (_ownsBoundedDiagnostic) {
+                string diagnostic = BoundedDiagnostic;
+                BoundedDiagnostic = null;
+                _ownsBoundedDiagnostic = false;
+                if (diagnostic != null) diagnostic.Dispose();
+            }
+            base.Dispose();
         }
     }
 

@@ -528,14 +528,14 @@ namespace guideXOS.OS {
         private ApplicationServiceResult<T> PersistentFailure<T>(
                 FatOperationResult result) {
             RecordPersistentFailure(result);
-            return ApplicationServiceResult<T>.Failure(
+            return ApplicationServiceResult<T>.FailureOwnedDiagnostic(
                 MapPersistentFailure(result), PersistentDiagnostic(result));
         }
 
         private ApplicationServiceResult PersistentFailure(
                 FatOperationResult result) {
             RecordPersistentFailure(result);
-            return ApplicationServiceResult.Failure(
+            return ApplicationServiceResult.FailureOwnedDiagnostic(
                 MapPersistentFailure(result), PersistentDiagnostic(result));
         }
 
