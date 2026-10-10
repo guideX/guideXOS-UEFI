@@ -35,20 +35,20 @@ B1 is the pre-cleanup peak snapshot; the post-cleanup accounting uses B2 minus t
 
 Every row below is one live allocator run of one page after process cleanup. The two arrays have no requester owner or generation in the diagnostic ownership fields; the six strings carry requester `0x3`, generation `0x100000001`, and diagnostic lifetime 1. All eight are native-runtime allocations made through `RhpNewArray` (helper 1). All rows have the recorded allocator class `0x6` (`NativeRuntimeMalloc`). The common return address is `0x10012535`.
 
-| Run ID | Managed object address | Pages | Requested/object bytes | Type and layout | Creation site | Requester / generation | String hash / final disposal |
-|---|---:|---:|---:|---|---|---|---|
-| `0x2B657` | `0x7AB7000` | 1 | `0x38` | rank-1 SZ array; length 4; component size 8; component type code `0x14`; EEType `0x100F5490`; metadata class `0x5` | 0 (array path not attributed) | 0 / 0 | — |
-| `0x2B658` | `0x7ABA000` | 1 | `0x28` | rank-1 SZ array; length 4; component size 4; component type code `0x09`; EEType `0x100F4CF8`; metadata class `0x4` | 0 (array path not attributed) | 0 / 0 | — |
-| `0x2C5E2` | `0x85E4000` | 1 | `0x80` | String; length `0x33` (51); EEType `0x100ECC98`; component type code `0x14`, size 2 | `0x191` (401, `String.Ctor` fallback) | `0x3` / `0x100000001` | `0x94A661B97507E172`; dispose 0, frees 0 |
-| `0x2C5E5` | `0x85E5000` | 1 | `0x80` | String; length `0x32` (50); EEType `0x100ECC98`; component type code `0x14`, size 2 | `0x191` (401, `String.Ctor` fallback) | `0x3` / `0x100000001` | `0xADE827DD03D3AE1F`; dispose 0, frees 0 |
-| `0x2C5E3` | `0x85E6000` | 1 | `0x68` | String; length `0x26` (38); EEType `0x100ECC98`; component type code `0x14`, size 2 | `0x191` (401, `String.Ctor` fallback) | `0x3` / `0x100000001` | `0x7B75BBA2453D7996`; dispose 0, frees 0 |
-| `0x2C5E4` | `0x85E7000` | 1 | `0x210` | String; length `0xFB` (251); EEType `0x100ECC98`; component type code `0x14`, size 2 | `0x191` (401, `String.Ctor` fallback) | `0x3` / `0x100000001` | `0x2DB56378C1962B98`; dispose 0, frees 0 |
-| `0x2C5E7` | `0x85E9000` | 1 | `0x18` | String; length 1; EEType `0x100ECC98`; component type code `0x14`, size 2 | `0x191` (401, `String.Ctor` fallback) | `0x3` / `0x100000001` | `0xAF63AE4C86019E62`; dispose 0, frees 0 |
-| `0x2C5E8` | `0x85EA000` | 1 | `0x60` | String; length `0x24` (36); EEType `0x100ECC98`; component type code `0x14`, size 2 | `0x191` (401, `String.Ctor` fallback) | `0x3` / `0x100000001` | `0xD82EC95D355533BA`; dispose 0, frees 0 |
+| Run ID | Address | Pages | Requested/object bytes | Allocation class | Type | Site ID | Caller | Lifetime / owner | Content hash; Dispose / free |
+|---|---:|---:|---:|---|---|---:|---|---|---|
+| `0x2B657` | `0x7AB7000` | 1 | `0x38` | `0x6 NativeRuntimeMalloc` | `Ring3Process[]`, length 4, EEType `0x100F5490` | 0 (static initialization; unset) | `0x10012535` (`RhpNewArray+0x71`) | lifetime 1; global `Ring3ProcessTable.Slots`; requester/generation 0/0 | — |
+| `0x2B658` | `0x7ABA000` | 1 | `0x28` | `0x6 NativeRuntimeMalloc` | `uint[]`, length 4, EEType `0x100F4CF8` | 0 (static initialization; unset) | `0x10012535` (`RhpNewArray+0x71`) | lifetime 1; global `Ring3ProcessTable.Generations`; requester/generation 0/0 | — |
+| `0x2C5E2` | `0x85E4000` | 1 | `0x80` | `0x6 NativeRuntimeMalloc` | `System.String`, length 51, EEType `0x100ECC98` | `0x191` (401, `String.Ctor` fallback) | `0x10012535` (`RhpNewArray+0x71`) | lifetime 1; requester `0x3`, generation `0x100000001` | `0x94A661B97507E172`; 0 / 0 |
+| `0x2C5E5` | `0x85E5000` | 1 | `0x80` | `0x6 NativeRuntimeMalloc` | `System.String`, length 50, EEType `0x100ECC98` | `0x191` (401, `String.Ctor` fallback) | `0x10012535` (`RhpNewArray+0x71`) | lifetime 1; requester `0x3`, generation `0x100000001` | `0xADE827DD03D3AE1F`; 0 / 0 |
+| `0x2C5E3` | `0x85E6000` | 1 | `0x68` | `0x6 NativeRuntimeMalloc` | `System.String`, length 38, EEType `0x100ECC98` | `0x191` (401, `String.Ctor` fallback) | `0x10012535` (`RhpNewArray+0x71`) | lifetime 1; requester `0x3`, generation `0x100000001` | `0x7B75BBA2453D7996`; 0 / 0 |
+| `0x2C5E4` | `0x85E7000` | 1 | `0x210` | `0x6 NativeRuntimeMalloc` | `System.String`, length 251, EEType `0x100ECC98` | `0x191` (401, `String.Ctor` fallback) | `0x10012535` (`RhpNewArray+0x71`) | lifetime 1; requester `0x3`, generation `0x100000001` | `0x2DB56378C1962B98`; 0 / 0 |
+| `0x2C5E7` | `0x85E9000` | 1 | `0x18` | `0x6 NativeRuntimeMalloc` | `System.String`, length 1, EEType `0x100ECC98` | `0x191` (401, `String.Ctor` fallback) | `0x10012535` (`RhpNewArray+0x71`) | lifetime 1; requester `0x3`, generation `0x100000001` | `0xAF63AE4C86019E62`; 0 / 0 |
+| `0x2C5E8` | `0x85EA000` | 1 | `0x60` | `0x6 NativeRuntimeMalloc` | `System.String`, length 36, EEType `0x100ECC98` | `0x191` (401, `String.Ctor` fallback) | `0x10012535` (`RhpNewArray+0x71`) | lifetime 1; requester `0x3`, generation `0x100000001` | `0xD82EC95D355533BA`; 0 / 0 |
 
 The final `STRING_LIVE` snapshot for requester `0x3` repeats all six string rows with `dispose=0`, `freeAttempts=0`, and `freeResult=0`. Their site is no longer zero: `0x191` is the new diagnostic fallback at `Corlib/System/String.cs`, in `String.Ctor(char*, int, int)`, used when no outer allocation-site context was set. This establishes the constructor route. It does **not** identify which higher-level parser/ABI/backend consumer caused each constructor call, why the string remains rooted, or which component is entitled to dispose it.
 
-The two arrays are classified by EEType inspection as rank-one arrays of four 8-byte components and four 4-byte components respectively. Their low-level element type codes and component sizes are recorded above; semantic managed type names were not symbolized in this capture. Both are included in the same eight-page accounting, so they are not unexplained pages.
+The exact-build `guideXOS\Kernel.map` resolves EEType `0x100F5490` to `Ring3Process[]` and EEType `0x100F4CF8` to `uint[]`. These are `Ring3ProcessTable.Slots` and `Ring3ProcessTable.Generations`, both fixed-size static tables of capacity four in `Kernel\Misc\Process.cs`. Their first-use initialization explains why these two pages occur only in the first B2 delta; the repeated requester and controls do not add them again. Their concrete types and global lifetime are identified, but their allocator creation site field remains zero.
 
 ## Repeat and controls
 
@@ -58,6 +58,10 @@ The two arrays are classified by EEType inspection as rank-one arrays of four 8-
 - **NotFound:** six new one-page strings/six pages; requester `0xE`, generation `0x500000001`; same constructor fallback site; all six are still live with no dispose/free attempt at B2.
 
 The different B1 peaks reflect allocations made during each request and its cleanup. The accounting target is the new live run set at B2 relative to that lifetime’s B0, not the temporary B1 peak.
+
+Reconciliation of the saved phase-1 (B1) and phase-2 (B2) run rows for lifetime 1 gives 683 runs / 2,876 pages live at B1 and 8 runs / 8 pages live at B2. Exactly 675 B1 runs / 2,868 pages are absent at B2, so they were reclaimed during `Cleanup()` / `Dispose()`. By helper, B1 had 664 `RhpNewArray` runs / 2,857 pages and 19 `RhpNewFast` runs / 19 pages; B2 retains 8 `RhpNewArray` runs and zero `RhpNewFast` runs. By EEType class, B1 had 326 strings / 2,373 pages, 338 arrays / 484 pages, and 19 other objects / 19 pages; B2 retains six strings / six pages and two arrays / two pages. Thus request/process-private temporary objects are reclaimed, while only the six strings and two identified global tables cross B2.
+
+Across allocations after B0, helper counters report `RhpNewArray`: 4,919 allocations, 4,911 frees, 8 survivors / 8 pages; `RhpNewFast`: 89 allocations, 89 frees, 0 survivors / 0 pages; helper 0: 0 allocations, 0 frees, 0 survivors / 0 pages. All B2 survivors therefore pass through `RhpNewArray`; no `RhpNewFast` survivor or additional helper survivor remains.
 
 ## Accounting and phase gate
 
@@ -79,3 +83,20 @@ Thus the allocator-page delta is reconciled. Source-level lifetime ownership is 
 - Diagnostic kernel SHA-256: `F52B538BDA9098CA8864A8D7E539C702C823F611702E9AB3B55943FE686B49A3`
 - Diagnostic ramdisk SHA-256: `59384D12B83D89D243C7BDF46B1F75F2102A624FC628CACF492BF4A84424B08E`
 - Fixture SHA-256: `BEFA57E7EF0799D031A0188A3D0883F0F342B8F8AE90B3330652DA04ADBA739D`; fixture was seeded by this run (`PHASE35_FIXTURE_PREEXISTING_OR_SEEDED=Seeded`, seed writes 1).
+
+## Continuation audit amendment (2026-10-07)
+
+The live repository preflight for this continuation differs from the preflight recorded above, so the live state is authoritative for this continuation: repository `D:\dev\guideXOSUEFI`, branch `main`, HEAD `4b82358a2fd3714d2307d6550238436e70b6dcce` (subject `...`), upstream `origin/main`, ahead/behind `0/0`. The root worktree had a pre-existing deletion of tracked `APP_MODEL_CONVERGENCE.md` and untracked `Docs/APP_MODEL_CONVERGENCE.md`; both remain untouched. Nested `out\rt` was detached at `9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3` with pre-existing tracked and untracked changes; all remain untouched. Ending HEAD is unchanged. No build, guest run, or kernel/managed source edit was performed in this continuation; the fresh R9 build and guest capture cited above remain the evidence used here. R7 and R8 were not edited.
+
+The two first-lifetime non-string runs are fully identifiable from the exact-build `guideXOS\Kernel.map` and live declarations:
+
+| Run ID | EEType / concrete type | Source declaration | Lifetime classification |
+|---|---|---|---|
+| `0x2B657` | `0x100F5490`, `Ring3Process[]`, length 4 | `Ring3ProcessTable.Slots` (`Kernel/Misc/Process.cs`) | Intentionally global static table, allocated on first process-table use; absent from the identical second-lifetime delta and controls |
+| `0x2B658` | `0x100F4CF8`, `uint[]`, length 4 | `Ring3ProcessTable.Generations` (`Kernel/Misc/Process.cs`) | Intentionally global static table, allocated on first process-table use; absent from the identical second-lifetime delta and controls |
+
+The mapped string caller `0x10012535` resolves to `StartupCodeHelpers.RhpNewArray+0x71`, the shared allocation hook at `Corlib/Internal/Runtime/CompilerHelpers/StartupCodeHelpers.cs` (the return address is inside that helper, not an upstream managed call site). Each retained string has constructor fallback site `0x191` / decimal `401`, assigned in `Corlib/System/String.cs` when no more specific diagnostic site is active. Thus the observed allocation route is `String.Ctor(char*, int, int) -> RhpNewArray -> NativeRuntimeMalloc`; the exact higher-level producer, semantic purpose, and logical owner remain unresolved. The six first-success string rows each have `Dispose=0`, allocator-free attempts `0`, and free result `0` at B2. No alias-safe reclamation point can be inferred from these observations.
+
+The first capture therefore has **8 measured pages, 8 accounted pages, 0 unexplained pages**, but it is not a complete ownership/provenance inventory for the six repeating strings: their caller return address is only the allocation helper and site `401` is a constructor fallback, not a producer-site attribution. No reclamation fix is made. Outcome F remains the correct status; Phase 35 remains incomplete and Phase 36 remains gated.
+
+The source-level workload sequence for the first successful `success` payload is: six invalid-path public SDK calls in `CheckInvalidPaths` (empty, absolute, parent traversal, invalid character, overlength path, overlength segment), all rejected locally; then `CheckMissing` triggers the two one-time raw bounds-proof `PersistentRead` ABI entries (32-byte exact buffer and 31-byte short buffer) followed by one `missing.phase35` NotFound request; then one `state.bin` read, mutation of the first returned byte, a second `state.bin` read and independence/content check, and one `empty.bin` read. The guest counters record exactly 6 PersistentRead ABI entries: 5 successful reads and 1 NotFound/error path. The bounds proof compared 32 + 31 fixture bytes; the public proof made 32 content-byte comparisons for the first `state.bin` result and 64 across the repeated `state.bin` result and its two `HasFixtureBytes` checks. `System.GC.Collect` executes once after clearing both returned arrays and once after the empty-value check. The guest's run-level result remained 35. The retained strings are kernel-side `RhpNewArray` allocations during the PersistentRead syscall (`callerLabel=2`); the report cannot separate production storage code from diagnostics at a more specific managed producer site.
