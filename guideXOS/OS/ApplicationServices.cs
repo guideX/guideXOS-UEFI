@@ -385,11 +385,16 @@ namespace guideXOS.OS {
             if (ownsBoundedDiagnostic && diagnostic != null &&
                     !ReferenceEquals(diagnostic, BoundedDiagnostic))
                 diagnostic.Dispose();
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.RecordDiagnosticManagedCreationSite((IntPtr)this,
+                Allocator.R13SiteServiceResult);
+#endif
         }
 
         public static ApplicationServiceResult SuccessResult() {
-            return new ApplicationServiceResult(
+            ApplicationServiceResult result = new ApplicationServiceResult(
                 ApplicationServiceResultCode.Success, null);
+            return result;
         }
 
         public static ApplicationServiceResult InvalidContextResult() {
@@ -452,11 +457,16 @@ namespace guideXOS.OS {
             if (ownsBoundedDiagnostic && diagnostic != null &&
                     !ReferenceEquals(diagnostic, BoundedDiagnostic))
                 diagnostic.Dispose();
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.RecordDiagnosticManagedCreationSite((IntPtr)this,
+                Allocator.R13SiteTypedServiceResult);
+#endif
         }
 
         public static ApplicationServiceResult<T> SuccessResult(T value) {
-            return new ApplicationServiceResult<T>(
+            ApplicationServiceResult<T> result = new ApplicationServiceResult<T>(
                 ApplicationServiceResultCode.Success, value, null);
+            return result;
         }
 
         public static ApplicationServiceResult<T> Failure(
@@ -930,8 +940,14 @@ namespace guideXOS.OS {
         public static ApplicationStorageReadRequest Create(
                 ApplicationStorageNamespace space, string relativePath,
                 long offset, int maximumBytes) {
-            return new ApplicationStorageReadRequest(space, relativePath,
-                offset, maximumBytes);
+            ApplicationStorageReadRequest request =
+                new ApplicationStorageReadRequest(space, relativePath,
+                    offset, maximumBytes);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.RecordDiagnosticManagedCreationSite((IntPtr)request,
+                Allocator.R13SiteStorageReadRequest);
+#endif
+            return request;
         }
     }
 
@@ -1002,8 +1018,14 @@ namespace guideXOS.OS {
         internal static ApplicationStorageReadResult Create(
                 string relativePath, long offset, byte[] bytes,
                 int bytesRead, bool endOfResource) {
-            return new ApplicationStorageReadResult(relativePath, offset,
-                bytes, bytesRead, endOfResource);
+            ApplicationStorageReadResult result =
+                new ApplicationStorageReadResult(relativePath, offset,
+                    bytes, bytesRead, endOfResource);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.RecordDiagnosticManagedCreationSite((IntPtr)result,
+                Allocator.R13SiteStorageReadResult);
+#endif
+            return result;
         }
 
         private static byte[] CopyBytes(byte[] source) {

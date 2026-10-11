@@ -181,11 +181,13 @@ namespace guideXOS.Misc {
                 noBackend;
         }
 
-        private static bool CleanupPhase33Target(ApplicationInstance target) {
-            if (target == null || !ApplicationInstanceRegistry.TryTerminate(
-                    target, "Phase 33 diagnostic target cleanup")) return false;
+        private static bool CleanupPhase33Target(
+                ApplicationInstanceHandle handle) {
+            if (!handle.IsValid) return false;
+            if (!ApplicationInstanceRegistry.TryTerminate(handle,
+                    "Phase 33 diagnostic target cleanup")) return false;
             WindowManager.CleanupClosedWindowsAndGetCountSnapshot();
-            return !ApplicationInstanceRegistry.TryGet(target.Handle,
+            return !ApplicationInstanceRegistry.TryGet(handle,
                 out ApplicationInstance ignored);
         }
 
@@ -302,9 +304,15 @@ namespace guideXOS.Misc {
                 "FOUR_LIFETIMES=FAIL");
 
             bool primaryCleanup = true;
-            for (int i = 0; i < createdTargets; i++)
-                primaryCleanup = CleanupPhase33Target(retainedTargets[i]) &&
+            for (int i = 0; i < createdTargets; i++) {
+                ApplicationInstance target = retainedTargets[i];
+                ApplicationInstanceHandle targetHandle = target == null
+                    ? ApplicationInstanceHandle.None : target.Handle;
+                retainedTargets[i] = null;
+                target = null;
+                primaryCleanup = CleanupPhase33Target(targetHandle) &&
                     primaryCleanup;
+            }
             Phase33Marker(primaryCleanup ? "PRIMARY_TARGET_CLEANUP=1" :
                 "PRIMARY_TARGET_CLEANUP=0");
             createdTargets = 0;
@@ -329,9 +337,13 @@ namespace guideXOS.Misc {
                     ownerValue, 1, out processHandle, out resumed, out main);
                 ApplicationInstance target = GetPhase33Target(targetCountBefore);
                 bool targetCreated = ran && IsPhase33Target(target);
+                ApplicationInstanceHandle targetHandle = targetCreated
+                    ? target.Handle : ApplicationInstanceHandle.None;
                 bool stale = CheckPhase33StaleRequester(ownerValue, context,
                     access, processHandle);
-                bool targetClean = targetCreated && CleanupPhase33Target(target);
+                target = null;
+                bool targetClean = targetCreated &&
+                    CleanupPhase33Target(targetHandle);
                 bool pass = ran && resumed && main && targetCreated && stale && targetClean;
                 stress = stress && pass;
                 if (pass) successReturns++;
@@ -468,7 +480,12 @@ namespace guideXOS.Misc {
 
             bool cleanup = true;
             for (int i = 0; i < createdTargets; i++) {
-                bool targetCleanup = CleanupPhase33Target(retainedTargets[i]);
+                ApplicationInstance target = retainedTargets[i];
+                ApplicationInstanceHandle targetHandle = target == null
+                    ? ApplicationInstanceHandle.None : target.Handle;
+                retainedTargets[i] = null;
+                target = null;
+                bool targetCleanup = CleanupPhase33Target(targetHandle);
                 Phase33Marker("FINAL_TARGET_CLEANUP=" + i.ToString() + ":" +
                     (targetCleanup ? "1" : "0"));
                 cleanup = targetCleanup && cleanup;

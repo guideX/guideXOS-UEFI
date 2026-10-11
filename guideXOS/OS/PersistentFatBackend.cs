@@ -27,6 +27,17 @@ namespace guideXOS.OS {
         internal const int MaxValueLength = 64 * 1024;
         internal const int MaxEntriesPerApplication = 64;
 
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER && UEFI_DIAGNOSTIC_APP_MODEL
+        private static ulong Phase35R12KeyFnv64(string key) {
+            ulong hash = 14695981039346656037UL;
+            for (int i = 0; i < key.Length; i++) {
+                hash ^= key[i];
+                hash *= 1099511628211UL;
+            }
+            return hash;
+        }
+#endif
+
         private const string ExpectedSerial = "GX35Q0001";
         private const ulong ExpectedBlockCount = 32768UL;
         private const uint ExpectedBlockSize = 512U;
@@ -305,32 +316,57 @@ namespace guideXOS.OS {
             Ring3Abi.Phase35DiagnosticOwnerBytes(
                 "PHASE35_DIAG_READ_AFTER_FAT_LENGTH=0x");
             if (result != FatOperationResult.Success) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+                Ring3Abi.Phase35DiagnosticMarker("PHASE35_R12_SAME_KEY_READY=1");
+                Ring3Abi.Phase35DiagnosticValueMarker(
+                    "PHASE35_R12_KEY_FNV64=", Phase35R12KeyFnv64(relativePath));
+#endif
                 Ring3Abi.Phase35DiagnosticMarker(
                     "P35_DIAG_FAT_LENGTH_FAILED=1");
                 Ring3Abi.Phase35DiagnosticValueMarker(
                     "P35_DIAG_FAT_LENGTH_RESULT=", (ulong)(byte)result);
                 Ring3Abi.Phase35DiagnosticValueMarker(
                     "P35_DIAG_FAT_LENGTH_VALUE=", fileLength);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER && UEFI_DIAGNOSTIC_PHASE35R12_SUPPRESS_KNOWN_DIAGNOSTICS
+                Ring3Abi.Phase35DiagnosticMarker(
+                    "PHASE35_R12_KNOWN_DIAGNOSTICS_SUPPRESSED=1");
+#else
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+                string applicationIdMessage = Phase35R12DiagnosticConcat(510,
+                    "P35_DIAG_APPLICATION_ID=", applicationId);
+#else
                 string applicationIdMessage =
                     "P35_DIAG_APPLICATION_ID=" + applicationId;
+#endif
                 try {
                     Ring3Abi.Phase35DiagnosticMarker(applicationIdMessage);
                 } finally {
                     applicationIdMessage.Dispose();
                 }
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+                string relativePathMessage = Phase35R12DiagnosticConcat(511,
+                    "P35_DIAG_RELATIVE_PATH=", relativePath);
+#else
                 string relativePathMessage =
                     "P35_DIAG_RELATIVE_PATH=" + relativePath;
+#endif
                 try {
                     Ring3Abi.Phase35DiagnosticMarker(relativePathMessage);
                 } finally {
                     relativePathMessage.Dispose();
                 }
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+                string filePathMessage = Phase35R12DiagnosticConcat(512,
+                    "P35_DIAG_FILE_PATH=", filePath);
+#else
                 string filePathMessage = "P35_DIAG_FILE_PATH=" + filePath;
+#endif
                 try {
                     Ring3Abi.Phase35DiagnosticMarker(filePathMessage);
                 } finally {
                     filePathMessage.Dispose();
                 }
+#endif
                 return result;
             }
             if (fileLength > MaxValueLength) return FatOperationResult.EntryLimitExceeded;
@@ -564,6 +600,17 @@ namespace guideXOS.OS {
             path.Dispose();
             return valuePath;
         }
+
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+        private static string Phase35R12DiagnosticConcat(uint site,
+                string prefix, string value) {
+            uint previousSite = Allocator.CurrentDiagnosticStringSite;
+            Allocator.CurrentDiagnosticStringSite = site;
+            string message = prefix + value;
+            Allocator.CurrentDiagnosticStringSite = previousSite;
+            return message;
+        }
+#endif
 
         private static string GetValueDirectory(string applicationId, string relativePath) {
             char[] path = new char[ValueDirectoryLength(applicationId,

@@ -575,7 +575,17 @@ namespace guideXOS.OS {
         }
 
         private static string PersistentDiagnostic(FatOperationResult result) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+            uint previousSite = Allocator.CurrentDiagnosticStringSite;
+            Allocator.CurrentDiagnosticStringSite = 530;
+            string resultText = result.ToString();
+            Allocator.CurrentDiagnosticStringSite = 531;
+            string diagnostic = "Persistent storage operation failed: " + resultText;
+            Allocator.CurrentDiagnosticStringSite = previousSite;
+            return diagnostic;
+#else
             return "Persistent storage operation failed: " + result.ToString();
+#endif
         }
 
         private static byte[] CopyBytes(byte[] source) {

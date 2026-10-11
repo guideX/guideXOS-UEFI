@@ -1117,8 +1117,13 @@ namespace guideXOS.Misc {
             bool cleanup = true;
             for (int i = 0; i < targetIndex; i++) {
                 ApplicationInstance target = launchedTargets[i];
-                if (target == null || !ApplicationInstanceRegistry.TryTerminate(
-                        target, "Phase 31 diagnostic target cleanup")) {
+                ApplicationInstanceHandle targetHandle = target == null
+                    ? ApplicationInstanceHandle.None : target.Handle;
+                launchedTargets[i] = null;
+                target = null;
+                if (!targetHandle.IsValid ||
+                        !ApplicationInstanceRegistry.TryTerminate(targetHandle,
+                            "Phase 31 diagnostic target cleanup")) {
                     cleanup = false;
                 }
             }
@@ -1475,6 +1480,22 @@ namespace guideXOS.Misc {
             }
         }
 
+        private static void MarkPhase32TargetTerminationEnd(int targetIndex,
+                ApplicationInstanceHandle handle, string appId,
+                bool terminated) {
+            Program.MarkUefiRing3Phase32(
+                "TARGET_TERMINATE;stage=END;targetIndex=" +
+                targetIndex.ToString() + ";instance=" +
+                handle.Value.ToString() + ";generation=" +
+                handle.Generation.ToString() + ";appId=" + (appId ?? "") +
+                ";lifecycle=Terminated;owned=0;terminated=" +
+                (terminated ? "1" : "0") +
+                ";memory=" + Allocator.MemoryInUse.ToString() +
+                ";freeInvalid=" + Allocator.FreeFailInvalidPtr.ToString() +
+                ";freeNoPages=" + Allocator.FreeFailNoPages.ToString() +
+                ";freeCorrupt=" + Allocator.FreeFailCorruptRun.ToString());
+        }
+
         private static void RunPhase32() {
             Native.Cli();
             Marker("PHASE32_BEGIN=1");
@@ -1646,12 +1667,18 @@ namespace guideXOS.Misc {
             bool cleanup = true;
             for (int i = 0; i < targetIndex; i++) {
                 ApplicationInstance target = launchedTargets[i];
+                ApplicationInstanceHandle targetHandle = target == null
+                    ? ApplicationInstanceHandle.None : target.Handle;
+                string targetAppId = target == null ? null : target.DescriptorId;
                 Marker("PHASE32_TARGET_CLEANUP_INDEX=" + i.ToString());
                 MarkPhase32TargetTermination("BEGIN", i, target, false);
-                bool terminated = target != null &&
-                    ApplicationInstanceRegistry.TryTerminate(target,
+                launchedTargets[i] = null;
+                target = null;
+                bool terminated = targetHandle.IsValid &&
+                    ApplicationInstanceRegistry.TryTerminate(targetHandle,
                         "Phase 32 diagnostic target cleanup");
-                MarkPhase32TargetTermination("END", i, target, terminated);
+                MarkPhase32TargetTerminationEnd(i, targetHandle, targetAppId,
+                    terminated);
                 if (!terminated) {
                     cleanup = false;
                     Marker("PHASE32_TARGET_CLEANUP_ITEM=FAIL");
@@ -2342,16 +2369,30 @@ namespace guideXOS.Misc {
 
         private static void CleanupOwner() {
             if (_owner == null) return;
-            ulong value = _owner.Handle.Value;
-            if (_ownerCreated && ApplicationInstanceRegistry.TryTerminate(
-                    _owner.Handle, "scheduled Ring 3 diagnostic complete")) {
+            ApplicationInstanceHandle ownerHandle = _owner.Handle;
+            ulong value = ownerHandle.Value;
+            // Drop the proof's persistent alias before the registry releases
+            // the instance-owned managed object graph.
+            _owner = null;
+            bool ownerCreated = _ownerCreated;
+            _ownerCreated = false;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            uint previousCreationSite = Allocator.CurrentDiagnosticManagedCreationSite;
+            if (_phase35R13AuditLifetimeActive)
+                Allocator.CurrentDiagnosticManagedCreationSite =
+                    Allocator.R13SiteOwnerTermination;
+#endif
+            if (ownerCreated && ApplicationInstanceRegistry.TryTerminate(
+                    ownerHandle, "scheduled Ring 3 diagnostic complete")) {
                 Marker("RING3_APP_MODEL_OWNER_DETACHED=1");
-            } else if (!_ownerCreated) {
+            } else if (!ownerCreated) {
                 Marker("RING3_APP_MODEL_OWNER_DETACHED=0");
             } else {
                 Marker("RING3_APP_MODEL_OWNER_DETACHED=0");
             }
-            _owner = null;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.CurrentDiagnosticManagedCreationSite = previousCreationSite;
+#endif
             Marker(value != 0 ? "RING3_STALE_SERVICE_CONTEXTS=0" :
                 "RING3_STALE_SERVICE_CONTEXTS=1");
         }

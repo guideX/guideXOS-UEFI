@@ -36,7 +36,7 @@
 .PARAMETER UefiDiagnosticMode
     Optional UEFI regression build variant: Tiny, FirstFrame, Frames, Input,
     InputStress, ContextMenu, Png, Font, Background, BackgroundRotation,
-    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Phase27, Ring3Phase28, Ring3Phase29, Ring3Phase30, Ring3Phase31, Ring3Phase32, Ring3Phase33, Ring3Phase34, Ring3Phase35, Ring3Phase35R2, Ring3Phase35R9, Ring3Direct, Storage35Q, Storage35P2, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
+    AppModel, AppRuntime, Ring3, Ring3Phase15, Ring3Phase24, Ring3Phase25, Ring3Phase26, Ring3Phase27, Ring3Phase28, Ring3Phase29, Ring3Phase30, Ring3Phase31, Ring3Phase32, Ring3Phase33, Ring3Phase34, Ring3Phase35, Ring3Phase35R2, Ring3Phase35R9, Ring3Phase35R12Suppressed, Ring3Phase35R13, Ring3Direct, Storage35Q, Storage35P2, Widget, WidgetStress, WidgetSoak, WidgetOnlyPerformance,
     WidgetOnlyClock, WidgetOnlyMonitor, or WidgetOnlyUptime
 
 .EXAMPLE
@@ -60,7 +60,7 @@ param(
     [switch]$CreateISO,
     [switch]$Clean,
     [switch]$BootloaderOnly,
-  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'CleanupStress', 'StartMenuStress', 'ForegroundStress', 'FaultBytesProbe', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Phase33', 'Ring3Phase34', 'Ring3Phase35', 'Ring3Phase35R2', 'Ring3Phase35R9', 'Ring3Direct', 'Storage35Q', 'Storage35P2', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
+  [ValidateSet('', 'Tiny', 'FirstFrame', 'Frames', 'Input', 'InputStress', 'ContextMenu', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'AppRuntime', 'CleanupStress', 'StartMenuStress', 'ForegroundStress', 'FaultBytesProbe', 'Ring3', 'Ring3Phase15', 'Ring3Phase24', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Phase33', 'Ring3Phase34', 'Ring3Phase35', 'Ring3Phase35R2', 'Ring3Phase35R9', 'Ring3Phase35R12Suppressed', 'Ring3Phase35R13', 'Ring3Direct', 'Storage35Q', 'Storage35P2', 'Widget', 'WidgetStress', 'WidgetSoak', 'WidgetOnlyPerformance', 'WidgetOnlyClock', 'WidgetOnlyMonitor', 'WidgetOnlyUptime')]
     [string]$UefiDiagnosticMode = ''
 )
 

@@ -43,10 +43,10 @@ namespace System {
             => "System.Object";
 
         public virtual void Dispose() {
-            // Managed objects are owned and reclaimed by the NativeAOT GC.
-            // Only release this reference when it is itself the start of a live
-            // allocator run. Static/frozen strings and interior GC objects are
-            // ignored; resource-owning types still release resources in overrides.
+            // This minimal runtime allocates managed objects from the kernel
+            // allocator and has no automatic reclamation path. Release only an
+            // exact live run; resource-owning objects release child runs in
+            // their overrides before calling this implementation.
             var obj = this;
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
             Allocator.RecordManagedObjectDispose(

@@ -129,6 +129,12 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3Phase35R9'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE35;UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER;UEFI_DIAGNOSTIC_APP_MODEL;UEFI_DIAGNOSTIC_STORAGE35P2</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3Phase35R13'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE35;UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER;UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER;UEFI_DIAGNOSTIC_APP_MODEL;UEFI_DIAGNOSTIC_STORAGE35P2</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3Phase35R12Suppressed'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE35;UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER;UEFI_DIAGNOSTIC_PHASE35R12_SUPPRESS_KNOWN_DIAGNOSTICS;UEFI_DIAGNOSTIC_APP_MODEL;UEFI_DIAGNOSTIC_STORAGE35P2</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Storage35Q'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_STORAGE35Q</DefineConstants>
 	</PropertyGroup>

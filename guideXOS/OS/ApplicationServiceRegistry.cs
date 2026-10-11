@@ -2113,6 +2113,8 @@ namespace guideXOS.OS {
             int startingStaleOwnership =
                 ApplicationInstanceRegistry.StaleOwnershipCount;
             ApplicationInstance instance = null;
+            ApplicationInstanceHandle instanceHandle =
+                ApplicationInstanceHandle.None;
             ApplicationServiceContext context = null;
             ApplicationServiceRequestHandle requestHandle =
                 ApplicationServiceRequestHandle.Invalid;
@@ -2127,6 +2129,7 @@ namespace guideXOS.OS {
                     LaunchRequest.ForAppId("selftest.phase9.transient-window",
                         null, null, LaunchActivationIntent.NewInstance),
                     out instance, out reused, out failure);
+                if (started && instance != null) instanceHandle = instance.Handle;
                 bool completed = started &&
                     ApplicationInstanceRegistry.TryCompleteLaunch(instance,
                         false, out failure);
@@ -2164,8 +2167,9 @@ namespace guideXOS.OS {
                     metadata.Owner == instance.Handle &&
                     metadata.RequestHandle == requestHandle &&
                     window.IsServiceSessionWindow;
-                bool terminated = instance != null &&
-                    ApplicationInstanceRegistry.TryTerminate(instance,
+                instance = null;
+                bool terminated = instanceHandle.IsValid &&
+                    ApplicationInstanceRegistry.TryTerminate(instanceHandle,
                         "transient service window self-test cleanup");
                 WindowManager.CleanupClosedWindows();
                 TaskbarApplicationEntryRegistry.Reconcile();
@@ -2189,10 +2193,12 @@ namespace guideXOS.OS {
                 window.CloseForApplicationTermination();
                 WindowManager.CleanupClosedWindows();
             }
-            if (instance != null &&
-                    ApplicationInstanceRegistry.TryGet(instance.Handle,
+            if (instanceHandle.IsValid &&
+                    ApplicationInstanceRegistry.TryGet(instanceHandle,
                         out ApplicationInstance retained)) {
-                ApplicationInstanceRegistry.TryTerminate(retained,
+                ApplicationInstanceHandle retainedHandle = retained.Handle;
+                retained = null;
+                ApplicationInstanceRegistry.TryTerminate(retainedHandle,
                     "transient service window assertion cleanup");
             }
             ApplicationServiceSessionTable.Reset();

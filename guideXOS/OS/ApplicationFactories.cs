@@ -660,10 +660,12 @@ namespace guideXOS.OS {
                 ApplicationFactoryResult failedResult =
                     FactorySelfTestProbe.FailedResult(calculator.AppId);
                 bool failureResult = failureBegan && !failedResult.Success;
+                ApplicationInstanceHandle failedHandle = failureBegan
+                    ? failedInstance.Handle : ApplicationInstanceHandle.None;
                 if (failureBegan) ApplicationInstanceRegistry.FailLaunch(
                     failedInstance, failedReused, failedResult.BoundedDiagnostic);
-                Check(failureResult && failedInstance != null &&
-                    !ApplicationInstanceRegistry.TryGet(failedInstance.Handle,
+                Check(failureResult && failedHandle.IsValid &&
+                    !ApplicationInstanceRegistry.TryGet(failedHandle,
                         out ApplicationInstance ignoredFailedInstance),
                     "failed factory cleanup", ref passed, ref failed,
                     ref firstFailure);

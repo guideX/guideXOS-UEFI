@@ -145,8 +145,28 @@ namespace guideXOS.Misc {
 
     internal static class Ring3ProcessTable {
         internal const int Capacity = 4;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+        internal static readonly Ring3Process[] Slots;
+        internal static readonly uint[] Generations;
+
+        static Ring3ProcessTable() {
+            uint previousCreationSite =
+                Allocator.CurrentDiagnosticManagedCreationSite;
+            Allocator.CurrentDiagnosticManagedCreationSite =
+                Allocator.R13SiteProcessTableInitialization;
+            Slots = new Ring3Process[Capacity];
+            Allocator.RecordDiagnosticManagedCreationSite((IntPtr)Slots,
+                Allocator.R13SiteProcessTableInitialization);
+            Generations = new uint[Capacity];
+            Allocator.RecordDiagnosticManagedCreationSite((IntPtr)Generations,
+                Allocator.R13SiteProcessTableInitialization);
+            Allocator.CurrentDiagnosticManagedCreationSite =
+                previousCreationSite;
+        }
+#else
         internal static readonly Ring3Process[] Slots = new Ring3Process[Capacity];
         internal static readonly uint[] Generations = new uint[Capacity];
+#endif
 
         internal static uint NextGeneration(uint current) {
             return current == 0xFFFFFFFFU ? 1U : current + 1U;

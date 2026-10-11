@@ -186,7 +186,19 @@ namespace guideXOS.OS {
             _policy = policy;
             _closeWhenLastWindowClosed = closeWhenLastWindowClosed;
             _allowZeroWindows = allowZeroWindows;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            uint previousCreationSite = Allocator.CurrentDiagnosticManagedCreationSite;
+            Allocator.CurrentDiagnosticManagedCreationSite =
+                Allocator.R13SiteOwnedWindowArray;
+#endif
             _ownedWindows = new Window[MaxOwnedWindows];
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.RecordDiagnosticManagedCreationSite((IntPtr)_ownedWindows,
+                Allocator.R13SiteOwnedWindowArray);
+#endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.CurrentDiagnosticManagedCreationSite = previousCreationSite;
+#endif
             _launchRequest = request;
             _state = ApplicationInstanceLifecycleState.Registered;
             // The common cooperative default is allocation-free.  Explicit
@@ -226,6 +238,10 @@ namespace guideXOS.OS {
         public bool SuspensionSupported {
             get { return LifecycleCapability != ApplicationLifecycleCapability.Unsupported; }
         }
+        /// <summary>
+        /// Borrowed launch context. It remains valid while this instance is
+        /// registered and until a reusable launch replaces the request.
+        /// </summary>
         public LaunchRequest LaunchRequestContext { get { return _launchRequest; } }
         public string Document {
             get { return _launchRequest == null ? null : _launchRequest.Document; }
@@ -264,9 +280,12 @@ namespace guideXOS.OS {
         }
 
         internal void UpdateLaunchRequest(LaunchRequest request) {
+            LaunchRequest previous = _launchRequest;
             _launchRequest = request;
             _failureReason = null;
             _terminationReason = null;
+            if (previous != null && !ReferenceEquals(previous, request))
+                previous.Dispose();
         }
 
         internal ApplicationLifecycleAdapter LifecycleAdapter {
@@ -346,6 +365,18 @@ namespace guideXOS.OS {
                 _ownedWindows[i] = null;
             }
             _ownedWindowCount = 0;
+        }
+
+        public override void Dispose() {
+            // The registry owns live instances. Disposal is only valid after
+            // the exact generation has been removed from its slot.
+            if (ApplicationInstanceRegistry.IsRegisteredInstance(this)) return;
+            ClearOwnedWindows();
+            LaunchRequest request = _launchRequest;
+            _launchRequest = null;
+            _ownedWindows.Dispose();
+            if (request != null) request.Dispose();
+            base.Dispose();
         }
 
         private static bool IsValidTransition(
@@ -608,6 +639,12 @@ namespace guideXOS.OS {
             return null;
         }
 
+        /// <summary>
+        /// On success, transfers ownership of <paramref name="request"/> to
+        /// the registered instance. A failed call leaves it with the caller.
+        /// The returned instance is a borrowed reference valid while its
+        /// generation remains registered.
+        /// </summary>
         public static bool TryBeginLaunch(ApplicationDescriptor descriptor,
                                           LaunchRequest request,
                                           out ApplicationInstance instance,
@@ -715,12 +752,25 @@ namespace guideXOS.OS {
             _generations[free] = generation;
             ApplicationInstanceHandle handle =
                 ApplicationInstanceHandle.Create(free + 1, generation);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            uint previousCreationSite = Allocator.CurrentDiagnosticManagedCreationSite;
+            Allocator.CurrentDiagnosticManagedCreationSite =
+                Allocator.R13SiteApplicationInstance;
+#endif
             ApplicationInstance created = new ApplicationInstance(handle,
                 descriptorId, policy, closeWhenLastWindowClosed,
                 allowZeroWindows, request);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.RecordDiagnosticManagedCreationSite((IntPtr)created,
+                Allocator.R13SiteApplicationInstance);
+#endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.CurrentDiagnosticManagedCreationSite = previousCreationSite;
+#endif
             if (!created.TryTransition(ApplicationInstanceLifecycleState.Loading)) {
                 failure = LaunchResult.Failed(LaunchErrorCode.InitializationFailed,
                     "Application instance could not enter loading", descriptorId);
+                created.Dispose();
                 return false;
             }
             _instances[free] = created;
@@ -1125,6 +1175,7 @@ namespace guideXOS.OS {
                     ApplicationInstanceLifecycleState.Terminated, reason,
                     "Application instance handle is stale or unavailable");
             }
+            ApplicationInstanceHandle terminatedHandle = instance.Handle;
             ApplicationInstanceLifecycleState from = instance.LifecycleState;
             if (from == ApplicationInstanceLifecycleState.Closing) {
                 from = ApplicationInstanceLifecycleState.Closing;
@@ -1157,18 +1208,19 @@ namespace guideXOS.OS {
                 // reused accidentally even if a callback corrupted state.
                 instance.RecordFailure("Application instance termination transition failed");
             }
-            if (_activeApplicationHandle == instance.Handle) {
+            if (_activeApplicationHandle == terminatedHandle) {
                 _activeApplicationHandle = ApplicationInstanceHandle.None;
             }
             _terminatedCount++;
+            ApplicationLifecycleResult result = callbackFailed
+                ? ApplicationLifecycleResult.Failed(
+                    ApplicationLifecycleResultCode.CallbackFailed,
+                    terminatedHandle, from, reason,
+                    diagnostic ?? "Application termination callback failed")
+                : ApplicationLifecycleResult.Succeeded(terminatedHandle, from,
+                    ApplicationInstanceLifecycleState.Terminated, reason);
             Remove(instance);
-            if (callbackFailed) {
-                return ApplicationLifecycleResult.Failed(
-                    ApplicationLifecycleResultCode.CallbackFailed, instance.Handle,
-                    from, reason, diagnostic ?? "Application termination callback failed");
-            }
-            return ApplicationLifecycleResult.Succeeded(instance.Handle, from,
-                ApplicationInstanceLifecycleState.Terminated, reason);
+            return result;
         }
 
         private static ApplicationLifecycleResult InvalidLifecycle(
@@ -1392,8 +1444,10 @@ namespace guideXOS.OS {
                                         string reason) {
             ApplicationLifecycleResult result = Terminate(handle,
                 ApplicationCloseReason.ForcedTermination);
-            return result.Success || result.Code ==
+            bool terminated = result.Success || result.Code ==
                 ApplicationLifecycleResultCode.CallbackFailed;
+            result.Dispose();
+            return terminated;
         }
 
         internal static bool TryTerminate(ApplicationInstance instance,
@@ -1401,8 +1455,10 @@ namespace guideXOS.OS {
             if (instance == null) return false;
             ApplicationLifecycleResult result = Terminate(instance,
                 ApplicationCloseReason.ForcedTermination, true);
-            return result.Success || result.Code ==
+            bool terminated = result.Success || result.Code ==
                 ApplicationLifecycleResultCode.CallbackFailed;
+            result.Dispose();
+            return terminated;
         }
 
         internal static void OnWindowClosed(Window window) {
@@ -1516,6 +1572,7 @@ namespace guideXOS.OS {
             if (_activeApplicationHandle == instance.Handle) {
                 _activeApplicationHandle = ApplicationInstanceHandle.None;
             }
+            instance.Dispose();
         }
 
         /// <summary>
@@ -1568,8 +1625,13 @@ namespace guideXOS.OS {
             Check(capacitySetup && rejected, "capacity boundary", ref passed,
                 ref failed, ref firstFailure);
             for (int i = created - 1; i >= 0; i--) {
-                if (capacityInstances[i] != null)
-                    TryTerminate(capacityInstances[i], "self-test capacity cleanup");
+                ApplicationInstance capacityInstance = capacityInstances[i];
+                ApplicationInstanceHandle capacityHandle = capacityInstance == null
+                    ? ApplicationInstanceHandle.None : capacityInstance.Handle;
+                capacityInstances[i] = null;
+                capacityInstance = null;
+                if (capacityHandle.IsValid)
+                    TryTerminate(capacityHandle, "self-test capacity cleanup");
             }
 
             bool windowProof = RunWindowOwnershipSelfTest(ref firstFailure);
@@ -1667,7 +1729,8 @@ namespace guideXOS.OS {
                         ApplicationInstanceLifecycleState.Running,
                     "suspend unsupported", ref passed, ref failed,
                     ref firstFailure);
-                TryTerminate(unsupported, "phase6 unsupported cleanup");
+                unsupported = null;
+                TryTerminate(unsupportedHandle, "phase6 unsupported cleanup");
             } else {
                 Check(false, "unsupported lifecycle setup", ref passed,
                     ref failed, ref firstFailure);
@@ -1715,7 +1778,8 @@ namespace guideXOS.OS {
                         ApplicationInstanceLifecycleState.Inactive,
                     "resume callback failure", ref passed, ref failed,
                     ref firstFailure);
-                TryTerminate(callbackInstance, "phase6 callback cleanup");
+                callbackInstance = null;
+                TryTerminate(callbackHandle, "phase6 callback cleanup");
             } else {
                 Check(false, "callback lifecycle setup", ref passed, ref failed,
                     ref firstFailure);
@@ -1738,7 +1802,8 @@ namespace guideXOS.OS {
                     suspended.Success && resumed.Success;
                 Check(stable, "zero-window reusable instance", ref passed,
                     ref failed, ref firstFailure);
-                TryTerminate(zero, "phase6 zero-window cleanup");
+                zero = null;
+                TryTerminate(zeroHandle, "phase6 zero-window cleanup");
             } else {
                 Check(false, "zero-window lifecycle setup", ref passed,
                     ref failed, ref firstFailure);
@@ -1754,6 +1819,7 @@ namespace guideXOS.OS {
                 out launchFailure);
             if (staleStarted) {
                 staleHandle = stale.Handle;
+                stale = null;
                 ApplicationLifecycleResult terminated = Terminate(staleHandle,
                     ApplicationCloseReason.ForcedTermination);
                 ApplicationLifecycleResult staleActivation = Activate(staleHandle);

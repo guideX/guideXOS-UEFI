@@ -14,6 +14,10 @@ namespace guideXOS.Misc {
             "138258426EF34FA0B2F63915382FCD402BD5C25ECED993F3BDAC1D00077003D5";
         private static bool _phase35Scheduled;
         private static CSharpApplicationStorageService _phase35Storage;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+        private static bool _phase35R13AuditLifetimeActive;
+        private static int _phase35R13Scenario;
+#endif
 
         private static void Phase35Marker(string value) {
             const string prefix = "PHASE35_";
@@ -55,14 +59,39 @@ namespace guideXOS.Misc {
             }
             _owner = instance;
             _ownerCreated = true;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            if (_phase35R13AuditLifetimeActive) {
+                HexMarker("R13_OWNER_HANDLE=0x", instance.Handle.Value);
+                HexMarker("R13_OWNER_GENERATION=0x",
+                    instance.Handle.Generation);
+            }
+#endif
             ApplicationServiceResult contextResult;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            uint previousCreationSite = Allocator.CurrentDiagnosticManagedCreationSite;
+            Allocator.CurrentDiagnosticManagedCreationSite =
+                Allocator.R13SiteContextCreation;
+#endif
             if (!ApplicationServiceRegistry.TryCreateContextAndAccess(
                     instance.Handle, out context, out access,
                     out contextResult) || context == null || access == null) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+                Allocator.CurrentDiagnosticManagedCreationSite = previousCreationSite;
+#endif
+                if (contextResult != null) contextResult.Dispose();
                 CleanupOwner();
                 Phase35Marker("REQUESTER_CONTEXT_CREATED=0");
                 return false;
             }
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            if (_phase35R13AuditLifetimeActive && contextResult != null)
+                Allocator.RecordDiagnosticManagedCreationSite(
+                    (IntPtr)contextResult, Allocator.R13SiteContextCreation);
+#endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.CurrentDiagnosticManagedCreationSite = previousCreationSite;
+#endif
+            if (contextResult != null) contextResult.Dispose();
             if (applicationId == Phase35ApplicationId)
                 _phase35Storage = access.Storage as
                     CSharpApplicationStorageService;
@@ -289,8 +318,14 @@ namespace guideXOS.Misc {
             observedExitCode = int.MinValue;
             serviceRequests = -1;
 #if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
-            ulong previousDiagnosticLifetime =
-                Allocator.BeginDiagnosticLifetime();
+            bool ownsDiagnosticLifetime = true;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            if (_phase35R13AuditLifetimeActive)
+                ownsDiagnosticLifetime = false;
+#endif
+            ulong previousDiagnosticLifetime = ownsDiagnosticLifetime ?
+                Allocator.BeginDiagnosticLifetime() :
+                Allocator.CurrentDiagnosticLifetime;
 #endif
             Native.Cli();
             ulong memoryBeforeCreate = Allocator.MemoryInUse;
@@ -322,8 +357,9 @@ namespace guideXOS.Misc {
                 Phase35Marker("PROCESS_CREATE_FAILED=1");
                 Phase35Marker("PROCESS_CREATE_REJECTED=" + failure);
 #if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
-                Allocator.RestoreDiagnosticLifetime(
-                    previousDiagnosticLifetime);
+                if (ownsDiagnosticLifetime)
+                    Allocator.RestoreDiagnosticLifetime(
+                        previousDiagnosticLifetime);
 #endif
                 return false;
             }
@@ -375,6 +411,13 @@ namespace guideXOS.Misc {
             HexMarker("R9_B1_BYTES=0x", Allocator.MemoryInUse);
             HexMarker("R9_B1_LIVE_PAGES=0x",
                 Allocator.MemoryInUse / Allocator.PageSize);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            if (_phase35R13AuditLifetimeActive) {
+                HexMarker("R13_B1_BYTES=0x", Allocator.MemoryInUse);
+                HexMarker("R13_B1_PAGES=0x",
+                    Allocator.MemoryInUse / Allocator.PageSize);
+            }
+#endif
             Allocator.DumpDiagnosticLiveRunsSince(allocationSequenceBefore, 1);
 #endif
             ulong memoryBeforeCleanup = Allocator.MemoryInUse;
@@ -411,10 +454,12 @@ namespace guideXOS.Misc {
                 else
                     HexMarker("PHASE35_DIAG_CLEANUP_GROWTH=0x",
                         memoryAfterCleanup - memoryBeforeCleanup);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
                 if (Allocator.DiagnosticProvenanceEnabled)
                     HexMarker("PHASE35_DIAG_SYSCALL_OWNER_REMAINING=0x",
                         Allocator.GetDiagnosticOwnerBytes(
                             Ring3Abi.DiagnosticAllocatorOwnerId(oldHandle)));
+#endif
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
                 HexMarker("DIAG_PROCESS_HANDLE=0x", oldHandle.Value);
                 HexMarker("DIAG_PROCESS_GENERATION=0x",
@@ -454,6 +499,14 @@ namespace guideXOS.Misc {
             Allocator.DumpDiagnosticLiveRunsSince(allocationSequenceBefore, 2);
             Allocator.DumpDiagnosticHelperTotalsSince(
                 allocationSequenceBefore, 2);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            if (_phase35R13AuditLifetimeActive) {
+                HexMarker("R13_B2_PROCESS_BYTES=0x",
+                    Allocator.MemoryInUse);
+                HexMarker("R13_B2_PROCESS_PAGES=0x",
+                    Allocator.MemoryInUse / Allocator.PageSize);
+            }
+#endif
 #endif
             ulong diagnosticRequestAfter = Allocator.LastDiagnosticRequest;
             ulong processCleanupRequest = 0;
@@ -473,7 +526,8 @@ namespace guideXOS.Misc {
             }
 #endif
 #if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
-            Allocator.RestoreDiagnosticLifetime(previousDiagnosticLifetime);
+            if (ownsDiagnosticLifetime)
+                Allocator.RestoreDiagnosticLifetime(previousDiagnosticLifetime);
 #endif
             return result;
         }
@@ -483,16 +537,37 @@ namespace guideXOS.Misc {
             if (_phase35Storage == null || staleContext == null) return false;
             int readsBefore = _phase35Storage.PersistentReadCount;
             int staleBefore = _phase35Storage.StaleContextRejectionCount;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            uint previousCreationSite = Allocator.CurrentDiagnosticManagedCreationSite;
+            Allocator.CurrentDiagnosticManagedCreationSite =
+                Allocator.R13SiteStaleContextRead;
+#endif
+            ApplicationStorageReadRequest request =
+                ApplicationStorageReadRequest.Create(
+                    ApplicationStorageNamespace.Persistent,
+                    PersistentFatBackend.FixturePath, 0, 32);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            if (_phase35R13AuditLifetimeActive)
+                Allocator.RecordDiagnosticManagedCreationSite((IntPtr)request,
+                    Allocator.R13SiteStaleContextRead);
+#endif
             ApplicationServiceResult<ApplicationStorageReadResult> result =
-                _phase35Storage.Read(staleContext,
-                    ApplicationStorageReadRequest.Create(
-                        ApplicationStorageNamespace.Persistent,
-                        PersistentFatBackend.FixturePath, 0, 32));
+                _phase35Storage.Read(staleContext, request);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            if (_phase35R13AuditLifetimeActive && result != null)
+                Allocator.RecordDiagnosticManagedCreationSite((IntPtr)result,
+                    Allocator.R13SiteStaleContextRead);
+#endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.CurrentDiagnosticManagedCreationSite = previousCreationSite;
+#endif
             bool rejected = result.Code ==
                 ApplicationServiceResultCode.InvalidContext;
             bool noBackend = readsBefore == _phase35Storage.PersistentReadCount;
             bool counted = _phase35Storage.StaleContextRejectionCount ==
                 staleBefore + 1;
+            request.Dispose();
+            if (result != null) result.Dispose();
             Phase35Marker(rejected ? "STALE_CONTEXT_REJECTED=1" :
                 "STALE_CONTEXT_REJECTED=0");
             Phase35Marker(noBackend ? "STALE_CONTEXT_NO_BACKEND=1" :
@@ -515,9 +590,17 @@ namespace guideXOS.Misc {
             bool ran = RunOnePhase35Lifetime(payloadKind, ownerValue,
                 expectedRequests, out oldHandle, out resumed, out exitCode,
                 out requests);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            if (_phase35R13AuditLifetimeActive)
+                RunPhase35R13Operation(_phase35R13Scenario, 11, 6);
+#endif
             CleanupOwner();
             bool staleOwner = !ApplicationInstanceRegistry.TryGet(
                 ApplicationInstanceHandle.FromValue(ownerValue), out _);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            if (_phase35R13AuditLifetimeActive)
+                RunPhase35R13Operation(_phase35R13Scenario, 12, 5);
+#endif
             bool staleContext = CheckPhase35StaleContext(context);
             context.Dispose();
             bool noRequests = ApplicationServiceRegistry.ActiveRequestCount == 0;
@@ -626,6 +709,10 @@ namespace guideXOS.Misc {
             if (setupOwner) CleanupOwner();
             Phase35Marker(backend ? "PERSISTENT_BACKEND_READY=1" :
                 "PERSISTENT_BACKEND_READY=0");
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            RunPhase35R13AllocatorAudit(backend);
+            return;
+#endif
 #if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
             RunPhase35RetainedRunLedger(backend);
             return;
@@ -892,6 +979,244 @@ namespace guideXOS.Misc {
                 "RING3_PHASE35_COMPLETE=0");
             Native.Sti();
         }
+
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+        private static void RunPhase35R13Operation(int scenario, int id,
+                int kind) {
+            Allocator.CurrentDiagnosticOperationId = (ulong)id;
+            NumberMarker("R13_OP_SCENARIO=", scenario);
+            NumberMarker("R13_OP_ID=", id);
+            NumberMarker("R13_OP_KIND=", kind);
+        }
+
+        private static void RunPhase35R13OperationPlan(int scenario,
+                int payloadKind) {
+            if (payloadKind == 1) {
+                for (int id = 1; id <= 6; id++)
+                    RunPhase35R13Operation(scenario, id, 1);
+                RunPhase35R13Operation(scenario, 7, 2);
+                RunPhase35R13Operation(scenario, 8, 3);
+                RunPhase35R13Operation(scenario, 9, 3);
+                RunPhase35R13Operation(scenario, 10, 4);
+            } else if (payloadKind == 6) {
+                RunPhase35R13Operation(scenario, 1, 0);
+            } else if (payloadKind == 7) {
+                RunPhase35R13Operation(scenario, 1, 3);
+            } else if (payloadKind == 9) {
+                RunPhase35R13Operation(scenario, 1, 2);
+            }
+        }
+
+        private static bool RunOnePhase35R13AuditLifetime(int scenario,
+                int payloadKind, int expectedRequests) {
+            ulong previousLifetime = Allocator.BeginDiagnosticLifetime();
+            _phase35R13AuditLifetimeActive = true;
+            _phase35R13Scenario = scenario;
+            ulong b0 = Allocator.MemoryInUse;
+            ulong sequence = Allocator.DiagnosticAllocationSequence;
+            int readsBefore = _phase35Storage.PersistentReadCount;
+            int successesBefore =
+                _phase35Storage.PersistentSuccessfulReadCount;
+            int failuresBefore = _phase35Storage.FailedReadRequestCount;
+            HexMarker("R13_SCENARIO=0x", (ulong)scenario);
+            HexMarker("R13_LIFETIME_ID=0x",
+                Allocator.CurrentDiagnosticLifetime);
+            HexMarker("R13_B0_BYTES=0x", b0);
+            HexMarker("R13_B0_PAGES=0x", b0 / Allocator.PageSize);
+            NumberMarker("R13_PAYLOAD_KIND=", payloadKind);
+            RunPhase35R13OperationPlan(scenario, payloadKind);
+            RunPhase35R13Operation(scenario, 0, 6);
+
+            bool resumed = false;
+            int exitCode = int.MinValue;
+            bool passed = RunOnePhase35AndCheckStale(payloadKind,
+                Phase35ApplicationId, expectedRequests, out resumed,
+                out exitCode);
+            ulong b2 = Allocator.MemoryInUse;
+            ulong measuredPages = b2 >= b0 ?
+                (b2 - b0) / Allocator.PageSize : 0UL;
+            HexMarker("R13_B2_BYTES=0x", b2);
+            HexMarker("R13_B2_PAGES=0x", b2 / Allocator.PageSize);
+            HexMarker("R13_B2_MINUS_B0_PAGES=0x", measuredPages);
+            NumberMarker("R13_PERSISTENT_READS=",
+                _phase35Storage.PersistentReadCount - readsBefore);
+            NumberMarker("R13_PERSISTENT_SUCCESSES=",
+                _phase35Storage.PersistentSuccessfulReadCount -
+                    successesBefore);
+            NumberMarker("R13_PERSISTENT_FAILURES=",
+                _phase35Storage.FailedReadRequestCount - failuresBefore);
+            NumberMarker("R13_MAIN_RETURN=", exitCode);
+            if (exitCode == 35) Marker("MAIN_RETURN=35");
+            ulong accountedPages;
+            Phase35Marker("R13_RUNS_BEGIN=1");
+            accountedPages = Allocator.DumpDiagnosticLiveRunsSince(
+                sequence, 2);
+            Allocator.DumpDiagnosticHelperTotalsSince(sequence, 2);
+            Allocator.DumpDiagnosticSiteTotalsSince(sequence, 2);
+            Phase35Marker("R13_RUNS_END=1");
+            HexMarker("R13_ACCOUNTED_PAGES=0x", accountedPages);
+            HexMarker("R13_UNEXPLAINED_PAGES=0x",
+                measuredPages > accountedPages ?
+                    measuredPages - accountedPages : 0UL);
+            HexMarker("R13_OVERACCOUNTED_PAGES=0x",
+                accountedPages > measuredPages ?
+                    accountedPages - measuredPages : 0UL);
+            bool memoryStable = b2 == b0;
+            bool ledgerStable = measuredPages == 0 && accountedPages == 0;
+            Phase35Marker(passed && resumed && exitCode == 35 &&
+                    memoryStable && ledgerStable ?
+                "R13_LIFETIME_PASS=1" : "R13_LIFETIME_PASS=0");
+            _phase35R13AuditLifetimeActive = false;
+            Allocator.RestoreDiagnosticLifetime(previousLifetime);
+            return passed && resumed && exitCode == 35 && memoryStable &&
+                ledgerStable;
+        }
+
+        private static bool RunPhase35R13LifetimeBatch(int firstScenario,
+                int count, out int successfulReturns) {
+            successfulReturns = 0;
+            ulong baseline = Allocator.MemoryInUse;
+            ulong unknownBytes = Allocator.GetTagBytes(
+                Allocator.AllocTag.Unknown);
+            for (int i = 0; i < count; i++) {
+                bool passed = RunOnePhase35R13AuditLifetime(
+                    firstScenario + i, 1, 6);
+                if (passed) successfulReturns++;
+            }
+            bool stable = Allocator.MemoryInUse == baseline &&
+                Allocator.GetTagBytes(Allocator.AllocTag.Unknown) ==
+                    unknownBytes && Ring3ProcessTable.LiveCount == 0 &&
+                ThreadPool.LiveUserThreadCount == 0 &&
+                ApplicationServiceRegistry.ActiveRequestCount == 0;
+            return successfulReturns == count && stable;
+        }
+
+        private static bool RunPhase35R13EightMiBGate() {
+            const ulong bytes = 8UL * 1024UL * 1024UL;
+            ulong baseline = Allocator.MemoryInUse;
+            ulong previousOperation =
+                Allocator.CurrentDiagnosticOperationId;
+            Allocator.CurrentDiagnosticOperationId = 13;
+            IntPtr allocation = Allocator.Allocate(bytes);
+            ulong freed = allocation == IntPtr.Zero ? 0UL :
+                Allocator.Free(allocation, "Phase35R13EightMiBGate");
+            Allocator.CurrentDiagnosticOperationId = previousOperation;
+            bool passed = allocation != IntPtr.Zero && freed == bytes &&
+                Allocator.MemoryInUse == baseline;
+            HexMarker("PHASE35_R13_8MIB_BYTES=0x", freed);
+            Phase35Marker(passed ? "R13_8MIB_ALLOCATION=PASS" :
+                "R13_8MIB_ALLOCATION=FAIL");
+            return passed;
+        }
+
+        private static void RunPhase35R13AllocatorAudit(bool backend) {
+            Phase35Marker("R13_ALLOC_LEDGER_READY=1");
+            if (!backend || _phase35Storage == null) {
+                Phase35Marker("R13_AUDIT_SETUP=FAIL");
+                Phase35Marker("R13_AUDIT_COMPLETE=0");
+                Native.Sti();
+                return;
+            }
+            Phase35Marker("R13_AUDIT_SETUP=PASS");
+            uint previousCreationSite =
+                Allocator.CurrentDiagnosticManagedCreationSite;
+            ulong previousOperationId = Allocator.CurrentDiagnosticOperationId;
+            ulong processTableSequence = Allocator.DiagnosticAllocationSequence;
+            ulong processTableMemory = Allocator.MemoryInUse;
+            Allocator.CurrentDiagnosticManagedCreationSite =
+                Allocator.R13SiteProcessTableInitialization;
+            Allocator.CurrentDiagnosticOperationId = 0;
+            int processTableLive = Ring3ProcessTable.LiveCount;
+            Allocator.CurrentDiagnosticManagedCreationSite =
+                previousCreationSite;
+            Allocator.CurrentDiagnosticOperationId = previousOperationId;
+            ulong processTableDelta = Allocator.MemoryInUse >= processTableMemory
+                ? Allocator.MemoryInUse - processTableMemory : 0UL;
+            Phase35Marker("R13_PROCESS_TABLE_INIT_BEGIN=1");
+            NumberMarker("R13_PROCESS_TABLE_LIVE=", processTableLive);
+            HexMarker("R13_PROCESS_TABLE_INIT_BYTES=0x", processTableDelta);
+            HexMarker("R13_PROCESS_TABLE_INIT_PAGES=0x",
+                processTableDelta / Allocator.PageSize);
+            Allocator.DumpDiagnosticLiveRunsSince(processTableSequence, 0);
+            Allocator.DumpDiagnosticHelperTotalsSince(processTableSequence, 0);
+            Allocator.DumpDiagnosticSiteTotalsSince(processTableSequence, 0);
+            Phase35Marker("R13_PROCESS_TABLE_INIT_END=1");
+            bool first = RunOnePhase35R13AuditLifetime(1, 1, 6);
+            Phase35Marker(first ? "R13_STRESS_EQUIVALENT_PASS=1" :
+                "R13_STRESS_EQUIVALENT_PASS=0");
+            bool second = RunOnePhase35R13AuditLifetime(2, 1, 6);
+            Phase35Marker(second ? "R13_REPEAT_PASS=1" :
+                "R13_REPEAT_PASS=0");
+            bool noRead = RunOnePhase35R13AuditLifetime(3, 6, 0);
+            Phase35Marker(noRead ? "R13_NO_READ_PASS=1" :
+                "R13_NO_READ_PASS=0");
+            bool oneRead = RunOnePhase35R13AuditLifetime(4, 7, 1);
+            Phase35Marker(oneRead ? "R13_ONE_READ_PASS=1" :
+                "R13_ONE_READ_PASS=0");
+            bool notFound = RunOnePhase35R13AuditLifetime(5, 9, 1);
+            Phase35Marker(notFound ? "R13_NOT_FOUND_PASS=1" :
+                "R13_NOT_FOUND_PASS=0");
+
+            int fiveReturns = 0;
+            bool five = first && second && noRead && oneRead && notFound &&
+                RunPhase35R13LifetimeBatch(6, 5, out fiveReturns);
+            NumberMarker("R13_FIVE_LIFETIME_RETURNS=", fiveReturns);
+            Phase35Marker(five ? "R13_FIVE_LIFETIME_PASS=1" :
+                "R13_FIVE_LIFETIME_PASS=0");
+
+            int twentyFiveReturns = 0;
+            bool twentyFive = false;
+            bool eightMiB = false;
+            if (five) {
+                twentyFive = RunPhase35R13LifetimeBatch(11, 25,
+                    out twentyFiveReturns);
+                Phase35Marker(twentyFive ? "25_LIFETIME_STRESS=PASS" :
+                    "25_LIFETIME_STRESS=FAIL");
+                ulong baseline = Allocator.MemoryInUse;
+                ulong unknownBytes = Allocator.GetTagBytes(
+                    Allocator.AllocTag.Unknown);
+                bool requestsClean =
+                    ApplicationServiceRegistry.ActiveRequestCount == 0;
+                bool processClean = Ring3ProcessTable.LiveCount == 0 &&
+                    ThreadPool.LiveUserThreadCount == 0;
+                bool allocatorStable = twentyFive && requestsClean &&
+                    processClean && Allocator.MemoryInUse == baseline &&
+                    Allocator.GetTagBytes(Allocator.AllocTag.Unknown) ==
+                        unknownBytes && Allocator.FreeFailInvalidPtr == 0 &&
+                    Allocator.FreeFailCorruptRun == 0 &&
+                    Allocator.FreeFailNoPages == 0;
+                Phase35Marker(allocatorStable ?
+                    "STRESS_ALLOCATOR_STABLE=1" :
+                    "STRESS_ALLOCATOR_STABLE=0");
+                Phase35Marker(requestsClean ? "ACTIVE_STORAGE_REQUESTS=0" :
+                    "ACTIVE_STORAGE_REQUESTS=NONZERO");
+                Phase35Marker(requestsClean ? "OPEN_PERSISTENT_HANDLES=0" :
+                    "OPEN_PERSISTENT_HANDLES=NONZERO");
+                NumberMarker("PHASE35_FREE_INVALID=",
+                    Allocator.FreeFailInvalidPtr);
+                NumberMarker("PHASE35_FREE_CORRUPT=",
+                    Allocator.FreeFailCorruptRun);
+                NumberMarker("PHASE35_FREE_NO_PAGES=",
+                    Allocator.FreeFailNoPages);
+                if (allocatorStable)
+                    eightMiB = RunPhase35R13EightMiBGate();
+            } else {
+                Phase35Marker("25_LIFETIME_STRESS=SKIPPED");
+                Phase35Marker("STRESS_ALLOCATOR_STABLE=0");
+                Phase35Marker("ACTIVE_STORAGE_REQUESTS=NONZERO");
+                Phase35Marker("OPEN_PERSISTENT_HANDLES=NONZERO");
+                Phase35Marker("R13_8MIB_ALLOCATION=SKIPPED");
+            }
+            NumberMarker("R13_TWENTY_FIVE_LIFETIME_RETURNS=",
+                twentyFiveReturns);
+            CleanupOwner();
+            bool complete = first && second && noRead && oneRead && notFound &&
+                five && twentyFive && eightMiB;
+            Phase35Marker(complete ? "R13_AUDIT_COMPLETE=1" :
+                "R13_AUDIT_COMPLETE=0");
+            Native.Sti();
+        }
+#endif
 
 #if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
         private static void RunPhase35RetainedRunLedger(bool backend) {

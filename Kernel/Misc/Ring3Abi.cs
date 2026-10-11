@@ -1204,9 +1204,20 @@ namespace guideXOS.Misc {
                 WritePersistentReadResponse(request.ResponseBuffer,
                     &response);
                 process.RecordServiceRequestSuccess();
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER
+                uint previousTypedResultSite =
+                    Allocator.CurrentDiagnosticStringSite;
+                Allocator.CurrentDiagnosticStringSite = 520;
+                string typedResult = response.ResultCode.ToString();
+                Allocator.CurrentDiagnosticStringSite = 521;
+                string typedResultMessage =
+                    "RING3_PERSISTENT_READ_TYPED_RESULT=" + typedResult;
+                Allocator.CurrentDiagnosticStringSite = previousTypedResultSite;
+#else
                 string typedResult = response.ResultCode.ToString();
                 string typedResultMessage =
                     "RING3_PERSISTENT_READ_TYPED_RESULT=" + typedResult;
+#endif
                 try {
                     Marker(typedResultMessage);
                 } finally {

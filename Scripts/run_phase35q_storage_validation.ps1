@@ -8,6 +8,7 @@ param(
     [switch]$Phase35R,
     [switch]$Phase35R2Matrix,
     [switch]$Phase35R9Ledger,
+    [switch]$Phase35R13AllocLedger,
     [switch]$PreserveFailedImage
 )
 
@@ -48,6 +49,7 @@ if ($Phase35P2) { $selectedPhase35ModeCount++ }
 if ($Phase35R) { $selectedPhase35ModeCount++ }
 if ($Phase35R2Matrix) { $selectedPhase35ModeCount++ }
 if ($Phase35R9Ledger) { $selectedPhase35ModeCount++ }
+if ($Phase35R13AllocLedger) { $selectedPhase35ModeCount++ }
 if ($selectedPhase35ModeCount -gt 1) {
     throw 'Select only one Phase 35 proof mode.'
 }
@@ -122,7 +124,7 @@ try {
     } elseif ($SkipBuild) {
         Write-Host 'Reusing the currently staged diagnostic kernel and EFI artifacts.'
     } else {
-        $diagnosticMode = if ($Phase35R9Ledger) { 'Ring3Phase35R9' } elseif ($Phase35R2Matrix) { 'Ring3Phase35R2' } elseif ($Phase35R) { 'Ring3Phase35' } elseif ($Phase35P2) { 'Storage35P2' } else { 'Storage35Q' }
+        $diagnosticMode = if ($Phase35R13AllocLedger) { 'Ring3Phase35R13' } elseif ($Phase35R9Ledger) { 'Ring3Phase35R9' } elseif ($Phase35R2Matrix) { 'Ring3Phase35R2' } elseif ($Phase35R) { 'Ring3Phase35' } elseif ($Phase35P2) { 'Storage35P2' } else { 'Storage35Q' }
         Write-Host "Building the $diagnosticMode diagnostic kernel and ordinary EFI artifacts..."
         & (Join-Path $root 'build.ps1') -UefiDiagnosticMode $diagnosticMode
         if ($LASTEXITCODE -ne 0) { throw "build.ps1 failed with exit code $LASTEXITCODE" }
@@ -213,6 +215,9 @@ try {
         if ($Phase35R2Matrix -and $content -match '(?m)^PHASE35_ALLOC_MATRIX_RESULT=[^,]+,FAIL\r?$') {
             throw 'Guest allocator matrix reported a failed requester.'
         }
+        if ($Phase35R13AllocLedger -and $content -match '(?m)^PHASE35_R13_AUDIT_COMPLETE=0\r?$') {
+            throw 'Guest Phase 35R13 allocator audit reported an incomplete requester run.'
+        }
         if ($content -match '(?im)(CPU_FAULT_[A-Z_]+|#PF|#GP|#UD|ABI.*PANIC|PANIC:|ALLOC_FREE_INVALID=(?:0x0*[1-9A-Fa-f][0-9A-Fa-f]*|[1-9][0-9]*))') {
             $fault = [regex]::Match($content, '(?im)(CPU_FAULT_[A-Z_]+|#PF|#GP|#UD|ABI.*PANIC|PANIC:|ALLOC_FREE_INVALID=(?:0x0*[1-9A-Fa-f][0-9A-Fa-f]*|[1-9][0-9]*))').Value
             throw "Guest fault or allocator invariant was reported: $fault"
@@ -233,7 +238,12 @@ try {
             $lastProgress = Get-Date
         }
 
-        if ($Phase35R2Matrix) {
+        if ($Phase35R13AllocLedger) {
+            if ($content -match '(?m)^PHASE35_R13_AUDIT_COMPLETE=1\r?$') {
+                $proofSucceeded = $true
+                break
+            }
+        } elseif ($Phase35R2Matrix) {
             if ($content -match '(?m)^PHASE35_ALLOC_MATRIX_COMPLETE=1\r?$') {
                 $proofSucceeded = $true
                 break
@@ -306,7 +316,299 @@ try {
     $qemu = $null
 
     $finalContent = Get-Content -LiteralPath $serialPath -Raw
-    if ($Phase35R9Ledger) {
+    if ($Phase35R13AllocLedger) {
+        $requiredMarkers = @(
+            'ALLOC_PROVENANCE_READY=1;capacity=262144-live-runs;storage=static-per-page',
+            'PHASE35_PERSISTENT_BACKEND_READY=1',
+            'PHASE35_R13_ALLOC_LEDGER_READY=1',
+            'PHASE35_R13_STRESS_EQUIVALENT_PASS=1',
+            'PHASE35_R13_REPEAT_PASS=1',
+            'PHASE35_R13_NO_READ_PASS=1',
+            'PHASE35_R13_ONE_READ_PASS=1',
+            'PHASE35_R13_NOT_FOUND_PASS=1',
+            'PHASE35_R13_FIVE_LIFETIME_PASS=1',
+            'PHASE35_25_LIFETIME_STRESS=PASS',
+            'PHASE35_STRESS_ALLOCATOR_STABLE=1',
+            'PHASE35_ACTIVE_STORAGE_REQUESTS=0',
+            'PHASE35_OPEN_PERSISTENT_HANDLES=0',
+            'PHASE35_FREE_INVALID=0',
+            'PHASE35_FREE_CORRUPT=0',
+            'PHASE35_FREE_NO_PAGES=0',
+            'PHASE35_R13_8MIB_ALLOCATION=PASS',
+            'PHASE35_R13_AUDIT_COMPLETE=1')
+        $r13 = @{}
+        $scenario = 0
+        $inRunTable = $false
+        $finalRunTableRows = 0
+        foreach ($line in ($finalContent -split "`r?`n")) {
+            if ($line -match '^R13_SCENARIO=0x([0-9A-Fa-f]+)$') {
+                $scenario = [Convert]::ToInt32($Matches[1], 16)
+                if (-not $r13.ContainsKey($scenario)) {
+                    $r13[$scenario] = [pscustomobject]@{
+                        B0Bytes = $null
+                        B1Bytes = $null
+                        B2ProcessBytes = $null
+                        B2Bytes = $null
+                        MainReturn = $null
+                        OwnerHandle = $null
+                        OwnerGeneration = $null
+                        DeltaPages = $null
+                        AccountedPages = [UInt64]0
+                        UnexplainedPages = $null
+                        OveraccountedPages = $null
+                        PersistentReads = $null
+                        PersistentSuccesses = $null
+                        PersistentFailures = $null
+                        LifetimePass = $false
+                        SiteTotals = [System.Collections.Generic.List[object]]::new()
+                        RunRows = [System.Collections.Generic.List[string]]::new()
+                        RunCount = 0
+                    }
+                }
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_OWNER_HANDLE=0x([0-9A-Fa-f]+)$') {
+                $r13[$scenario].OwnerHandle = [Convert]::ToUInt64(
+                    $Matches[1], 16)
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_OWNER_GENERATION=0x([0-9A-Fa-f]+)$') {
+                $r13[$scenario].OwnerGeneration = [Convert]::ToUInt64(
+                    $Matches[1], 16)
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_B0_BYTES=0x([0-9A-Fa-f]+)$') {
+                $r13[$scenario].B0Bytes = [Convert]::ToUInt64(
+                    $Matches[1], 16)
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_B1_BYTES=0x([0-9A-Fa-f]+)$') {
+                $r13[$scenario].B1Bytes = [Convert]::ToUInt64(
+                    $Matches[1], 16)
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_B2_PROCESS_BYTES=0x([0-9A-Fa-f]+)$') {
+                $r13[$scenario].B2ProcessBytes = [Convert]::ToUInt64(
+                    $Matches[1], 16)
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_B2_BYTES=0x([0-9A-Fa-f]+)$') {
+                $r13[$scenario].B2Bytes = [Convert]::ToUInt64(
+                    $Matches[1], 16)
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_MAIN_RETURN=(-?[0-9]+)$') {
+                $r13[$scenario].MainReturn = [int]$Matches[1]
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_B2_MINUS_B0_PAGES=0x([0-9A-Fa-f]+)$') {
+                $r13[$scenario].DeltaPages = [Convert]::ToUInt64(
+                    $Matches[1], 16)
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_UNEXPLAINED_PAGES=0x([0-9A-Fa-f]+)$') {
+                $r13[$scenario].UnexplainedPages = [Convert]::ToUInt64(
+                    $Matches[1], 16)
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_OVERACCOUNTED_PAGES=0x([0-9A-Fa-f]+)$') {
+                $r13[$scenario].OveraccountedPages = [Convert]::ToUInt64(
+                    $Matches[1], 16)
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_PERSISTENT_READS=([0-9]+)$') {
+                $r13[$scenario].PersistentReads = [int]$Matches[1]
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_PERSISTENT_SUCCESSES=([0-9]+)$') {
+                $r13[$scenario].PersistentSuccesses = [int]$Matches[1]
+            } elseif ($scenario -ne 0 -and
+                    $line -match '^R13_PERSISTENT_FAILURES=([0-9]+)$') {
+                $r13[$scenario].PersistentFailures = [int]$Matches[1]
+            } elseif ($scenario -ne 0 -and
+                    $line -eq 'PHASE35_R13_LIFETIME_PASS=1') {
+                $r13[$scenario].LifetimePass = $true
+            } elseif ($line -eq 'PHASE35_R13_RUNS_BEGIN=1') {
+                $inRunTable = $true
+            } elseif ($line -eq 'PHASE35_R13_RUNS_END=1') {
+                $inRunTable = $false
+            } elseif ($inRunTable -and $scenario -ne 0 -and
+                    $line -match '^R13_SITE_TOTAL;phase=0x([0-9A-Fa-f]+);site=0x([0-9A-Fa-f]+);allocations=0x([0-9A-Fa-f]+);frees=0x([0-9A-Fa-f]+);survivors=0x([0-9A-Fa-f]+);pages=0x([0-9A-Fa-f]+)$') {
+                $r13[$scenario].SiteTotals.Add([pscustomobject]@{
+                    Phase = [Convert]::ToUInt64($Matches[1], 16)
+                    Site = [Convert]::ToUInt64($Matches[2], 16)
+                    Allocations = [Convert]::ToUInt64($Matches[3], 16)
+                    Frees = [Convert]::ToUInt64($Matches[4], 16)
+                    Survivors = [Convert]::ToUInt64($Matches[5], 16)
+                    Pages = [Convert]::ToUInt64($Matches[6], 16)
+                })
+            } elseif ($inRunTable -and $scenario -ne 0 -and
+                    $line -match '^R9_RUN;phase=([0-9A-Fa-f]+);' -and
+                    [Convert]::ToUInt64($Matches[1], 16) -eq 2 -and
+                    $line -match ';pages=0x([0-9A-Fa-f]+);' -and
+                    $scenario -ne 0) {
+                $r13[$scenario].AccountedPages += [Convert]::ToUInt64(
+                    $Matches[1], 16)
+                $r13[$scenario].RunCount++
+                $r13[$scenario].RunRows.Add($line)
+                $finalRunTableRows++
+            }
+        }
+        foreach ($id in 1..35) {
+            if (-not $r13.ContainsKey($id) -or
+                    $null -eq $r13[$id].DeltaPages -or
+                    $null -eq $r13[$id].MainReturn -or
+                    -not $r13[$id].LifetimePass) {
+                throw "R13 scenario $id is missing its lifetime result or measured delta."
+            }
+            $s = $r13[$id]
+            if ($s.MainReturn -ne 35) {
+                throw "R13 scenario $id returned $($s.MainReturn), expected 35."
+            }
+            if ($s.RunCount -eq 0) {
+                if ($s.DeltaPages -ne 0 -or $s.SiteTotals.Count -eq 0) {
+                    throw "R13 scenario $id has no retained runs but lacks a zero-delta site census."
+                }
+                foreach ($siteTotal in $s.SiteTotals) {
+                    if ($siteTotal.Phase -ne 2 -or
+                            $siteTotal.Allocations -ne $siteTotal.Frees -or
+                            $siteTotal.Survivors -ne 0 -or
+                            $siteTotal.Pages -ne 0) {
+                        throw "R13 scenario $id failed the zero-survivor site census at site $($siteTotal.Site)."
+                    }
+                }
+            }
+            $unexplained = if ($s.DeltaPages -gt $s.AccountedPages) {
+                $s.DeltaPages - $s.AccountedPages
+            } else { [UInt64]0 }
+            $overAccounted = if ($s.AccountedPages -gt $s.DeltaPages) {
+                $s.AccountedPages - $s.DeltaPages
+            } else { [UInt64]0 }
+            Write-Host "R13 scenario $id : owner=0x$('{0:X}' -f $s.OwnerHandle) generation=$($s.OwnerGeneration) B0=$($s.B0Bytes) B1=$($s.B1Bytes) B2Process=$($s.B2ProcessBytes) B2=$($s.B2Bytes) measuredPages=$($s.DeltaPages) accountedPages=$($s.AccountedPages) unexplainedPages=$unexplained overAccountedPages=$overAccounted retainedRuns=$($s.RunCount) zeroSurvivorCensus=$($s.RunCount -eq 0) persistentReads=$($s.PersistentReads) successes=$($s.PersistentSuccesses) failures=$($s.PersistentFailures)"
+            if ($s.AccountedPages -ne $s.DeltaPages -or
+                    $s.UnexplainedPages -ne 0 -or
+                    $s.OveraccountedPages -ne 0) {
+                throw "R13 scenario $id failed live-run page reconciliation."
+            }
+            foreach ($siteTotal in $s.SiteTotals) {
+                Write-Host "R13 site scenario=$id site=$($siteTotal.Site) allocations=$($siteTotal.Allocations) frees=$($siteTotal.Frees) survivors=$($siteTotal.Survivors) pages=$($siteTotal.Pages)"
+            }
+            foreach ($runRow in $s.RunRows) {
+                Write-Host "R13 retained run scenario=$id $runRow"
+            }
+        }
+        Write-Host "R13 retained-run rows across 35 requester lifetimes: $finalRunTableRows"
+        $faultVectorMatches = [regex]::Matches($finalContent,
+            '(?m)^RING3_FAULT_VECTOR=0x([0-9A-Fa-f]+)\r?$')
+        $pfCount = 0
+        $gpCount = 0
+        $udCount = 0
+        foreach ($faultVector in $faultVectorMatches) {
+            $vector = [Convert]::ToInt32($faultVector.Groups[1].Value, 16)
+            if ($vector -eq 14) { $pfCount++ }
+            elseif ($vector -eq 13) { $gpCount++ }
+            elseif ($vector -eq 6) { $udCount++ }
+        }
+        $panicCount = [regex]::Matches($finalContent,
+            '(?m)^PANIC:').Count
+        if ($pfCount -ne 0 -or $gpCount -ne 0 -or $udCount -ne 0 -or
+                $panicCount -ne 0) {
+            throw "R13 fault scan failed: #PF=$pfCount #GP=$gpCount #UD=$udCount panic=$panicCount."
+        }
+        Write-Host 'R13 fault scan: #PF=0 #GP=0 #UD=0 ABI panic=0'
+
+        $serialLines = $finalContent -split "`r?`n"
+        $firstScenarioLine = -1
+        $secondScenarioLine = $serialLines.Length
+        for ($lineIndex = 0; $lineIndex -lt $serialLines.Length; $lineIndex++) {
+            if ($firstScenarioLine -lt 0 -and
+                    $serialLines[$lineIndex] -eq
+                        'R13_SCENARIO=0x0000000000000001') {
+                $firstScenarioLine = $lineIndex
+                continue
+            }
+            if ($firstScenarioLine -ge 0 -and
+                    $serialLines[$lineIndex] -match '^R13_SCENARIO=') {
+                $secondScenarioLine = $lineIndex
+                break
+            }
+        }
+        if ($firstScenarioLine -lt 0) {
+            throw 'R13 did not emit the first requester block for the NotFound string check.'
+        }
+        $notFoundStrings = @(
+            @{ Hash = '94A661B97507E172'; Length = 51; Site = 0x1FE },
+            @{ Hash = '7B75BBA2453D7996'; Length = 38; Site = 0x1FF },
+            @{ Hash = '2DB56378C1962B98'; Length = 251; Site = 0x200 },
+            @{ Hash = 'ADE827DD03D3AE1F'; Length = 50; Site = 0x213 },
+            @{ Hash = 'AF63AE4C86019E62'; Length = 1; Site = 0x208 },
+            @{ Hash = 'D82EC95D355533BA'; Length = 36; Site = 0x209 })
+        $verifiedStringRequests = @{}
+        foreach ($string in $notFoundStrings) {
+            $valueLineIndex = -1
+            $request = $null
+            $address = $null
+            $hashPattern = '^STRING_VALUE;request=0x([0-9A-Fa-f]+);address=(0x[0-9A-Fa-f]+);hash=0x' +
+                [regex]::Escape($string.Hash) + '$'
+            for ($lineIndex = $firstScenarioLine;
+                    $lineIndex -lt $secondScenarioLine; $lineIndex++) {
+                if ($serialLines[$lineIndex] -match $hashPattern) {
+                    $valueLineIndex = $lineIndex
+                    $request = $Matches[1]
+                    $address = $Matches[2]
+                    break
+                }
+            }
+            if ($valueLineIndex -lt 0) {
+                throw "R13 first lifetime did not emit NotFound string hash $($string.Hash)."
+            }
+            $creationLine = $null
+            $allocationSequence = $null
+            $createPattern = '^STRING_CREATE;request=0x' +
+                [regex]::Escape($request) + ';address=' +
+                [regex]::Escape($address) +
+                ';.*length=0x([0-9A-Fa-f]+);site=0x([0-9A-Fa-f]+);allocSeq=(0x[0-9A-Fa-f]+);'
+            for ($lineIndex = $valueLineIndex - 1;
+                    $lineIndex -ge $firstScenarioLine; $lineIndex--) {
+                if ($serialLines[$lineIndex] -match $createPattern) {
+                    $creationLine = $serialLines[$lineIndex]
+                    $length = [Convert]::ToInt32($Matches[1], 16)
+                    $site = [Convert]::ToInt32($Matches[2], 16)
+                    $allocationSequence = $Matches[3]
+                    break
+                }
+            }
+            if ($null -eq $creationLine -or
+                    $length -ne $string.Length -or
+                    $site -ne $string.Site) {
+                throw "R13 NotFound string $($string.Hash) has a changed creation length or site."
+            }
+            $recordPattern = '(?m)^STRING_(DISPOSE|FREE_GUARD|FREE);request=0x' +
+                [regex]::Escape($request) + ';address=' +
+                [regex]::Escape($address) + ';allocSeq=' +
+                [regex]::Escape($allocationSequence) + ';[^\r\n]*\r?$'
+            $recordMatches = [regex]::Matches($finalContent, $recordPattern)
+            $disposeCount = 0
+            $acceptedFreeCount = 0
+            $successfulFreeCount = 0
+            foreach ($record in $recordMatches) {
+                $recordLine = $record.Value.TrimEnd("`r")
+                if ($recordLine -match '^STRING_DISPOSE;.*;count=0x0*1$') {
+                    $disposeCount++
+                } elseif ($recordLine -match
+                        '^STRING_FREE_GUARD;.*;accepted=0x0*1;exactRun=0x0*1;reason=0x0+$') {
+                    $acceptedFreeCount++
+                } elseif ($recordLine -match
+                        '^STRING_FREE;.*;result=0x(?!0+$)[0-9A-Fa-f]+$') {
+                    $successfulFreeCount++
+                }
+            }
+            if ($disposeCount -ne 1 -or $acceptedFreeCount -ne 1 -or
+                    $successfulFreeCount -ne 1) {
+                throw "R13 NotFound string $($string.Hash) failed exact Dispose/free counts: Dispose=$disposeCount accepted=$acceptedFreeCount successful=$successfulFreeCount."
+            }
+            $verifiedStringRequests[$request] = $true
+        }
+        foreach ($request in $verifiedStringRequests.Keys) {
+            $snapshotPattern = '(?m)^STRING_LIVE_COUNT;request=0x' +
+                [regex]::Escape($request) + ';stage=0x0*3;count=0x([0-9A-Fa-f]+);dropped=0x([0-9A-Fa-f]+)\r?$'
+            $snapshots = [regex]::Matches($finalContent, $snapshotPattern)
+            if ($snapshots.Count -ne 1 -or
+                    [Convert]::ToUInt64($snapshots[0].Groups[1].Value, 16) -ne 0 -or
+                    [Convert]::ToUInt64($snapshots[0].Groups[2].Value, 16) -ne 0) {
+                throw "R13 NotFound string request $request did not finish with a clean zero-survivor ledger."
+            }
+        }
+        Write-Host 'R13 NotFound string check: 6/6 exact Dispose and accepted free; zero survivors'
+    } elseif ($Phase35R9Ledger) {
         $lifetimeMatch = [regex]::Match($finalContent,
             '(?m)^R9_LIFETIME_ID=0x([0-9A-Fa-f]+)\r?$')
         $deltaMatch = [regex]::Match($finalContent,
@@ -502,7 +804,8 @@ try {
                 throw "Phase 35 allocator invariant failed: $marker"
             }
         }
-    } elseif (-not $Phase35P2 -and -not $Phase35R9Ledger) {
+    } elseif (-not $Phase35P2 -and -not $Phase35R9Ledger -and
+            -not $Phase35R13AllocLedger) {
         $allocatorRows = [regex]::Matches($finalContent, '(?m)^35Q_ALLOCATOR_COUNTS=[^\r\n]*')
         if ($allocatorRows.Count -lt 6) { throw "Expected six allocator invariant snapshots; saw $($allocatorRows.Count)." }
         foreach ($row in $allocatorRows) {

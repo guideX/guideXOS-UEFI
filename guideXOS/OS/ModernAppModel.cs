@@ -314,9 +314,22 @@ namespace guideXOS.OS {
         public static LaunchRequest ForAppId(string appId, string[] arguments,
                                             string document,
                                             LaunchActivationIntent intent) {
-            return new LaunchRequest(appId, null, arguments, document, "open", null,
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            uint previousCreationSite = Allocator.CurrentDiagnosticManagedCreationSite;
+            Allocator.CurrentDiagnosticManagedCreationSite = Allocator.R13SiteLaunchRequest;
+#endif
+            LaunchRequest request = new LaunchRequest(appId, null, arguments,
+                document, "open", null,
                 LaunchRequestTargetKind.Application,
                 ApplicationShellTargetKind.Virtual, null, intent);
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.RecordDiagnosticManagedCreationSite((IntPtr)request,
+                Allocator.R13SiteLaunchRequest);
+#endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.CurrentDiagnosticManagedCreationSite = previousCreationSite;
+#endif
+            return request;
         }
 
         public static LaunchRequest ForFile(string appId, string document,
@@ -397,14 +410,32 @@ namespace guideXOS.OS {
         }
 
         private static string[] CloneStrings(string[] values) {
-            if (values == null || values.Length == 0) return new string[0];
-            string[] copy = new string[values.Length];
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            uint previousCreationSite = Allocator.CurrentDiagnosticManagedCreationSite;
+            Allocator.CurrentDiagnosticManagedCreationSite =
+                Allocator.R13SiteLaunchArguments;
+#endif
+            string[] copy = values == null || values.Length == 0
+                ? new string[0] : new string[values.Length];
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.RecordDiagnosticManagedCreationSite((IntPtr)copy,
+                Allocator.R13SiteLaunchArguments);
+#endif
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.CurrentDiagnosticManagedCreationSite = previousCreationSite;
+#endif
+            if (values == null || values.Length == 0) return copy;
             for (int i = 0; i < values.Length; i++) copy[i] = values[i];
             return copy;
         }
 
         private static string[] CopyStrings(string[] values) {
             return CloneStrings(values);
+        }
+
+        public override void Dispose() {
+            _arguments.Dispose();
+            base.Dispose();
         }
 
         /// <summary>

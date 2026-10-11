@@ -97,6 +97,10 @@ namespace guideXOS.OS {
             _toState = toState;
             _closeReason = closeReason;
             _diagnostic = diagnostic;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+            Allocator.RecordDiagnosticManagedCreationSite((IntPtr)this,
+                Allocator.R13SiteLifecycleResult);
+#endif
         }
 
         public ApplicationLifecycleResultCode Code { get { return _code; } }
@@ -115,9 +119,10 @@ namespace guideXOS.OS {
                 ApplicationInstanceLifecycleState fromState,
                 ApplicationInstanceLifecycleState toState,
                 ApplicationCloseReason closeReason) {
-            return new ApplicationLifecycleResult(
+            ApplicationLifecycleResult result = new ApplicationLifecycleResult(
                 ApplicationLifecycleResultCode.Success, handle, fromState,
                 toState, closeReason, null);
+            return result;
         }
 
         public static ApplicationLifecycleResult Failed(
@@ -126,8 +131,10 @@ namespace guideXOS.OS {
                 ApplicationInstanceLifecycleState state,
                 ApplicationCloseReason closeReason,
                 string diagnostic) {
-            return new ApplicationLifecycleResult(code, handle, state, state,
-                closeReason, BoundDiagnostic(diagnostic));
+            ApplicationLifecycleResult result = new ApplicationLifecycleResult(
+                code, handle, state, state, closeReason,
+                BoundDiagnostic(diagnostic));
+            return result;
         }
 
         public static string CodeNameOf(ApplicationLifecycleResultCode code) {
