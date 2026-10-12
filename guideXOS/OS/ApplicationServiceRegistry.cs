@@ -1375,6 +1375,11 @@ namespace guideXOS.OS {
                         ApplicationStorageNamespace.Persistent,
                         PersistentFatBackend.FixturePath));
                 if (!fixtureExists.Succeeded || !fixtureExists.Value) return false;
+                ApplicationServiceResult<ApplicationStorageEntry[]> initialEntries =
+                    access.Storage.Enumerate(ownerContext,
+                        ApplicationStorageNamespace.Persistent);
+                if (!initialEntries.Succeeded || initialEntries.Value == null ||
+                        !IsSortedPersistentEntries(initialEntries.Value)) return false;
 
                 if (!PersistentFailurePropagationSelfTest(ownerContext))
                     return false;
@@ -1485,7 +1490,7 @@ namespace guideXOS.OS {
                             PersistentFatBackend.FixturePath) ||
                         !ContainsPersistentEntry(ownEntries.Value, "lifecycle.bin") ||
                         !ContainsPersistentEntry(ownEntries.Value, "private.bin") ||
-                        !ContainsPersistentEntry(ownEntries.Value, "empty.bin") ||
+                        !ContainsPersistentEntry(ownEntries.Value, "p2-empty.bin") ||
                         !ContainsPersistentEntry(ownEntries.Value, "one.bin") ||
                         !ContainsPersistentEntry(ownEntries.Value, "replace.bin") ||
                         !ContainsPersistentEntry(ownEntries.Value, "boundary.bin") ||
@@ -1568,7 +1573,7 @@ namespace guideXOS.OS {
                     stressContext = null;
                 }
                 string[] cleanupPaths = new string[] {
-                    "lifecycle.bin", "private.bin", "empty.bin", "one.bin",
+                    "lifecycle.bin", "private.bin", "p2-empty.bin", "one.bin",
                     "replace.bin", "boundary.bin"
                 };
                 for (int i = 0; i < cleanupPaths.Length; i++) {
@@ -1581,9 +1586,8 @@ namespace guideXOS.OS {
                     access.Storage.Enumerate(replacementContext,
                         ApplicationStorageNamespace.Persistent);
                 if (!afterCleanup.Succeeded || afterCleanup.Value == null ||
-                        afterCleanup.Value.Length != 1 ||
-                        !ContainsPersistentEntry(afterCleanup.Value,
-                            PersistentFatBackend.FixturePath)) return false;
+                        !SamePersistentEntries(initialEntries.Value,
+                            afterCleanup.Value)) return false;
                 _lastPersistentLifecycleSelfTestPassed = true;
                 return true;
             } finally {
@@ -1619,15 +1623,15 @@ namespace guideXOS.OS {
 
             if (!storageService.Write(context,
                     ApplicationStorageWriteRequest.Create(
-                        ApplicationStorageNamespace.Persistent, "empty.bin",
+                        ApplicationStorageNamespace.Persistent, "p2-empty.bin",
                         new byte[0])).Succeeded) return false;
             ApplicationServiceResult<bool> emptyExists = storageService.Exists(
                 context, ApplicationStorageRequest.Create(
-                    ApplicationStorageNamespace.Persistent, "empty.bin"));
+                    ApplicationStorageNamespace.Persistent, "p2-empty.bin"));
             ApplicationServiceResult<ApplicationStorageReadResult> emptyRead =
                 storageService.Read(context,
                     ApplicationStorageReadRequest.Create(
-                        ApplicationStorageNamespace.Persistent, "empty.bin", 0, 1));
+                        ApplicationStorageNamespace.Persistent, "p2-empty.bin", 0, 1));
             if (!emptyExists.Succeeded || !emptyExists.Value || !emptyRead.Succeeded ||
                     emptyRead.Value == null || emptyRead.Value.BytesRead != 0 ||
                     emptyRead.Value.Bytes.Length != 0 || !emptyRead.Value.EndOfResource)
@@ -1948,6 +1952,19 @@ namespace guideXOS.OS {
             for (int i = 1; i < entries.Length; i++)
                 if (ComparePersistentPaths(entries[i - 1].RelativePath,
                         entries[i].RelativePath) > 0) return false;
+            return true;
+        }
+
+        private static bool SamePersistentEntries(
+                ApplicationStorageEntry[] expected,
+                ApplicationStorageEntry[] actual) {
+            if (expected == null || actual == null ||
+                    expected.Length != actual.Length) return false;
+            for (int i = 0; i < expected.Length; i++) {
+                if (expected[i] == null || actual[i] == null ||
+                        expected[i].RelativePath != actual[i].RelativePath ||
+                        expected[i].Length != actual[i].Length) return false;
+            }
             return true;
         }
 

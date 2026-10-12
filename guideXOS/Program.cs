@@ -745,6 +745,8 @@ unsafe class Program {
         if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
             BootConsole.DrawDebugLines = false;
             BootConsole.WriteLine("[BOOT_MODE] UEFI");
+            NotificationManager.ResetForKernelBoot();
+            Animator.Initialize();
             BootConsole.WriteLine("[INPUT] Native post-EBS path selected");
             ApplicationModelBootState.ResetForKernelBoot();
 
@@ -1422,9 +1424,10 @@ unsafe class Program {
     /// Setup the global Escape key handler shared by legacy and UEFI paths.
     /// </summary>
     private static void SetupEscapeKeyHandler() {
+        var escapeKey = System.ConsoleKey.Escape;
         Keyboard.OnKeyChanged += (sender, key) => {
             try {
-                if (key.Key == System.ConsoleKey.Escape && key.KeyState == System.ConsoleKeyState.Pressed) {
+                if (key.Key == escapeKey && key.KeyState == System.ConsoleKeyState.Pressed) {
                     if (Desktop.Taskbar != null && Desktop.Taskbar.IsWorkspaceSwitcherVisible) {
                         Desktop.Taskbar.CloseWorkspaceSwitcher();
                         return;

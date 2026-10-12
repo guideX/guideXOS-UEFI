@@ -67,6 +67,16 @@ namespace guideXOS.GUI {
             //Add(new Nofity("VMware Tools is working", NotificationLevel.None));
         }
 
+        internal static void ResetForKernelBoot() {
+            if (Notifications != null) {
+                for (int i = Notifications.Count - 1; i >= 0; i--) {
+                    Notify notification = Notifications[i];
+                    if (notification != null) notification.Dispose();
+                }
+            }
+            Notifications = new List<Notify>();
+        }
+
         public static void Add(Notify nofity) {
             if (Notifications != null) {
                 Notifications.Add(nofity);
