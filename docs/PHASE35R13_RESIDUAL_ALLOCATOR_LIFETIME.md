@@ -187,3 +187,73 @@ Phase 35 remains incomplete. Phase 36 remains gated. The next narrow action is t
 After sandbox validation, the reviewed source/script/document changes were copied into the live `main` checkout. The copied source set is `Corlib/System/Object.cs`; `Kernel/Misc/Allocator.cs`, `Process.cs`, `Ring3Abi.cs`, `Ring3Proof.cs`, `Ring3ProofPhase33.cs`, and `Ring3ProofPhase35.cs`; `Scripts/run_phase35q_storage_validation.ps1`; `UserManagedPersistentStorageProof/Program.cs`; `build.ps1`; `guideXOS/OS/ApplicationFactories.cs`, `ApplicationInstance.cs`, `ApplicationLifecycle.cs`, `ApplicationServiceRegistry.cs`, `ApplicationServices.cs`, `ApplicationStorageServices.cs`, `ModernAppModel.cs`, and `PersistentFatBackend.cs`; and `guideXOS/guideXOS.csproj`. This report is `Docs/PHASE35R13_RESIDUAL_ALLOCATOR_LIFETIME.md`.
 
 No `ramdisk.img`, generated executable, generated descriptor, test image, EFI, kernel, cache, or other sandbox build output was copied to live. After transfer, the live checkout remained on `main` at `881c5b01c2d9d47801ca0f0baead0ee2f5fde981`, with 18 tracked source/script files modified and this new report untracked. `git diff --check` reported no whitespace errors. The nested runtime remained at `9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3` with its original 58 status entries. The source transfer was hash-checked against the sandbox; no generated output was copied.
+
+## Current R13 revalidation and reboot follow-up (2026-10-11)
+
+This section is the latest contained revalidation and supersedes the earlier provisional statements in this report that fresh P2 reboot verification had not completed. The allocator root cause, exact pre-fix retained-run inventory, owner-scoped repair, and R12 six-string closure above remain unchanged.
+
+### Contained build and artifact identity
+
+The current live source snapshot was refreshed into `C:\dev\guideXOSUEFI_Phase35R13_SANDBOX`; no Git worktree was created. The fresh `Ring3Phase35R13` build completed before the P2 follow-up and recorded a coherent 41-artifact managed cohort:
+
+| Check | Result |
+|---|---:|
+| Managed artifacts | 41 |
+| Descriptor agreement | 41/41 |
+| Build staging agreement | 41/41 |
+| Ramdisk staging agreement | 41/41 |
+| Compiled allowlist agreement | 41/41 |
+
+Fresh full-build artifact hashes were kernel `CE939A2068DA85083BFEDBBDA9D551E1891C75F8B06D4A4136BBEB92F0B43161`, ramdisk `55B2BB16A58D63CD713E67E3D9566DC6F3A915F1BFD2EF0B15256E942FD9289A`, and EFI `7DEAA1E678B2BFFB0246D2A33308113DC324FEEBD695B274BA0C38690EB20B02`. The P2 kernel-only variant was `4279F2894B47F0C1F0CDE6AC25F23BC566FB049607D42AB551AD59C95331715A`. It reused the verified ramdisk. After restoring the saved R13 kernel for the combined reboot attempt, kernel/ESP kernel agreed at the R13 hash above and ramdisk/ESP ramdisk agreed at the 41-artifact hash. The EFI source and staged copy agreed at `744D92EEA99101B8975E1D52948FE67919DCB28F9715C874D4349F8CF0749B78` for that follow-up. Artifact reproducibility remains unverified; the differing EFI hash is retained as a qualification item, not treated as a managed-cohort mismatch.
+
+### Fresh retained-page accounting
+
+The fresh R13 audit emitted `PHASE35_R13_ALLOC_LEDGER_READY=1`. Its first full stress-equivalent requester measured:
+
+| Checkpoint | Bytes | Pages |
+|---|---:|---:|
+| B0 before requester | 59,289,600 | 14,475 |
+| B1 after request operations | 71,061,504 | 17,349 |
+| B2Process after process cleanup | 59,314,176 | 14,481 |
+| B2 after final request/context cleanup | 59,289,600 | 14,475 |
+| **B2 − B0** | **0** | **0** |
+
+The six transitional pages visible at B2Process were gone at B2. The post-cleanup retained-run table is empty; its exact accounting is zero retained pages, zero classified pages, zero unexplained pages, and zero over-accounted pages. There is no post-fix run row to report for B2−B0.
+
+| Scenario | B0 pages | B1 pages | B2Process pages | B2 pages | B2 − B0 |
+|---|---:|---:|---:|---:|---:|
+| Full stress-equivalent requester 1 | 14,475 | 17,349 | 14,481 | 14,475 | 0 |
+| Identical full requester 2 | 14,475 | 17,349 | 14,481 | 14,475 | 0 |
+| No Persistent read | 14,475 | 17,290 | 14,481 | 14,475 | 0 |
+| Minimal successful `state.bin` read | 14,475 | 17,333 | 14,481 | 14,475 | 0 |
+| NotFound-only | 14,475 | 17,290 | 14,481 | 14,475 | 0 |
+| Five-lifetime batch | 14,475 baseline | — | — | 14,475 after each cleanup | 0/lifetime |
+| 25-lifetime batch | 14,475 baseline | — | — | 14,475 after each cleanup | 0/lifetime |
+
+The R13 audit sequence covered 35 requester lifetimes. Every scenario had `measuredPages=0`, `accountedPages=0`, `unexplainedPages=0`, `overAccountedPages=0`, and `retainedRuns=0`. The full workload made six backend Persistent reads: five succeeded and one returned NotFound. The separate stale-context rejection did not call the backend, but incremented the failed-request counter, so that counter reported two failures (NotFound plus stale context). These counters are not a partition of backend reads. The operation IDs and operation meanings remain as listed in the diagnostic plan above.
+
+### Fresh helper and string census
+
+The full requester’s helper census was balanced: `RhpNewArray` 4,921 allocations / 4,921 frees / zero survivors / zero pages; `RhpNewFast` 99 / 99 / zero / zero. The creation-site census was also balanced: site 0 247/247, site 1 25/25, site 2 382/382, and `NativeRuntimeMalloc` site 6 4,366/4,366; each had zero survivors and zero pages. Sites 3–5 and 7–10 had no allocations. No surviving managed type or allocator run remained to classify after cleanup.
+
+The six R12 NotFound strings remained closed in the fresh single-boot audit: six exact Dispose events, six accepted frees, and zero survivors. This does not reopen or alter the R12 repair. The final audit markers were `PHASE35_R13_FIVE_LIFETIME_PASS=1`, five returns; `PHASE35_25_LIFETIME_STRESS=PASS`, 25 returns; `PHASE35_STRESS_ALLOCATOR_STABLE=1`; active storage requests `0`; Persistent handles `0`; invalid/corrupt/no-pages frees `0/0/0`; #PF/#GP/#UD/ABI panic `0/0/0/0`; and the 8-MiB contiguous allocation passed.
+
+### P2 reboot-delete result
+
+The fresh `Storage35P2` same-image harness completed successfully (exit 0) using one disposable image. The first boot reported `Seeded`, `seedWrites=1`, and fixture SHA-256 `BEFA57E7EF0799D031A0188A3D0883F0F342B8F8AE90B3330652DA04ADBA739D`; its `PHASE35P2_REBOOT_DELETE=FAIL` is the intentional pre-verification state. After resetting the same image, boot 2 reported `Verified`, `seedWrites=0`, the same exact fixture hash, `PHASE35P2_REBOOT_DELETE=PASS`, and `APP_MODEL_COMPLETE`. Each boot also passed lifecycle `15/15` and taskbar grouping `16/16`. The P2 harness explicitly requires this `FAIL` then `PASS` sequence.
+
+The production delete path remains `TryDelete` followed by `TrySync`; the verification boot’s managed `Exists` returned false and `Read` returned `NotFound`. The test image was restored to pristine SHA-256 `2EFE22E39E112105854DBC4784887CE06A64A040EC98D50FB52DD7A7FE94B451`. No FAT delete or flush change was needed. The previous apparent P2 blocker was a harness interpretation issue: the first-boot `FAIL` is expected, and the second-boot result passed.
+
+### R13 same-image managed reboot status
+
+A separate QMP run used the R13 kernel and the same backing image across a reset. Boot 1 seeded the fixture and completed the full 35-lifetime audit: 35 `R13_MAIN_RETURN=35` rows, `PHASE35_25_LIFETIME_STRESS=PASS`, `PHASE35_STRESS_ALLOCATOR_STABLE=1`, and `PHASE35_R13_AUDIT_COMPLETE=1`. After the QMP reset, boot 2 reached `[WIDGETS] initialized` and then raised breakpoint exception vector `0x03` at RIP `0x10007538`. It did not reach the second App Model fixture row or the second R13 audit. This leaves the Phase 35 post-reboot `MAIN_RETURN=35` gate unproven even though the dedicated P2 same-image fixture read and delete verification passed.
+
+An isolated `Ring3Phase35`-mode attempt also halted before its managed proof: fixture seeding returned FAT `WriteFailure` (`create-directory=6`) and emitted `APP_MODEL_FAIL=APPLICATION_SERVICES`. The R13 mode seeded the same pristine fixture successfully. This mode-specific seeding discrepancy remains unclassified and was not changed as part of the allocator repair.
+
+Evidence files in the contained sandbox include `out/phase35q/run-r13-audit.log`, `out/phase35q/serial-ee442b7bc84e4f838dec799872429089.log`, `out/phase35q/run-r13-p2-verified.log`, `out/phase35q/serial-1cd2117f4be24d4593e2e608d8eb31dd.log`, and `out/phase35q/r13-same-image-30a68a0d7e864fc0b5c352e87c3bb34d.serial.log`. The latter records the second-boot vector-3 fault. Test images were restored to their pristine hash before cleanup.
+
+### Current live preflight and decision
+
+The live checkout preflight was `D:\dev\guideXOSUEFI`, branch `main`, HEAD `2cea5188cb98370d13f86f23b5e76bacb09ec48f`, subject `...`, upstream `origin/main`, ahead/behind `0/0`. `git worktree list` showed only the live root; no Git worktree was created. The root had 14 status entries: tracked modifications to `Tools/Phase25/README.md`, `Tools/Phase25/build_phase25_bootstrap.ps1`, `Tools/Phase25/stage_phase25_bootstrap.ps1`, `Tools/Phase26/stage_phase26_bootstrap.ps1`, `Tools/Phase27/build_phase27_bootstrap.ps1`, `build.ps1`, `ramdisk.img`, `ramdisk_src/Native/guideXOS.Phase35NotFoundProof.exe`, `ramdisk_src/Native/guideXOS.Phase35NotFoundProof.gxmi`, `run_qemu.bat`, and `run_qemu.ps1`; untracked `ESP/startup.nsh`, `edk2-i386-vars.fd`, and `edk2-x86_64-code.fd`; no deletions. The six inherited R12 files are `Kernel/Misc/Ring3Abi.cs`, `Scripts/run_phase35q_storage_validation.ps1`, `UserManagedPersistentStorageProof/Program.cs`, `guideXOS/OS/ApplicationServices.cs`, `guideXOS/OS/ApplicationStorageServices.cs`, and `guideXOS/OS/PersistentFatBackend.cs`. They were clean relative to Git and SHA-256-identical between the live and sandbox snapshots. The nested runtime remained at HEAD `9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3` with 58 status entries. No branch change, commit, or generated-output transfer was made; only this report was updated in the live checkout.
+
+The R13 allocator blocker is closed and the P2 reboot-delete contract is proven. The remaining same-image Phase 35 managed proof hit the widget-startup breakpoint before the post-reboot return. DSDT default/1280-MiB runs, artifact reproducibility and mutation rejection, Phase 26–34 controls, Compatibility and Phase 8–11 matrix, and ordinary full build remain outstanding. **Outcome B. Phase 35 remains incomplete; Phase 36 remains gated.** The next narrow action is to diagnose the second-boot widget-startup breakpoint at RIP `0x10007538`, then repeat the R13 same-image proof and resume the R7 matrix.

@@ -32,8 +32,8 @@ Build and host-validate:
 ```powershell
 .\Tools\Phase25\build_phase25_bootstrap.ps1
 python .\Tools\Phase25\verify_phase25.py `
-  .\out\dotnet\phase25-bootstrap\guideXOS.Phase25Bootstrap.bin `
-  .\out\dotnet\phase25-bootstrap\guideXOS.Phase25Bootstrap.gxbi
+  .\out\phase25-bootstrap\guideXOS.Phase25Bootstrap.bin `
+  .\out\phase25-bootstrap\guideXOS.Phase25Bootstrap.gxbi
 ```
 
 The kernel selector is `Ring3Phase25`.  A host build and GXBI validation do not

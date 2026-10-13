@@ -10,7 +10,7 @@ REM Change to the directory where this script lives.
 cd /d "%~dp0"
 
 echo Refreshing build and ESP before boot...
-powershell.exe -ExecutionPolicy Bypass -File "build.ps1"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "build.ps1"
 if errorlevel 1 (
     echo ERROR: build.ps1 failed; refusing to boot stale ESP content.
     pause

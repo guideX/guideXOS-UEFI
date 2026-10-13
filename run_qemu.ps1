@@ -10,8 +10,20 @@ Write-Host ""
 Set-Location $PSScriptRoot
 
 Write-Host "Refreshing build and ESP before boot..." -ForegroundColor Cyan
-& powershell.exe -ExecutionPolicy Bypass -File "$PSScriptRoot\build.ps1"
-if ($LASTEXITCODE -ne 0) {
+$powerShellExe = if ($PSVersionTable.PSEdition -eq 'Core') {
+    Join-Path $PSHOME 'pwsh.exe'
+} else {
+    Join-Path $PSHOME 'powershell.exe'
+}
+if (-not (Test-Path -LiteralPath $powerShellExe -PathType Leaf)) {
+    $powerShellExe = Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe'
+}
+if (-not (Test-Path -LiteralPath $powerShellExe -PathType Leaf)) {
+    throw "Could not find a PowerShell executable to run build.ps1 (checked $PSHOME and Windows PowerShell)."
+}
+& $powerShellExe -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\build.ps1"
+$buildExitCode = $LASTEXITCODE
+if ($buildExitCode -ne 0) {
     Write-Host "  ? build.ps1 failed; refusing to boot stale ESP content." -ForegroundColor Red
     exit 1
 }
@@ -94,29 +106,50 @@ if (-not $filesOK) {
 Copy-Item -LiteralPath $qemuFirmwareCodeSource -Destination $qemuFirmwareCode -Force
 Copy-Item -LiteralPath $qemuFirmwareVarsSource -Destination $qemuFirmwareVars -Force
 
+# Construct these as expandable strings before invoking the native QEMU
+# executable. Unquoted `file=$qemuFirmwareCode` arguments are passed literally
+# by Windows PowerShell's native-command argument handling.
+$qemuCodeDrive = "if=pflash,format=raw,readonly=on,file=$qemuFirmwareCode"
+$qemuVarsDrive = "if=pflash,format=raw,file=$qemuFirmwareVars"
+$qemuEspDrive = 'if=none,id=esp,format=raw,file=fat:rw:ESP'
+$qemuEspDevice = 'ide-hd,drive=esp'
+$qemuExecutable = 'C:\Program Files\qemu\qemu-system-x86_64.exe'
+
+if (-not (Test-Path -LiteralPath $qemuExecutable -PathType Leaf)) {
+    Write-Host "? QEMU executable not found: $qemuExecutable" -ForegroundColor Red
+    exit 1
+}
+
 Write-Host "Starting QEMU..." -ForegroundColor Green
 Write-Host "Press Ctrl+C in this window to exit QEMU" -ForegroundColor Yellow
 Write-Host ""
 
 # Launch QEMU with pflash (validated method)
 try {
-    & "C:\Program Files\qemu\qemu-system-x86_64.exe" `
-        -machine pc-q35-8.2 `
-        -drive if=pflash,format=raw,readonly=on,file=$qemuFirmwareCode `
-        -drive if=pflash,format=raw,file=$qemuFirmwareVars `
-        -drive if=none,id=esp,format=raw,file=fat:rw:ESP `
-        -device ide-hd,drive=esp `
-        -m 1024M `
-        -serial stdio `
-        -name "guideXOS" `
-        -no-reboot `
-        -boot menu=off,splash-time=0
+    $qemuArguments = @(
+        '-machine', 'pc-q35-8.2',
+        '-drive', $qemuCodeDrive,
+        '-drive', $qemuVarsDrive,
+        '-drive', $qemuEspDrive,
+        '-device', $qemuEspDevice,
+        '-m', '1024M',
+        '-serial', 'stdio',
+        '-name', 'guideXOS',
+        '-no-reboot',
+        '-boot', 'menu=off,splash-time=0'
+    )
+    & $qemuExecutable @qemuArguments
+    $qemuExitCode = $LASTEXITCODE
+    if ($qemuExitCode -ne 0) {
+        throw "QEMU exited with code $qemuExitCode"
+    }
 } catch {
     Write-Host ""
     Write-Host "? QEMU failed to start!" -ForegroundColor Red
     Write-Host "Error: $_" -ForegroundColor Red
     Write-Host ""
     Write-Host "Make sure QEMU is installed at: C:\Program Files\qemu\" -ForegroundColor Yellow
+    exit 1
 }
 
 Write-Host ""

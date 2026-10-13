@@ -195,8 +195,34 @@ if (-not $SkipBootloader) {
 
 # Check for .NET SDK
 if (-not $SkipKernel) {
+    # Existing PowerShell sessions can have a PATH that predates the SDK
+    # installation. Recover the standard machine or per-user install location
+    # and add it to this build process so child build scripts can also use dotnet.
     if (-not (Test-Command dotnet)) {
-        Write-Error ".NET SDK not found! Install .NET 7 SDK"
+        $dotnetCandidates = @(
+            (Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'),
+            (Join-Path $env:USERPROFILE '.dotnet\dotnet.exe'),
+            (Join-Path $env:LOCALAPPDATA 'Microsoft\dotnet\dotnet.exe')
+        )
+        $installedDotnet = $null
+        foreach ($candidate in $dotnetCandidates) {
+            if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+                $installedDotnet = $candidate
+                break
+            }
+        }
+        if ($installedDotnet) {
+            $dotnetDirectory = Split-Path -Parent $installedDotnet
+            if ($env:PATH) {
+                $env:PATH = "$dotnetDirectory;$env:PATH"
+            } else {
+                $env:PATH = $dotnetDirectory
+            }
+        }
+    }
+
+    if (-not (Test-Command dotnet)) {
+        Write-Error ".NET SDK not found! Install a .NET SDK (this project targets .NET 7) or add its install directory to PATH."
         exit 1
     }
     $dotnetVersion = dotnet --version
