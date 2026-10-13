@@ -76,6 +76,12 @@ namespace guideXOS.Kernel.Drivers.Input {
         // GUI code must not rely only on the final Control.MouseButtons state.
         private static MouseButtons _pressedButtonsThisFrame;
         private static MouseButtons _releasedButtonsThisFrame;
+        private static int _leftPressedXThisFrame;
+        private static int _leftPressedYThisFrame;
+        private static int _leftReleasedXThisFrame;
+        private static int _leftReleasedYThisFrame;
+        private static int _rightPressedXThisFrame;
+        private static int _rightPressedYThisFrame;
         
         #endregion
         
@@ -161,9 +167,26 @@ namespace guideXOS.Kernel.Drivers.Input {
             MouseButtons trackedButtons = MouseButtons.Left |
                                            MouseButtons.Right |
                                            MouseButtons.Middle;
-            _pressedButtonsThisFrame |= (evt.Buttons & trackedButtons) & ~oldButtons;
-            _releasedButtonsThisFrame |= (oldButtons & trackedButtons) & ~evt.Buttons;
+            MouseButtons pressed = (evt.Buttons & trackedButtons) & ~oldButtons;
+            MouseButtons released = (oldButtons & trackedButtons) & ~evt.Buttons;
             UpdateGlobalState(evt);
+            if ((pressed & MouseButtons.Left) != MouseButtons.None &&
+                (_pressedButtonsThisFrame & MouseButtons.Left) == MouseButtons.None) {
+                _leftPressedXThisFrame = Control.MousePosition.X;
+                _leftPressedYThisFrame = Control.MousePosition.Y;
+            }
+            if ((pressed & MouseButtons.Right) != MouseButtons.None &&
+                (_pressedButtonsThisFrame & MouseButtons.Right) == MouseButtons.None) {
+                _rightPressedXThisFrame = Control.MousePosition.X;
+                _rightPressedYThisFrame = Control.MousePosition.Y;
+            }
+            if ((released & MouseButtons.Left) != MouseButtons.None &&
+                (_releasedButtonsThisFrame & MouseButtons.Left) == MouseButtons.None) {
+                _leftReleasedXThisFrame = Control.MousePosition.X;
+                _leftReleasedYThisFrame = Control.MousePosition.Y;
+            }
+            _pressedButtonsThisFrame |= pressed;
+            _releasedButtonsThisFrame |= released;
             
             // Store as last event
             _lastEvent = evt;
@@ -228,8 +251,8 @@ namespace guideXOS.Kernel.Drivers.Input {
             }
             
             // Clamp to screen bounds
-            newX = Math.Clamp(newX, 0, Framebuffer.Width);
-            newY = Math.Clamp(newY, 0, Framebuffer.Height);
+            newX = Math.Clamp(newX, 0, Math.Max(0, Framebuffer.Width - 1));
+            newY = Math.Clamp(newY, 0, Math.Max(0, Framebuffer.Height - 1));
             
             // Update global state
             Control.MousePosition.X = newX;
@@ -249,6 +272,10 @@ namespace guideXOS.Kernel.Drivers.Input {
         public static void BeginFrame() {
             _pressedButtonsThisFrame = MouseButtons.None;
             _releasedButtonsThisFrame = MouseButtons.None;
+            _leftPressedXThisFrame = _leftReleasedXThisFrame = Control.MousePosition.X;
+            _leftPressedYThisFrame = _leftReleasedYThisFrame = Control.MousePosition.Y;
+            _rightPressedXThisFrame = Control.MousePosition.X;
+            _rightPressedYThisFrame = Control.MousePosition.Y;
         }
 
         public static MouseButtons PressedButtonsThisFrame => _pressedButtonsThisFrame;
@@ -261,6 +288,13 @@ namespace guideXOS.Kernel.Drivers.Input {
         public static bool WasReleasedThisFrame(MouseButtons button) {
             return (_releasedButtonsThisFrame & button) != MouseButtons.None;
         }
+
+        public static int LeftPressedXThisFrame => _leftPressedXThisFrame;
+        public static int LeftPressedYThisFrame => _leftPressedYThisFrame;
+        public static int LeftReleasedXThisFrame => _leftReleasedXThisFrame;
+        public static int LeftReleasedYThisFrame => _leftReleasedYThisFrame;
+        public static int RightPressedXThisFrame => _rightPressedXThisFrame;
+        public static int RightPressedYThisFrame => _rightPressedYThisFrame;
 
         #region Diagnostics
         

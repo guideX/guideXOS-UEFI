@@ -80,6 +80,11 @@ unsafe class Program {
     /// Cursor Busy
     /// </summary>
     private static Image CursorBusy;
+    private static int _uefiCursorHotspotX;
+    private static int _uefiCursorHotspotY;
+    private static int _uefiCursorMovingHotspotX;
+    private static int _uefiCursorMovingHotspotY;
+    private static bool _uefiCursorAssetsLoaded;
     /// <summary>
     /// Cached Document Icon
     /// </summary>
@@ -613,6 +618,25 @@ unsafe class Program {
 #endif
     }
 
+    internal static void MarkUefiDesktopP3Event(string eventName, int iconId,
+            int x, int y) {
+#if UEFI_DIAGNOSTIC_DESKTOP_P3
+        if (!IsUefiMode || eventName == null) return;
+        SerialBreadcrumb("DESKTOP_P3_EVENT=" + eventName + ",icon=" +
+            iconId.ToString() + ",x=" + x.ToString() + ",y=" + y.ToString());
+#endif
+    }
+
+    private static void MarkUefiCursorAsset(string assetName, Image image,
+            int hotspotX, int hotspotY) {
+#if UEFI_DIAGNOSTIC_DESKTOP_P3
+        if (!IsUefiMode || assetName == null || image == null) return;
+        SerialBreadcrumb("DESKTOP_P3_CURSOR=" + assetName + ",size=" +
+            image.Width.ToString() + "x" + image.Height.ToString() +
+            ",hotspot=" + hotspotX.ToString() + "," + hotspotY.ToString());
+#endif
+    }
+
     private static void SetupUefiDiagnosticInputTarget() {
         if (!IsUefiMode || !UEFI_ENABLE_INPUT_DIAGNOSTIC_TARGET) return;
 #if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
@@ -720,8 +744,8 @@ unsafe class Program {
     }
 
     /// <summary>
-    /// Create a small procedural cursor for UEFI, where image-dependent paths
-    /// remain disabled until they have a separate runtime validation.
+    /// Create a small procedural UEFI fallback. The ramdisk cursor artwork is
+    /// loaded when the managed PNG decoder becomes available during setup.
     /// </summary>
     private static Image CreateFallbackCursor() {
         Image img = new Image(16, 16);
@@ -738,6 +762,74 @@ unsafe class Program {
             }
         }
         return img;
+    }
+
+    private static Image LoadUefiCursorImage(string path) {
+        byte[] data = null;
+        Image image = null;
+        try {
+            data = File.ReadAllBytes(path);
+            image = Desktop.DecodeDesktopImage(data, true);
+            if (image == null || !HasVisiblePixels(image)) {
+                if (image != null) image.Dispose();
+                return null;
+            }
+            return image;
+        } catch {
+            if (image != null) image.Dispose();
+            return null;
+        } finally {
+            if (data != null) data.Dispose();
+        }
+    }
+
+    private static void LoadUefiCursorAssets() {
+        if (_uefiCursorAssetsLoaded || !IsUefiMode || File.Instance == null)
+            return;
+        _uefiCursorAssetsLoaded = true;
+
+        Image oldCursor = Cursor;
+        Image oldMoving = CursorMoving;
+        Image oldBusy = CursorBusy;
+        Image arrow = LoadUefiCursorImage("Images/Cursor.png");
+        if (arrow != null) {
+            Cursor = arrow;
+            CursorBusy = arrow;
+            _uefiCursorHotspotX = 1;
+            _uefiCursorHotspotY = 1;
+            MarkUefiCursorAsset("Cursor.png", arrow,
+                _uefiCursorHotspotX, _uefiCursorHotspotY);
+        } else {
+            _uefiCursorHotspotX = 0;
+            _uefiCursorHotspotY = 0;
+            BootConsole.WriteLine("[CURSOR] using generated fallback");
+        }
+
+        Image moving = LoadUefiCursorImage("Images/Grab.png");
+        if (moving != null) {
+            CursorMoving = moving;
+            _uefiCursorMovingHotspotX = 11;
+            _uefiCursorMovingHotspotY = 0;
+            MarkUefiCursorAsset("Grab.png", moving,
+                _uefiCursorMovingHotspotX, _uefiCursorMovingHotspotY);
+        } else {
+            CursorMoving = Cursor;
+            _uefiCursorMovingHotspotX = _uefiCursorHotspotX;
+            _uefiCursorMovingHotspotY = _uefiCursorHotspotY;
+            MarkUefiCursorAsset("fallback", Cursor,
+                _uefiCursorHotspotX, _uefiCursorHotspotY);
+        }
+
+        DisposeUnreferencedCursor(oldCursor);
+        if (oldMoving != oldCursor) DisposeUnreferencedCursor(oldMoving);
+        if (oldBusy != oldCursor && oldBusy != oldMoving)
+            DisposeUnreferencedCursor(oldBusy);
+    }
+
+    private static void DisposeUnreferencedCursor(Image image) {
+        if (image == null || image == Cursor || image == CursorMoving ||
+            image == CursorBusy) return;
+        image.Dispose();
     }
 
     public static void KMain() {
@@ -765,6 +857,11 @@ unsafe class Program {
                 BootConsole.WriteLine("[FS] no ramdisk available");
             }
 
+            _uefiCursorAssetsLoaded = false;
+            _uefiCursorHotspotX = 0;
+            _uefiCursorHotspotY = 0;
+            _uefiCursorMovingHotspotX = 0;
+            _uefiCursorMovingHotspotY = 0;
             Cursor = CreateFallbackCursor();
             CursorMoving = Cursor;
             CursorBusy = Cursor;
@@ -1229,6 +1326,7 @@ unsafe class Program {
             } else {
                 BootConsole.WriteLine("[SMAIN] Initializing managed PNG image assets");
                 bool pngReady = PngLoader.Initialize();
+                if (pngReady) LoadUefiCursorAssets();
                 if (pngReady) BackgroundRotationManager.Initialize();
                 bool iconTablesLoaded = pngReady && RefreshCachedIcons();
                 if (iconTablesLoaded) {
@@ -1502,16 +1600,25 @@ unsafe class Program {
             if ((rightPressed || (rightDown && !RightClicked)) &&
                 !WindowManager.MouseHandled) {
                 RightClicked = true;
+                int x = rightPressed
+                    ? MouseEventDispatcher.RightPressedXThisFrame
+                    : Control.MousePosition.X;
+                int y = rightPressed
+                    ? MouseEventDispatcher.RightPressedYThisFrame
+                    : Control.MousePosition.Y;
                 if (RightMenu != null) {
                     CloseWidgetContextMenu();
                     if (Desktop.Taskbar != null) Desktop.Taskbar.CloseContextMenu();
-                    int x = Control.MousePosition.X;
-                    int y = Control.MousePosition.Y;
-                    RightMenu.ShowAt(x, y);
-                    MarkUefiContextMenuOpened(RightMenu.X, RightMenu.Y,
-                        RightMenu.Width, RightMenu.Height);
-                    MarkUefiWidgetDesktopMenuOpened(RightMenu.X, RightMenu.Y,
-                        RightMenu.Width, RightMenu.Height);
+                    bool desktopContextTarget = !IsUefiMode ||
+                        (!Desktop.IsPointOverVisibleWindow(x, y) &&
+                         y < Framebuffer.Height - 40);
+                    if (desktopContextTarget) {
+                        RightMenu.ShowAt(x, y);
+                        MarkUefiContextMenuOpened(RightMenu.X, RightMenu.Y,
+                            RightMenu.Width, RightMenu.Height);
+                        MarkUefiWidgetDesktopMenuOpened(RightMenu.X, RightMenu.Y,
+                            RightMenu.Width, RightMenu.Height);
+                    }
                 }
             }
             RightClicked = rightDown;
@@ -1590,8 +1697,12 @@ unsafe class Program {
                 MouseEventDispatcher.BeginFrame();
                 try { MouseEventDispatcher.Update(); } catch { }
                 WindowManager.MouseHandled = false;
-                if (Desktop.Taskbar != null) Desktop.Taskbar.HandleUefiInput();
-                try { WindowManager.InputAll(); } catch { }
+                if (Desktop.HasUefiPointerCapture) {
+                    WindowManager.MouseHandled = true;
+                } else {
+                    if (Desktop.Taskbar != null) Desktop.Taskbar.HandleUefiInput();
+                    try { WindowManager.InputAll(); } catch { }
+                }
                 try { WindowManager.FlushPendingCreates(); } catch { }
                 try { WAVPlayer.DoPlay(); } catch { }
 
@@ -1607,9 +1718,10 @@ unsafe class Program {
 
                 try { BackgroundRotationManager.Update(); } catch { }
                 try { BackgroundRotationManager.DrawBackground(); } catch { }
+                EnsureUefiDesktopIconCacheSize();
                 try {
                     Desktop.Update(_cachedDocumentIcon, _cachedFolderIcon,
-                        _cachedImageIcon, _cachedAudioIcon, 48);
+                        _cachedImageIcon, _cachedAudioIcon, Desktop.IconSize);
                 } catch { }
                 try { WindowManager.DrawAllExceptTaskManager(); } catch { }
                 try {
@@ -1621,14 +1733,7 @@ unsafe class Program {
                     if (Desktop.Taskbar != null) Desktop.Taskbar.Draw();
                 } catch { }
 
-                try {
-                    Image cursor = (Control.MouseButtons & MouseButtons.Left) == MouseButtons.Left
-                        ? CursorMoving : Cursor;
-                    if (cursor != null && cursor.RawData != null) {
-                        Framebuffer.Graphics.DrawImage(Control.MousePosition.X,
-                            Control.MousePosition.Y, cursor);
-                    }
-                } catch { }
+                DrawUefiCursor();
 
                 try { Framebuffer.Update(); } catch {
                     Thread.Sleep(1);
@@ -1667,10 +1772,13 @@ unsafe class Program {
         MouseEventDispatcher.BeginFrame();
         PS2Mouse.ProcessPendingInput(256);
         WindowManager.MouseHandled = false;
-        if (Desktop.Taskbar != null) Desktop.Taskbar.HandleUefiInput();
-        WindowManager.InputAll();
+        if (Desktop.HasUefiPointerCapture) {
+            WindowManager.MouseHandled = true;
+        } else {
+            if (Desktop.Taskbar != null) Desktop.Taskbar.HandleUefiInput();
+            WindowManager.InputAll();
+        }
         WindowManager.FlushPendingCreates();
-
         SetUefiFrameBreadcrumb(1, 0, 100);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         BackgroundRotationManager.Update();
@@ -1680,13 +1788,13 @@ unsafe class Program {
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         SetUefiFrameBreadcrumb(2, 0, 200);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
+        EnsureUefiDesktopIconCacheSize();
         Desktop.Update(_cachedDocumentIcon, _cachedFolderIcon,
-            _cachedImageIcon, _cachedAudioIcon, 48);
+            _cachedImageIcon, _cachedAudioIcon, Desktop.IconSize);
         // Let taskbar hit regions claim right-clicks before the desktop popup
         // is opened. Both routes still use the normal Window-based menus.
         HandleContextMenuOpening();
         EmitUefiRealIconMarker(graphics, frameCounter);
-
         SetUefiFrameBreadcrumb(2, 1, 201);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         SetUefiFrameBreadcrumb(3, 0, 300);
@@ -3008,15 +3116,43 @@ unsafe class Program {
 
     private static void DrawUefiCursor() {
         try {
-            Image cursor = (Control.MouseButtons & MouseButtons.Left) == MouseButtons.Left
-                ? CursorMoving : Cursor;
+            bool moving = (Control.MouseButtons & MouseButtons.Left) ==
+                          MouseButtons.Left;
+            Image cursor = moving ? CursorMoving : Cursor;
             if (cursor != null && cursor.RawData != null) {
-                Framebuffer.Graphics.DrawImage(Control.MousePosition.X,
-                    Control.MousePosition.Y, cursor);
+                int hotspotX = moving ? _uefiCursorMovingHotspotX :
+                                        _uefiCursorHotspotX;
+                int hotspotY = moving ? _uefiCursorMovingHotspotY :
+                                        _uefiCursorHotspotY;
+                int left, top;
+                UefiDesktopCursorPosition(Control.MousePosition.X,
+                    Control.MousePosition.Y, hotspotX, hotspotY,
+                    out left, out top);
+                Framebuffer.Graphics.DrawImage(left, top, cursor, true);
             }
         } catch {
-            // UEFI input remains disabled; a cursor draw failure must not stop the frame.
+            // A cursor draw failure must not stop the desktop frame.
         }
+    }
+
+    internal static void UefiDesktopCursorPosition(int pointerX, int pointerY,
+            int hotspotX, int hotspotY, out int left, out int top) {
+        UefiCursorGeometry.GetTopLeft(pointerX, pointerY,
+            hotspotX, hotspotY, out left, out top);
+    }
+
+    private static void EnsureUefiDesktopIconCacheSize() {
+        if (!IsUefiMode || _cachedIconSize == Desktop.IconSize) return;
+        int previousSize = _cachedIconSize;
+        _cachedIconSize = Desktop.IconSize;
+        if (RefreshCachedIcons()) {
+            try { _lastIconCacheRefresh = Timer.Ticks; } catch { }
+            return;
+        }
+        _cachedIconSize = previousSize;
+        Desktop.SetIconSize(previousSize);
+        BootConsole.WriteLine("[ICON_GRAPHICS] UEFI size change failed; retained " +
+            previousSize.ToString());
     }
     /// <summary>
     /// Refresh cached icons without exposing a partially updated set to Desktop.Update.

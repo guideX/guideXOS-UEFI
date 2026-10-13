@@ -202,6 +202,8 @@ param(
     [switch]$NativeInput,
     [Alias('InputStress')]
     [switch]$NativeInputStress,
+    [switch]$DesktopP3,
+    [switch]$DesktopP3Stress,
     [switch]$ContextMenu,
     [switch]$ContextMenuSoak,
     [switch]$TaskbarSoak,
@@ -251,6 +253,7 @@ $selectorCount = @(
     $(if ($Ring3Direct) { 1 } else { 0 }),
     $(if ($NativeInput) { 1 } else { 0 }),
     $(if ($NativeInputStress) { 1 } else { 0 }),
+    $(if ($DesktopP3 -or $DesktopP3Stress) { 1 } else { 0 }),
     $(if ($ContextMenu) { 1 } else { 0 }),
     $(if ($ContextMenuSoak) { 1 } else { 0 }),
     $(if ($TaskbarSoak) { 1 } else { 0 }),
@@ -280,7 +283,8 @@ if ($Frames -eq 0 -and -not $Tiny -and -not $FirstFrame -and -not $Png -and
     -not $StartMenuStress -and -not $ForegroundStress -and -not $Ring3 -and
     -not $Ring3Phase15 -and -not $Ring3Phase25 -and -not $Ring3Phase26 -and -not $Ring3Phase27 -and -not $Ring3Phase28 -and -not $Ring3Phase29 -and -not $Ring3Phase30 -and -not $Ring3Phase31 -and -not $Ring3Phase32 -and -not $Ring3Phase33 -and -not $Ring3Phase34 -and -not $Ring3Phase35 -and
     -not $Ring3Direct -and
-    -not $NativeInput -and -not $NativeInputStress -and -not $ContextMenu -and
+    -not $NativeInput -and -not $NativeInputStress -and
+    -not $DesktopP3 -and -not $DesktopP3Stress -and -not $ContextMenu -and
     -not $ContextMenuSoak -and -not $TaskbarSoak -and -not $Widget -and
     -not $WidgetStress -and -not $WidgetSoak -and
     -not $Continuous) {
@@ -344,6 +348,8 @@ if ($Tiny) {
     $diagnosticMode = 'Input'
 } elseif ($NativeInputStress) {
     $diagnosticMode = 'InputStress'
+} elseif ($DesktopP3 -or $DesktopP3Stress) {
+    $diagnosticMode = 'DesktopP3'
 } elseif ($ContextMenu -or $ContextMenuSoak) {
     $diagnosticMode = 'ContextMenu'
 } elseif ($Widget) {
@@ -356,8 +362,8 @@ if ($Tiny) {
 $isWidgetValidation = $diagnosticMode -in @('Widget', 'WidgetStress', 'WidgetSoak')
 $isAppModelValidation = $diagnosticMode -eq 'AppModel'
 $isBoundedDiagnostic = $diagnosticMode -in @('Tiny', 'FirstFrame', 'Frames', 'Png', 'Font', 'Background', 'BackgroundRotation', 'AppModel', 'Ring3', 'Ring3Phase15', 'Ring3Phase25', 'Ring3Phase26', 'Ring3Phase27', 'Ring3Phase28', 'Ring3Phase29', 'Ring3Phase30', 'Ring3Phase31', 'Ring3Phase32', 'Ring3Phase33', 'Ring3Phase34', 'Ring3Phase35', 'Ring3Direct', 'Widget', 'WidgetStress')
-$isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'ContextMenu', 'ForegroundStress')
-$isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress', 'StartMenuStress', 'ForegroundStress')
+$isInputValidation = $diagnosticMode -in @('Input', 'InputStress', 'DesktopP3', 'ContextMenu', 'ForegroundStress')
+$isStartMenuValidation = $diagnosticMode -in @('Input', 'InputStress', 'DesktopP3', 'StartMenuStress', 'ForegroundStress')
 $isStartMenuStressValidation = $diagnosticMode -eq 'StartMenuStress'
 $isForegroundStressValidation = $diagnosticMode -eq 'ForegroundStress'
 $isCleanupStressValidation = $CleanupStress
@@ -719,6 +725,275 @@ function Save-QmpTaskbarFrame {
     if ($null -eq $response -or $response.error) {
         throw "Production taskbar screenshot capture failed: $Name"
     }
+}
+
+function Save-QmpDesktopP3Frame {
+    param($Qmp, [string]$Name)
+    $directory = Join-Path $PSScriptRoot 'out\desktop-p3-evidence'
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    $path = Join-Path $directory $Name
+    $request = @{
+        execute = 'human-monitor-command'
+        arguments = @{ 'command-line' = 'screendump ' + $path }
+    } | ConvertTo-Json -Compress
+    $Qmp.Writer.WriteLine($request)
+    $response = Read-QmpMessage $Qmp.Reader
+    if ($null -eq $response -or $response.error) {
+        throw "Desktop P3 screenshot capture failed: $Name"
+    }
+}
+
+function Send-QmpDesktopP3StressClick {
+    param($Qmp)
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $true))
+    Start-Sleep -Milliseconds 150
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $false))
+    Start-Sleep -Milliseconds 100
+}
+
+function Send-QmpDesktopP3StressWorkload {
+    param($Qmp)
+
+    # Select both launchable tiles and click empty desktop after each pair,
+    # producing 100 real selections and 50 deselections.
+    for ($cycle = 0; $cycle -lt 50; $cycle++) {
+        $firstIndex = $cycle % 2
+        $secondIndex = 1 - $firstIndex
+        $iconPoints = @(@(80, 126), @(256, 176))
+        Set-QmpPointer $Qmp $iconPoints[$firstIndex][0] $iconPoints[$firstIndex][1]
+        Send-QmpDesktopP3StressClick $Qmp
+        Set-QmpPointer $Qmp $iconPoints[$secondIndex][0] $iconPoints[$secondIndex][1]
+        Send-QmpDesktopP3StressClick $Qmp
+        Set-QmpPointer $Qmp 900 700
+        Send-QmpDesktopP3StressClick $Qmp
+    }
+
+    # Repeat captured drag/drop cycles. Alternate the direction so DOCS remains
+    # near its current position while crossing the production drag threshold.
+    Set-QmpPointer $Qmp 256 176
+    for ($cycle = 0; $cycle -lt 50; $cycle++) {
+        $deltaX = if (($cycle % 2) -eq 0) { 8 } else { -8 }
+        Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $true))
+        Start-Sleep -Milliseconds 150
+        Send-QmpRelative $Qmp $deltaX 0
+        Start-Sleep -Milliseconds 150
+        Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $false))
+        Start-Sleep -Milliseconds 120
+    }
+
+    # Relaunch Notepad from the desktop 25 times and close each window before
+    # the next attempt, exercising the existing shell activation route.
+    for ($cycle = 0; $cycle -lt 25; $cycle++) {
+        Set-QmpPointer $Qmp 256 176
+        Send-QmpDesktopP3StressClick $Qmp
+        Send-QmpDesktopP3StressClick $Qmp
+        Start-Sleep -Milliseconds 450
+        Set-QmpPointer $Qmp 1040 180
+        Send-QmpDesktopP3StressClick $Qmp
+        Start-Sleep -Milliseconds 350
+    }
+
+    # Repeatedly open and dismiss Start with its normal keyboard dismissal.
+    Set-QmpPointer $Qmp 30 780
+    for ($cycle = 0; $cycle -lt 25; $cycle++) {
+        Send-QmpDesktopP3StressClick $Qmp
+        Start-Sleep -Milliseconds 180
+        Send-QmpMonitorKey $Qmp 'esc'
+        Start-Sleep -Milliseconds 150
+    }
+
+    # Keep the software cursor moving across icon, wallpaper, widget, taskbar,
+    # Start, and screen-edge regions for five active minutes.
+    $path = @(
+        @(80, 126), @(256, 176), @(600, 400), @(1160, 130),
+        @(120, 780), @(30, 780), @(1279, 759)
+    )
+    $pointerX = 30
+    $pointerY = 780
+    $soakStart = Get-Date
+    $soakTarget = $soakStart.AddMinutes(5)
+    $pathIndex = 0
+    while ((Get-Date) -lt $soakTarget) {
+        $target = $path[$pathIndex % $path.Count]
+        while ($pointerX -ne $target[0] -or $pointerY -ne $target[1]) {
+            $stepX = [Math]::Clamp($target[0] - $pointerX, -100, 100)
+            $stepY = [Math]::Clamp($target[1] - $pointerY, -100, 100)
+            Send-QmpRelative $Qmp $stepX $stepY
+            $pointerX += $stepX
+            $pointerY += $stepY
+            Start-Sleep -Milliseconds 4
+        }
+        $pathIndex++
+        Start-Sleep -Milliseconds 750
+    }
+    $soakSeconds = [int][Math]::Floor(((Get-Date) - $soakStart).TotalSeconds)
+    $script:desktopP3StressResult = [ordered]@{
+        selections = 100
+        deselections = 50
+        dragCycles = 50
+        activations = 25
+        startToggles = 25
+        cursorSoakSeconds = $soakSeconds
+        cursorPathTransitions = $pathIndex
+    }
+}
+
+function Send-QmpDesktopP3Workload {
+    param($Qmp, [switch]$Stress)
+
+    # Dismiss the diagnostic login surface with its existing Cancel control.
+    Set-QmpPointer $Qmp 707 498
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 700
+
+    # Capture the restored arrow at the framebuffer origin and over a desktop
+    # tile, then verify graphic selection, label selection, and deselection.
+    Set-QmpPointer $Qmp 0 0
+    Save-QmpDesktopP3Frame $Qmp '01-cursor-top-left.ppm'
+    Set-QmpPointer $Qmp 80 126
+    Save-QmpDesktopP3Frame $Qmp '02-cursor-over-files.ppm'
+    Send-QmpMouseClick $Qmp 'left'
+    Save-QmpDesktopP3Frame $Qmp '03-files-selected.ppm'
+    Set-QmpPointer $Qmp 176 174
+    Send-QmpMouseClick $Qmp 'left'
+    Save-QmpDesktopP3Frame $Qmp '04-docs-label-selected.ppm'
+    Set-QmpPointer $Qmp 600 180
+    Send-QmpMouseClick $Qmp 'left'
+    Save-QmpDesktopP3Frame $Qmp '05-empty-desktop-deselected.ppm'
+
+    # Two same-position clicks inside the DOCS label activate Notepad through
+    # the existing Desktop.OnClick application route.
+    Set-QmpPointer $Qmp 176 174
+    Send-QmpMouseClick $Qmp 'left'
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 700
+    Save-QmpDesktopP3Frame $Qmp '06-notepad-opened-from-docs.ppm'
+    Set-QmpPointer $Qmp 640 400
+    Send-QmpMouseClick $Qmp 'left'
+    Send-QmpMonitorKey $Qmp 'x'
+    Start-Sleep -Milliseconds 250
+    Save-QmpDesktopP3Frame $Qmp '07-notepad-window-input.ppm'
+    # Close Notepad through its title-bar control so taskbar and menu routing
+    # are tested with the desktop unobstructed.
+    Set-QmpPointer $Qmp 1040 180
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 350
+    # The workload typed into Notepad, so choose Don't Save in its close
+    # prompt before testing desktop drag, Start, and context-menu routing.
+    Set-QmpPointer $Qmp 255 236
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 700
+
+    # Move DOCS while the button is held; save both the moving and released
+    # states. The pointer begins on the graphic to keep the expected offset
+    # easy to inspect in the screenshots.
+    Set-QmpPointer $Qmp 176 126
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $true))
+    Start-Sleep -Milliseconds 250
+    Send-QmpRelative $Qmp 80 50
+    Start-Sleep -Milliseconds 500
+    Save-QmpDesktopP3Frame $Qmp '08-docs-dragging.ppm'
+    Send-QmpEvents $Qmp @((New-QmpButtonEvent 'left' $false))
+    Start-Sleep -Milliseconds 500
+    Save-QmpDesktopP3Frame $Qmp '09-docs-dropped.ppm'
+
+    # Exercise Start and the desktop context menu without clicking through
+    # either popup, then dismiss both through their normal routes.
+    Set-QmpPointer $Qmp 30 780
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 700
+    Save-QmpDesktopP3Frame $Qmp '10-start-menu-open.ppm'
+    Send-QmpMonitorKey $Qmp 'esc'
+    Start-Sleep -Milliseconds 500
+    Open-QmpContextMenu $Qmp 900 400
+    Save-QmpDesktopP3Frame $Qmp '11-desktop-context-menu.ppm'
+
+    # Open Icon Size and select 32. Move within the menu and across its
+    # adjacent submenu so the popup keeps pointer ownership throughout.
+    Send-QmpRelative $Qmp 20 62
+    Start-Sleep -Milliseconds 250
+    for ($step = 0; $step -lt 4; $step++) {
+        Send-QmpRelative $Qmp 50 0
+        Start-Sleep -Milliseconds 50
+    }
+    Send-QmpRelative $Qmp 0 56
+    Start-Sleep -Milliseconds 300
+    Save-QmpDesktopP3Frame $Qmp '12-icon-size-submenu-open.ppm'
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 700
+    Save-QmpDesktopP3Frame $Qmp '13-icon-size-32-applied.ppm'
+
+    # Toggle the dockable Performance widget through the context menu, then
+    # click its body to prove it owns input above the desktop.
+    Open-QmpContextMenu $Qmp 900 400
+    Set-QmpPointer $Qmp 920 434
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 700
+    Save-QmpDesktopP3Frame $Qmp '14-performance-widget-visible.ppm'
+    Set-QmpPointer $Qmp 1160 130
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 300
+    Save-QmpDesktopP3Frame $Qmp '15-performance-widget-input.ppm'
+
+    # Right-click the moved DOCS tile, then click away. The menu must consume
+    # the outside click without activating the icon beneath it.
+    Open-QmpContextMenu $Qmp 256 176
+    Save-QmpDesktopP3Frame $Qmp '16-icon-context-menu-open.ppm'
+    Set-QmpPointer $Qmp 600 180
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 500
+    Save-QmpDesktopP3Frame $Qmp '17-icon-context-menu-dismissed.ppm'
+
+    # The FILES tile remains independent after dragging another tile, opening
+    # menus, and changing icon size; launch it through the normal shell route.
+    Set-QmpPointer $Qmp 80 126
+    Send-QmpMouseClick $Qmp 'left'
+    Send-QmpMouseClick $Qmp 'left'
+    Start-Sleep -Milliseconds 800
+    Save-QmpDesktopP3Frame $Qmp '18-file-explorer-opened-from-files.ppm'
+    Send-QmpMonitorKey $Qmp 'esc'
+    Start-Sleep -Milliseconds 700
+
+    Set-QmpPointer $Qmp 1279 759
+    Save-QmpDesktopP3Frame $Qmp '19-cursor-bottom-right.ppm'
+
+    if ($Stress) {
+        # Close File Explorer, which stays open after the visual proof frame.
+        Set-QmpPointer $Qmp 818 180
+        Send-QmpDesktopP3StressClick $Qmp
+        Start-Sleep -Milliseconds 450
+        Send-QmpDesktopP3StressWorkload $Qmp
+        Save-QmpDesktopP3Frame $Qmp '20-cursor-after-soak.ppm'
+    }
+}
+
+function Test-QmpDesktopP3InputSettled {
+    param([string]$Content)
+    if ([string]::IsNullOrEmpty($Content)) { return $false }
+
+    $down = [regex]::Matches($Content,
+        '(?m)^INPUT_STATS_MOUSE_LEFT_DOWN=(\d+)\r?$')
+    $up = [regex]::Matches($Content,
+        '(?m)^INPUT_STATS_MOUSE_LEFT_UP=(\d+)\r?$')
+    $lastActivation = [regex]::Matches($Content,
+        '(?m)^DESKTOP_P3_EVENT=ACTIVATE,icon=0,x=\d+,y=\d+\r?$')
+    if ($down.Count -eq 0 -or $up.Count -eq 0 -or
+        $lastActivation.Count -eq 0) { return $false }
+
+    $latestDown = $down[$down.Count - 1]
+    $latestUp = $up[$up.Count - 1]
+    $latestStatsIndex = [Math]::Max($latestDown.Index, $latestUp.Index)
+    $activationIndex = $lastActivation[$lastActivation.Count - 1].Index
+    $downCount = [int]$latestDown.Groups[1].Value
+    $upCount = [int]$latestUp.Groups[1].Value
+    if ($downCount -eq $upCount) { return $true }
+
+    # The guest's counters are sampled periodically. An icon activation is
+    # emitted only after the matching release has been dispatched, so accept
+    # one pending snapshot press when that final activation follows the
+    # snapshot in the serial stream.
+    return ($downCount -eq $upCount + 1) -and
+           ($activationIndex -gt $latestStatsIndex)
 }
 
 function Send-QmpTaskbarSoak {
@@ -1744,7 +2019,7 @@ function Reset-QmpPointer {
     param($Qmp)
     # The native relative PS/2 cursor starts at a bounded screen coordinate.
     # Repeated negative reports deterministically return it to (0,0).
-    for ($i = 0; $i -lt 12; $i++) {
+    for ($i = 0; $i -lt 32; $i++) {
         Send-QmpRelative $Qmp -100 -100
         # Leave a small drain interval between reports; the guest deliberately
         # keeps PS/2 parsing on the render thread instead of the IRQ handler.
@@ -2425,6 +2700,10 @@ try {
                     } elseif ($isCleanupStressValidation) {
                         Send-QmpCleanupStressWorkload $qmp
                         $status = 'CLEANUP_STRESS_COMPLETE'
+                    } elseif ($diagnosticMode -eq 'DesktopP3') {
+                        $script:desktopP3ScreenshotStartUtc = [DateTime]::UtcNow
+                        Send-QmpDesktopP3Workload $qmp -Stress:$DesktopP3Stress
+                        $status = 'DESKTOP_P3_COMPLETE'
                     } elseif ($isWidgetValidation) {
                         if ($WidgetSoak) {
                             Send-QmpWidgetSoak $qmp 600
@@ -2439,6 +2718,32 @@ try {
                         }
                     } else {
                         Send-QmpWorkload $qmp $NativeInputStress
+                    }
+                    if ($diagnosticMode -eq 'DesktopP3') {
+                        # The guest emits input counters periodically. Keep it
+                        # running until a post-activation snapshot confirms
+                        # that every injected left press has been released.
+                        $desktopP3Settled = $false
+                        $desktopP3DrainDeadline = (Get-Date).AddSeconds(45)
+                        while ((Get-Date) -lt $desktopP3DrainDeadline) {
+                            $qemu.Refresh()
+                            if ($qemu.HasExited) { break }
+                            if (Test-Path -LiteralPath $serialPath) {
+                                $settledContent = Get-Content -LiteralPath $serialPath `
+                                    -Raw -ErrorAction SilentlyContinue
+                                if (Test-QmpDesktopP3InputSettled $settledContent) {
+                                    $content = $settledContent
+                                    $desktopP3Settled = $true
+                                    break
+                                }
+                            }
+                            Start-Sleep -Milliseconds 250
+                        }
+                        $status = if ($desktopP3Settled) {
+                            'DESKTOP_P3_COMPLETE'
+                        } else {
+                            'DESKTOP_P3_DRAIN_TIMEOUT'
+                        }
                     }
                     $inputInjected = $true
                     if ($diagnosticMode -eq 'ContextMenu') {
@@ -2459,6 +2764,9 @@ try {
                         break
                     }
                     if ($isCleanupStressValidation) {
+                        break
+                    }
+                    if ($diagnosticMode -eq 'DesktopP3') {
                         break
                     }
                     if ($isStartMenuStressValidation) {
@@ -3267,11 +3575,98 @@ if ($isForegroundStressValidation -and $status -eq 'FOREGROUND_STRESS_COMPLETE' 
     $status = 'FOREGROUND_STRESS_VALIDATION_FAILED'
 }
 
+$desktopP3Validation = $null
+if ($diagnosticMode -eq 'DesktopP3') {
+    $p3Events = [regex]::Matches($finalContent,
+        '(?m)^DESKTOP_P3_EVENT=([A-Z_]+),icon=(-?\d+),x=(\d+),y=(\d+)$')
+    $p3CursorAssets = [regex]::Matches($finalContent,
+        '(?m)^DESKTOP_P3_CURSOR=(Cursor\.png|Grab\.png),size=(\d+)x(\d+),hotspot=(\d+),(\d+)$')
+    $p3Selects = [regex]::Matches($finalContent,
+        '(?m)^DESKTOP_P3_EVENT=SELECT,').Count
+    $p3Deselects = [regex]::Matches($finalContent,
+        '(?m)^DESKTOP_P3_EVENT=DESELECT,').Count
+    $p3Activations = [regex]::Matches($finalContent,
+        '(?m)^DESKTOP_P3_EVENT=ACTIVATE,').Count
+    $p3DragStarts = [regex]::Matches($finalContent,
+        '(?m)^DESKTOP_P3_EVENT=DRAG_START,').Count
+    $p3DragEnds = [regex]::Matches($finalContent,
+        '(?m)^DESKTOP_P3_EVENT=DRAG_END,').Count
+    $p3ExpectedScreenshots = @(
+        '01-cursor-top-left.ppm',
+        '02-cursor-over-files.ppm',
+        '03-files-selected.ppm',
+        '04-docs-label-selected.ppm',
+        '05-empty-desktop-deselected.ppm',
+        '06-notepad-opened-from-docs.ppm',
+        '07-notepad-window-input.ppm',
+        '08-docs-dragging.ppm',
+        '09-docs-dropped.ppm',
+        '10-start-menu-open.ppm',
+        '11-desktop-context-menu.ppm',
+        '12-icon-size-submenu-open.ppm',
+        '13-icon-size-32-applied.ppm',
+        '14-performance-widget-visible.ppm',
+        '15-performance-widget-input.ppm',
+        '16-icon-context-menu-open.ppm',
+        '17-icon-context-menu-dismissed.ppm',
+        '18-file-explorer-opened-from-files.ppm',
+        '19-cursor-bottom-right.ppm'
+    )
+    if ($DesktopP3Stress) {
+        $p3ExpectedScreenshots += '20-cursor-after-soak.ppm'
+    }
+    $p3EvidenceDirectory = Join-Path $PSScriptRoot 'out\desktop-p3-evidence'
+    $p3MissingScreenshots = @($p3ExpectedScreenshots | Where-Object {
+        $screenshotPath = Join-Path $p3EvidenceDirectory $_
+        if (-not (Test-Path -LiteralPath $screenshotPath -PathType Leaf)) {
+            return $true
+        }
+        $screenshot = Get-Item -LiteralPath $screenshotPath
+        return ($null -eq $script:desktopP3ScreenshotStartUtc -or
+            $screenshot.LastWriteTimeUtc -lt $script:desktopP3ScreenshotStartUtc)
+    })
+    $p3Screenshots = $p3ExpectedScreenshots.Count - $p3MissingScreenshots.Count
+    $p3InputSettled = Test-QmpDesktopP3InputSettled $finalContent
+    $p3StressPassed = $true
+    if ($DesktopP3Stress) {
+        $p3StressPassed = $null -ne $script:desktopP3StressResult -and
+            $p3Selects -ge 104 -and $p3Deselects -ge 51 -and
+            $p3Activations -ge 27 -and $p3DragStarts -ge 51 -and
+            $p3DragEnds -ge 51 -and
+            $script:desktopP3StressResult.cursorSoakSeconds -ge 300
+    }
+    $p3Pass = $status -eq 'DESKTOP_P3_COMPLETE' -and
+        $p3CursorAssets.Count -eq 2 -and $p3Selects -ge 2 -and
+        $p3Deselects -ge 1 -and $p3Activations -ge 2 -and
+        $p3DragStarts -ge 1 -and $p3DragEnds -ge 1 -and
+        $p3Screenshots -eq $p3ExpectedScreenshots.Count -and $inputStat.MOUSE_DROPPED -eq 0 -and
+        $p3InputSettled -and $p3StressPassed
+    $desktopP3Validation = [ordered]@{
+        pass = $p3Pass
+        cursorAssets = $p3CursorAssets.Count
+        selects = $p3Selects
+        deselects = $p3Deselects
+        activations = $p3Activations
+        dragStarts = $p3DragStarts
+        dragEnds = $p3DragEnds
+        screenshots = $p3Screenshots
+        missingScreenshots = $p3MissingScreenshots
+        stressPassed = $p3StressPassed
+        stress = if ($DesktopP3Stress) { $script:desktopP3StressResult } else { $null }
+        mouseDropped = $inputStat.MOUSE_DROPPED
+        leftDownUp = "$($inputStat.MOUSE_LEFT_DOWN)/$($inputStat.MOUSE_LEFT_UP)"
+        inputSettled = $p3InputSettled
+    }
+    if ($status -eq 'DESKTOP_P3_COMPLETE' -and -not $p3Pass) {
+        $status = 'DESKTOP_P3_VALIDATION_FAILED'
+    }
+}
+
 Write-Host ''
 Write-Host '========================================' -ForegroundColor Cyan
 Write-Host '   Validation Summary' -ForegroundColor Cyan
 Write-Host '========================================' -ForegroundColor Cyan
-Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'TASKBAR_SOAK_COMPLETE', 'APP_RUNTIME_COMPLETE', 'CLEANUP_STRESS_COMPLETE', 'START_MENU_STRESS_COMPLETE', 'FOREGROUND_STRESS_COMPLETE', 'RING3_PROOF_COMPLETE', 'RING3_PHASE30_COMPLETE', 'RING3_PHASE31_COMPLETE', 'RING3_PHASE32_COMPLETE', 'RING3_PHASE33_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
+Write-Host "Status: $status" -ForegroundColor $(if ($status -in @('TIMEOUT_SUCCESS', 'DIAGNOSTIC_COMPLETE', 'APP_MODEL_COMPLETE', 'CONTEXT_MENU_COMPLETE', 'TASKBAR_SOAK_COMPLETE', 'APP_RUNTIME_COMPLETE', 'CLEANUP_STRESS_COMPLETE', 'START_MENU_STRESS_COMPLETE', 'FOREGROUND_STRESS_COMPLETE', 'DESKTOP_P3_COMPLETE', 'RING3_PROOF_COMPLETE', 'RING3_PHASE30_COMPLETE', 'RING3_PHASE31_COMPLETE', 'RING3_PHASE32_COMPLETE', 'RING3_PHASE33_COMPLETE', 'WIDGET_COMPLETE', 'WIDGET_STRESS_COMPLETE', 'WIDGET_SOAK_COMPLETE')) { 'Green' } else { 'Red' })
 Write-Host "Dispatch selected: $dispatchSelected" -ForegroundColor Gray
 Write-Host "Continuous entered: $continuousEntered" -ForegroundColor Gray
 Write-Host "Heartbeats: $heartbeatCount (last frame $lastHeartbeatFrame)" -ForegroundColor Gray
@@ -3311,6 +3706,16 @@ if ($appModelValidation) {
     Write-Host "Descriptors/factories/fallbacks: $($appModelValidation.descriptors)/$($appModelValidation.factoryRegistrations)/$($appModelValidation.factoryFallbacks)" -ForegroundColor Gray
     Write-Host "Compatibility calls/translations/legacy/failures: $($appModelValidation.compatibilityFacadeCalls)/$($appModelValidation.compatibilityTranslations)/$($appModelValidation.compatibilityLegacyBackendCalls)/$($appModelValidation.compatibilityFailures)" -ForegroundColor Gray
 }
+if ($desktopP3Validation) {
+    Write-Host "Desktop P3 validation: $($desktopP3Validation.pass)" -ForegroundColor $(if ($desktopP3Validation.pass) { 'Green' } else { 'Red' })
+    Write-Host "Cursor assets, select/deselect, activate, drag start/end: $($desktopP3Validation.cursorAssets), $($desktopP3Validation.selects)/$($desktopP3Validation.deselects), $($desktopP3Validation.activations), $($desktopP3Validation.dragStarts)/$($desktopP3Validation.dragEnds)" -ForegroundColor Gray
+    Write-Host "Screenshots, dropped mouse packets, left down/up: $($desktopP3Validation.screenshots), $($desktopP3Validation.mouseDropped), $($desktopP3Validation.leftDownUp)" -ForegroundColor Gray
+    if ($DesktopP3Stress) {
+        Write-Host "Desktop stress validation: $($desktopP3Validation.stressPassed)" -ForegroundColor $(if ($desktopP3Validation.stressPassed) { 'Green' } else { 'Red' })
+        Write-Host "Selections/deselections, drags, activations, Start toggles: $($desktopP3Validation.stress.selections)/$($desktopP3Validation.stress.deselections), $($desktopP3Validation.stress.dragCycles), $($desktopP3Validation.stress.activations), $($desktopP3Validation.stress.startToggles)" -ForegroundColor Gray
+        Write-Host "Active cursor soak seconds/path transitions: $($desktopP3Validation.stress.cursorSoakSeconds)/$($desktopP3Validation.stress.cursorPathTransitions)" -ForegroundColor Gray
+    }
+}
 if ($isCleanupStressValidation -and $script:cleanupStressCounts) {
     Write-Host "Cleanup stress Notepad/Calculator/mixed/Computer Files: $($script:cleanupStressCounts.Notepad)/$($script:cleanupStressCounts.Calculator)/$($script:cleanupStressCounts.Mixed)/$($script:cleanupStressCounts.ComputerFiles)" -ForegroundColor Gray
     Write-Host "Cleanup stress freeInvalid samples: $($script:cleanupStressTelemetry | ConvertTo-Json -Compress)" -ForegroundColor Gray
@@ -3340,7 +3745,7 @@ if ($faultText) {
 }
 Write-Host "Serial log: $serialPath" -ForegroundColor Cyan
 
-if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'INPUT_VALIDATION_FAILED', 'START_MENU_STRESS_VALIDATION_FAILED', 'APP_MODEL_VALIDATION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED', 'APP_RUNTIME_VALIDATION_FAILED', 'WIDGET_VALIDATION_FAILED')) {
+if ($status -in @('FAULT', 'QEMU_EXITED', 'TIMEOUT_NO_PROGRESS', 'TIMEOUT_NO_INPUT', 'INPUT_INJECTION_FAILED', 'INPUT_VALIDATION_FAILED', 'DESKTOP_P3_VALIDATION_FAILED', 'START_MENU_STRESS_VALIDATION_FAILED', 'APP_MODEL_VALIDATION_FAILED', 'CONTEXT_MENU_VALIDATION_FAILED', 'APP_RUNTIME_VALIDATION_FAILED', 'WIDGET_VALIDATION_FAILED')) {
     exit 1
 }
 exit 0

@@ -1,8 +1,10 @@
 using guideXOS.DefaultApps;
 using guideXOS.FS;
 using guideXOS.Kernel.Drivers;
+using guideXOS.Kernel.Drivers.Input;
 using guideXOS.Misc;
 using guideXOS.OS;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
@@ -130,6 +132,22 @@ namespace guideXOS.GUI {
         private static List<int> _customPosX = null;
         private static List<int> _customPosY = null;
         private static bool _uefiImageTileDrawReported;
+        private const int UefiDesktopIconCount = 4;
+        private const int UefiDesktopIconMarginX = 48;
+        private const int UefiDesktopIconStartY = 96;
+        private const int UefiDesktopIconGap = 40;
+        private const int UefiDesktopTilePadding = 16;
+        private const int UefiDesktopLabelGap = 8;
+        private static readonly string[] UefiDesktopLabels = {
+            "FILES", "DOCS", "IMAGES", "AUDIO"
+        };
+        private static readonly uint[] UefiDesktopAccents = {
+            0xFF47D6C8u, 0xFFFFD166u, 0xFFFF6B6Bu, 0xFF9B8AFBu
+        };
+        private static readonly UefiDesktopIconGeometry[] UefiDesktopGeometry =
+            new UefiDesktopIconGeometry[UefiDesktopIconCount];
+        private static readonly UefiDesktopInteraction UefiDesktopInput =
+            new UefiDesktopInteraction();
         
         /// <summary>
         /// Initialize
@@ -161,6 +179,7 @@ namespace guideXOS.GUI {
                 _customPosX = null;
                 _customPosY = null;
                 _uefiImageTileDrawReported = false;
+                UefiDesktopInput.Reset();
                 return;
             }
 
@@ -412,7 +431,8 @@ namespace guideXOS.GUI {
         /// <summary>
         /// Set custom position for an icon by its id.
         /// </summary>
-        private static void SetCustomPos(int id, int cx, int cy) {
+        private static void SetCustomPos(int id, int cx, int cy,
+                                         bool saveConfiguration = true) {
             if (_customPosIds == null) {
                 _customPosIds = new List<int>();
                 _customPosX = new List<int>();
@@ -423,7 +443,8 @@ namespace guideXOS.GUI {
                     _customPosX[i] = cx;
                     _customPosY[i] = cy;
                     // Save positions to config if not in LiveMode
-                    if (!OS.SystemMode.IsLiveMode && HomeMode) {
+                    if (saveConfiguration && BootConsole.CurrentMode != BootMode.UEFI &&
+                        !OS.SystemMode.IsLiveMode && HomeMode) {
                         OS.Configuration.SaveConfiguration();
                     }
                     return;
@@ -433,7 +454,8 @@ namespace guideXOS.GUI {
             _customPosX.Add(cx);
             _customPosY.Add(cy);
             // Save positions to config if not in LiveMode
-            if (!OS.SystemMode.IsLiveMode && HomeMode) {
+            if (saveConfiguration && BootConsole.CurrentMode != BootMode.UEFI &&
+                !OS.SystemMode.IsLiveMode && HomeMode) {
                 OS.Configuration.SaveConfiguration();
             }
         }
@@ -557,10 +579,23 @@ namespace guideXOS.GUI {
                 graphics.Width <= 0 || graphics.Height <= 0) return;
 
             SetIconSize(iconSize);
-            DrawUefiImageIcon(graphics, folderIcon, "FILES", 48, 96, 0xFF47D6C8u);
-            DrawUefiImageIcon(graphics, documentIcon, "DOCS", 152, 96, 0xFFFFD166u);
-            DrawUefiImageIcon(graphics, imageIcon, "IMAGES", 256, 96, 0xFFFF6B6Bu);
-            DrawUefiImageIcon(graphics, audioIcon, "AUDIO", 360, 96, 0xFF9B8AFBu);
+            BuildUefiIconLayout(documentIcon, folderIcon, imageIcon, audioIcon);
+            HandleUefiDesktopInput();
+            for (int i = 0; i < UefiDesktopIconCount; i++) {
+                UefiDesktopIconGeometry geometry = UefiDesktopGeometry[i];
+                if (UefiDesktopInput.IsDragging &&
+                    UefiDesktopInput.DraggedIconId == i) {
+                    geometry = UefiDesktopIconGeometry.Create(i,
+                        UefiDesktopInput.DragX, UefiDesktopInput.DragY,
+                        geometry.TileSize, geometry.LabelWidth,
+                        geometry.LabelHeight, UefiDesktopLabelGap);
+                    UefiDesktopGeometry[i] = geometry;
+                }
+                DrawUefiImageIcon(graphics, UefiDesktopIconImage(i,
+                    documentIcon, folderIcon, imageIcon, audioIcon),
+                    UefiDesktopLabels[i], geometry, UefiDesktopAccents[i],
+                    UefiDesktopInput.SelectedIconId == i);
+            }
             if (!_uefiImageTileDrawReported &&
                 folderIcon != null && folderIcon.RawData != null &&
                 documentIcon != null && documentIcon.RawData != null &&
@@ -570,51 +605,258 @@ namespace guideXOS.GUI {
                 BootConsole.WriteLine(
                     "[ICON_GRAPHICS] desktop-drawn=files,docs,images,audio");
             }
-
-            // Keep the recovered UEFI desktop layout, but give its existing
-            // FILES tile the same real window route as the legacy desktop.
-            bool leftDown = (Control.MouseButtons & MouseButtons.Left) == MouseButtons.Left;
-            bool clickEdge = leftDown && !_prevLeftDown;
-#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
-            if (clickEdge) {
-                Program.MarkUefiDesktopClickEdge(Control.MousePosition.X,
-                                                 Control.MousePosition.Y,
-                                                 WindowManager.MouseHandled);
-            }
-            if (clickEdge && !WindowManager.MouseHandled) {
-                Program.MarkUefiDesktopClickCandidate(Control.MousePosition.X,
-                                                       Control.MousePosition.Y);
-            }
-#endif
-            if (clickEdge && !WindowManager.MouseHandled &&
-                Control.MousePosition.X >= 48 && Control.MousePosition.X <= 112 &&
-                Control.MousePosition.Y >= 96 && Control.MousePosition.Y <= 160) {
-                // Route the real UEFI FILES tile through the same alias and
-                // shell-object resolver used by the legacy-compatible path.
-                // Reset the legacy click latch because this UEFI tile is
-                // handled directly rather than through ClickEvent.
-                OnClick("File Explorer", false, 48, 96);
-                ClickLock = false;
-                Program.MarkUefiDesktopFilesClickRouted();
-                Program.MarkUefiGuiMouseRouted();
-            }
-            _prevLeftDown = leftDown;
-
         }
 
-        private static void DrawUefiImageIcon(guideXOS.Graph.Graphics graphics, Image icon, string label, int x, int y, uint accent) {
-            const int tileSize = 64;
-            graphics.FillRectangle(x, y, tileSize, tileSize, 0xFF263241u);
-            graphics.DrawRectangle(x, y, tileSize, tileSize, accent, 2);
-            if (icon != null) {
-                // The image is the normal decoded guideXOS asset.  Keep the
-                // recovered tile geometry and label positions unchanged.
-                graphics.DrawImage(x + 8, y + 8, icon);
+        internal static bool HasUefiPointerCapture =>
+            UefiDesktopInput.HasPointerCapture;
+
+        internal static bool IsPointOverVisibleWindow(int x, int y) {
+            if (WindowManager.Windows == null) return false;
+            for (int i = WindowManager.Windows.Count - 1; i >= 0; i--) {
+                Window window = WindowManager.Windows[i];
+                if (window != null && window.Visible &&
+                    x > window.X && x < window.X + window.Width &&
+                    y > window.Y - window.BarHeight &&
+                    y < window.Y + window.Height) return true;
+            }
+            return false;
+        }
+
+        private static Image UefiDesktopIconImage(int id, Image documentIcon,
+                Image folderIcon, Image imageIcon, Image audioIcon) {
+            switch (id) {
+                case 0: return folderIcon;
+                case 1: return documentIcon;
+                case 2: return imageIcon;
+                case 3: return audioIcon;
+                default: return null;
+            }
+        }
+
+        private static void BuildUefiIconLayout(Image documentIcon,
+                Image folderIcon, Image imageIcon, Image audioIcon) {
+            int screenW = Framebuffer.Width;
+            int workAreaBottom = Framebuffer.Height - BarHeight;
+            if (workAreaBottom < 0) workAreaBottom = 0;
+            int maxLabelWidth = 0;
+            for (int i = 0; i < UefiDesktopIconCount; i++) {
+                int width = WindowManager.font == null ? 0 :
+                    WindowManager.font.MeasureString(UefiDesktopLabels[i]);
+                if (width > maxLabelWidth) maxLabelWidth = width;
+            }
+
+            for (int i = 0; i < UefiDesktopIconCount; i++) {
+                Image icon = UefiDesktopIconImage(i, documentIcon, folderIcon,
+                                                  imageIcon, audioIcon);
+                int iconWidth = icon == null ? IconSize : icon.Width;
+                int iconHeight = icon == null ? IconSize : icon.Height;
+                int tileSize = Math.Max(iconWidth, iconHeight) +
+                               UefiDesktopTilePadding;
+                int labelWidth = WindowManager.font == null ? 0 :
+                    WindowManager.font.MeasureString(UefiDesktopLabels[i]);
+                int labelHeight = WindowManager.font == null ? 0 :
+                    WindowManager.font.FontSize;
+                UefiDesktopIconGeometry sample = UefiDesktopIconGeometry.Create(
+                    i, 0, 0, tileSize, labelWidth, labelHeight,
+                    UefiDesktopLabelGap);
+
+                int strideX = Math.Max(tileSize, maxLabelWidth) +
+                              UefiDesktopIconGap;
+                if (strideX < 1) strideX = 1;
+                int columns = (screenW - UefiDesktopIconMarginX * 2 +
+                               UefiDesktopIconGap) / strideX;
+                if (columns < 1) columns = 1;
+                if (columns > UefiDesktopIconCount)
+                    columns = UefiDesktopIconCount;
+                int defaultX = UefiDesktopIconMarginX + (i % columns) * strideX;
+                int defaultY = UefiDesktopIconStartY + (i / columns) *
+                    (sample.HitHeight + UefiDesktopIconGap);
+                int iconX = defaultX;
+                int iconY = defaultY;
+                int customX, customY;
+                bool hasCustomPosition = GetCustomPos(i, out customX,
+                                                       out customY);
+                if (hasCustomPosition) {
+                    iconX = customX;
+                    iconY = customY;
+                }
+                UefiDesktopIconGeometry.ClampPosition(iconX, iconY,
+                    sample.HitOffsetX, sample.HitOffsetY,
+                    sample.HitWidth, sample.HitHeight, screenW,
+                    workAreaBottom, out iconX, out iconY);
+                if (hasCustomPosition &&
+                    (iconX != customX || iconY != customY)) {
+                    SetCustomPos(i, iconX, iconY, false);
+                }
+                UefiDesktopGeometry[i] = UefiDesktopIconGeometry.Create(i,
+                    iconX, iconY, tileSize, labelWidth, labelHeight,
+                    UefiDesktopLabelGap);
+            }
+        }
+
+        private static bool IsUefiDesktopInputBlockedAt(int x, int y) {
+            int workAreaBottom = Framebuffer.Height - BarHeight;
+            return !UefiDesktopInputArbitration.CanBeginPointerCapture(
+                x, y, Framebuffer.Width, workAreaBottom,
+                WindowManager.MouseHandled, WindowManager.HasWindowMoving,
+                IsPointOverVisibleWindow(x, y));
+        }
+
+        private static void HandleUefiDesktopInput() {
+            bool leftDown = (Control.MouseButtons & MouseButtons.Left) ==
+                            MouseButtons.Left;
+            bool leftPressed = MouseEventDispatcher.WasPressedThisFrame(
+                MouseButtons.Left);
+            bool leftReleased = MouseEventDispatcher.WasReleasedThisFrame(
+                MouseButtons.Left);
+
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+            if (leftPressed) {
+                Program.MarkUefiDesktopClickEdge(
+                    MouseEventDispatcher.LeftPressedXThisFrame,
+                    MouseEventDispatcher.LeftPressedYThisFrame,
+                    WindowManager.MouseHandled);
+            }
+#endif
+
+            if (UefiDesktopInput.HasPointerCapture && !leftDown &&
+                !leftReleased) {
+                UefiDesktopInput.CancelPointerCapture();
+            }
+
+            if (!UefiDesktopInput.HasPointerCapture && leftPressed) {
+                int pressX = MouseEventDispatcher.LeftPressedXThisFrame;
+                int pressY = MouseEventDispatcher.LeftPressedYThisFrame;
+                bool inputAvailable = !IsUefiDesktopInputBlockedAt(
+                    pressX, pressY);
+                if (inputAvailable) {
+                    int hitId = UefiDesktopIconGeometry.HitTest(
+                        UefiDesktopGeometry, pressX, pressY);
+                    int iconX = hitId < 0 ? 0 :
+                        UefiDesktopGeometry[hitId].IconX;
+                    int iconY = hitId < 0 ? 0 :
+                        UefiDesktopGeometry[hitId].IconY;
+                    int previousSelection = UefiDesktopInput.SelectedIconId;
+                    if (UefiDesktopInput.BeginPress(hitId, pressX, pressY,
+                            iconX, iconY, Timer.Ticks, true)) {
+                        IndexClicked = UefiDesktopInput.SelectedIconId;
+                        WindowManager.MouseHandled = true;
+                        Program.MarkUefiGuiMouseRouted();
+#if UEFI_DIAGNOSTIC_INPUT || UEFI_DIAGNOSTIC_INPUT_STRESS
+                        Program.MarkUefiDesktopClickCandidate(pressX, pressY);
+#endif
+                        if (previousSelection != hitId) {
+                            Program.MarkUefiDesktopP3Event(
+                                hitId < 0 ? "DESELECT" : "SELECT",
+                                hitId, pressX, pressY);
+                        }
+                    }
+                }
+            }
+
+            if (!UefiDesktopInput.HasPointerCapture) return;
+
+            WindowManager.MouseHandled = true;
+            int pointerX = leftReleased
+                ? MouseEventDispatcher.LeftReleasedXThisFrame
+                : Control.MousePosition.X;
+            int pointerY = leftReleased
+                ? MouseEventDispatcher.LeftReleasedYThisFrame
+                : Control.MousePosition.Y;
+            int capturedId = UefiDesktopInput.CapturedIconId;
+            if (capturedId >= 0 && (leftDown || leftReleased)) {
+                UefiDesktopIconGeometry geometry =
+                    UefiDesktopGeometry[capturedId];
+                bool wasDragging = UefiDesktopInput.IsDragging;
+                bool moved = UefiDesktopInput.UpdatePointer(pointerX,
+                    pointerY, geometry.HitOffsetX, geometry.HitOffsetY,
+                    geometry.HitWidth, geometry.HitHeight,
+                    Framebuffer.Width, Framebuffer.Height - BarHeight);
+                if (!wasDragging && UefiDesktopInput.IsDragging) {
+                    Program.MarkUefiDesktopP3Event("DRAG_START",
+                        capturedId, pointerX, pointerY);
+                }
+                if (moved) {
+                    UefiDesktopGeometry[capturedId] =
+                        UefiDesktopIconGeometry.Create(capturedId,
+                            UefiDesktopInput.DragX, UefiDesktopInput.DragY,
+                            geometry.TileSize, geometry.LabelWidth,
+                            geometry.LabelHeight, UefiDesktopLabelGap);
+                }
+            }
+
+            if (!leftReleased) return;
+
+            int releaseX = MouseEventDispatcher.LeftReleasedXThisFrame;
+            int releaseY = MouseEventDispatcher.LeftReleasedYThisFrame;
+            int releaseHitId = UefiDesktopIconGeometry.HitTest(
+                UefiDesktopGeometry, releaseX, releaseY);
+            int activatedId, movedIconId, movedX, movedY;
+            if (!UefiDesktopInput.EndPress(releaseHitId, releaseX, releaseY,
+                    Timer.Ticks, out activatedId, out movedIconId,
+                    out movedX, out movedY)) return;
+
+            IndexClicked = UefiDesktopInput.SelectedIconId;
+            if (movedIconId >= 0) {
+                SetCustomPos(movedIconId, movedX, movedY, false);
+                Program.MarkUefiDesktopP3Event("DRAG_END", movedIconId,
+                                               movedX, movedY);
+            }
+            if (activatedId >= 0) {
+                Program.MarkUefiDesktopP3Event("ACTIVATE", activatedId,
+                                               releaseX, releaseY);
+                ActivateUefiDesktopIcon(activatedId, releaseX, releaseY);
+            }
+        }
+
+        private static void ActivateUefiDesktopIcon(int iconId, int x, int y) {
+            string target;
+            switch (iconId) {
+                case 0: target = "File Explorer"; break;
+                case 1: target = "Notepad"; break;
+                case 2: target = "Image Viewer"; break;
+                case 3: target = "WAV Player"; break;
+                default: return;
+            }
+            try {
+                OnClick(target, false, x, y);
+            } catch {
+                ShowOpenError(x + 60, y + 60,
+                    "Unable to open " + target + ".");
+            } finally {
+                ClickLock = false;
+            }
+            if (iconId == 0) Program.MarkUefiDesktopFilesClickRouted();
+            Program.MarkUefiGuiMouseRouted();
+        }
+
+        private static void DrawUefiImageIcon(guideXOS.Graph.Graphics graphics,
+                Image icon, string label, UefiDesktopIconGeometry geometry,
+                uint accent, bool selected) {
+            if (selected) {
+                graphics.AFillRectangle(geometry.HitX, geometry.HitY,
+                    geometry.HitWidth, geometry.HitHeight, 0x553F8FCBu);
+            }
+            graphics.FillRectangle(geometry.IconX, geometry.IconY,
+                geometry.TileSize, geometry.TileSize, 0xFF263241u);
+            graphics.DrawRectangle(geometry.IconX, geometry.IconY,
+                geometry.TileSize, geometry.TileSize,
+                selected ? 0xFF9BD8FFu : accent, selected ? 2 : 1);
+            if (icon != null && icon.RawData != null) {
+                int imageX = geometry.IconX +
+                    ((geometry.TileSize - icon.Width) / 2);
+                int imageY = geometry.IconY +
+                    ((geometry.TileSize - icon.Height) / 2);
+                graphics.DrawImage(imageX, imageY, icon);
             }
             if (WindowManager.font != null && label != null) {
-                int labelWidth = WindowManager.font.MeasureString(label);
-                WindowManager.font.DrawString(x + ((tileSize - labelWidth) / 2), y + tileSize + 8, label);
+                WindowManager.font.DrawString(geometry.LabelX,
+                    geometry.LabelY, label);
                 Program.MarkUefiDesktopTextRendered();
+            }
+            if (selected) {
+                graphics.DrawRectangle(geometry.HitX, geometry.HitY,
+                    geometry.HitWidth, geometry.HitHeight, 0xFF9BD8FFu, 1);
             }
         }
 
