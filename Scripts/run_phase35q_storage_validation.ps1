@@ -202,9 +202,10 @@ try {
             $failure = [regex]::Matches($content, '(?m)^35Q_FAIL=[^\r\n]*')[-1].Value
             throw "Guest durability proof failed: $failure"
         }
-        if ($Phase35P2 -and $content -match '(?m)^APP_MODEL_FAIL=') {
+        if (($Phase35P2 -or $Phase35R) -and
+                $content -match '(?m)^APP_MODEL_FAIL=') {
             $failure = [regex]::Matches($content, '(?m)^APP_MODEL_FAIL=[^\r\n]*')[-1].Value
-            throw "Guest Phase 35P2 App Model proof failed: $failure"
+            throw "Guest App Model service regression failed: $failure"
         }
         if ($Phase35R -and $content -match '(?m)^PHASE35_COMPLETE=0\r?$') {
             throw 'Guest managed Persistent-read proof reported PHASE35_COMPLETE=0.'
@@ -506,24 +507,6 @@ try {
         Write-Host 'R13 fault scan: #PF=0 #GP=0 #UD=0 ABI panic=0'
 
         $serialLines = $finalContent -split "`r?`n"
-        $firstScenarioLine = -1
-        $secondScenarioLine = $serialLines.Length
-        for ($lineIndex = 0; $lineIndex -lt $serialLines.Length; $lineIndex++) {
-            if ($firstScenarioLine -lt 0 -and
-                    $serialLines[$lineIndex] -eq
-                        'R13_SCENARIO=0x0000000000000001') {
-                $firstScenarioLine = $lineIndex
-                continue
-            }
-            if ($firstScenarioLine -ge 0 -and
-                    $serialLines[$lineIndex] -match '^R13_SCENARIO=') {
-                $secondScenarioLine = $lineIndex
-                break
-            }
-        }
-        if ($firstScenarioLine -lt 0) {
-            throw 'R13 did not emit the first requester block for the NotFound string check.'
-        }
         $notFoundStrings = @(
             @{ Hash = '94A661B97507E172'; Length = 51; Site = 0x1FE },
             @{ Hash = '7B75BBA2453D7996'; Length = 38; Site = 0x1FF },
@@ -531,83 +514,104 @@ try {
             @{ Hash = 'ADE827DD03D3AE1F'; Length = 50; Site = 0x213 },
             @{ Hash = 'AF63AE4C86019E62'; Length = 1; Site = 0x208 },
             @{ Hash = 'D82EC95D355533BA'; Length = 36; Site = 0x209 })
-        $verifiedStringRequests = @{}
-        foreach ($string in $notFoundStrings) {
-            $valueLineIndex = -1
-            $request = $null
-            $address = $null
-            $hashPattern = '^STRING_VALUE;request=0x([0-9A-Fa-f]+);address=(0x[0-9A-Fa-f]+);hash=0x' +
-                [regex]::Escape($string.Hash) + '$'
-            for ($lineIndex = $firstScenarioLine;
-                    $lineIndex -lt $secondScenarioLine; $lineIndex++) {
-                if ($serialLines[$lineIndex] -match $hashPattern) {
-                    $valueLineIndex = $lineIndex
-                    $request = $Matches[1]
-                    $address = $Matches[2]
+        foreach ($scenarioId in @(1, 5)) {
+            $scenarioMarker = 'R13_SCENARIO=0x{0:X16}' -f $scenarioId
+            $firstScenarioLine = -1
+            $secondScenarioLine = $serialLines.Length
+            for ($lineIndex = 0; $lineIndex -lt $serialLines.Length; $lineIndex++) {
+                if ($firstScenarioLine -lt 0 -and
+                        $serialLines[$lineIndex] -eq $scenarioMarker) {
+                    $firstScenarioLine = $lineIndex
+                    continue
+                }
+                if ($firstScenarioLine -ge 0 -and
+                        $serialLines[$lineIndex] -match '^R13_SCENARIO=') {
+                    $secondScenarioLine = $lineIndex
                     break
                 }
             }
-            if ($valueLineIndex -lt 0) {
-                throw "R13 first lifetime did not emit NotFound string hash $($string.Hash)."
+            if ($firstScenarioLine -lt 0) {
+                throw "R13 did not emit scenario $scenarioId for the NotFound string check."
             }
-            $creationLine = $null
-            $allocationSequence = $null
-            $createPattern = '^STRING_CREATE;request=0x' +
-                [regex]::Escape($request) + ';address=' +
-                [regex]::Escape($address) +
-                ';.*length=0x([0-9A-Fa-f]+);site=0x([0-9A-Fa-f]+);allocSeq=(0x[0-9A-Fa-f]+);'
-            for ($lineIndex = $valueLineIndex - 1;
-                    $lineIndex -ge $firstScenarioLine; $lineIndex--) {
-                if ($serialLines[$lineIndex] -match $createPattern) {
-                    $creationLine = $serialLines[$lineIndex]
-                    $length = [Convert]::ToInt32($Matches[1], 16)
-                    $site = [Convert]::ToInt32($Matches[2], 16)
-                    $allocationSequence = $Matches[3]
-                    break
+            $verifiedStringRequests = @{}
+            foreach ($string in $notFoundStrings) {
+                $valueLineIndex = -1
+                $request = $null
+                $address = $null
+                $hashPattern = '^STRING_VALUE;request=0x([0-9A-Fa-f]+);address=(0x[0-9A-Fa-f]+);hash=0x' +
+                    [regex]::Escape($string.Hash) + '$'
+                for ($lineIndex = $firstScenarioLine;
+                        $lineIndex -lt $secondScenarioLine; $lineIndex++) {
+                    if ($serialLines[$lineIndex] -match $hashPattern) {
+                        $valueLineIndex = $lineIndex
+                        $request = $Matches[1]
+                        $address = $Matches[2]
+                        break
+                    }
+                }
+                if ($valueLineIndex -lt 0) {
+                    throw "R13 scenario $scenarioId did not emit NotFound string hash $($string.Hash)."
+                }
+                $creationLine = $null
+                $allocationSequence = $null
+                $createPattern = '^STRING_CREATE;request=0x' +
+                    [regex]::Escape($request) + ';address=' +
+                    [regex]::Escape($address) +
+                    ';.*length=0x([0-9A-Fa-f]+);site=0x([0-9A-Fa-f]+);allocSeq=(0x[0-9A-Fa-f]+);'
+                for ($lineIndex = $valueLineIndex - 1;
+                        $lineIndex -ge $firstScenarioLine; $lineIndex--) {
+                    if ($serialLines[$lineIndex] -match $createPattern) {
+                        $creationLine = $serialLines[$lineIndex]
+                        $length = [Convert]::ToInt32($Matches[1], 16)
+                        $site = [Convert]::ToInt32($Matches[2], 16)
+                        $allocationSequence = $Matches[3]
+                        break
+                    }
+                }
+                if ($null -eq $creationLine -or
+                        $length -ne $string.Length -or
+                        $site -ne $string.Site) {
+                    throw "R13 scenario $scenarioId NotFound string $($string.Hash) has a changed creation length or site."
+                }
+                $recordPattern = '(?m)^STRING_(DISPOSE|FREE_GUARD|FREE);request=0x' +
+                    [regex]::Escape($request) + ';address=' +
+                    [regex]::Escape($address) + ';allocSeq=' +
+                    [regex]::Escape($allocationSequence) + ';[^\r\n]*\r?$'
+                $recordMatches = [regex]::Matches($finalContent, $recordPattern)
+                $disposeCount = 0
+                $acceptedFreeCount = 0
+                $successfulFreeCount = 0
+                foreach ($record in $recordMatches) {
+                    $recordLine = $record.Value.TrimEnd("`r")
+                    if ($recordLine -match '^STRING_DISPOSE;.*;count=0x0*1$') {
+                        $disposeCount++
+                    } elseif ($recordLine -match
+                            '^STRING_FREE_GUARD;.*;accepted=0x0*1;exactRun=0x0*1;reason=0x0+$') {
+                        $acceptedFreeCount++
+                    } elseif ($recordLine -match
+                            '^STRING_FREE;.*;result=0x(?!0+$)[0-9A-Fa-f]+$') {
+                        $successfulFreeCount++
+                    }
+                }
+                if ($disposeCount -ne 1 -or $acceptedFreeCount -ne 1 -or
+                        $successfulFreeCount -ne 1) {
+                    throw "R13 scenario $scenarioId NotFound string $($string.Hash) failed exact Dispose/free counts: Dispose=$disposeCount accepted=$acceptedFreeCount successful=$successfulFreeCount."
+                }
+                $verifiedStringRequests[$request] = $true
+            }
+            foreach ($request in $verifiedStringRequests.Keys) {
+                $snapshotPattern = '(?m)^STRING_LIVE_COUNT;request=0x' +
+                    [regex]::Escape($request) + ';stage=0x0*3;count=0x([0-9A-Fa-f]+);dropped=0x([0-9A-Fa-f]+)\r?$'
+                $snapshots = [regex]::Matches($finalContent, $snapshotPattern)
+                if ($snapshots.Count -ne 1 -or
+                        [Convert]::ToUInt64($snapshots[0].Groups[1].Value, 16) -ne 0 -or
+                        [Convert]::ToUInt64($snapshots[0].Groups[2].Value, 16) -ne 0) {
+                    throw "R13 scenario $scenarioId NotFound string request $request did not finish with a clean zero-survivor ledger."
                 }
             }
-            if ($null -eq $creationLine -or
-                    $length -ne $string.Length -or
-                    $site -ne $string.Site) {
-                throw "R13 NotFound string $($string.Hash) has a changed creation length or site."
-            }
-            $recordPattern = '(?m)^STRING_(DISPOSE|FREE_GUARD|FREE);request=0x' +
-                [regex]::Escape($request) + ';address=' +
-                [regex]::Escape($address) + ';allocSeq=' +
-                [regex]::Escape($allocationSequence) + ';[^\r\n]*\r?$'
-            $recordMatches = [regex]::Matches($finalContent, $recordPattern)
-            $disposeCount = 0
-            $acceptedFreeCount = 0
-            $successfulFreeCount = 0
-            foreach ($record in $recordMatches) {
-                $recordLine = $record.Value.TrimEnd("`r")
-                if ($recordLine -match '^STRING_DISPOSE;.*;count=0x0*1$') {
-                    $disposeCount++
-                } elseif ($recordLine -match
-                        '^STRING_FREE_GUARD;.*;accepted=0x0*1;exactRun=0x0*1;reason=0x0+$') {
-                    $acceptedFreeCount++
-                } elseif ($recordLine -match
-                        '^STRING_FREE;.*;result=0x(?!0+$)[0-9A-Fa-f]+$') {
-                    $successfulFreeCount++
-                }
-            }
-            if ($disposeCount -ne 1 -or $acceptedFreeCount -ne 1 -or
-                    $successfulFreeCount -ne 1) {
-                throw "R13 NotFound string $($string.Hash) failed exact Dispose/free counts: Dispose=$disposeCount accepted=$acceptedFreeCount successful=$successfulFreeCount."
-            }
-            $verifiedStringRequests[$request] = $true
+            Write-Host "R13 scenario $scenarioId NotFound string check: 6/6 exact Dispose and accepted free; zero survivors"
         }
-        foreach ($request in $verifiedStringRequests.Keys) {
-            $snapshotPattern = '(?m)^STRING_LIVE_COUNT;request=0x' +
-                [regex]::Escape($request) + ';stage=0x0*3;count=0x([0-9A-Fa-f]+);dropped=0x([0-9A-Fa-f]+)\r?$'
-            $snapshots = [regex]::Matches($finalContent, $snapshotPattern)
-            if ($snapshots.Count -ne 1 -or
-                    [Convert]::ToUInt64($snapshots[0].Groups[1].Value, 16) -ne 0 -or
-                    [Convert]::ToUInt64($snapshots[0].Groups[2].Value, 16) -ne 0) {
-                throw "R13 NotFound string request $request did not finish with a clean zero-survivor ledger."
-            }
-        }
-        Write-Host 'R13 NotFound string check: 6/6 exact Dispose and accepted free; zero survivors'
+        Write-Host 'R13 diagnostic paths: enabled; isolated NotFound and full requester censuses both checked.'
     } elseif ($Phase35R9Ledger) {
         $lifetimeMatch = [regex]::Match($finalContent,
             '(?m)^R9_LIFETIME_ID=0x([0-9A-Fa-f]+)\r?$')

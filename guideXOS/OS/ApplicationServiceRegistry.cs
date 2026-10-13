@@ -42,6 +42,7 @@ namespace guideXOS.OS {
         private static bool _lastPersistentLifecycleSelfTestPassed;
         private static bool _lastPersistentValueBoundsSelfTestPassed;
         private static bool _lastPersistentOffsetSelfTestPassed;
+        private static int _lastPersistentValueContractStep;
         private static bool _lastPersistentDeleteSelfTestPassed;
         private static bool _lastPersistentEnumerateSelfTestPassed;
         private static bool _lastPersistentFailurePropagationSelfTestPassed;
@@ -265,6 +266,10 @@ namespace guideXOS.OS {
 
         internal static bool LastPersistentValueBoundsSelfTestPassed {
             get { return _lastPersistentValueBoundsSelfTestPassed; }
+        }
+
+        internal static int LastPersistentValueContractStep {
+            get { return _lastPersistentValueContractStep; }
         }
 
         internal static bool LastPersistentOffsetSelfTestPassed {
@@ -1612,6 +1617,7 @@ namespace guideXOS.OS {
                 ApplicationStorageService storageService,
                 ApplicationServiceContext context,
                 CSharpApplicationStorageService storage) {
+            _lastPersistentValueContractStep = 1;
             ApplicationStorageWriteRequest invalidWrite =
                 ApplicationStorageWriteRequest.Create(
                     ApplicationStorageNamespace.Persistent, "oversize.bin",
@@ -1621,10 +1627,12 @@ namespace guideXOS.OS {
                     invalidWrite).Code != ApplicationServiceResultCode.InvalidRequest ||
                     storage.BackendCallCount != callsBeforeInvalid) return false;
 
+            _lastPersistentValueContractStep = 2;
             if (!storageService.Write(context,
                     ApplicationStorageWriteRequest.Create(
                         ApplicationStorageNamespace.Persistent, "p2-empty.bin",
                         new byte[0])).Succeeded) return false;
+            _lastPersistentValueContractStep = 3;
             ApplicationServiceResult<bool> emptyExists = storageService.Exists(
                 context, ApplicationStorageRequest.Create(
                     ApplicationStorageNamespace.Persistent, "p2-empty.bin"));
@@ -1637,6 +1645,7 @@ namespace guideXOS.OS {
                     emptyRead.Value.Bytes.Length != 0 || !emptyRead.Value.EndOfResource)
                 return false;
 
+            _lastPersistentValueContractStep = 4;
             byte[] oneByte = new byte[] { 0x7B };
             if (!storageService.Write(context,
                     ApplicationStorageWriteRequest.Create(
@@ -1645,6 +1654,7 @@ namespace guideXOS.OS {
                     !PersistentReadExact(storageService, context, "one.bin", 0,
                         1, oneByte, 0, 1, true)) return false;
 
+            _lastPersistentValueContractStep = 5;
             byte[] sameSizeA = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
             byte[] sameSizeB = new byte[] { 8, 7, 6, 5, 4, 3, 2, 1 };
             if (!storageService.Write(context,
@@ -1658,6 +1668,7 @@ namespace guideXOS.OS {
                     !PersistentReadExact(storageService, context, "replace.bin", 0,
                         8, sameSizeB, 0, 8, true)) return false;
 
+            _lastPersistentValueContractStep = 6;
             byte[] shorter = new byte[] { 0x31, 0x32, 0x33 };
             if (!storageService.Write(context,
                     ApplicationStorageWriteRequest.Create(
@@ -1666,6 +1677,7 @@ namespace guideXOS.OS {
                     !PersistentReadExact(storageService, context, "replace.bin", 0,
                         8, shorter, 0, shorter.Length, true)) return false;
 
+            _lastPersistentValueContractStep = 7;
             byte[] longer = CreateStoragePattern(1024, 0x6D);
             if (!storageService.Write(context,
                     ApplicationStorageWriteRequest.Create(
@@ -1675,20 +1687,25 @@ namespace guideXOS.OS {
                         PersistentFatBackend.MaxValueLength, longer, 0,
                         longer.Length, true)) return false;
 
+            _lastPersistentValueContractStep = 8;
             byte[] maximum = CreateStoragePattern(
                 ApplicationStorageWriteRequest.MaxPayloadLength, 0x93);
             if (!storageService.Write(context,
                     ApplicationStorageWriteRequest.Create(
                         ApplicationStorageNamespace.Persistent, "boundary.bin",
                         maximum)).Succeeded) return false;
+            _lastPersistentValueContractStep = 9;
             if (!PersistentReadExact(storageService, context, "boundary.bin", 0,
                         ApplicationStorageReadRequest.MaxChunkLength, maximum, 0,
                         maximum.Length, true)) return false;
+            _lastPersistentValueContractStep = 10;
             if (!PersistentReadExact(storageService, context, "boundary.bin",
                     32768, 32768, maximum, 32768, 32768, true)) return false;
+            _lastPersistentValueContractStep = 11;
             if (!PersistentReadExact(storageService, context, "boundary.bin",
                     65536, 1, maximum, 65536, 0, true)) return false;
 
+            _lastPersistentValueContractStep = 12;
             ApplicationServiceResult<ApplicationStorageReadResult> beyond =
                 storageService.Read(context,
                     ApplicationStorageReadRequest.Create(
@@ -1703,6 +1720,7 @@ namespace guideXOS.OS {
                         overflowRequest).Code !=
                         ApplicationServiceResultCode.InvalidRequest) return false;
 
+            _lastPersistentValueContractStep = 13;
             ApplicationServiceResult<bool> missingExists = storageService.Exists(
                 context, ApplicationStorageRequest.Create(
                     ApplicationStorageNamespace.Persistent, "missing.bin"));

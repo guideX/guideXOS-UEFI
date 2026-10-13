@@ -662,7 +662,7 @@ namespace guideXOS.Misc {
             bool resumed;
             int exitCode;
             int requests;
-            bool ran = RunOnePhase35Lifetime(1, _owner.Handle.Value, 6,
+            bool ran = RunOnePhase35Lifetime(1, _owner.Handle.Value, 7,
                 out oldHandle, out resumed, out exitCode, out requests);
             CleanupOwner();
             bool persistentRetained = _phase35Storage.PersistentReadCount >
@@ -672,7 +672,7 @@ namespace guideXOS.Misc {
                 "RESET_TEMPORARY_CLEARED=0");
             Phase35Marker(persistentRetained ? "RESET_PERSISTENT_RETAINED=1" :
                 "RESET_PERSISTENT_RETAINED=0");
-            return temporaryCleared && ran && resumed && requests == 6 &&
+            return temporaryCleared && ran && resumed && requests == 7 &&
                 persistentRetained && staleContext &&
                 Ring3ProcessTable.Resolve(oldHandle) == null;
         }
@@ -727,8 +727,7 @@ namespace guideXOS.Misc {
             for (int i = 0; i < 4; i++) {
                 bool resumed;
                 int exitCode;
-                bool pass = RunOnePhase35AndCheckStale(1,
-                    Phase35ApplicationId, 6, out resumed, out exitCode) &&
+                bool pass = RunOnePhase35AndCheckStale(1, Phase35ApplicationId, 7, out resumed, out exitCode) &&
                     resumed && exitCode == 35;
                 if (pass) primaryReturns++;
                 Phase35Marker(pass ? "PRIMARY_LIFETIME_PASS=1" :
@@ -761,8 +760,7 @@ namespace guideXOS.Misc {
                 out failFastRequests);
             CleanupOwner();
             bool failFastStale = CheckPhase35StaleContext(failFastContext);
-            bool replacement = RunOnePhase35AndCheckStale(1,
-                Phase35ApplicationId, 6, out bool replacementResumed,
+            bool replacement = RunOnePhase35AndCheckStale(1, Phase35ApplicationId, 7, out bool replacementResumed,
                 out int replacementExit) && replacementResumed &&
                 replacementExit == 35;
             bool failFastPass = failFast && failFastResumed &&
@@ -853,8 +851,7 @@ namespace guideXOS.Misc {
             for (int i = 0; i < 25; i++) {
                 bool resumed;
                 int exitCode;
-                bool pass = RunOnePhase35AndCheckStale(1,
-                    Phase35ApplicationId, 6, out resumed, out exitCode) &&
+                bool pass = RunOnePhase35AndCheckStale(1, Phase35ApplicationId, 7, out resumed, out exitCode) &&
                     resumed && exitCode == 35;
                 if (pass) stressSuccesses++;
                 all = all && pass;
@@ -1079,8 +1076,7 @@ namespace guideXOS.Misc {
             ulong unknownBytes = Allocator.GetTagBytes(
                 Allocator.AllocTag.Unknown);
             for (int i = 0; i < count; i++) {
-                bool passed = RunOnePhase35R13AuditLifetime(
-                    firstScenario + i, 1, 6);
+                bool passed = RunOnePhase35R13AuditLifetime(firstScenario + i, 1, 7);
                 if (passed) successfulReturns++;
             }
             bool stable = Allocator.MemoryInUse == baseline &&
@@ -1141,10 +1137,10 @@ namespace guideXOS.Misc {
             Allocator.DumpDiagnosticHelperTotalsSince(processTableSequence, 0);
             Allocator.DumpDiagnosticSiteTotalsSince(processTableSequence, 0);
             Phase35Marker("R13_PROCESS_TABLE_INIT_END=1");
-            bool first = RunOnePhase35R13AuditLifetime(1, 1, 6);
+            bool first = RunOnePhase35R13AuditLifetime(1, 1, 7);
             Phase35Marker(first ? "R13_STRESS_EQUIVALENT_PASS=1" :
                 "R13_STRESS_EQUIVALENT_PASS=0");
-            bool second = RunOnePhase35R13AuditLifetime(2, 1, 6);
+            bool second = RunOnePhase35R13AuditLifetime(2, 1, 7);
             Phase35Marker(second ? "R13_REPEAT_PASS=1" :
                 "R13_REPEAT_PASS=0");
             bool noRead = RunOnePhase35R13AuditLifetime(3, 6, 0);
@@ -1238,7 +1234,7 @@ namespace guideXOS.Misc {
             Phase35Marker("R9_RUN_LEDGER_READY=1");
             Phase35Marker("R9_CAPTURE=STRESS_EQUIVALENT");
             ulong b0 = Allocator.MemoryInUse;
-            bool first = RunOnePhase35Lifetime(1, owner, 6,
+            bool first = RunOnePhase35Lifetime(1, owner, 7,
                 out Ring3ProcessHandle firstHandle, out bool firstResumed,
                 out int firstExit, out int firstRequests);
             ulong b2 = Allocator.MemoryInUse;
@@ -1258,7 +1254,7 @@ namespace guideXOS.Misc {
                 "R9_STRESS_EQUIVALENT_PASS=0");
 
             Phase35Marker("R9_REPEAT=IDENTICAL");
-            bool second = RunOnePhase35Lifetime(1, owner, 6,
+            bool second = RunOnePhase35Lifetime(1, owner, 7,
                 out Ring3ProcessHandle secondHandle,
                 out bool secondResumed, out int secondExit,
                 out int secondRequests);

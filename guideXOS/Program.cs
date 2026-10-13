@@ -2031,6 +2031,61 @@ unsafe class Program {
                 SerialBreadcrumb("APP_MODEL_SERVICES_FIRST_FAILURE=" +
                     (ApplicationServiceRegistry.LastSelfTestFailure ??
                         "unknown"));
+                SerialBreadcrumb(ApplicationServiceRegistry.LastResourceChunkSelfTestPassed ?
+                    "APP_MODEL_PHASE10_RESOURCE_CHUNK=1" :
+                    "APP_MODEL_PHASE10_RESOURCE_CHUNK=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastStoragePathSelfTestPassed ?
+                    "APP_MODEL_PHASE10_PATH_CONFINEMENT=1" :
+                    "APP_MODEL_PHASE10_PATH_CONFINEMENT=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentAvailabilitySelfTestPassed ?
+                    "APP_MODEL_PHASE10_PERSISTENT_AVAILABLE=1" :
+                    "APP_MODEL_PHASE10_PERSISTENT_AVAILABLE=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentBackendSelfTestPassed ?
+                    "APP_MODEL_PHASE10_PERSISTENT_BACKEND=1" :
+                    "APP_MODEL_PHASE10_PERSISTENT_BACKEND=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentNamespaceSelfTestPassed ?
+                    "APP_MODEL_PHASE10_NAMESPACE=1" :
+                    "APP_MODEL_PHASE10_NAMESPACE=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentFailurePropagationSelfTestPassed ?
+                    "APP_MODEL_PHASE10_FAILURE_PROPAGATION=1" :
+                    "APP_MODEL_PHASE10_FAILURE_PROPAGATION=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentDeleteSelfTestPassed ?
+                    "APP_MODEL_PHASE10_DELETE=1" :
+                    "APP_MODEL_PHASE10_DELETE=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentStaleContextSelfTestPassed ?
+                    "APP_MODEL_PHASE10_STALE_CONTEXT=1" :
+                    "APP_MODEL_PHASE10_STALE_CONTEXT=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentLifecycleSelfTestPassed ?
+                    "APP_MODEL_PHASE10_LIFECYCLE=1" :
+                    "APP_MODEL_PHASE10_LIFECYCLE=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentValueBoundsSelfTestPassed ?
+                    "APP_MODEL_PHASE10_VALUE_BOUNDS=1" :
+                    "APP_MODEL_PHASE10_VALUE_BOUNDS=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentOffsetSelfTestPassed ?
+                    "APP_MODEL_PHASE10_OFFSET_BOUNDS=1" :
+                    "APP_MODEL_PHASE10_OFFSET_BOUNDS=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentCrossScopeSelfTestPassed ?
+                    "APP_MODEL_PHASE10_CROSS_SCOPE=1" :
+                    "APP_MODEL_PHASE10_CROSS_SCOPE=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentEnumerateSelfTestPassed ?
+                    "APP_MODEL_PHASE10_ENUMERATE=1" :
+                    "APP_MODEL_PHASE10_ENUMERATE=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentTemporarySeparationSelfTestPassed ?
+                    "APP_MODEL_PHASE10_TEMPORARY_SEPARATION=1" :
+                    "APP_MODEL_PHASE10_TEMPORARY_SEPARATION=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastPersistentResetSelfTestPassed ?
+                    "APP_MODEL_PHASE10_PERSISTENT_RESET=1" :
+                    "APP_MODEL_PHASE10_PERSISTENT_RESET=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastStorageAppScopeSelfTestPassed ?
+                    "APP_MODEL_PHASE10_APP_SCOPE=1" :
+                    "APP_MODEL_PHASE10_APP_SCOPE=0");
+                SerialBreadcrumb(ApplicationServiceRegistry.LastStorageResetSelfTestPassed ?
+                    "APP_MODEL_PHASE10_TEMPORARY_RESET=1" :
+                    "APP_MODEL_PHASE10_TEMPORARY_RESET=0");
+                SerialText("APP_MODEL_PHASE10_VALUE_FAILURE_STEP=");
+                SerialUnsigned((ulong)
+                    ApplicationServiceRegistry.LastPersistentValueContractStep);
+                SerialChar('\n');
                 failure = "APPLICATION_SERVICES";
             } else {
                 SerialBreadcrumb("APP_MODEL_APP_COUNT=" + Desktop.Apps.Length.ToString());

@@ -710,13 +710,28 @@ namespace GuideXos
                 "state.bin", scratch, 0x0000600000000000UL, 32, 5);
             ulong overflowDestination = InvokeMalformedPersistentRead(
                 "state.bin", scratch, 0xFFFFFFFFFFFFFFF0UL, 32, 6);
+            ulong zeroDestination = InvokeMalformedPersistentRead(
+                "state.bin", scratch, (ulong)(nuint)scratch, 32, 7);
+            ulong invalidResponseDestination = InvokeMalformedPersistentRead(
+                "state.bin", scratch, (ulong)(nuint)scratch, 32, 8);
+            ulong overflowResponseDestination = InvokeMalformedPersistentRead(
+                "state.bin", scratch, (ulong)(nuint)scratch, 32, 9);
+            ulong overflowedOffset = InvokeMalformedPersistentRead(
+                "state.bin", scratch, (ulong)(nuint)scratch, 32, 10);
+            ulong oversizedCapacity = InvokeMalformedPersistentRead(
+                "state.bin", scratch, (ulong)(nuint)scratch, 32, 11);
             valid = wrongSize == InvalidRequest &&
                 invalidOperation == InvalidRequest &&
                 inconsistentLength == InvalidRequest &&
                 invalidCapacity == InvalidRequest &&
                 invalidPath == InvalidRequest &&
                 unmappedDestination == InvalidPointer &&
-                overflowDestination == InvalidPointer;
+                overflowDestination == InvalidPointer &&
+                zeroDestination == InvalidRequest &&
+                invalidResponseDestination == InvalidPointer &&
+                overflowResponseDestination == InvalidPointer &&
+                overflowedOffset == InvalidRequest &&
+                oversizedCapacity == InvalidRequest;
             return valid;
         }
 
@@ -757,6 +772,11 @@ namespace GuideXos
                 case 4: break;
                 case 5: break;
                 case 6: break;
+                case 7: request.DataBuffer = 0; break;
+                case 8: request.ResponseBuffer = 0x0000600000000000UL; break;
+                case 9: request.ResponseBuffer = 0xFFFFFFFFFFFFFFF0UL; break;
+                case 10: request.Offset = ulong.MaxValue; break;
+                case 11: request.DataCapacity = uint.MaxValue; break;
             }
             return InvokePersistentStorageRead(
                 (ulong)(nuint)requestPointer, requestLength);

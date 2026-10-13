@@ -15,7 +15,9 @@ internal static class Program
 #elif GUIDEXOS_PHASE35_TWO_READ
         if (!ReadFixture(out byte[] first)) return 41;
         first[0] ^= 0xFF;
-        bool passed = ReadFixture(out byte[] second) && HasFixtureBytes(second);
+        bool passed = ReadFixture(out byte[] second) &&
+            !System.Object.ReferenceEquals(first, second) &&
+            HasFixtureBytes(second);
         second = null;
         first = null;
         System.GC.Collect();
@@ -61,12 +63,14 @@ internal static class Program
         }
         first[0] ^= 0xFF;
         bool repeatPassed = ReadFixture(out byte[] second) &&
+            !System.Object.ReferenceEquals(first, second) &&
             HasFixtureBytes(second);
         second = null;
         first = null;
         System.GC.Collect();
         if (!repeatPassed) return 42;
         if (!CheckEmpty()) return 43;
+        if (!CheckMaximum()) return 55;
         System.GC.Collect();
         return 35;
 #endif
@@ -106,6 +110,7 @@ internal static class Program
         if (!LocallyRejected("/state.bin")) return 49;
         if (!LocallyRejected("../state.bin")) return 50;
         if (!LocallyRejected("bad?.bin")) return 51;
+        if (!LocallyRejected("state:bin")) return 56;
         string longPath = new string('x', 193);
         bool longRejected = LocallyRejected(longPath);
         longPath = null;
@@ -145,6 +150,25 @@ internal static class Program
         return result.Succeeded &&
                code == GuideXosStorageResultCode.Success &&
                IsEmpty(bytes);
+    }
+
+    private static bool CheckMaximum()
+    {
+        GuideXosResult result = GuideXosStorage.TryReadBytes("max.bin",
+            out byte[] bytes, out GuideXosStorageResultCode code);
+        if (!result.Succeeded ||
+            code != GuideXosStorageResultCode.Success ||
+            bytes == null ||
+            bytes.Length != GuideXosStorage.MaxValueLength)
+            return false;
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            byte expected = (byte)((i * 31 + (i >> 8) * 13 + 0x35) & 0xFF);
+            if (bytes[i] != expected) return false;
+        }
+        bytes = null;
+        System.GC.Collect();
+        return true;
     }
 
 #endif

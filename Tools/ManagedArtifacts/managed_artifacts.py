@@ -144,18 +144,36 @@ def read_legacy_kernel_hashes(source: Path) -> dict[str, str]:
 
 
 def read_generated_kernel_hashes(source: Path) -> dict[int, str]:
-    """Read generated identities so post-build audits verify the compiled input."""
+    """Read generated identities and verify the compiled return constants."""
     text = source.read_text(encoding="utf-8-sig")
     pattern = re.compile(
         r"// Phase(?:29|30|31|32|33|34|35) [\w-]+: ([0-9A-Fa-f]{64})\s+"
-        r"case 0x([0-9A-Fa-f]{8})U:"
+        r"case 0x([0-9A-Fa-f]{8})U:\s+return\s+(.*?);",
+        re.S,
     )
     found: dict[int, str] = {}
-    for digest, flags_text in pattern.findall(text):
+    for digest, flags_text, expression in pattern.findall(text):
         flags = int(flags_text, 16)
         if flags in found:
             raise ValueError(f"Generated kernel identities contain duplicate flags 0x{flags:08X}")
-        found[flags] = digest.upper()
+        words = re.findall(
+            r"ReadU32\(hash,\s*(\d+)\)\s*==\s*0x([0-9A-Fa-f]+)U",
+            expression,
+        )
+        offsets = [int(offset, 10) for offset, _ in words]
+        if offsets != list(range(0, 32, 4)):
+            raise ValueError(
+                f"Generated identity 0x{flags:08X} does not compare all eight digest words"
+            )
+        compiled_digest = b"".join(
+            int(word, 16).to_bytes(4, "little") for _, word in words
+        ).hex().upper()
+        if compiled_digest != digest.upper():
+            raise ValueError(
+                f"Generated identity comment/code mismatch for flags 0x{flags:08X}: "
+                f"comment={digest.upper()} code={compiled_digest}"
+            )
+        found[flags] = compiled_digest
     expected = {payload.proof_flags for payload in PAYLOADS}
     if set(found) != expected:
         raise ValueError(
