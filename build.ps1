@@ -194,38 +194,73 @@ if (-not $SkipBootloader) {
 }
 
 # Check for .NET SDK
-if (-not $SkipKernel) {
-    # Existing PowerShell sessions can have a PATH that predates the SDK
-    # installation. Recover the standard machine or per-user install location
-    # and add it to this build process so child build scripts can also use dotnet.
-    if (-not (Test-Command dotnet)) {
-        $dotnetCandidates = @(
-            (Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'),
-            (Join-Path $env:USERPROFILE '.dotnet\dotnet.exe'),
-            (Join-Path $env:LOCALAPPDATA 'Microsoft\dotnet\dotnet.exe')
-        )
-        $installedDotnet = $null
-        foreach ($candidate in $dotnetCandidates) {
-            if ($candidate -and (Test-Path -LiteralPath $candidate)) {
-                $installedDotnet = $candidate
-                break
+if ((-not $SkipKernel) -or (-not $SkipRamdisk)) {
+    # Resolve every candidate under the managed proof's pinned SDK policy. This
+    # rejects a host-only dotnet executable and SDKs that cannot satisfy the
+    # repository lock, including the bundled runtime SDK when it is too old.
+    $sdkPinPath = Join-Path $RootDir 'UserManagedProof\global.json'
+    $sdkPinVersion = $null
+    $sdkPinRollForward = $null
+    $sdkResolutionDirectory = $RootDir
+    if (Test-Path -LiteralPath $sdkPinPath -PathType Leaf) {
+        try {
+            $sdkPin = Get-Content -LiteralPath $sdkPinPath -Raw | ConvertFrom-Json
+            $sdkPinVersion = [string]$sdkPin.sdk.version
+            $sdkPinRollForward = [string]$sdkPin.sdk.rollForward
+            if ([string]::IsNullOrWhiteSpace($sdkPinVersion)) {
+                throw 'The SDK version is empty.'
             }
-        }
-        if ($installedDotnet) {
-            $dotnetDirectory = Split-Path -Parent $installedDotnet
-            if ($env:PATH) {
-                $env:PATH = "$dotnetDirectory;$env:PATH"
-            } else {
-                $env:PATH = $dotnetDirectory
-            }
+            $sdkResolutionDirectory = Split-Path -Parent $sdkPinPath
+        } catch {
+            throw "Unable to read the managed proof SDK pin at ${sdkPinPath}: $($_.Exception.Message)"
         }
     }
 
-    if (-not (Test-Command dotnet)) {
-        Write-Error ".NET SDK not found! Install a .NET SDK (this project targets .NET 7) or add its install directory to PATH."
+    $dotnetCandidates = @()
+    $dotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
+    if ($null -ne $dotnetCommand -and $dotnetCommand.Source) {
+        $dotnetCandidates += $dotnetCommand.Source
+    }
+    $dotnetCandidates += @(
+        (Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'),
+        (Join-Path $env:USERPROFILE '.dotnet\dotnet.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\dotnet\dotnet.exe'),
+        (Join-Path $RootDir 'out\rt\.dotnet\dotnet.exe')
+    )
+    $dotnetCandidates = @($dotnetCandidates | Where-Object { $_ } | Select-Object -Unique)
+    $dotnetExe = $null
+    $dotnetVersion = $null
+    foreach ($candidate in $dotnetCandidates) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        try {
+            Push-Location -LiteralPath $sdkResolutionDirectory
+            try {
+                $candidateOutput = @(& $candidate --version 2>$null)
+                $candidateExitCode = $LASTEXITCODE
+            } finally {
+                Pop-Location
+            }
+            $candidateVersion = if ($candidateOutput.Count -gt 0) { [string]$candidateOutput[0] } else { '' }
+            if ($candidateExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($candidateVersion)) {
+                $candidateVersion = $candidateVersion.Trim()
+                if ($sdkPinRollForward -eq 'disable' -and $candidateVersion -ne $sdkPinVersion) {
+                    Write-Info ".NET SDK candidate rejected: $candidate resolves $candidateVersion; the repository requires $sdkPinVersion with roll-forward disabled."
+                    continue
+                }
+                $dotnetExe = $candidate
+                $dotnetVersion = $candidateVersion
+                break
+            }
+        } catch {
+            # Continue to the next known SDK installation.
+        }
+    }
+    if (-not $dotnetExe) {
+        Write-Error ".NET SDK not found! Install an SDK or restore the pinned SDK under out\rt\.dotnet."
         exit 1
     }
-    $dotnetVersion = dotnet --version
+    $dotnetDirectory = Split-Path -Parent $dotnetExe
+    $env:PATH = "$dotnetDirectory;$env:PATH"
     Write-Success ".NET SDK found: $dotnetVersion"
     if (-not $vcvars64) {
         $vcvars64 = Find-VcVars64 $null
@@ -336,15 +371,20 @@ if (-not $SkipBootloader) {
 
     # MSBuild on this host can inherit both Path and PATH, which breaks VC tool startup.
     # Keep the canonical Path entry and drop the duplicate PATH entry before launching it.
+    $pathBeforeMsbuild = $env:Path
     Remove-Item Env:PATH -ErrorAction SilentlyContinue
     
     Write-Info "Building with MSBuild..."
-    & $msbuild $BootloaderProject `
-        /p:Configuration=Release `
-        /p:Platform=x64 /p:IntDir=x64\Release\build\ `
-        /v:minimal `
-        /nologo `
-        /t:Rebuild
+    try {
+        & $msbuild $BootloaderProject `
+            /p:Configuration=Release `
+            /p:Platform=x64 /p:IntDir=x64\Release\build\ `
+            /v:minimal `
+            /nologo `
+            /t:Rebuild
+    } finally {
+        if ($null -ne $pathBeforeMsbuild) { $env:Path = $pathBeforeMsbuild }
+    }
     
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Bootloader build failed with exit code $LASTEXITCODE"
@@ -428,6 +468,72 @@ if (-not $SkipRamdisk) {
         if ($LASTEXITCODE -ne 0) {
             Write-Error "Phase 26 bootstrap staging failed"
             exit 1
+        }
+    }
+
+    $phase23PrivateIlcRoot = Join-Path $RootDir "out\dotnet\phase23-private-ilc"
+    $phase23PrivateIlcPath = Join-Path $phase23PrivateIlcRoot "ilc-published\ilc.exe"
+    $phase23PrivateIlcRecord = Join-Path $phase23PrivateIlcRoot "private-ilc-build.json"
+    $phase23PrivateIlcRebuilt = $false
+    $phase23PrivateIlcReady = (Test-Path -LiteralPath $phase23PrivateIlcPath -PathType Leaf) -and
+        (Test-Path -LiteralPath $phase23PrivateIlcRecord -PathType Leaf)
+    if ($phase23PrivateIlcReady) {
+        try {
+            $phase23PrivateIlcRecordData = Get-Content -LiteralPath $phase23PrivateIlcRecord -Raw | ConvertFrom-Json
+            $phase23PrivateIlcHash = (Get-FileHash -LiteralPath $phase23PrivateIlcPath -Algorithm SHA256).Hash.ToUpperInvariant()
+            $phase23PrivateIlcReady =
+                $phase23PrivateIlcRecordData.runtimeSourceCommit -eq '9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3' -and
+                $phase23PrivateIlcRecordData.ilcPatchIdentity -eq 'guidexos-ilc-target-v1' -and
+                $phase23PrivateIlcRecordData.privateCompiler.sha256 -eq $phase23PrivateIlcHash
+        } catch {
+            $phase23PrivateIlcReady = $false
+        }
+    }
+    if (-not $phase23PrivateIlcReady) {
+        $phase23PrivateIlcBuild = Join-Path $RootDir "Tools\Phase23\build_private_ilcompiler.ps1"
+        if (-not (Test-Path -LiteralPath $phase23PrivateIlcBuild -PathType Leaf)) {
+            throw "Phase 23 private ILCompiler is absent or incomplete, and its build script is missing: $phase23PrivateIlcBuild"
+        }
+        Write-Info "Phase 23 private ILCompiler is absent or incomplete; building it from the pinned runtime source..."
+        & $phase23PrivateIlcBuild -OutputRoot $phase23PrivateIlcRoot
+        if ($LASTEXITCODE -ne 0) { throw "Phase 23 private ILCompiler build failed: $LASTEXITCODE" }
+        foreach ($requiredPath in @($phase23PrivateIlcPath, $phase23PrivateIlcRecord)) {
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                throw "Phase 23 private ILCompiler build did not produce a required file: $requiredPath"
+            }
+        }
+        $phase23PrivateIlcRebuilt = $true
+    }
+
+    $phase23RuntimePack = Join-Path $RootDir "out\dotnet\phase23-runtime-pack"
+    $phase23RuntimePackRequiredFiles = @(
+        "guidexos-runtime-pack.manifest.json",
+        "guidexos_link_shim.obj",
+        "packages\microsoft.dotnet.ilcompiler.9.0.0.nupkg",
+        "packages\runtime.guidexos-x64.microsoft.dotnet.ilcompiler.9.0.0.nupkg",
+        "packages\runtime.win-x64.microsoft.dotnet.ilcompiler.9.0.0.nupkg"
+    )
+    $phase23RuntimePackReady = (-not $phase23PrivateIlcRebuilt) -and
+        (Test-Path -LiteralPath $phase23RuntimePack -PathType Container)
+    foreach ($relativePath in $phase23RuntimePackRequiredFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $phase23RuntimePack $relativePath) -PathType Leaf)) {
+            $phase23RuntimePackReady = $false
+            break
+        }
+    }
+    if (-not $phase23RuntimePackReady) {
+        $phase23RuntimePackStage = Join-Path $RootDir "Tools\Phase23\stage_guidexos_private_pack.ps1"
+        if (-not (Test-Path -LiteralPath $phase23RuntimePackStage -PathType Leaf)) {
+            throw "Phase 23 runtime pack is absent or incomplete, and its staging script is missing: $phase23RuntimePackStage"
+        }
+        Write-Info "Phase 23 runtime pack is absent, incomplete, or stale; staging the accepted private compiler/runtime pack..."
+        & $phase23RuntimePackStage -OutputRoot $phase23RuntimePack
+        if ($LASTEXITCODE -ne 0) { throw "Phase 23 runtime pack staging failed: $LASTEXITCODE" }
+        foreach ($relativePath in $phase23RuntimePackRequiredFiles) {
+            $requiredPath = Join-Path $phase23RuntimePack $relativePath
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                throw "Phase 23 runtime pack staging did not produce a required file: $requiredPath"
+            }
         }
     }
 
@@ -595,7 +701,7 @@ if (-not $SkipKernel) {
         if ($skipKernelRestore) {
             $publishArgs += " --no-restore"
         }
-        $cmdPathPrefix = "set `"PATH=$env:SystemRoot\System32;C:\Program Files\dotnet`" && "
+        $cmdPathPrefix = "set `"PATH=$env:SystemRoot\System32;$dotnetDirectory`" && "
         & "$env:SystemRoot\System32\cmd.exe" /d /s /c "$cmdPathPrefix call `"$vcvars64`" >nul && $publishArgs"
     } else {
         $publishArgs = @($KernelProject, '-c', 'Release') + $publishPropertyArgs

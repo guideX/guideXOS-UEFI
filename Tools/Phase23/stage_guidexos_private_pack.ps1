@@ -32,7 +32,11 @@ $runtimePackageId = 'runtime.guidexos-x64.Microsoft.DotNet.ILCompiler'
 foreach ($path in @($runtimeBuild, $privateIlc, $privateIlcRecord, $phase19PalObject, $phase19PalLib, $phase19PalContractPath, $compilerPackageCache, $runtimePackageCache)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Required Phase 23 input is absent: $path" }
 }
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build_guidexos_link_shim.ps1') -OutputRoot $OutputRoot
+$windowsPowerShell = Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe'
+if (-not (Test-Path -LiteralPath $windowsPowerShell -PathType Leaf)) {
+    throw "Windows PowerShell executable is absent: $windowsPowerShell"
+}
+& $windowsPowerShell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build_guidexos_link_shim.ps1') -OutputRoot $OutputRoot
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $linkShimObject -PathType Leaf)) { throw 'The GUIDEXOS link shim was not produced.' }
 
 $actualCommit = (& git -C $RuntimeSourceRoot rev-parse HEAD).Trim()
