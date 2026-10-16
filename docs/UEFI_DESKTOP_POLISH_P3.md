@@ -24,13 +24,32 @@ The desktop rendered four static UEFI tiles, but hit testing only had a special 
 
 ## Validation
 
-The focused hosted project links the production interaction source directly and passed 42 assertions covering tile and label hit bounds, empty-space misses, selection/deselection, double-click timing and distance, drag threshold and offset, activation-vs-drag, work-area clamping, pointer capture, higher-priority input ownership, and cursor hotspots.
+### Revalidation at the current main head
 
-The ordinary full build completed successfully in the sandbox. Its configured Phase 27–35 proof cohorts passed, including the Phase 35 contracts; no Phase 36 work was started. A targeted `DesktopP3` diagnostic build also completed before the guest runs. The build logs and artifacts remain in the sandbox and were not copied to the live checkout.
+The live checkout was `main` at `1e2dba921831364719eb816b4d76bdea0b89fca0`, one commit ahead of `origin/main`. The P3 implementation is already present in ancestor commit `3f1d155`; its production files, tests, and `build.ps1` matched the current live checkout. No product-code edits were needed for this revalidation.
 
-The QEMU guest proof used the sandbox-built EFI image at 1280×800. It loaded both 28×28 cursor assets, selected by graphic and label, deselected on empty desktop, activated Notepad by double-click, moved and dropped DOCS, opened Start and desktop context menus, changed icon size to 32, opened and clicked the Performance widget, dismissed a context menu without activating the icon underneath, launched File Explorer from FILES, and captured the pointer at both screen corners. The final baseline counters were 4 selections, 1 deselection, 2 activations, 1 drag start/end, 11/11 left down/up, 1/1 right down/up, and 0 dropped mouse packets. All 19 expected screenshots were present in `C:\dev\guideXOSUEFI_P3_SANDBOX\out\desktop-p3-evidence`.
+- The focused hosted project passed **42 assertions** with `dotnet run --project Tests\UefiDesktopInteractionTests\UefiDesktopInteractionTests.csproj --configuration Release --artifacts-path out\p3-test-artifacts`. Output: `out\p3-focused-tests-current-head.log`.
+- The ordinary full build completed with zero errors. Descriptor, build staging, ramdisk staging, and compiled allowlist agreement were all **41/41**. Log: `out\p3-full-build-current-head.log`. The known base Ring3Phase35 fixture-seeding caveat remains a separate documented issue; no Phase 36 work was started.
+- The current-head continuous startup smoke returned `TIMEOUT_SUCCESS`: dispatch selected, Continuous entered, four heartbeats through frame 600, timer 634→16,752, graphics invariants true. Log: `out\p3-continuous-smoke.log`.
+- A fresh **visible** `DesktopP3` QEMU baseline at 1280×800 on the current-head diagnostic EFI image returned `DESKTOP_P3_COMPLETE`. It captured all 19 expected frames, loaded both cursor assets, recorded four selections, one deselection, two activations, one drag start/end, zero dropped mouse packets, and valid graphics invariants. Log: `out\p3-visible-baseline-current-head.log`; serial: `serial_uefi_validation_20261015_184642.txt`; frames: `out\desktop-p3-evidence`.
+- The protected live `out\rt` tree remained unchanged at **66,730 files / 2,152,293,540 bytes**. Existing user deletions and untracked `toolchain_probe.obj` were preserved.
 
-The opt-in stress workload exercised 100 selections, 50 deselections, 50 drag/drop cycles, 25 Notepad activations, 25 Start open/close cycles, and 300 seconds of cursor motion over icons, wallpaper, the widget, taskbar, Start, and screen edges. I fixed the harness pointer reset after the first measurement showed a 79-pixel residual at the right edge: it now sends enough bounded negative reports to return a 1280-pixel guest pointer to zero before absolute test moves. The corrected run reached the intended coordinates, closed File Explorer before the soak, and passed the runner's event, balanced-input, packet-drop, graphics-invariant, and screenshot checks.
+The fresh baseline's last periodic mouse snapshot showed 5 downs and 4 ups because the final File Explorer activation followed that snapshot; the validator accepted the subsequent release evidence. The completed full stress run below recorded balanced 318/318 left-button transitions and is the stronger stuck-button check.
+
+### Accepted full graphical stress proof
+
+The completed 2026-10-13 P3 acceptance run used the same P3 production source now in `3f1d155` and the built-in QMP/framebuffer screenshot harness. It returned `DESKTOP_P3_COMPLETE` and `Desktop stress validation: True`. Its QEMU window was hidden, but guest interaction used real QMP mouse/keyboard input and captured guest framebuffer screenshots.
+
+- 104/51 total selections/deselections, including baseline proof;
+- 51/51 drag starts/drops and 27 icon activations;
+- 26 Start opens, 25 requested Start open/close cycles;
+- 300 seconds of cursor path motion across desktop, widget, taskbar, Start, and screen edges (344 path transitions);
+- 20 screenshots, 11,831 mouse packets, 11,189 moves, zero dropped packets;
+- 318/318 left and 3/3 right button transitions; graphics invariants true; stack low-water 2,620,160 bytes.
+
+Runner log: `out\desktop-p3-memory-reset-fixed-runner.log`. Serial log: `out\desktop-p3-memory-reset-fixed-serial.log`. The current-head build and visible baseline above independently cover the later build-only changes in `1e2dba9`.
+
+Exploratory same-day QMP timing changes in the ordinary-copy sandbox produced stress telemetry below the activation gate. Those edits were not transferred or counted as accepted proof; the completed original P3 stress run above remains the qualified stress result. The current P3 source and runner in the live checkout remain untouched by those experiments.
 
 ## Stability and remaining verification
 
@@ -40,7 +59,9 @@ The stress run completed 12 heartbeats through frame 14,400. Stack low-water sta
 
 The corrected stress summary reported 104/51 total selections/deselections (including the initial visual proof), 51/51 drag starts/ends, 27 activations, 26 Start opens, 20 fresh screenshots, 11,831 mouse packets, 11,189 mouse moves, and zero dropped mouse packets. The final screenshot shows the cursor over FILES, the selected DOCS tile, the Performance widget, and no lingering File Explorer window. It is at `C:\dev\guideXOSUEFI_P3_SANDBOX\out\desktop-p3-evidence\20-cursor-after-soak.ppm`. No separate physical/bare-metal run was available.
 
-## Files changed
+## Changes and file list
+
+### P3 implementation already committed in `3f1d155`
 
 - `Kernel/Drivers/Input/MouseEventDispatcher.cs`
 - `guideXOS/GUI/UefiDesktopInteraction.cs` (new production geometry and gesture logic)
@@ -48,10 +69,15 @@ The corrected stress summary reported 104/51 total selections/deselections (incl
 - `guideXOS/Program.cs`
 - `guideXOS/guideXOS.csproj`
 - `build.ps1`
-- `run_uefi_validation.ps1` (P3 proof plus corrected QMP pointer reset)
+- `run_uefi_validation.ps1` (P3 proof and bounded QMP pointer reset)
 - `Tests/UefiDesktopInteractionTests/Program.cs`
 - `Tests/UefiDesktopInteractionTests/UefiDesktopInteractionTests.csproj`
-- `Docs/UEFI_DESKTOP_POLISH_P3.md`
+
+### Current revalidation change
+
+- `docs/UEFI_DESKTOP_POLISH_P3.md` (this report update; evaluated source snapshot `1e2dba921831364719eb816b4d76bdea0b89fca0`).
+
+No generated binaries, screenshots, or build outputs were copied into the live checkout. The report update is the only file to be committed for this revalidation.
 
 Manual hardware checklist:
 
