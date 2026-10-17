@@ -52,3 +52,57 @@ One isolated diagnostic QEMU boot was attempted using copied ESP and firmware fi
 | Production QEMU cold boots with Memory Details exercised | 0 of 3; the one diagnostic boot does not count |
 
 The exact v0.2 crash release blocker is **not closed**. The ownership correction is implemented and has source-level regression and compile evidence, but UI runtime, kernel stability, complete production build, and three production cold-boot gates remain open.
+
+## R1 production qualification follow-up — 2026-10-17
+
+This section supersedes the preceding provisional QEMU and release-gate status. The full production build and three production UI boots are now complete. The release blocker remains open because allocator use grows substantially during the required stress run, and several secondary acceptance checks remain incomplete.
+
+### Repository and containment
+
+- Starting and ending branch: `main`; starting and ending HEAD: `95501977f95042413ce9f36ca9417ce39ce25367`. `origin/main` matched HEAD (0 ahead, 0 behind). No commit or push was made.
+- The starting tracked changes were `guideXOS/DefaultApps/TaskManager.cs` and `Tests/TaskManagerMemoryDetailsRegression.ps1`. R1 also updates this report. The three pre-existing untracked paths remain: `Tools/Phase23/recover_source_patch_evidence.ps1`, `Tools/Phase23/runtime-source-cache-recovery.lock.json`, and `toolchain_probe.obj`.
+- The dirty pinned `out\rt` checkout remains at `9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3` with its existing modifications. It was not cleaned or repatched. Full build and QEMU work used the ordinary-copy lane at `C:\gx`; the live `out\rt` artifact scan found no writes during qualification.
+- The C:\gx `TaskManager.cs` source hash matched the workspace source. The build log is `C:\gx\out\logs\taskmanager-memorydetails-full-release-rerun.log`.
+
+### Ownership audit and source regression
+
+- `StringPool.GetNumber`, memory-size helpers, and related lookups return shared cached strings. The Memory Details draw path no longer obtains those values from StringPool or disposes pooled objects.
+- The 14 Memory Details value fields are privately allocated. Numeric and formatted values use fresh strings; literal values are copied through `CreateOwnedMemoryLabel`. Refresh calls `DisposeMemoryDetailLabels` before assigning replacements, clears each field, and the Task Manager `Dispose` override releases the remaining labels on window close. Refresh occurs inside the draw path before the current frame reads the replacement fields; close reaches disposal through the normal Window lifecycle.
+- Snapshot bounds and nonzero size are checked before heap subtraction and division. The shared overflow-safe percentage helper avoids multiplying untrusted values by 100, and cumulative page counts saturate instead of wrapping.
+- `Tests\TaskManagerMemoryDetailsRegression.ps1`: **PASS** on the current source. It also rejects `b0a50b924da0e1d76d50b2b58de01418d4b41d74:guideXOS/DefaultApps/TaskManager.cs` at the specific assertion that Memory Details must not retain shared StringPool return values.
+- Runtime invalid-snapshot injection was not performed. The safe `N/A` path is covered by source regression; no runtime `N/A` screenshot is available.
+
+### Production build and image identity
+
+Ran the complete `C:\gx\build.ps1` release build. It emitted `=== Build Complete! ===`, exit code 0, and zero build errors. Managed artifact admission and staging all agreed at 41/41: descriptor, build staging, ramdisk staging, and compiled allowlist. The production kernel, ramdisk, and EFI files staged into the ESP and copied into each formal QEMU boot directory have matching hashes:
+
+| Component | SHA-256 |
+| --- | --- |
+| `kernel.elf` | `1875F96565320AA007A34316072F5E7E4BDD7E83D3B7C60B74DC1AE2E37B10DA` |
+| `ramdisk.img` | `F7EFBFF3BC4B845303419DDF523EBC27DBFD01D9174EBEEF5F8A7009E8D780A8` |
+| `EFI/BOOT/BOOTX64.EFI` | `8C0A01ACDEC39C61C139E4AD84DDFC8D110174951CECF07401F0635B888F7FAD` |
+
+### Production QEMU interaction
+
+Three clean QEMU boots used separate ESP copies and firmware-variable files from that production build. QMP mouse events opened Task Manager through Start > All Programs in every boot. Memory Details was visibly rendered, updated, and selected again after navigating away; Task Manager closed and the desktop remained responsive. Thus **3/3 production boots** passed the no-crash UI sequence. The first boot also completed **25/25** open/enter/exit cycles and **50/50** tab transitions across all four tabs.
+
+Evidence is under `C:\gx\out\taskmanager-memorydetails-qualification`:
+
+- `boot-1-stress-verified`: `qualification-summary.txt`, `serial-final.txt`, Start-menu and Task Manager screenshots, Memory Details screenshots for cycles 1, 5, 10, 15, 20, and 25, tab-transition screenshots, and the final healthy desktop capture.
+- `boot-2-basic-verified` and `boot-3-basic-verified`: per-boot summaries, serial logs, Task Manager and Memory Details render/return screenshots, and healthy desktop captures.
+- `boot-1-desktop-icon`: a separate production UI smoke boot; `desktop-files-icon-activated.png` shows Computer Files opened by double-clicking the Files desktop icon, and serial contains `DESKTOP_FILES_CLICK_ROUTED`.
+- `boot-1-desktop-ui`: a separate startup/widget probe. Widgets initialized in serial, but the edge-reveal screenshots did not show the widget panel. The early desktop capture showed no notification toast. These widget and notification interactions are not counted as passed.
+
+Across the three formal boot logs, fault-marker scan count was zero for #PF, #GP, #UD, #BP, panic, unhandled exception, corrupt run, and NativeAOT invalid-free markers. On the stress boot, free calls/successes were 50,391/50,391; invalid, no-pages, and corrupt frees were all 0. Each basic boot recorded 26,651/26,651 free calls/successes and the same zero failure counters. No obvious screen flicker or UI hang appeared in the captured run, though flicker was not measured with a dedicated detector.
+
+### Memory stability result and decision
+
+The required memory-stability gate **failed**. Allocator memory-in-use was 19,075,072 bytes before stress. It was 29,806,592 at cycle 5, 37,892,096 at cycle 10, 58,761,216 at cycle 15, 87,547,904 at cycle 20, and 117,137,408 at cycle 25. After the 50 tab transitions and final close it was 149,704,704 bytes, a net increase of 130,629,632 bytes (124.58 MiB). Invalid and corrupt frees remained zero, but that does not explain or clear the sustained allocation growth. The successful `Leak Exists FALSE` text in the UI is not evidence of allocator stability.
+
+**R1 outcome: B — runtime UI tests completed without a crash, but release acceptance is incomplete and the memory-stability gate failed. The v0.2 Task Manager release blocker remains open.** The source ownership repair is verified and the exact production binary passed the requested UI operations, but this stress memory growth must be diagnosed before release acceptance. Invalid snapshot runtime injection, widgets/notification interaction, and bare-metal qualification also remain outstanding. No physical hardware was available. Owner checklist:
+
+1. Boot the same kernel, ramdisk, and EFI images on bare metal and record their SHA-256 hashes.
+2. Open Task Manager through the desktop, select Memory Details, navigate away and back, then close and reopen the window. Repeat 25 window cycles and 50 mixed tab transitions.
+3. Capture Memory Details and the post-close desktop; record allocator/free counters and check serial/debug output for faults or invalid frees.
+
+The changed tracked files are `guideXOS/DefaultApps/TaskManager.cs`, `Tests/TaskManagerMemoryDetailsRegression.ps1`, and this report. `git diff --check` passed. No commit was made because the acceptance result was not clean; nothing was pushed.

@@ -1,0 +1,255 @@
+{
+  "schema": 1,
+  "target": "guidexos-x64",
+  "runtimeCommit": "9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3",
+  "cacheProfile": "phase21-phase22-phase23-plus-phase26-corelib",
+  "trackedFiles": [
+    {
+      "path": "Directory.Build.props",
+      "sha256": "360A1B727DCF5115C37931DBAD21E0A70A278DE095DF7A4C49C34B7D9A2B3495"
+    },
+    {
+      "path": "eng/build.ps1",
+      "sha256": "CECF3204FEC1A25AB79C455D33456E0B60408F3A84D454270421B47C4060A673"
+    },
+    {
+      "path": "eng/native/configurecompiler.cmake",
+      "sha256": "0AD8DA4A91CCA6F9339EA17E9E491868E76EE6CBE7E158AA6F4DA2DDD3564993"
+    },
+    {
+      "path": "eng/native/configureplatform.cmake",
+      "sha256": "933C0FF257ED065F748D5253B8C03517492982ECECC7FA425BF9394DCFA4DB07"
+    },
+    {
+      "path": "src/coreclr/clrdefinitions.cmake",
+      "sha256": "E2E6EB66780F83A85BB99299CB2EC8B3943E1EBD859702584ED9B5FAB10E7520"
+    },
+    {
+      "path": "src/coreclr/CMakeLists.txt",
+      "sha256": "5D956C8A62854C5BBD59436750F109BE4A4D10A820A80CB2CC8256B2BC03C4F4"
+    },
+    {
+      "path": "src/coreclr/gc/env/gcenv.base.h",
+      "sha256": "8241C4EA5033E643B96678F1B4545272F5640C162C250F88E523AE1E47CE59DA"
+    },
+    {
+      "path": "src/coreclr/gc/env/gcenv.structs.h",
+      "sha256": "32FE695D6ADF1CB84AB6EDAB016F118E43E786A21705481B0C01E390553A94F9"
+    },
+    {
+      "path": "src/coreclr/inc/daccess.h",
+      "sha256": "F0B90719CD30202BB40432F971AE4E68DCEFF284B3474D4E5D62D8FE4EAF12B5"
+    },
+    {
+      "path": "src/coreclr/nativeaot/CMakeLists.txt",
+      "sha256": "B0A92A5DB923DABAB3EAE0B3347E6A3C63C0904A7854C6A02E4620CD6114740E"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Common/src/Internal/Runtime/CompilerHelpers/StartupCodeHelpers.cs",
+      "sha256": "2F344B56514381B52216611A2C955802EA48B5E4C66A9CF671C7EAFD6577324F"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Directory.Build.props",
+      "sha256": "9C54A1ED7851F351ADADAE0392325625D58EEF5CD550D7068C1207FB072E4C3D"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Runtime/CMakeLists.txt",
+      "sha256": "A9B093ADF5889488132CF39CC8740C376F57AD0C5209DFD6F2513BBECCD962F6"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Runtime/Full/CMakeLists.txt",
+      "sha256": "1EB7F544DD8142C54834C5672037B7BB078A6A1BD464C7A78AA76D340ECE8B7B"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Runtime/gcenv.h",
+      "sha256": "74F00DD7582D7304DA6F5F8059CCD8B7A9B5136BC6C41C3991583211F7D3A3A8"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Runtime/PalRedhawk.h",
+      "sha256": "38470147C888EB9DF3A47B1EE56A3DD84C3FBCDC32BCBB3255540058DC2626F2"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Runtime/regdisplay.h",
+      "sha256": "77DC977CC391FB10845A34ECDA384ADC709413F238D5581849B1D84D67FA8E63"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Runtime/startup.cpp",
+      "sha256": "AF67361A582A20C8C029DC579987D7482422BC809F607916173AC6BB2D340028"
+    },
+    {
+      "path": "src/coreclr/nativeaot/System.Private.CoreLib/src/Internal/Runtime/CompilerHelpers/InteropHelpers.cs",
+      "sha256": "61CCB6826931C0E2B475D5E5D509A97782AF686A63CCCC950E4B2231515DFE8F"
+    },
+    {
+      "path": "src/coreclr/nativeaot/System.Private.CoreLib/src/Internal/Runtime/CompilerHelpers/StartupCode/StartupCodeHelpers.Extensions.cs",
+      "sha256": "52C3B66281FE372D83FE411D09FAB039625BE7ECAD51924800F75CF058DC8ADF"
+    },
+    {
+      "path": "src/coreclr/nativeaot/System.Private.CoreLib/src/System/Threading/Thread.NativeAot.Windows.cs",
+      "sha256": "2B707CE189F9C733085949C012824A32DC4E718539477E54CA4C3B9BF28EF796"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/DictionaryLayoutNode.cs",
+      "sha256": "322D4A094B1DB982FB8E886398615307592D652B99EDA9B318B1E6566F3E2E59"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/EETypeNode.cs",
+      "sha256": "B15F9DD987BCE771C0E1B5E82A4D93E2DFE59A6F9AD65ABFB336CF37BD17411A"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/ExternalReferencesTableNode.cs",
+      "sha256": "DBBD7FD17732AB45FE342E6AEC20880A078998E9788F7B80C6BB7E37653522DB"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/FatFunctionPointerNode.cs",
+      "sha256": "439633506504C9609D3CE2D041FBCBF4DB4644C0467F788CD02CBEC6237F5F48"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/GCStaticEETypeNode.cs",
+      "sha256": "840B415294C8D5EDE4855E7FB172EAE4E4B493D9C7E7B43F9112720B778BC112"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/GCStaticsPreInitDataNode.cs",
+      "sha256": "E7FBC95EB4CA1CBEAF1A76301D8A135C703602030F6DD2B0645A3FCD0B2BD798"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/GenericCompositionNode.cs",
+      "sha256": "AC79DAC2F4BF6CA7CA0F47A40FD41855C5F7679EA5F573F0D74C6669F2DBBAD2"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/GenericVarianceNode.cs",
+      "sha256": "C5DD9BFC28845A5CB685A914082419D8579DF544F8C48C2EB9335B3757D4129B"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/InterfaceDispatchMapNode.cs",
+      "sha256": "5169956A65ABEB3F8ACA5DB989E7F0F96EA2614CB0F76AFC3D42281AAC80921A"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/MethodExceptionHandlingInfoNode.cs",
+      "sha256": "93D901EA0D7D07275D997FE89F227097511047F8C9577AD7FA0C51F49FDB38A8"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/ModulesSectionNode.cs",
+      "sha256": "6B9431D8CA7F22A73FC694A198C77985EEEEB87478102F13587A73D9BE6E9207"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/NativeLayoutSignatureNode.cs",
+      "sha256": "ADD797F6ADDA8F243397B057DDDDF9C649085A82B67A4EF7A4AC73CEC66BBD84"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/ReadyToRunHeaderNode.cs",
+      "sha256": "629A25052138C8AFEA59535AFEC33324993FC8E562020E63AB7145B13C67C4E2"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/RuntimeFieldHandleNode.cs",
+      "sha256": "FF27A58D68262569D1AC8A086964597581972E7AAD620C8A763E1CCAEBEBB637"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/RuntimeMethodHandleNode.cs",
+      "sha256": "E23EC5FD86FD82FFF09872D743DCE3CEEB559F05CCFE21AD362AF801B8C902D4"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/SealedVTableNode.cs",
+      "sha256": "B9FF7D0B6B172A395C1AEE5B4F3CD94BEA6C7B7482F4220B0392896381A69904"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/TypeThreadStaticIndexNode.cs",
+      "sha256": "38297833EB5907634C2476F3CCE79CE4905A559D692293BFA8D9B1826C26EA25"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/DependencyAnalysis/UnboxingStubNode.cs",
+      "sha256": "4307BCA847B86E964763B2E3C7722113DBAAFA4DC085045A6EE5CCF4D59B64ED"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/ExportsFileWriter.cs",
+      "sha256": "5D95B7CB3A1750EE1BC13AD23452494456AE372EE6FE15ADB148001E590A39CB"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/ObjectWriter/ObjectWriter.cs",
+      "sha256": "BF54FF10DAA919C7688E079D2DE5930991F21ECCF4E9F54676E8D65DBAA0C4AF"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/RuntimeConfigurationRootProvider.cs",
+      "sha256": "71A3777DE083B68EBBBFBEB6941BD76F15F6380EB22BB4CFE703328B6F57A6E3"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.Compiler/Compiler/UserDefinedTypeDescriptor.cs",
+      "sha256": "FC6C3F399E7094E29B2EEFE16F4C1A65E8823B29D57486BDFD47ED7278B70421"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.RyuJit/Compiler/RyuJitCompilationBuilder.cs",
+      "sha256": "B016EABDF23D16E2C8C306229EC246D419CE9CBDD4A8C519F9B889B184C188F6"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler.RyuJit/JitInterface/CorInfoImpl.RyuJit.cs",
+      "sha256": "42183D631C046674E7A58E363533AD3EAEB8D419FDF05B36480E2BD9286E8B0B"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler/ILCompilerRootCommand.cs",
+      "sha256": "0F37F21BF88BD0EE809C7820B031C4CDB7BD82AF2A0C60988648C555D8B369C5"
+    },
+    {
+      "path": "src/coreclr/tools/aot/ILCompiler/Program.cs",
+      "sha256": "5B7ADF9214DBB91E3EAF29D69931C160E3759C6245C1F5DFA73F4737A66A1CE3"
+    },
+    {
+      "path": "src/coreclr/tools/Common/CommandLineHelpers.cs",
+      "sha256": "7AA1D6A2CD98155D88137902C0CD5F58F0AB491C333F1A3C3CA3EB74C7261F98"
+    },
+    {
+      "path": "src/coreclr/tools/Common/Compiler/DependencyAnalysis/Target_X64/TargetRegisterMap.cs",
+      "sha256": "1E69C90639CB70540A38CB27BB7186DEFD25BEF10E0BD9279E19A94390F9C3F8"
+    },
+    {
+      "path": "src/coreclr/tools/Common/JitInterface/CorInfoImpl.cs",
+      "sha256": "104B0C51260ECF7D7ED1A4FA2450B08741371557F41391878A020BFB7C4418EE"
+    },
+    {
+      "path": "src/coreclr/tools/Common/JitInterface/JitConfigProvider.cs",
+      "sha256": "50EF6EB503F2FC3961C248B626C9B94919A111A5A7E3653EA96676DFACCA2730"
+    },
+    {
+      "path": "src/coreclr/tools/Common/TypeSystem/Common/TargetDetails.cs",
+      "sha256": "8941B7ABCDCEC62B6933E7FC98B8E4B7616828CEB2EDCC6A4AD93ECCF253D5E5"
+    },
+    {
+      "path": "src/coreclr/tools/Common/TypeSystem/Interop/UnmanagedCallingConventions.cs",
+      "sha256": "AD16F4EB976EBA509E15F323C6DA785AB6C24B23088773D51CD54953E2D85E2D"
+    },
+    {
+      "path": "src/native/libs/CMakeLists.txt",
+      "sha256": "74205B92B7A11E53408FF2875678BB1523FAD4987E1F4E88C18A9F05EAAF2F05"
+    }
+  ],
+  "requiredTemplates": [
+    {
+      "path": "src/coreclr/gc/env/gcenv.guidexos.inl",
+      "sha256": "5CDA443C594151A0B5F2AAE4B5C942C62907AC2E343A74FE72A93786DB466032"
+    },
+    {
+      "path": "src/coreclr/gc/guidexos/gcenv.guidexos.cpp",
+      "sha256": "5EC86639BFEDE33F2334BF47F1CDBB63A4AD4D0C13BD8B5F522DFD1746261817"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Runtime/guidexos/AsmOffsets.cpp",
+      "sha256": "9FD182583152263AD42C85AC215584AC616C3CBC5EE537FBDFCB152CF9DA2625"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Runtime/guidexos/GuidexosGcPal.h",
+      "sha256": "6941FA435D25E44F981321C21DBBE1B50366AD9F38900F7E274D8321144FD881"
+    },
+    {
+      "path": "src/coreclr/nativeaot/Runtime/guidexos/PalRedhawkInline.h",
+      "sha256": "13E5E76C97816E215487B20B55FCB587E2298DAE7495B16A4F4565808FCC6500"
+    }
+  ],
+  "allowedGeneratedArtifacts": [
+    "src/coreclr/nativeaot/System.Private.CoreLib/src/out/dotnet/phase27-managed-service-proof/success-runtime-pack/_phase26-build/corelib-output/aotsdk/System.Private.CoreLib.dll",
+    "src/coreclr/nativeaot/System.Private.CoreLib/src/out/dotnet/phase27-managed-service-proof/success-runtime-pack/_phase26-build/corelib-output/aotsdk/System.Private.CoreLib.xml",
+    "src/coreclr/nativeaot/System.Private.CoreLib/src/out/dotnet/phase28-managed-sdk/success-runtime-pack/_phase26-build/corelib-output/aotsdk/System.Private.CoreLib.dll",
+    "src/coreclr/nativeaot/System.Private.CoreLib/src/out/dotnet/phase28-managed-sdk/success-runtime-pack/_phase26-build/corelib-output/aotsdk/System.Private.CoreLib.xml",
+    "src/coreclr/nativeaot/System.Private.CoreLib/src/out/dotnet/phase30-managed-clipboard/oversize-runtime-pack/_phase26-build/corelib-output/aotsdk/System.Private.CoreLib.dll",
+    "src/coreclr/nativeaot/System.Private.CoreLib/src/out/dotnet/phase30-managed-clipboard/oversize-runtime-pack/_phase26-build/corelib-output/aotsdk/System.Private.CoreLib.xml"
+  ],
+  "note": "Generated artifacts are path-allowlisted and preserved; their contents are not used as source-patch evidence."
+}

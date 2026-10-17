@@ -729,11 +729,7 @@ namespace guideXOS.DefaultApps {
                 ulong totalMem = _systemSnapshot.MemorySizeBytes == 0
                     ? 1UL : _systemSnapshot.MemorySizeBytes;
                 ulong usedMem = _systemSnapshot.MemoryInUseBytes;
-                _memUtilPct = (int)(usedMem * 100UL / totalMem);
-                if (_memUtilPct < 0)
-                    _memUtilPct = 0;
-                if (_memUtilPct > 100)
-                    _memUtilPct = 100;
+                _memUtilPct = CalculateMemoryPercent(usedMem, totalMem);
                 UpdateChart(_memChart, _memUtilPct, 0xFF58D68D);
 
                 // Disk (synthetic animation so chart isn't flat). If real stats are added later, replace here.
@@ -1356,7 +1352,8 @@ namespace guideXOS.DefaultApps {
                 _mdLeakStr = CreateOwnedMemoryLabel(
                     _leakExists ? "TRUE" : "FALSE");
                 if (_cumulativeAllocatedPages > 0) {
-                    int freePct = (int)((_cumulativeFreedPages * 100UL) / _cumulativeAllocatedPages);
+                    int freePct = CalculateMemoryPercent(
+                        _cumulativeFreedPages, _cumulativeAllocatedPages);
                     _mdFreeAllocRatioStr = FormatOwnedMemoryPercent(freePct);
                 } else {
                     _mdFreeAllocRatioStr = CreateOwnedMemoryLabel("N/A");
@@ -1371,7 +1368,8 @@ namespace guideXOS.DefaultApps {
                     _mdHeapSizeStr = FormatOwnedMemorySize(heapSize);
                     _mdHeapUsedStr = FormatOwnedMemorySize(heapUsed);
                     _mdHeapFreeStr = FormatOwnedMemorySize(heapFree);
-                    int heapUtilPct = (int)(heapUsed * 100UL / heapSize);
+                    int heapUtilPct = CalculateMemoryPercent(heapUsed,
+                        heapSize);
                     _mdHeapUtilStr = FormatOwnedMemoryPercent(heapUtilPct);
                 } else {
                     _mdHeapSizeStr = CreateOwnedMemoryLabel("N/A");
@@ -1477,6 +1475,26 @@ namespace guideXOS.DefaultApps {
             return value + string.Empty;
         }
 
+        private static int CalculateMemoryPercent(ulong used, ulong total) {
+            if (total == 0 || used == 0) return 0;
+            if (used >= total) return 100;
+
+            // Add the fraction one hundred times without scaling used first.
+            // The subtraction check keeps both remainder operations below total.
+            ulong threshold = total - used;
+            ulong remainder = 0;
+            int percent = 0;
+            for (int i = 0; i < 100; i++) {
+                if (remainder >= threshold) {
+                    remainder -= threshold;
+                    percent++;
+                } else {
+                    remainder += used;
+                }
+            }
+            return percent;
+        }
+
         private static string FormatOwnedMemoryNumber(ulong value) {
             return value.ToString();
         }
@@ -1520,11 +1538,17 @@ namespace guideXOS.DefaultApps {
             
             // Calculate allocations from current state
             ulong currentPageInUse = Allocator._Info.PageInUse;
-            _cumulativeAllocatedPages = currentPageInUse + _cumulativeFreedPages;
+            _cumulativeAllocatedPages = currentPageInUse >
+                ~0UL - _cumulativeFreedPages
+                    ? ~0UL
+                    : currentPageInUse + _cumulativeFreedPages;
 
             // Update leak detection
-            long netGrowth = (long)_cumulativeAllocatedPages - (long)_cumulativeFreedPages;
-            _leakHistory.Add((ulong)netGrowth);
+            ulong netGrowth = _cumulativeAllocatedPages >=
+                _cumulativeFreedPages
+                    ? _cumulativeAllocatedPages - _cumulativeFreedPages
+                    : 0UL;
+            _leakHistory.Add(netGrowth);
             
             // Keep history size limited
             if (_leakHistory.Count > _leakHistoryMaxSamples) {
@@ -1547,7 +1571,8 @@ namespace guideXOS.DefaultApps {
                         // Check if overall trend is stable
                         ulong first = _leakHistory[0];
                         ulong last = _leakHistory[_leakHistory.Count - 1];
-                        if (last <= first + 100) { // Allow small growth margin
+                        if (last <= first || last - first <= 100UL) {
+                            // Allow small growth margin without overflowing.
                             _leakExists = false;
                         }
                     }
