@@ -471,9 +471,104 @@ if (-not $SkipRamdisk) {
         }
     }
 
+    $phase19RuntimePackRoot = Join-Path $RootDir "out\dotnet\phase19-runtime-pack"
+    $phase19PalObject = Join-Path $phase19RuntimePackRoot "guidexos_nativeaot_pal_contract.obj"
+    $phase19PalArchive = Join-Path $phase19RuntimePackRoot "guidexos_nativeaot_pal_contract.lib"
+    $phase19Manifest = Join-Path $phase19RuntimePackRoot "phase19-manifest.json"
+    $phase19ToolchainRecord = Join-Path $phase19RuntimePackRoot "toolchain-record.json"
+
+    function Test-Phase19RuntimePack {
+        foreach ($requiredPath in @($phase19PalObject, $phase19PalArchive, $phase19Manifest, $phase19ToolchainRecord)) {
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) { return $false }
+        }
+        try {
+            $manifestData = Get-Content -LiteralPath $phase19Manifest -Raw | ConvertFrom-Json
+            $objectHash = (Get-FileHash -LiteralPath $phase19PalObject -Algorithm SHA256).Hash.ToUpperInvariant()
+            $archiveHash = (Get-FileHash -LiteralPath $phase19PalArchive -Algorithm SHA256).Hash.ToUpperInvariant()
+            $sourcePath = Join-Path $RootDir "Tools\Phase19\guidexos_nativeaot_pal_contract.cpp"
+            $sourceHash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToUpperInvariant()
+            return $manifestData.target.identity -eq 'guidexos-x64' -and
+                $manifestData.status -eq 'CONTRACT_BUILT_SOURCE_RUNTIME_REQUIRED' -and
+                $manifestData.artifacts.source.sha256 -eq $sourceHash -and
+                $manifestData.artifacts.object.sha256 -eq $objectHash -and
+                $manifestData.artifacts.archive.sha256 -eq $archiveHash
+        } catch {
+            return $false
+        }
+    }
+
+    if (-not (Test-Phase19RuntimePack)) {
+        $phase19PackBuild = Join-Path $RootDir "Tools\build_phase19_runtime_pack.ps1"
+        if (-not (Test-Path -LiteralPath $phase19PackBuild -PathType Leaf)) {
+            throw "Phase 19 PAL contract artifacts are absent or stale, and the Phase 19 builder is missing: $phase19PackBuild"
+        }
+        Write-Info "Phase 19 PAL contract artifacts are absent or stale; building the pinned contract pack..."
+        try {
+            & $phase19PackBuild
+            if ($LASTEXITCODE -ne 0) { throw "Phase 19 runtime pack build failed: $LASTEXITCODE" }
+        } catch {
+            throw "Unable to prepare the Phase 19 PAL contract required by Phase 23. Details: $($_.Exception.Message)"
+        }
+        if (-not (Test-Phase19RuntimePack)) {
+            throw "Phase 19 builder completed without producing a valid PAL contract object, archive, manifest, and toolchain record under $phase19RuntimePackRoot"
+        }
+    }
+
     $phase23PrivateIlcRoot = Join-Path $RootDir "out\dotnet\phase23-private-ilc"
     $phase23PrivateIlcPath = Join-Path $phase23PrivateIlcRoot "ilc-published\ilc.exe"
     $phase23PrivateIlcRecord = Join-Path $phase23PrivateIlcRoot "private-ilc-build.json"
+    $phase23SourcePatchRoot = Join-Path $RootDir "out\dotnet\phase23-source-patch"
+    $phase23SourcePatchRecord = Join-Path $phase23SourcePatchRoot "phase23-ilc-source-patch-record.json"
+    $runtimeSourceRoot = Join-Path $RootDir "out\rt"
+    $phase21SourcePatchRoot = Join-Path $RootDir "out\dotnet\phase21-source-patch"
+    $phase21SourcePatchRecord = Join-Path $phase21SourcePatchRoot "phase21-source-patch-record.json"
+    $phase22SourcePatchRoot = Join-Path $RootDir "out\dotnet\phase22-source-patch"
+    $phase22SourcePatchRecord = Join-Path $phase22SourcePatchRoot "phase22-source-patch-record.json"
+    $phase21SourcePatch = Join-Path $RootDir "Tools\Phase21\apply_phase21_patch.ps1"
+    $phase22SourcePatch = Join-Path $RootDir "Tools\Phase22\apply_phase22_patch.ps1"
+    $phase23SourcePatch = Join-Path $RootDir "Tools\Phase23\apply_phase23_ilc_patch.ps1"
+    $sourcePatchEvidenceReady =
+        (Test-Path -LiteralPath $phase21SourcePatchRecord -PathType Leaf) -and
+        (Test-Path -LiteralPath $phase22SourcePatchRecord -PathType Leaf) -and
+        (Test-Path -LiteralPath $phase23SourcePatchRecord -PathType Leaf)
+    if (-not $sourcePatchEvidenceReady) {
+        $runtimeStatus = @(& git -C $runtimeSourceRoot status --porcelain=v1 --untracked-files=all)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to inspect pinned runtime source status: $runtimeSourceRoot"
+        }
+        if ($runtimeStatus.Count -eq 0) {
+            foreach ($patchScript in @($phase21SourcePatch, $phase22SourcePatch, $phase23SourcePatch)) {
+                if (-not (Test-Path -LiteralPath $patchScript -PathType Leaf)) {
+                    throw "Runtime source-patch evidence is missing, and its preparation script is unavailable: $patchScript"
+                }
+            }
+            Write-Info "Phase 21-23 source-patch evidence is missing; applying the pinned transforms to the clean runtime checkout..."
+            try {
+                & $phase21SourcePatch -SourceRoot $runtimeSourceRoot -OutputRoot $phase21SourcePatchRoot
+                & $phase22SourcePatch -SourceRoot $runtimeSourceRoot -OutputRoot $phase22SourcePatchRoot
+                & $phase23SourcePatch -SourceRoot $runtimeSourceRoot -OutputRoot $phase23SourcePatchRoot
+            } catch {
+                throw "Unable to prepare Phase 21-23 runtime source evidence from a clean pinned checkout. Details: $($_.Exception.Message)"
+            }
+        } else {
+            $recoverSourcePatchEvidence = Join-Path $RootDir "Tools\Phase23\recover_source_patch_evidence.ps1"
+            if (-not (Test-Path -LiteralPath $recoverSourcePatchEvidence -PathType Leaf)) {
+                throw "Source-patch evidence is missing while out\rt is modified, and the verified-cache recovery script is unavailable: $recoverSourcePatchEvidence"
+            }
+            Write-Info "Phase 21-23 source-patch evidence is missing; verifying the pinned runtime cache before restoring its records..."
+            try {
+                & $recoverSourcePatchEvidence -SourceRoot $runtimeSourceRoot -OutputRoot (Join-Path $RootDir "out\dotnet")
+            } catch {
+                throw "Unable to recover Phase 21-23 source-patch evidence. The runtime cache was preserved. Details: $($_.Exception.Message)"
+            }
+        }
+        foreach ($requiredRecord in @($phase21SourcePatchRecord, $phase22SourcePatchRecord, $phase23SourcePatchRecord)) {
+            if (-not (Test-Path -LiteralPath $requiredRecord -PathType Leaf)) {
+                throw "Runtime source preparation did not produce its required evidence record: $requiredRecord"
+            }
+        }
+    }
+
     $phase23PrivateIlcRebuilt = $false
     $phase23PrivateIlcReady = (Test-Path -LiteralPath $phase23PrivateIlcPath -PathType Leaf) -and
         (Test-Path -LiteralPath $phase23PrivateIlcRecord -PathType Leaf)
