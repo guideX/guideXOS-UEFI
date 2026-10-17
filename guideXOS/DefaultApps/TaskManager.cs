@@ -121,7 +121,7 @@ namespace guideXOS.DefaultApps {
         private int[] _ownerGrowthCounter;
         private int _blameOwnerCount;
 
-        // Cached strings for Memory Details to reduce per-frame allocations
+        // Owned labels are refreshed once per second and released safely.
         private string _mdFreeCallsStr;
         private string _mdFreeSuccessStr;
         private string _mdFailPtrStr;
@@ -137,6 +137,7 @@ namespace guideXOS.DefaultApps {
         private string _mdHeapFreeStr;
         private string _mdHeapUtilStr;
         private ulong _lastMemLabelUpdateTicks;
+        private bool _lastMemoryLabelSnapshotAvailable;
         private const int MemLabelUpdateIntervalMs = 1000; // update labels once per second
 
         public TaskManager(int X, int Y, int Width = 760, int Height = 520)
@@ -183,6 +184,8 @@ namespace guideXOS.DefaultApps {
         }
 
         private void RefreshSystemSnapshot() {
+            _systemSnapshotAvailable = false;
+            _systemSnapshot = default(SystemInformationSnapshot);
             if (_serviceContext == null || _services == null ||
                     _services.SystemInformation == null) return;
             ApplicationServiceResult<SystemInformationSnapshot> result =
@@ -1273,7 +1276,11 @@ namespace guideXOS.DefaultApps {
         }
 
         public override void Dispose() {
-            // Dispose cached memory detail strings to avoid leaks
+            DisposeMemoryDetailLabels();
+            base.Dispose();
+        }
+
+        private void DisposeMemoryDetailLabels() {
             _mdFreeCallsStr?.Dispose();
             _mdFreeSuccessStr?.Dispose();
             _mdFailPtrStr?.Dispose();
@@ -1288,64 +1295,90 @@ namespace guideXOS.DefaultApps {
             _mdHeapUsedStr?.Dispose();
             _mdHeapFreeStr?.Dispose();
             _mdHeapUtilStr?.Dispose();
-            base.Dispose();
+
+            _mdFreeCallsStr = null;
+            _mdFreeSuccessStr = null;
+            _mdFailPtrStr = null;
+            _mdFailNoPagesStr = null;
+            _mdAllocPagesStr = null;
+            _mdFreedPagesStr = null;
+            _mdPagesInUseStr = null;
+            _mdNetGrowthStr = null;
+            _mdLeakStr = null;
+            _mdFreeAllocRatioStr = null;
+            _mdHeapSizeStr = null;
+            _mdHeapUsedStr = null;
+            _mdHeapFreeStr = null;
+            _mdHeapUtilStr = null;
         }
 
         private void DrawMemoryDetails(int x, int y, int w, int h) {
             // Update underlying statistics every second
             ulong now = CurrentUptimeTicks;
-            if ((long)(now - _lastMemDetailUpdate) >= 1000) {
+            if (_lastMemDetailUpdate == 0 ||
+                    (now >= _lastMemDetailUpdate &&
+                     now - _lastMemDetailUpdate >= 1000)) {
                 UpdateMemoryDetailStats();
-                _lastMemDetailUpdate = now;
+                _lastMemDetailUpdate = now == 0 ? 1UL : now;
             }
 
-            // Refresh cached label strings only if interval elapsed
-            if ((long)(now - _lastMemLabelUpdateTicks) >= MemLabelUpdateIntervalMs) {
-                _lastMemLabelUpdateTicks = now;
+            // These labels are private Task Manager allocations. StringPool
+            // returns shared cached objects that must never be disposed here.
+            bool snapshotAvailabilityChanged =
+                _lastMemoryLabelSnapshotAvailable != _systemSnapshotAvailable;
+            if (_mdFreeCallsStr == null || snapshotAvailabilityChanged ||
+                    (now >= _lastMemLabelUpdateTicks &&
+                     now - _lastMemLabelUpdateTicks >=
+                        (ulong)MemLabelUpdateIntervalMs)) {
+                DisposeMemoryDetailLabels();
+                _lastMemLabelUpdateTicks = now == 0 ? 1UL : now;
+                _lastMemoryLabelSnapshotAvailable = _systemSnapshotAvailable;
 
-                // Dispose old cached values
-                _mdFreeCallsStr?.Dispose();
-                _mdFreeSuccessStr?.Dispose();
-                _mdFailPtrStr?.Dispose();
-                _mdFailNoPagesStr?.Dispose();
-                _mdAllocPagesStr?.Dispose();
-                _mdFreedPagesStr?.Dispose();
-                _mdPagesInUseStr?.Dispose();
-                _mdNetGrowthStr?.Dispose();
-                _mdLeakStr?.Dispose();
-                _mdFreeAllocRatioStr?.Dispose();
-                _mdHeapSizeStr?.Dispose();
-                _mdHeapUsedStr?.Dispose();
-                _mdHeapFreeStr?.Dispose();
-                _mdHeapUtilStr?.Dispose();
-
-                // USE STRING POOL where possible
-                _mdFreeCallsStr = StringPool.GetNumber(Allocator.FreeCallCount);
-                _mdFreeSuccessStr = StringPool.GetNumber(Allocator.FreeSuccessCount);
-                _mdFailPtrStr = StringPool.GetNumber(Allocator.FreeFailInvalidPtr);
-                _mdFailNoPagesStr = StringPool.GetNumber(Allocator.FreeFailNoPages);
-                _mdAllocPagesStr = StringPool.GetNumber(_cumulativeAllocatedPages);
-                _mdFreedPagesStr = StringPool.GetNumber(_cumulativeFreedPages);
-                _mdPagesInUseStr = StringPool.GetNumber(Allocator._Info.PageInUse);
-                _mdNetGrowthStr = ((long)_cumulativeAllocatedPages - (long)_cumulativeFreedPages).ToString();
-                _mdLeakStr = _leakExists ? "TRUE" : "FALSE";
+                _mdFreeCallsStr = FormatOwnedMemoryNumber(
+                    Allocator.FreeCallCount);
+                _mdFreeSuccessStr = FormatOwnedMemoryNumber(
+                    Allocator.FreeSuccessCount);
+                _mdFailPtrStr = FormatOwnedMemoryNumber(
+                    Allocator.FreeFailInvalidPtr);
+                _mdFailNoPagesStr = FormatOwnedMemoryNumber(
+                    Allocator.FreeFailNoPages);
+                _mdAllocPagesStr = FormatOwnedMemoryNumber(
+                    _cumulativeAllocatedPages);
+                _mdFreedPagesStr = FormatOwnedMemoryNumber(
+                    _cumulativeFreedPages);
+                _mdPagesInUseStr = FormatOwnedMemoryNumber(
+                    Allocator._Info.PageInUse);
+                ulong netGrowth = _cumulativeAllocatedPages >=
+                    _cumulativeFreedPages
+                        ? _cumulativeAllocatedPages - _cumulativeFreedPages
+                        : 0UL;
+                _mdNetGrowthStr = FormatOwnedMemoryNumber(netGrowth);
+                _mdLeakStr = CreateOwnedMemoryLabel(
+                    _leakExists ? "TRUE" : "FALSE");
                 if (_cumulativeAllocatedPages > 0) {
                     int freePct = (int)((_cumulativeFreedPages * 100UL) / _cumulativeAllocatedPages);
-                    _mdFreeAllocRatioStr = StringPool.GetPercentage(freePct);
+                    _mdFreeAllocRatioStr = FormatOwnedMemoryPercent(freePct);
                 } else {
-                    _mdFreeAllocRatioStr = "N/A"; // literal
+                    _mdFreeAllocRatioStr = CreateOwnedMemoryLabel("N/A");
                 }
-                _mdHeapSizeStr = StringPool.GetMemorySize(
-                    _systemSnapshot.MemorySizeBytes);
-                _mdHeapUsedStr = StringPool.GetMemorySize(
-                    _systemSnapshot.MemoryInUseBytes);
-                ulong heapFree = _systemSnapshot.MemorySizeBytes -
-                    _systemSnapshot.MemoryInUseBytes;
-                _mdHeapFreeStr = StringPool.GetMemorySize(heapFree);
-                int heapUtilPct = _systemSnapshot.MemorySizeBytes > 0
-                    ? (int)(_systemSnapshot.MemoryInUseBytes * 100UL /
-                        _systemSnapshot.MemorySizeBytes) : 0;
-                _mdHeapUtilStr = StringPool.GetPercentage(heapUtilPct);
+
+                if (_systemSnapshotAvailable &&
+                        _systemSnapshot.IsWithinBounds() &&
+                        _systemSnapshot.MemorySizeBytes > 0) {
+                    ulong heapSize = _systemSnapshot.MemorySizeBytes;
+                    ulong heapUsed = _systemSnapshot.MemoryInUseBytes;
+                    ulong heapFree = heapSize - heapUsed;
+                    _mdHeapSizeStr = FormatOwnedMemorySize(heapSize);
+                    _mdHeapUsedStr = FormatOwnedMemorySize(heapUsed);
+                    _mdHeapFreeStr = FormatOwnedMemorySize(heapFree);
+                    int heapUtilPct = (int)(heapUsed * 100UL / heapSize);
+                    _mdHeapUtilStr = FormatOwnedMemoryPercent(heapUtilPct);
+                } else {
+                    _mdHeapSizeStr = CreateOwnedMemoryLabel("N/A");
+                    _mdHeapUsedStr = CreateOwnedMemoryLabel("N/A");
+                    _mdHeapFreeStr = CreateOwnedMemoryLabel("N/A");
+                    _mdHeapUtilStr = CreateOwnedMemoryLabel("N/A");
+                }
             }
 
             int rowY = y + 10;
@@ -1438,6 +1471,44 @@ namespace guideXOS.DefaultApps {
 
             WindowManager.font.DrawString(labelX, rowY, "Heap Utilization:");
             WindowManager.font.DrawString(valueX, rowY, _mdHeapUtilStr);
+        }
+
+        private static string CreateOwnedMemoryLabel(string value) {
+            return value + string.Empty;
+        }
+
+        private static string FormatOwnedMemoryNumber(ulong value) {
+            return value.ToString();
+        }
+
+        private static string FormatOwnedMemoryPercent(int value) {
+            if (value < 0) value = 0;
+            if (value > 100) value = 100;
+            string number = value.ToString();
+            string result = number + "%";
+            number.Dispose();
+            return result;
+        }
+
+        private static string FormatOwnedMemorySize(ulong bytes) {
+            ulong mb = bytes / (1024UL * 1024UL);
+            ulong gb = mb / 1024UL;
+            if (gb > 0) {
+                return FormatOwnedMemoryNumberWithSuffix(gb, " GB");
+            }
+            if (mb == 0) {
+                ulong kb = bytes / 1024UL;
+                return FormatOwnedMemoryNumberWithSuffix(kb, " KB");
+            }
+            return FormatOwnedMemoryNumberWithSuffix(mb, " MB");
+        }
+
+        private static string FormatOwnedMemoryNumberWithSuffix(ulong value,
+                                                                 string suffix) {
+            string number = value.ToString();
+            string result = number + suffix;
+            number.Dispose();
+            return result;
         }
 
         private void UpdateMemoryDetailStats() {
