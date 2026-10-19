@@ -371,6 +371,14 @@ namespace guideXOS.OS {
             return null;
         }
 
+        internal void ClearWindowObject(guideXOS.GUI.Window window) {
+            if (window == null) return;
+            for (int i = 0; i < _apps.Count; i++) {
+                if (ReferenceEquals(_apps[i].AppObject, window))
+                    _apps[i].AppObject = null;
+            }
+        }
+
         /// <summary>
         /// Compatibility facade retained for all current callers.  It creates
         /// a common request, resolves it through the modern descriptor

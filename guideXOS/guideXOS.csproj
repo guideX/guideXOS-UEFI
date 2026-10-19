@@ -135,6 +135,15 @@
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3Phase35R13'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE35;UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER;UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER;UEFI_DIAGNOSTIC_APP_MODEL;UEFI_DIAGNOSTIC_STORAGE35P2</DefineConstants>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'TaskManagerMemoryR2Probe'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE35;UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER;UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER;UEFI_DIAGNOSTIC_APP_MODEL;UEFI_TASKMANAGER_MEMORY_R2_PROBE</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'TaskManagerMemoryR3Probe'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE35;UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER;UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER;UEFI_DIAGNOSTIC_APP_MODEL;UEFI_DIAGNOSTIC_STORAGE35P2;UEFI_TASKMANAGER_MEMORY_R3_PROBE;UEFI_TASKMANAGER_MEMORY_R3_TRACE</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'TaskManagerMemoryR3ProbeNoEmit'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE35;UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER;UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER;UEFI_DIAGNOSTIC_APP_MODEL;UEFI_DIAGNOSTIC_STORAGE35P2;UEFI_TASKMANAGER_MEMORY_R3_PROBE;UEFI_TASKMANAGER_MEMORY_R3_NO_EMIT</DefineConstants>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'Ring3Phase35R12Suppressed'">
 		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_RING3_PHASE35;UEFI_DIAGNOSTIC_RING3_PHASE35R9_LEDGER;UEFI_DIAGNOSTIC_PHASE35R12_SUPPRESS_KNOWN_DIAGNOSTICS;UEFI_DIAGNOSTIC_APP_MODEL;UEFI_DIAGNOSTIC_STORAGE35P2</DefineConstants>
 	</PropertyGroup>
@@ -375,5 +384,11 @@
 	  <Compile Include="..\Kernel\Misc\Ring3ProofPhase33.cs" />
 	  <Compile Include="..\Kernel\Misc\Ring3ProofPhase34.cs" />
 	  <Compile Include="..\Kernel\Misc\Ring3ProofPhase35.cs" />
+	</ItemGroup>
+	<ItemGroup Condition="'$(UefiDiagnosticMode)' == 'TaskManagerMemoryR2Probe'">
+	  <Compile Include="..\Kernel\Misc\TaskManagerMemoryR2Probe.cs" />
+	</ItemGroup>
+	<ItemGroup Condition="'$(UefiDiagnosticMode)' == 'TaskManagerMemoryR3Probe' or '$(UefiDiagnosticMode)' == 'TaskManagerMemoryR3ProbeNoEmit'">
+	  <Compile Include="..\Kernel\Misc\TaskManagerMemoryR3Probe.cs" />
 	</ItemGroup>
 </Project>

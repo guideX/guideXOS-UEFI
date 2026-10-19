@@ -4,6 +4,7 @@ using System.Windows.Forms;
 using System.Collections.Generic;
 using guideXOS.DefaultApps;
 using guideXOS.OS;
+using guideXOS.Misc;
 namespace guideXOS.GUI {
     internal class Taskbar {
         public StartMenu StartMenu;
@@ -103,6 +104,23 @@ namespace guideXOS.GUI {
             _lastMouseActivity = _bootTicks;
         }
 
+        private static string FormatClockComponent(int value) {
+            string digits = value.ToString();
+            if (value >= 10) return digits;
+
+            string padded = null;
+            try {
+                padded = "0" + digits;
+                return padded;
+            } finally {
+                // Int32.ToString creates an owned string. Concatenation copies
+                // its contents, so this temporary has no remaining aliases.
+                if (digits != null &&
+                        !object.ReferenceEquals(digits, padded))
+                    digits.Dispose();
+            }
+        }
+
         public void CloseWorkspaceSwitcher() {
             if (_workspaceSwitcher != null) {
                 _workspaceSwitcher.Visible = false;
@@ -156,6 +174,13 @@ namespace guideXOS.GUI {
             graphics.FillRectangle(0, yTop, Framebuffer.Width, _barHeight, 0xFF1A1A1A);
             graphics.FillRectangle(0, yTop, Framebuffer.Width, 1, 0xFF333333);
 
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3ClockScope =
+                Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteTaskbarClockFormat, 0, 0,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+#endif
             bool timeChanged = RTC.Hour != _lastHour || RTC.Minute != _lastMinute;
             bool dateChanged = RTC.Day != _lastDay;
 
@@ -165,7 +190,7 @@ namespace guideXOS.GUI {
                     bool isPM = RTC.Hour >= 12;
                     int hour12 = RTC.Hour % 12 == 0 ? 12 : RTC.Hour % 12;
                     string suffix = isPM ? " PM" : " AM";
-                    string minute = RTC.Minute < 10 ? "0" + RTC.Minute.ToString() : RTC.Minute.ToString();
+                    string minute = FormatClockComponent(RTC.Minute);
                     string hour = hour12.ToString();
                     string temporary = hour + ":" + minute;
                     _cachedTime = temporary + suffix;
@@ -173,8 +198,8 @@ namespace guideXOS.GUI {
                     minute.Dispose();
                     temporary.Dispose();
                 } else {
-                    string hour = RTC.Hour < 10 ? "0" + RTC.Hour.ToString() : RTC.Hour.ToString();
-                    string minute = RTC.Minute < 10 ? "0" + RTC.Minute.ToString() : RTC.Minute.ToString();
+                    string hour = FormatClockComponent(RTC.Hour);
+                    string minute = FormatClockComponent(RTC.Minute);
                     _cachedTime = hour + ":" + minute;
                     hour.Dispose();
                     minute.Dispose();
@@ -200,6 +225,9 @@ namespace guideXOS.GUI {
                 third.Dispose();
                 _lastDay = RTC.Day;
             }
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3ClockScope.Dispose(); }
+#endif
 
             if (WindowManager.font != null && _cachedTime != null) {
                 int timeWidth = WindowManager.font.MeasureString(_cachedTime);
@@ -415,6 +443,13 @@ namespace guideXOS.GUI {
                                              int fallbacks, int active,
                                              int activations, ulong activeHandle,
                                              int hidden, int invalid) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3ReportScope =
+                Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteTaskbarVisualReport, 0, 0,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+#endif
             if (groups == _lastTaskbarVisualGroups &&
                     buttons == _lastTaskbarVisualButtons &&
                     icons == _lastTaskbarVisualIcons &&
@@ -434,13 +469,28 @@ namespace guideXOS.GUI {
             _lastTaskbarVisualActiveHandle = activeHandle;
             _lastTaskbarVisualHidden = hidden;
             _lastTaskbarVisualInvalid = invalid;
-            BootConsole.WriteLine("[TASKBAR_VISUAL] groups=" +
-                groups.ToString() + ";buttons=" + buttons.ToString() +
-                ";icons=" + icons.ToString() + ";fallback=" +
-                fallbacks.ToString() + ";active=" + active.ToString() +
-                ";activations=" + activations.ToString() +
-                ";active-handle=" + activeHandle.ToString() + ";hidden=" +
-                hidden.ToString() + ";invalid=" + invalid.ToString());
+            BootConsole.Write("[TASKBAR_VISUAL] groups=");
+            BootConsole.WriteDecimal(groups);
+            BootConsole.Write(";buttons=");
+            BootConsole.WriteDecimal(buttons);
+            BootConsole.Write(";icons=");
+            BootConsole.WriteDecimal(icons);
+            BootConsole.Write(";fallback=");
+            BootConsole.WriteDecimal(fallbacks);
+            BootConsole.Write(";active=");
+            BootConsole.WriteDecimal(active);
+            BootConsole.Write(";activations=");
+            BootConsole.WriteDecimal(activations);
+            BootConsole.Write(";active-handle=");
+            BootConsole.WriteDecimal(activeHandle);
+            BootConsole.Write(";hidden=");
+            BootConsole.WriteDecimal(hidden);
+            BootConsole.Write(";invalid=");
+            BootConsole.WriteDecimal(invalid);
+            BootConsole.NewLine();
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3ReportScope.Dispose(); }
+#endif
         }
 
         public void Draw() {
@@ -542,13 +592,17 @@ namespace guideXOS.GUI {
 
                 ApplicationLifecycleResult lifecycle = null;
                 _taskbarAppClickLatch = true;
-                if (TaskbarApplicationEntryRegistry.TryFocusWindow(
-                        entry.InstanceHandle, null, out lifecycle)) {
-                    if (_taskbarVisualActivations < int.MaxValue) {
-                        _taskbarVisualActivations++;
+                try {
+                    if (TaskbarApplicationEntryRegistry.TryFocusWindow(
+                            entry.InstanceHandle, null, out lifecycle)) {
+                        if (_taskbarVisualActivations < int.MaxValue) {
+                            _taskbarVisualActivations++;
+                        }
+                        WindowManager.MouseHandled = true;
+                        Program.MarkUefiGuiMouseRouted();
                     }
-                    WindowManager.MouseHandled = true;
-                    Program.MarkUefiGuiMouseRouted();
+                } finally {
+                    if (lifecycle != null) lifecycle.Dispose();
                 }
                 return;
             }
@@ -556,9 +610,25 @@ namespace guideXOS.GUI {
 
         private void ToggleUefiStartMenu() {
             if (Desktop.Apps != null) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                TaskManagerMemoryR3Probe.BeforeStartMenuOpen();
+#endif
                 if (StartMenu == null ||
                         WindowManager.Windows.IndexOf(StartMenu) < 0) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                    ulong startMenuFirstSequence =
+                        Allocator.DiagnosticAllocationSequence + 1;
+                    Allocator.MemoryR3Scope r3Scope1 = Allocator.EnterMemoryR3Scope(
+                            TaskManagerMemoryR3Probe.SiteStartMenuCreate,
+                            0, 0, 0);
+                    try {
+                        StartMenu = new StartMenu();
+                    } finally { r3Scope1.Dispose(); }
+                    TaskManagerMemoryR3Probe.StartMenuCreated(StartMenu,
+                        StartMenu.OwnerId, startMenuFirstSequence);
+#else
                     StartMenu = new StartMenu();
+#endif
                 }
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                 Program.MarkUefiAppRuntime("START_TOGGLE;registered=" +
@@ -744,10 +814,14 @@ namespace guideXOS.GUI {
                             if (semantic) {
                                 ApplicationLifecycleResult lifecycle =
                                     null;
-                                if (!TaskbarApplicationEntryRegistry.TryFocusWindow(
-                                        entry.InstanceHandle, w, out lifecycle)) {
-                                    btnX += wRect + gap;
-                                    continue;
+                                try {
+                                    if (!TaskbarApplicationEntryRegistry.TryFocusWindow(
+                                            entry.InstanceHandle, w, out lifecycle)) {
+                                        btnX += wRect + gap;
+                                        continue;
+                                    }
+                                } finally {
+                                    if (lifecycle != null) lifecycle.Dispose();
                                 }
                             }
                             if (w.IsMinimized) w.Restore();
@@ -774,7 +848,7 @@ namespace guideXOS.GUI {
                             bool isPM = RTC.Hour >= 12;
                             int hour12 = (RTC.Hour % 12 == 0) ? 12 : (RTC.Hour % 12);
                             string sfx = isPM ? " PM" : " AM";
-                            string min = RTC.Minute < 10 ? ("0" + RTC.Minute.ToString()) : RTC.Minute.ToString();
+                            string min = FormatClockComponent(RTC.Minute);
                             string h12 = hour12.ToString();
                             string temp = h12 + ":" + min;
                             _cachedTime = temp + sfx;
@@ -782,8 +856,8 @@ namespace guideXOS.GUI {
                             min.Dispose();
                             temp.Dispose();
                         } else {
-                            string h = RTC.Hour < 10 ? ("0" + RTC.Hour.ToString()) : RTC.Hour.ToString();
-                            string m = RTC.Minute < 10 ? ("0" + RTC.Minute.ToString()) : RTC.Minute.ToString();
+                            string h = FormatClockComponent(RTC.Hour);
+                            string m = FormatClockComponent(RTC.Minute);
                             _cachedTime = h + ":" + m;
                             h.Dispose();
                             m.Dispose();
@@ -1001,6 +1075,15 @@ namespace guideXOS.GUI {
                 _minimizedByShowDesktop.Clear();
                 _desktopShown = false;
             }
+        }
+
+        internal void ForgetWindow(Window window) {
+            if (window == null) return;
+            for (int i = _minimizedByShowDesktop.Count - 1; i >= 0; i--) {
+                if (object.ReferenceEquals(_minimizedByShowDesktop[i], window))
+                    _minimizedByShowDesktop.RemoveAt(i);
+            }
+            if (StartMenu != null) StartMenu.ForgetWindow(window);
         }
 
         public void OpenOnScreenKeyboard() {

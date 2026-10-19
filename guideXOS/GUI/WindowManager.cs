@@ -384,9 +384,13 @@ namespace guideXOS.GUI {
                 MoveToEnd(window);
                 return;
             }
-            ApplicationLifecycleResult result;
-            TaskbarApplicationEntryRegistry.TryFocusWindow(
-                window.ApplicationInstanceHandle, window, out result);
+            ApplicationLifecycleResult result = null;
+            try {
+                TaskbarApplicationEntryRegistry.TryFocusWindow(
+                    window.ApplicationInstanceHandle, window, out result);
+            } finally {
+                if (result != null) result.Dispose();
+            }
         }
         /// <summary>
         /// Draw All
@@ -569,6 +573,15 @@ namespace guideXOS.GUI {
         /// Get all windows that should appear in Start Menu
         /// </summary>
         public static List<Window> GetStartMenuWindows() {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3Scope6 =
+                Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteStartMenuWindowListCreate,
+                    Allocator.CurrentMemoryR3WindowId,
+                    Allocator.CurrentMemoryR3InstanceId,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+#endif
             var result = new List<Window>();
             for (int i = 0; i < Windows.Count; i++) {
                 var w = Windows[i];
@@ -577,6 +590,9 @@ namespace guideXOS.GUI {
                 }
             }
             return result;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3Scope6.Dispose(); }
+#endif
         }
 
         internal static bool RegisterTransientServiceWindow(Window window,
@@ -753,6 +769,11 @@ namespace guideXOS.GUI {
         }
 
         private static void CleanupClosedWindowsCore() {
+            TaskManager deferredTaskManagerHead = null;
+            TaskManager deferredTaskManagerTail = null;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            int r3ClosedTaskManagerOwnerId = 0;
+#endif
 #if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
             bool diagnosticCleanupStarted = false;
 #endif
@@ -802,6 +823,11 @@ namespace guideXOS.GUI {
 #endif
                     // FIXED: Dispose the window to free its resources
                     if (w != null) {
+                        TaskManager closingTaskManager = w as TaskManager;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                        if (closingTaskManager != null)
+                            r3ClosedTaskManagerOwnerId = w.OwnerId;
+#endif
                         string closedTitle = w.Title ?? "";
                         string closedInstance = w.ApplicationInstanceHandle.IsValid
                             ? w.ApplicationInstanceHandle.ToString() : "";
@@ -817,11 +843,19 @@ namespace guideXOS.GUI {
                             (w.IsDisposed ? "1" : "0"));
 #endif
                         w.Dispose();
+                        if (closingTaskManager != null) {
+                            if (deferredTaskManagerTail == null) {
+                                deferredTaskManagerHead = closingTaskManager;
+                            } else {
+                                deferredTaskManagerTail.QueueDeferredObjectRelease(
+                                    closingTaskManager);
+                            }
+                            deferredTaskManagerTail = closingTaskManager;
+                        }
                         _cleanupClosedWindowsCurrentOwnerId = 0;
 #if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
                         MarkCleanupDiagnostic("WINDOW_CLEANUP_DISPOSE_END",
-                            cleanupIdentity + ";disposed=" +
-                            (w.IsDisposed ? "1" : "0"));
+                            cleanupIdentity + ";disposed=1");
 #endif
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                         Program.MarkUefiAppRuntime("WINDOW_CLOSED=title=" +
@@ -845,6 +879,20 @@ namespace guideXOS.GUI {
             }
 #endif
             TaskbarApplicationEntryRegistry.Reconcile();
+            TaskManager deferredTaskManager = deferredTaskManagerHead;
+            while (deferredTaskManager != null) {
+                TaskManager next = deferredTaskManager.DeferredObjectReleaseNext;
+                if (Desktop.Taskbar != null)
+                    Desktop.Taskbar.ForgetWindow(deferredTaskManager);
+                WorkspaceManager.ForgetWindow(deferredTaskManager);
+                deferredTaskManager.ReleaseObjectRunAfterCleanup();
+                deferredTaskManager = next;
+            }
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            if (r3ClosedTaskManagerOwnerId != 0)
+                TaskManagerMemoryR3Probe.WindowCleanupCompleted(
+                    r3ClosedTaskManagerOwnerId);
+#endif
 #if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_APP_RUNTIME
             if (diagnosticCleanupStarted) {
                 MarkCleanupDiagnostic("WINDOW_CLEANUP_TASKBAR_RECONCILE_END",

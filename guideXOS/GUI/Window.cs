@@ -3,6 +3,7 @@ using guideXOS.Graph;
 using guideXOS.GUI.Base;
 using guideXOS.Kernel.Drivers;
 using guideXOS.Kernel.Drivers.Input;
+using guideXOS.Misc;
 using guideXOS.OS;
 using System;
 using System.Drawing;
@@ -781,6 +782,10 @@ namespace guideXOS.GUI {
         /// </summary>
         public virtual new void Dispose() {
             if (_disposed) return;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.RecordMemoryR3Dispose((IntPtr)this,
+                TaskManagerMemoryR3Probe.SiteWindowDispose);
+#endif
             _disposed = true;
             if (IsServiceSessionWindow) {
                 WindowManager.ReleaseTransientServiceWindow(this);
@@ -797,6 +802,14 @@ namespace guideXOS.GUI {
             if (_ownerId != 0) {
                 FreeOwnerMemory(_ownerId);
             }
+        }
+
+        // Task Manager has a close-when-last-window-closes instance policy.
+        // Its application object can therefore release its exact allocator
+        // run after the window and shell references have been detached.
+        internal void ReleaseDisposedWindowObjectRun() {
+            if (!_disposed) return;
+            base.Dispose();
         }
         
         /// <summary>

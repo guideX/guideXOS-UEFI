@@ -414,7 +414,7 @@ namespace guideXOS.Misc {
                 BootConsole.WriteLine("PHASE34_QUEUED_FOR_SCHEDULER=1");
             }
 #endif
-#if UEFI_DIAGNOSTIC_RING3_PHASE35
+#if UEFI_DIAGNOSTIC_RING3_PHASE35 && !UEFI_TASKMANAGER_MEMORY_R2_PROBE
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
                 Ring3Proof.SchedulePhase35();
                 BootConsole.WriteLine("PHASE35_QUEUED_FOR_SCHEDULER=1");

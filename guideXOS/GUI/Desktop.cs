@@ -263,8 +263,36 @@ namespace guideXOS.GUI {
         /// allowed to fall through to the historical AppCollection switch.
         /// </summary>
         internal static bool LaunchApplication(string name) {
-            LaunchResult result;
-            return LaunchApplication(LaunchRequest.ForName(name), out result);
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            if (name == "Task Manager")
+                TaskManagerMemoryR3Probe.BeginBeforeLaunch();
+            LaunchRequest request;
+            Allocator.MemoryR3Scope r3Scope1 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteLaunchRequestForName,
+                    0, 0, Allocator.CurrentMemoryR3LifetimeId);
+            try {
+                request = LaunchRequest.ForName(name);
+            } finally { r3Scope1.Dispose(); }
+#else
+            LaunchRequest request = LaunchRequest.ForName(name);
+#endif
+            LaunchResult result = null;
+            try {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                Allocator.MemoryR3Scope r3Scope2 =
+                    Allocator.EnterMemoryR3Scope(
+                        TaskManagerMemoryR3Probe.SiteLaunchConvenienceResult,
+                        0, 0, Allocator.CurrentMemoryR3LifetimeId);
+                try {
+                    return LaunchApplication(request, out result);
+                } finally { r3Scope2.Dispose(); }
+#else
+                return LaunchApplication(request, out result);
+#endif
+            } finally {
+                if (result != null) result.Dispose();
+                if (request != null) request.Dispose();
+            }
         }
 
         internal static bool LaunchApplication(LaunchRequest request,
@@ -595,6 +623,12 @@ namespace guideXOS.GUI {
                     documentIcon, folderIcon, imageIcon, audioIcon),
                     UefiDesktopLabels[i], geometry, UefiDesktopAccents[i],
                     UefiDesktopInput.SelectedIconId == i);
+            }
+            // Update hidden widget state on the UEFI path as well as the
+            // legacy desktop path. Hidden containers do not receive window
+            // input, so this desktop-level update lets edge reveal show them.
+            if (Program.WidgetsContainer != null) {
+                Program.WidgetsContainer.UpdateAutoHide();
             }
             if (!_uefiImageTileDrawReported &&
                 folderIcon != null && folderIcon.RawData != null &&

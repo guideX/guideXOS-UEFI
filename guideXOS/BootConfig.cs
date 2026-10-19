@@ -62,6 +62,25 @@ public static class BootConsole {
         }
         WriteSerialChar(str);
     }
+
+    public static unsafe void WriteDecimal(ulong value) {
+        char* digits = stackalloc char[20];
+        int count = 0;
+        do {
+            digits[count++] = (char)('0' + (int)(value % 10UL));
+            value /= 10UL;
+        } while (value != 0UL);
+        while (count > 0) Write(digits[--count]);
+    }
+
+    public static unsafe void WriteDecimal(int value) {
+        if (value < 0) {
+            Write('-');
+            WriteDecimal((ulong)(-(long)value));
+            return;
+        }
+        WriteDecimal((ulong)value);
+    }
     /// <summary>
     /// Write
     /// </summary>

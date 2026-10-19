@@ -27,7 +27,23 @@ namespace System.Runtime.CompilerServices {
             context.initialized = 1;
 
             // Run the class constructor.
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            // The allocator return address identifies this dispatcher for every
+            // allocation inside the constructor. Preserve the concrete constructor
+            // entry address as a fixed numeric provenance value for the R3 ledger.
+            uint previousCreationSite =
+                Allocator.CurrentDiagnosticManagedCreationSite;
+            Allocator.CurrentDiagnosticManagedCreationSite = unchecked(
+                (uint)(long)context.cctorMethodAddress);
+            try {
+                ((delegate*<void>)context.cctorMethodAddress)();
+            } finally {
+                Allocator.CurrentDiagnosticManagedCreationSite =
+                    previousCreationSite;
+            }
+#else
             ((delegate*<void>)context.cctorMethodAddress)();
+#endif
         }
     }
 }

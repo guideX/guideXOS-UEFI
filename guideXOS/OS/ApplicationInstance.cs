@@ -825,12 +825,16 @@ namespace guideXOS.OS {
             ApplicationInstanceLifecycleState state = instance.LifecycleState;
             if (state == ApplicationInstanceLifecycleState.Suspended) {
                 ApplicationLifecycleResult resumed = Resume(instance.Handle);
-                if (!resumed.Success) {
-                    failure = LaunchResult.Failed(
-                        LaunchErrorCode.ActivationFailed,
-                        resumed.Diagnostic ?? "Application resume failed",
-                        instance.DescriptorId);
-                    return false;
+                try {
+                    if (!resumed.Success) {
+                        failure = LaunchResult.Failed(
+                            LaunchErrorCode.ActivationFailed,
+                            resumed.Diagnostic ?? "Application resume failed",
+                            instance.DescriptorId);
+                        return false;
+                    }
+                } finally {
+                    if (resumed != null) resumed.Dispose();
                 }
                 state = instance.LifecycleState;
             }
@@ -850,11 +854,15 @@ namespace guideXOS.OS {
 
             if (activate) {
                 ApplicationLifecycleResult activated = Activate(instance.Handle);
-                if (!activated.Success) {
-                    failure = LaunchResult.Failed(LaunchErrorCode.ActivationFailed,
-                        activated.Diagnostic ?? "Application instance activation failed",
-                        instance.DescriptorId);
-                    return false;
+                try {
+                    if (!activated.Success) {
+                        failure = LaunchResult.Failed(LaunchErrorCode.ActivationFailed,
+                            activated.Diagnostic ?? "Application instance activation failed",
+                            instance.DescriptorId);
+                        return false;
+                    }
+                } finally {
+                    if (activated != null) activated.Dispose();
                 }
                 // Launch presentation is explicit.  Instance activation itself
                 // remains lifecycle-only so a requested Window focus cannot be
@@ -893,6 +901,7 @@ namespace guideXOS.OS {
             if (instance.LifecycleState == ApplicationInstanceLifecycleState.Suspended) {
                 ApplicationLifecycleResult resumed = Resume(instance.Handle);
                 if (!resumed.Success) return resumed;
+                resumed.Dispose();
             }
             ApplicationInstanceLifecycleState state = instance.LifecycleState;
             if (state != ApplicationInstanceLifecycleState.Inactive &&
@@ -913,6 +922,7 @@ namespace guideXOS.OS {
                 if (TryGet(_activeApplicationHandle, out previous)) {
                     ApplicationLifecycleResult deactivated = Deactivate(previous);
                     if (!deactivated.Success) return deactivated;
+                    deactivated.Dispose();
                 } else {
                     _staleLifecycleHandleCount++;
                     _activeApplicationHandle = ApplicationInstanceHandle.None;
@@ -1037,6 +1047,7 @@ namespace guideXOS.OS {
             if (instance.LifecycleState == ApplicationInstanceLifecycleState.Activated) {
                 ApplicationLifecycleResult deactivated = Deactivate(instance);
                 if (!deactivated.Success) return deactivated;
+                deactivated.Dispose();
             }
             ApplicationInstanceLifecycleState state = instance.LifecycleState;
             if (state != ApplicationInstanceLifecycleState.Inactive &&
@@ -1331,8 +1342,12 @@ namespace guideXOS.OS {
                     !window.ApplicationInstanceHandle.IsValid) return;
             ApplicationLifecycleResult result = Activate(
                 window.ApplicationInstanceHandle);
-            if (result.Code == ApplicationLifecycleResultCode.NotFound) {
-                RecordStaleOwnership();
+            try {
+                if (result.Code == ApplicationLifecycleResultCode.NotFound) {
+                    RecordStaleOwnership();
+                }
+            } finally {
+                if (result != null) result.Dispose();
             }
         }
 
@@ -1340,7 +1355,8 @@ namespace guideXOS.OS {
             if (!_activeApplicationHandle.IsValid) return;
             ApplicationInstance instance;
             if (TryGet(_activeApplicationHandle, out instance)) {
-                Deactivate(instance);
+                ApplicationLifecycleResult result = Deactivate(instance);
+                if (result != null) result.Dispose();
             } else {
                 _staleLifecycleHandleCount++;
                 _activeApplicationHandle = ApplicationInstanceHandle.None;
@@ -1350,23 +1366,31 @@ namespace guideXOS.OS {
         public static bool TryActivate(ApplicationInstanceHandle handle,
                                         out LaunchResult failure) {
             ApplicationLifecycleResult result = Activate(handle);
-            failure = result.Success ? null : LaunchResult.Failed(
-                result.Code == ApplicationLifecycleResultCode.NotFound
-                    ? LaunchErrorCode.AlreadyTerminated
-                    : LaunchErrorCode.ActivationFailed,
-                result.Diagnostic ?? "Application activation failed", null);
-            return result.Success;
+            try {
+                failure = result.Success ? null : LaunchResult.Failed(
+                    result.Code == ApplicationLifecycleResultCode.NotFound
+                        ? LaunchErrorCode.AlreadyTerminated
+                        : LaunchErrorCode.ActivationFailed,
+                    result.Diagnostic ?? "Application activation failed", null);
+                return result.Success;
+            } finally {
+                if (result != null) result.Dispose();
+            }
         }
 
         internal static bool TryActivate(ApplicationInstance instance,
                                          out LaunchResult failure) {
             ApplicationLifecycleResult result = Activate(
                 instance == null ? ApplicationInstanceHandle.None : instance.Handle);
-            failure = result.Success ? null : LaunchResult.Failed(
-                LaunchErrorCode.ActivationFailed,
-                result.Diagnostic ?? "Application activation failed",
-                instance == null ? null : instance.DescriptorId);
-            return result.Success;
+            try {
+                failure = result.Success ? null : LaunchResult.Failed(
+                    LaunchErrorCode.ActivationFailed,
+                    result.Diagnostic ?? "Application activation failed",
+                    instance == null ? null : instance.DescriptorId);
+                return result.Success;
+            } finally {
+                if (result != null) result.Dispose();
+            }
         }
 
         internal static bool TryAttachWindow(ApplicationInstance instance,
@@ -2698,8 +2722,12 @@ namespace guideXOS.OS {
             if (instance == null) return true;
             ApplicationLifecycleResult result = RequestClose(instance.Handle,
                 ApplicationCloseReason.ApplicationRequest);
-            return result.Success || result.Code ==
-                ApplicationLifecycleResultCode.CallbackFailed;
+            try {
+                return result.Success || result.Code ==
+                    ApplicationLifecycleResultCode.CallbackFailed;
+            } finally {
+                if (result != null) result.Dispose();
+            }
         }
 
         private static bool HandleAndTransitionTest(ref string firstFailure) {

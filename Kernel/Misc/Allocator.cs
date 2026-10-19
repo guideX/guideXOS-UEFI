@@ -1,5 +1,6 @@
 using guideXOS.Misc;
 using System;
+using Internal.Runtime.CompilerServices;
 /// <summary>
 /// Allocator with page-level bookkeeping, tagging, and per-owner (window) accounting.
 /// Adds overflow guards to prevent bogus huge allocation requests that arise from
@@ -74,6 +75,12 @@ abstract unsafe class Allocator {
     internal static uint CurrentDiagnosticManagedCreationSite;
     internal static ulong CurrentDiagnosticOperationId;
 #endif
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+    internal static uint CurrentMemoryR3SiteId;
+    internal static int CurrentMemoryR3WindowId;
+    internal static ulong CurrentMemoryR3InstanceId;
+    internal static uint CurrentMemoryR3LifetimeId;
+#endif
     private const int StringLedgerCapacity = 4096;
     private struct StringLedgerRecord {
         internal ulong Address, Run, RequestedBytes, Request, AllocatorSequence;
@@ -115,7 +122,11 @@ abstract unsafe class Allocator {
     internal const uint R13SiteLifecycleResult = 612;
     internal const uint R13SiteStorageReadResult = 613;
 #endif
-    private const int DiagnosticRunCapacity = 16384;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+    internal const int DiagnosticRunCapacity = 65536;
+#else
+    internal const int DiagnosticRunCapacity = 16384;
+#endif
     private static ulong _allocationSequence;
     private static ulong _diagnosticSnapshotSequence;
     private static ulong _freeSequence;
@@ -171,28 +182,50 @@ abstract unsafe class Allocator {
         /// Owners
         /// </summary>
         public fixed int Owners[NumPages]; // owner id at run start page
+        // Cumulative page accounting and free diagnostics live next to the
+        // allocator map so production snapshots can read an exact metric.
+        public ulong AllocatedPageTotal;
+        public ulong FreedPageTotal;
+        public ulong MaximumPageInUse;
+        public ulong IntervalMaximumPageInUse;
+        public ulong LiveRunCount;
+        public ulong FreeCallCount;
+        public ulong FreeSuccessCount;
+        public ulong FreeFailInvalidPtr;
+        public ulong FreeFailNoPages;
+        public ulong FreeFailCorruptRun;
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
-        public fixed ulong DiagnosticRunIds[16384];
-        public fixed ulong DiagnosticRunAddresses[16384];
-        public fixed ulong DiagnosticRunPages[16384];
-        public fixed ulong DiagnosticRunOwnerGenerations[16384];
-        public fixed ulong DiagnosticRunCallerHashes[16384];
-        public fixed ulong DiagnosticRunFreeSequences[16384];
-        public fixed int DiagnosticRunOwnerIds[16384];
-        public fixed int DiagnosticRunCallerLines[16384];
-        public fixed byte DiagnosticRunTags[16384];
-        public fixed byte DiagnosticRunCallerLabels[16384];
-        public fixed byte DiagnosticRunAllocationSites[16384];
-        public fixed ulong DiagnosticRunVirtualAddresses[16384];
-        public fixed ulong DiagnosticRunCr3[16384];
-        public fixed ulong DiagnosticRunRequestedSizes[16384];
-        public fixed ulong DiagnosticRunCallerAddresses[16384];
-        public fixed ulong DiagnosticRunRequesterIds[16384];
-        public fixed ulong DiagnosticRunLifetimeIds[16384];
-        public fixed ulong DiagnosticRunOperationIds[16384];
-        public fixed uint DiagnosticRunCreationSites[16384];
-        public fixed byte DiagnosticRunManagedHelpers[16384];
-        public fixed ulong DiagnosticRunEETypeAddresses[16384];
+        public fixed ulong DiagnosticRunIds[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunAddresses[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunPages[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunOwnerGenerations[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunCallerHashes[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunFreeSequences[DiagnosticRunCapacity];
+        public fixed int DiagnosticRunOwnerIds[DiagnosticRunCapacity];
+        public fixed int DiagnosticRunCallerLines[DiagnosticRunCapacity];
+        public fixed byte DiagnosticRunTags[DiagnosticRunCapacity];
+        public fixed byte DiagnosticRunCallerLabels[DiagnosticRunCapacity];
+        public fixed byte DiagnosticRunAllocationSites[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunVirtualAddresses[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunCr3[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunRequestedSizes[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunCallerAddresses[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunRequesterIds[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunLifetimeIds[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunOperationIds[DiagnosticRunCapacity];
+        public fixed uint DiagnosticRunCreationSites[DiagnosticRunCapacity];
+        public fixed byte DiagnosticRunManagedHelpers[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunEETypeAddresses[DiagnosticRunCapacity];
+        public fixed uint DiagnosticRunManagedLengths[DiagnosticRunCapacity];
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+        public fixed uint DiagnosticRunMemoryR3SiteIds[DiagnosticRunCapacity];
+        public fixed int DiagnosticRunMemoryR3WindowIds[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunMemoryR3InstanceIds[DiagnosticRunCapacity];
+        public fixed uint DiagnosticRunMemoryR3LifetimeIds[DiagnosticRunCapacity];
+        public fixed byte DiagnosticRunMemoryR3ObjectKinds[DiagnosticRunCapacity];
+        public fixed ulong DiagnosticRunMemoryR3DisposeCounts[DiagnosticRunCapacity];
+        public fixed uint DiagnosticRunMemoryR3DisposeSiteIds[DiagnosticRunCapacity];
+#endif
         public fixed uint DiagnosticPageRunSlots[NumPages];
         public fixed ulong DiagnosticPageOwnerGenerations[NumPages];
         public fixed ulong DiagnosticPageAllocationSequences[NumPages];
@@ -293,6 +326,210 @@ abstract unsafe class Allocator {
     /// Memory In Use
     /// </summary>
     public static ulong MemoryInUse => _Info.PageInUse * PageSize;
+    internal static ulong AllocatedPageTotal => _Info.AllocatedPageTotal;
+    internal static ulong FreedPageTotal => _Info.FreedPageTotal;
+    internal static ulong MaximumPageInUse => _Info.MaximumPageInUse;
+    internal static ulong IntervalMaximumPageInUse =>
+        _Info.IntervalMaximumPageInUse;
+    internal static ulong LiveRunCount => _Info.LiveRunCount;
+
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+    internal struct MemoryR3Snapshot {
+        internal ulong AllocatedPages, FreedPages, LivePages, LiveRuns;
+        internal ulong MaximumLivePages, IntervalMaximumLivePages;
+        internal ulong ReusablePages, AllocationSequence, FreeSequence;
+        internal ulong FreeCalls, FreeSuccesses, FreeInvalidPointer;
+        internal ulong FreeNoPages, FreeCorruptRun, DroppedRunRecords;
+        internal ulong StringLedgerDropped;
+    }
+
+    internal struct MemoryR3RunRecord {
+        internal ulong Id, Address, Pages, RequestedBytes, EEType, FreeSequence;
+        internal ulong CallerAddress, WindowInstanceId;
+        internal ulong DisposeCount;
+        internal uint SiteId, CreationSiteId, ManagedLength, LifetimeId;
+        internal uint DisposeSiteId;
+        internal int OwnerId;
+        internal int WindowId;
+        internal byte ObjectKind, ManagedHelper, AllocationTag;
+        internal byte AllocatorOperation;
+    }
+
+    internal struct MemoryR3Scope {
+        private uint _site;
+        private int _window;
+        private ulong _instance;
+        private uint _lifetime;
+        internal MemoryR3Scope(uint site, int window, ulong instance,
+                               uint lifetime) {
+            _site = CurrentMemoryR3SiteId;
+            _window = CurrentMemoryR3WindowId;
+            _instance = CurrentMemoryR3InstanceId;
+            _lifetime = CurrentMemoryR3LifetimeId;
+            CurrentMemoryR3SiteId = site;
+            CurrentMemoryR3WindowId = window;
+            CurrentMemoryR3InstanceId = instance;
+            CurrentMemoryR3LifetimeId = lifetime;
+        }
+        public new void Dispose() {
+            CurrentMemoryR3SiteId = _site;
+            CurrentMemoryR3WindowId = _window;
+            CurrentMemoryR3InstanceId = _instance;
+            CurrentMemoryR3LifetimeId = _lifetime;
+        }
+    }
+
+    internal static MemoryR3Scope EnterMemoryR3Scope(uint site,
+            int windowId, ulong instanceId, uint lifetimeId) =>
+        new MemoryR3Scope(site, windowId, instanceId, lifetimeId);
+
+    internal static void BeginMemoryR3Interval() {
+        lock (_sync) _Info.IntervalMaximumPageInUse = _Info.PageInUse;
+    }
+
+    internal static MemoryR3Snapshot CaptureMemoryR3Snapshot() {
+        lock (_sync) {
+            ulong reusable = 0;
+            for (int i = 0; i < NumPages; i++)
+                if (_Info.Pages[i] == 0) reusable++;
+            return new MemoryR3Snapshot {
+                AllocatedPages = _Info.AllocatedPageTotal,
+                FreedPages = _Info.FreedPageTotal,
+                LivePages = _Info.PageInUse,
+                LiveRuns = _Info.LiveRunCount,
+                MaximumLivePages = _Info.MaximumPageInUse,
+                IntervalMaximumLivePages = _Info.IntervalMaximumPageInUse,
+                ReusablePages = reusable,
+                AllocationSequence = _allocationSequence,
+                FreeSequence = _freeSequence,
+                FreeCalls = _Info.FreeCallCount,
+                FreeSuccesses = _Info.FreeSuccessCount,
+                FreeInvalidPointer = _Info.FreeFailInvalidPtr,
+                FreeNoPages = _Info.FreeFailNoPages,
+                FreeCorruptRun = _Info.FreeFailCorruptRun,
+                DroppedRunRecords = _diagnosticRunRecordsDropped,
+                StringLedgerDropped = _stringLedgerDropped
+            };
+        }
+    }
+
+    internal static ulong StampMemoryR3RunRange(ulong firstSequence,
+            ulong lastSequence, int windowId, ulong instanceId) {
+        if (firstSequence == 0 || lastSequence < firstSequence) return 0;
+        lock (_sync) {
+            ulong stamped = 0;
+            for (int slot = 0; slot < DiagnosticRunCapacity; slot++) {
+                ulong id = _Info.DiagnosticRunIds[slot];
+                if (id < firstSequence || id > lastSequence) continue;
+                _Info.DiagnosticRunMemoryR3WindowIds[slot] = windowId;
+                _Info.DiagnosticRunMemoryR3InstanceIds[slot] = instanceId;
+                stamped++;
+            }
+            return stamped;
+        }
+    }
+
+    internal static void StampMemoryR3Object(object value, uint site,
+            int windowId, ulong instanceId) {
+        if (value == null) return;
+        ulong address = Unsafe.As<object, ulong>(ref value);
+        if (address < (ulong)_Info.Start ||
+                address >= (ulong)_Info.Start + MemorySize) return;
+        lock (_sync) {
+            ulong page = (address - (ulong)_Info.Start) / PageSize;
+            uint encodedSlot = _Info.DiagnosticPageRunSlots[page];
+            if (encodedSlot == 0) return;
+            int slot = (int)encodedSlot - 1;
+            if (_Info.DiagnosticRunAddresses[slot] != address) return;
+            _Info.DiagnosticRunMemoryR3SiteIds[slot] = site;
+            _Info.DiagnosticRunMemoryR3WindowIds[slot] = windowId;
+            _Info.DiagnosticRunMemoryR3InstanceIds[slot] = instanceId;
+        }
+    }
+
+    internal static void RecordMemoryR3Dispose(IntPtr pointer, uint site) {
+        ulong address = (ulong)pointer;
+        if (address < (ulong)_Info.Start ||
+                address >= (ulong)_Info.Start + MemorySize) return;
+        lock (_sync) {
+            ulong page = (address - (ulong)_Info.Start) / PageSize;
+            uint encodedSlot = _Info.DiagnosticPageRunSlots[page];
+            if (encodedSlot == 0) return;
+            int slot = (int)encodedSlot - 1;
+            if (_Info.DiagnosticRunAddresses[slot] != address) return;
+            _Info.DiagnosticRunMemoryR3DisposeCounts[slot]++;
+            _Info.DiagnosticRunMemoryR3DisposeSiteIds[slot] = site;
+        }
+    }
+
+    internal static MemoryR3RunRecord GetMemoryR3RunRecord(int slot) {
+        if (slot < 0 || slot >= DiagnosticRunCapacity)
+            return default(MemoryR3RunRecord);
+        lock (_sync) {
+            return new MemoryR3RunRecord {
+                Id = _Info.DiagnosticRunIds[slot],
+                Address = _Info.DiagnosticRunAddresses[slot],
+                Pages = _Info.DiagnosticRunPages[slot],
+                RequestedBytes = _Info.DiagnosticRunRequestedSizes[slot],
+                EEType = _Info.DiagnosticRunEETypeAddresses[slot],
+                FreeSequence = _Info.DiagnosticRunFreeSequences[slot],
+                CallerAddress = _Info.DiagnosticRunCallerAddresses[slot],
+                SiteId = _Info.DiagnosticRunMemoryR3SiteIds[slot],
+                CreationSiteId = _Info.DiagnosticRunCreationSites[slot],
+                WindowId = _Info.DiagnosticRunMemoryR3WindowIds[slot],
+                WindowInstanceId =
+                    _Info.DiagnosticRunMemoryR3InstanceIds[slot],
+                LifetimeId = _Info.DiagnosticRunMemoryR3LifetimeIds[slot],
+                ManagedLength = _Info.DiagnosticRunManagedLengths[slot],
+                ObjectKind = _Info.DiagnosticRunMemoryR3ObjectKinds[slot],
+                DisposeCount =
+                    _Info.DiagnosticRunMemoryR3DisposeCounts[slot],
+                DisposeSiteId =
+                    _Info.DiagnosticRunMemoryR3DisposeSiteIds[slot],
+                OwnerId = _Info.DiagnosticRunOwnerIds[slot],
+                ManagedHelper = _Info.DiagnosticRunManagedHelpers[slot],
+                AllocationTag = _Info.DiagnosticRunTags[slot],
+                AllocatorOperation = _Info.DiagnosticRunAllocationSites[slot]
+            };
+        }
+    }
+
+    internal static ulong CountMemoryR3BaselineFreedPages() {
+        lock (_sync) {
+            ulong freed = 0;
+            for (int page = 0; page < NumPages; page++) {
+                if (_Info.DiagnosticBaselineOccupiedPages[page] == 0 ||
+                        _Info.DiagnosticBaselineRunIds[page] == 0) continue;
+                ulong id = _Info.DiagnosticBaselineRunIds[page];
+                uint encodedSlot = _Info.DiagnosticPageRunSlots[page];
+                bool stillSameRun = false;
+                if (encodedSlot != 0) {
+                    int slot = (int)encodedSlot - 1;
+                    stillSameRun = _Info.DiagnosticRunIds[slot] == id &&
+                        _Info.DiagnosticRunAddresses[slot] ==
+                            (ulong)_Info.Start + (ulong)page * PageSize;
+                }
+                if (!stillSameRun)
+                    freed += _Info.DiagnosticBaselineRunPages[page];
+            }
+            return freed;
+        }
+    }
+#endif
+
+    internal static void BeginMemoryMetricInterval() {
+        lock (_sync) _Info.IntervalMaximumPageInUse = _Info.PageInUse;
+    }
+
+    internal static ulong CountReusableFreePages() {
+        lock (_sync) {
+            ulong freePages = 0;
+            for (int page = 0; page < NumPages; page++) {
+                if (_Info.Pages[page] == 0) freePages++;
+            }
+            return freePages;
+        }
+    }
     /// <summary>
     /// Memory Size
     /// </summary>
@@ -314,23 +551,20 @@ abstract unsafe class Allocator {
     /// <summary>
     /// Free Call Count
     /// </summary>
-    private static ulong _freeCallCount = 0;
     /// <summary>
     /// Free Success Count
     /// </summary>
-    private static ulong _freeSuccessCount = 0;
     /// <summary>
     /// Free Fail Invalid Ptr
     /// </summary>
-    private static ulong _freeFailInvalidPtr = 0;
     /// <summary>
     /// Free Fail No Pages
     /// </summary>
-    private static ulong _freeFailNoPages = 0;
     /// <summary>
     /// Free Fail Corrupt Run
     /// </summary>
-    private static ulong _freeFailCorruptRun = 0;
+    // Page totals are cumulative since allocator initialization. Unlike
+    // FreeSuccessCount, these counters include every page in each run.
 #if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE35 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
     private const int FreeInvalidLogCapacity = 16;
     private static IntPtr[] _freeInvalidLoggedPointers;
@@ -341,23 +575,23 @@ abstract unsafe class Allocator {
     /// <summary>
     /// Free Call Count
     /// </summary>
-    public static ulong FreeCallCount => _freeCallCount;
+    public static ulong FreeCallCount => _Info.FreeCallCount;
     /// <summary>
     /// Free Success Count
     /// </summary>
-    public static ulong FreeSuccessCount => _freeSuccessCount;
+    public static ulong FreeSuccessCount => _Info.FreeSuccessCount;
     /// <summary>
     /// Free Fail Invalid Ptr
     /// </summary>
-    public static ulong FreeFailInvalidPtr => _freeFailInvalidPtr;
+    public static ulong FreeFailInvalidPtr => _Info.FreeFailInvalidPtr;
     /// <summary>
     /// Free Fail No Pages
     /// </summary>
-    public static ulong FreeFailNoPages => _freeFailNoPages;
+    public static ulong FreeFailNoPages => _Info.FreeFailNoPages;
     /// <summary>
     /// Free Fail Corrupt Run
     /// </summary>
-    public static ulong FreeFailCorruptRun => _freeFailCorruptRun;
+    public static ulong FreeFailCorruptRun => _Info.FreeFailCorruptRun;
 
     // Object.Dispose is shared by GC-managed references and a few objects that
     // deliberately occupy one allocator run. Only release the latter; arbitrary
@@ -401,6 +635,16 @@ abstract unsafe class Allocator {
         _freeInvalidLoggerUnavailableReported = false;
         SerialWriteFreeInvalidText("ALLOC_INVALID_LOG_READY;capacity=16\n");
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+        _stringLedger = null;
+        _stringLedgerCount = 0;
+        _stringLedgerDropped = 0;
+        CurrentDiagnosticStringSite = 0;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+        CurrentDiagnosticManagedCreationSite = 0;
+        CurrentDiagnosticOperationId = 0;
+#endif
+#else
         _stringLedger = new StringLedgerRecord[StringLedgerCapacity];
         _stringLedgerCount = 0;
         _stringLedgerDropped = 0;
@@ -411,6 +655,7 @@ abstract unsafe class Allocator {
 #endif
         SerialWriteFreeInvalidText("STRING_LEDGER_READY=1\n");
         SerialWriteFreeInvalidText("STRING_LEDGER_VERSION=R6-1\n");
+#endif
         SerialWriteFreeInvalidText("ALLOC_PROVENANCE_READY=1;capacity=262144-live-runs;storage=static-per-page\n");
 #if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
         SerialWriteFreeInvalidText("PHASE35_R13_ALLOC_LEDGER_READY=1\n");
@@ -432,12 +677,12 @@ abstract unsafe class Allocator {
     internal static ulong Free(IntPtr intPtr, string caller,
                                ulong callerAddress) {
         lock (_sync) {
-            _freeCallCount++; // Track every call
+            _Info.FreeCallCount++; // Track every call
             
             long p = GetPageIndexStart(intPtr); 
             
             if (p < 0 || p >= NumPages) { // guard invalid start index
-                _freeFailInvalidPtr++;
+                _Info.FreeFailInvalidPtr++;
 #if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE35 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
                 LogInvalidFreeOnce(intPtr, caller, callerAddress);
 #endif
@@ -450,7 +695,7 @@ abstract unsafe class Allocator {
                 // Corruption guard: run length must fit inside array
                 if (pages > (ulong)NumPages - (ulong)p) {
                     // Do not attempt to free; mark as corrupt
-                    _freeFailCorruptRun++;
+                    _Info.FreeFailCorruptRun++;
                     return 0;
                 }
                 // Tag accounting
@@ -482,6 +727,8 @@ abstract unsafe class Allocator {
                 
                 // Global usage
                 _Info.PageInUse -= pages;
+                _Info.FreedPageTotal += pages;
+                if (_Info.LiveRunCount != 0) _Info.LiveRunCount--;
                 
                 Native.Stosb((void*)intPtr, 0, pages * PageSize);
                 for (ulong i = 0; i < pages; i++) {
@@ -496,11 +743,11 @@ abstract unsafe class Allocator {
 #endif
                 }
                 
-                _freeSuccessCount++; // Track successful frees
+                _Info.FreeSuccessCount++; // Track successful frees
                 return pages * PageSize;
             }
             
-            _freeFailNoPages++;
+            _Info.FreeFailNoPages++;
             return 0;
         }
     }
@@ -608,7 +855,14 @@ abstract unsafe class Allocator {
             _Info.DiagnosticRunCreationSites[slot] = creationSite;
             _Info.DiagnosticRunManagedHelpers[slot] = 1;
             _Info.DiagnosticRunEETypeAddresses[slot] = eeType;
+            _Info.DiagnosticRunManagedLengths[slot] =
+                length < 0 ? 0U : unchecked((uint)length);
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            _Info.DiagnosticRunMemoryR3ObjectKinds[slot] =
+                isString ? (byte)2 : (byte)1;
+#endif
 
+#if !UEFI_TASKMANAGER_MEMORY_R3_PROBE
             uint stringSite = CurrentDiagnosticStringSite;
             if (isString && stringSite == 0) stringSite = 402;
             if (isString) {
@@ -620,11 +874,19 @@ abstract unsafe class Allocator {
                 _Info.DiagnosticRunCreationSites[slot] = stringSite;
 #endif
             }
-            if (isString && CurrentDiagnosticRequest != 0)
+            if (isString && (CurrentDiagnosticRequest != 0 ||
+#if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
+                    (DiagnosticProvenanceEnabled &&
+                        _diagnosticSnapshotSequence != 0 &&
+                        id > _diagnosticSnapshotSequence)))
+#else
+                    false))
+#endif
                 RecordStringCreationNoLock(address, objectBytes,
                     unchecked((uint)length), CurrentDiagnosticRequest,
                     stringSite, id,
                     _Info.DiagnosticRunCallerAddresses[slot]);
+#endif
 
         }
     }
@@ -644,6 +906,9 @@ abstract unsafe class Allocator {
             if (_Info.DiagnosticRunIds[slot] == 0 ||
                     _Info.DiagnosticRunAddresses[slot] != address) return;
             _Info.DiagnosticRunManagedHelpers[slot] = 2;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            _Info.DiagnosticRunMemoryR3ObjectKinds[slot] = 3;
+#endif
 #if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER
             _Info.DiagnosticRunCreationSites[slot] =
                 CurrentDiagnosticManagedCreationSite != 0
@@ -706,6 +971,7 @@ abstract unsafe class Allocator {
             Length = length, Request = request, CreationSite = site,
             CreationReturn = caller, AllocatorSequence = runId, Live = true
         };
+        if (request != 0) {
         SerialWriteFreeInvalidText("STRING_CREATE;request=0x");
         SerialWriteFreeInvalidHex(request);
         SerialWriteFreeInvalidText(";address=0x");
@@ -723,10 +989,14 @@ abstract unsafe class Allocator {
         SerialWriteFreeInvalidText(";return=0x");
         SerialWriteFreeInvalidHex(caller);
         Native.Out8(0x3F8, (byte)'\n');
+        }
     }
 
     internal static void RecordManagedObjectDispose(IntPtr pointer) {
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+        RecordMemoryR3Dispose(pointer, CurrentMemoryR3SiteId);
+#endif
         lock (_sync) {
             if (_stringLedger == null) return;
             ulong runId = GetDiagnosticStringRunId(pointer);
@@ -859,6 +1129,7 @@ abstract unsafe class Allocator {
             if (record.Address != (ulong)pointer || !record.Live) continue;
             record.ContentHash = hash;
             record.HasContentHash = true;
+            if (record.Request == 0) return;
             SerialWriteFreeInvalidText("STRING_VALUE;request=0x");
             SerialWriteFreeInvalidHex(record.Request);
             SerialWriteFreeInvalidText(";address=0x");
@@ -871,7 +1142,8 @@ abstract unsafe class Allocator {
 #endif
     }
 
-    internal static void DumpStringLedger(ulong request, ulong stage) {
+    internal static void DumpStringLedger(ulong request, ulong stage,
+            ulong afterSequence = 0) {
 #if UEFI_DIAGNOSTIC_RING3_PHASE35
         if (_stringLedger == null) return;
         lock (_sync) {
@@ -879,6 +1151,7 @@ abstract unsafe class Allocator {
             for (int i = 0; i < _stringLedgerCount; i++) {
                 ref StringLedgerRecord record = ref _stringLedger[i];
                 if (record.Address == 0) continue;
+                if (record.AllocatorSequence <= afterSequence) continue;
                 if (record.Request != request) {
                     if (stage == 3 && !record.Live) record.Address = 0;
                     continue;
@@ -1038,6 +1311,12 @@ abstract unsafe class Allocator {
             if (pages > (ulong)NumPages - i) return IntPtr.Zero;
             for (ulong k = 0; k < pages; k++) _Info.Pages[i + k] = PageSignature;
             _Info.Pages[i] = pages; _Info.PageInUse += pages;
+            _Info.AllocatedPageTotal += pages;
+            _Info.LiveRunCount++;
+            if (_Info.PageInUse > _Info.MaximumPageInUse)
+                _Info.MaximumPageInUse = _Info.PageInUse;
+            if (_Info.PageInUse > _Info.IntervalMaximumPageInUse)
+                _Info.IntervalMaximumPageInUse = _Info.PageInUse;
             byte t = (byte)tag; if (t >= (byte)AllocTag.Count) t = (byte)AllocTag.Unknown; _Info.Tags[i] = t; _Info.TagLivePages[t] += pages;
             
             // Owner accounting with simple array lookup
@@ -1111,6 +1390,19 @@ abstract unsafe class Allocator {
         _Info.DiagnosticRunCr3[slot] = cr3;
         _Info.DiagnosticRunRequestedSizes[slot] = requestedSize;
         _Info.DiagnosticRunCallerAddresses[slot] = callerAddress;
+        _Info.DiagnosticRunManagedLengths[slot] = 0;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+        _Info.DiagnosticRunMemoryR3ObjectKinds[slot] = 0;
+        _Info.DiagnosticRunMemoryR3DisposeCounts[slot] = 0;
+        _Info.DiagnosticRunMemoryR3DisposeSiteIds[slot] = 0;
+        _Info.DiagnosticRunMemoryR3SiteIds[slot] = CurrentMemoryR3SiteId;
+        _Info.DiagnosticRunMemoryR3WindowIds[slot] =
+            CurrentMemoryR3WindowId;
+        _Info.DiagnosticRunMemoryR3InstanceIds[slot] =
+            CurrentMemoryR3InstanceId;
+        _Info.DiagnosticRunMemoryR3LifetimeIds[slot] =
+            CurrentMemoryR3LifetimeId;
+#endif
         _Info.DiagnosticRunRequesterIds[slot] = CurrentDiagnosticRequest;
         _Info.DiagnosticRunLifetimeIds[slot] = CurrentDiagnosticLifetime;
 #if UEFI_DIAGNOSTIC_RING3_PHASE35R13_ALLOC_LEDGER

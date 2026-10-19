@@ -165,7 +165,7 @@ unsafe class Program {
 #else
     private const bool UEFI_ENABLE_BACKGROUND_ROTATION_DIAGNOSTIC = false;
 #endif
-#if UEFI_DIAGNOSTIC_APP_MODEL
+#if UEFI_DIAGNOSTIC_APP_MODEL && !UEFI_TASKMANAGER_MEMORY_R2_PROBE && !UEFI_TASKMANAGER_MEMORY_R3_PROBE
     private const bool UEFI_ENABLE_APP_MODEL_DIAGNOSTIC = true;
 #else
     private const bool UEFI_ENABLE_APP_MODEL_DIAGNOSTIC = false;
@@ -1568,6 +1568,29 @@ unsafe class Program {
         while (length > 0) SerialChar(digits[--length]);
     }
 
+    private static void SerialBreadcrumbUnsigned(string prefix, ulong value) {
+        SerialText(prefix);
+        SerialUnsigned(value);
+        SerialChar('\n');
+    }
+
+    private static void SerialBreadcrumbSigned(string prefix, long value) {
+        SerialText(prefix);
+        if (value < 0) {
+            SerialChar('-');
+            SerialUnsigned((ulong)(-(value + 1)) + 1UL);
+        } else {
+            SerialUnsigned((ulong)value);
+        }
+        SerialChar('\n');
+    }
+
+    private static void SerialBreadcrumbFlag(string prefix, bool value) {
+        SerialText(prefix);
+        SerialChar(value ? '1' : '0');
+        SerialChar('\n');
+    }
+
     private static void SerialWidgetUpdate(string name, int count) {
         SerialText("WIDGET_UPDATE=");
         SerialText(name);
@@ -1789,8 +1812,18 @@ unsafe class Program {
         SetUefiFrameBreadcrumb(2, 0, 200);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         EnsureUefiDesktopIconCacheSize();
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+        Allocator.MemoryR3Scope r3DesktopScope =
+            Allocator.EnterMemoryR3Scope(
+                TaskManagerMemoryR3Probe.SiteDesktopUpdate, 0, 0,
+                Allocator.CurrentMemoryR3LifetimeId);
+        try {
+#endif
         Desktop.Update(_cachedDocumentIcon, _cachedFolderIcon,
             _cachedImageIcon, _cachedAudioIcon, Desktop.IconSize);
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+        } finally { r3DesktopScope.Dispose(); }
+#endif
         // Let taskbar hit regions claim right-clicks before the desktop popup
         // is opened. Both routes still use the normal Window-based menus.
         HandleContextMenuOpening();
@@ -1799,16 +1832,60 @@ unsafe class Program {
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         SetUefiFrameBreadcrumb(3, 0, 300);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
-        if (Desktop.Taskbar != null) Desktop.Taskbar.DrawWorkspaceSwitcher();
+        if (Desktop.Taskbar != null) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3SwitcherScope =
+                Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteWorkspaceSwitcherDraw,
+                    0, 0, Allocator.CurrentMemoryR3LifetimeId);
+            try {
+#endif
+            Desktop.Taskbar.DrawWorkspaceSwitcher();
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3SwitcherScope.Dispose(); }
+#endif
+        }
 
         SetUefiFrameBreadcrumb(3, 1, 301);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         SetUefiFrameBreadcrumb(4, 0, 400);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
+ #if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+        Allocator.MemoryR3Scope r3WindowDrawScope =
+            Allocator.EnterMemoryR3Scope(
+                TaskManagerMemoryR3Probe.SiteSharedWindowDraw, 0, 0,
+                Allocator.CurrentMemoryR3LifetimeId);
+        try {
+#endif
         WindowManager.DrawAllExceptTaskManager();
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+        } finally { r3WindowDrawScope.Dispose(); }
+#endif
         WindowManager.DrawTaskManager();
         WindowManager.CleanupClosedWindows();
-        if (Desktop.Taskbar != null) Desktop.Taskbar.Draw();
+#if UEFI_TASKMANAGER_MEMORY_R2_PROBE
+        TaskManagerMemoryR2Probe.PollDeferredCleanup();
+#endif
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+        TaskManagerMemoryR3Probe.PollDeferredCleanup();
+        TaskManagerMemoryR3Probe.TraceAfterDeferredPoll();
+#endif
+        if (Desktop.Taskbar != null) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3TaskbarScope =
+                Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteTaskbarDraw, 0, 0,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+#endif
+            Desktop.Taskbar.Draw();
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3TaskbarScope.Dispose(); }
+#endif
+        }
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+        TaskManagerMemoryR3Probe.TraceAfterTaskbarDraw();
+#endif
 
         SetUefiFrameBreadcrumb(4, 1, 401);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
@@ -1886,42 +1963,45 @@ unsafe class Program {
             _uefiMultiFrameStackLowWater = rsp;
 
         bool graphicsValid = IsUefiGraphicsInvariantValid();
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_FRAME=" + frame.ToString());
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_TIMER=" +
-            GetUefiTimerTicks().ToString());
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_STACK_LOW_WATER=" +
-            _uefiMultiFrameStackLowWater.ToString());
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_GRAPHICS_VALID=" +
-            (graphicsValid ? "1" : "0"));
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_BYTES=" +
-            Allocator.MemoryInUse.ToString());
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_CALLS=" +
-            Allocator.FreeCallCount.ToString());
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_SUCCESS=" +
-            Allocator.FreeSuccessCount.ToString());
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_INVALID=" +
-            Allocator.FreeFailInvalidPtr.ToString());
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_NOPAGES=" +
-            Allocator.FreeFailNoPages.ToString());
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_CORRUPT=" +
-            Allocator.FreeFailCorruptRun.ToString());
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_THREADPOOL_LOCKED=" +
-            (ThreadPool.Locked ? "1" : "0"));
-        SerialBreadcrumb("CONTINUOUS_HEARTBEAT_THREADPOOL_LOCKER=" +
-            ThreadPool.Locker.ToString());
+        SerialBreadcrumbSigned("CONTINUOUS_HEARTBEAT_FRAME=", frame);
+        SerialBreadcrumbUnsigned("CONTINUOUS_HEARTBEAT_TIMER=",
+            GetUefiTimerTicks());
+        SerialBreadcrumbUnsigned("CONTINUOUS_HEARTBEAT_STACK_LOW_WATER=",
+            _uefiMultiFrameStackLowWater);
+        SerialBreadcrumbFlag("CONTINUOUS_HEARTBEAT_GRAPHICS_VALID=",
+            graphicsValid);
+        SerialBreadcrumbUnsigned("CONTINUOUS_HEARTBEAT_ALLOCATOR_BYTES=",
+            Allocator.MemoryInUse);
+        SerialBreadcrumbUnsigned("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_CALLS=",
+            Allocator.FreeCallCount);
+        SerialBreadcrumbUnsigned("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_SUCCESS=",
+            Allocator.FreeSuccessCount);
+        SerialBreadcrumbUnsigned("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_INVALID=",
+            Allocator.FreeFailInvalidPtr);
+        SerialBreadcrumbUnsigned("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_NOPAGES=",
+            Allocator.FreeFailNoPages);
+        SerialBreadcrumbUnsigned("CONTINUOUS_HEARTBEAT_ALLOCATOR_FREE_CORRUPT=",
+            Allocator.FreeFailCorruptRun);
+        SerialBreadcrumbFlag("CONTINUOUS_HEARTBEAT_THREADPOOL_LOCKED=",
+            ThreadPool.Locked);
+        SerialBreadcrumbSigned("CONTINUOUS_HEARTBEAT_THREADPOOL_LOCKER=",
+            ThreadPool.Locker);
         if (PS2Keyboard.IrqCount != 0 || PS2Mouse.InterruptCount != 0) {
-            SerialBreadcrumb("INPUT_STATS_KEY_IRQ=" + PS2Keyboard.IrqCount.ToString());
-            SerialBreadcrumb("INPUT_STATS_KEY_DROPPED=" + PS2Keyboard.DroppedScancodeCount.ToString());
-            SerialBreadcrumb("INPUT_STATS_KEY_DOWN=" + PS2Keyboard.KeyDownCount.ToString());
-            SerialBreadcrumb("INPUT_STATS_KEY_UP=" + PS2Keyboard.KeyUpCount.ToString());
-            SerialBreadcrumb("INPUT_STATS_MOUSE_IRQ=" + PS2Mouse.InterruptCount.ToString());
-            SerialBreadcrumb("INPUT_STATS_MOUSE_DROPPED=" + PS2Mouse.DroppedByteCount.ToString());
-            SerialBreadcrumb("INPUT_STATS_MOUSE_PACKETS=" + PS2Mouse.ProcessedPacketCount.ToString());
-            SerialBreadcrumb("INPUT_STATS_MOUSE_MOVES=" + PS2Mouse.MoveEventCount.ToString());
-            SerialBreadcrumb("INPUT_STATS_MOUSE_LEFT_DOWN=" + PS2Mouse.LeftDownCount.ToString());
-            SerialBreadcrumb("INPUT_STATS_MOUSE_LEFT_UP=" + PS2Mouse.LeftUpCount.ToString());
-            SerialBreadcrumb("INPUT_STATS_MOUSE_RIGHT_DOWN=" + PS2Mouse.RightDownCount.ToString());
-            SerialBreadcrumb("INPUT_STATS_MOUSE_RIGHT_UP=" + PS2Mouse.RightUpCount.ToString());
+            SerialBreadcrumbSigned("INPUT_STATS_KEY_IRQ=", PS2Keyboard.IrqCount);
+            SerialBreadcrumbSigned("INPUT_STATS_KEY_DROPPED=",
+                PS2Keyboard.DroppedScancodeCount);
+            SerialBreadcrumbSigned("INPUT_STATS_KEY_DOWN=", PS2Keyboard.KeyDownCount);
+            SerialBreadcrumbSigned("INPUT_STATS_KEY_UP=", PS2Keyboard.KeyUpCount);
+            SerialBreadcrumbSigned("INPUT_STATS_MOUSE_IRQ=", PS2Mouse.InterruptCount);
+            SerialBreadcrumbSigned("INPUT_STATS_MOUSE_DROPPED=",
+                PS2Mouse.DroppedByteCount);
+            SerialBreadcrumbSigned("INPUT_STATS_MOUSE_PACKETS=",
+                PS2Mouse.ProcessedPacketCount);
+            SerialBreadcrumbSigned("INPUT_STATS_MOUSE_MOVES=", PS2Mouse.MoveEventCount);
+            SerialBreadcrumbSigned("INPUT_STATS_MOUSE_LEFT_DOWN=", PS2Mouse.LeftDownCount);
+            SerialBreadcrumbSigned("INPUT_STATS_MOUSE_LEFT_UP=", PS2Mouse.LeftUpCount);
+            SerialBreadcrumbSigned("INPUT_STATS_MOUSE_RIGHT_DOWN=", PS2Mouse.RightDownCount);
+            SerialBreadcrumbSigned("INPUT_STATS_MOUSE_RIGHT_UP=", PS2Mouse.RightUpCount);
         }
         if (!graphicsValid) {
             SerialBreadcrumb("CONTINUOUS_DESKTOP_FAULT=GRAPHICS_INVARIANT");

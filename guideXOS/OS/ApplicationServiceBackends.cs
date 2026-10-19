@@ -427,9 +427,14 @@ namespace guideXOS.OS {
             if (!ApplicationServiceRegistry.TryValidateContext(
                     context, ApplicationServiceId.SystemInformation,
                     out instance, out valid)) {
-                return ApplicationServiceResult<SystemInformationSnapshot>.Failure(
-                    valid.Code, valid.BoundedDiagnostic);
+                try {
+                    return ApplicationServiceResult<SystemInformationSnapshot>.Failure(
+                        valid.Code, valid.BoundedDiagnostic);
+                } finally {
+                    if (valid != null) valid.Dispose();
+                }
             }
+            if (valid != null) valid.Dispose();
 
             ulong memorySize = Allocator.MemorySize;
             if (memorySize == 0) {
@@ -447,8 +452,14 @@ namespace guideXOS.OS {
             SystemInformationSnapshot snapshot = new SystemInformationSnapshot(
                 Timer.Ticks, memorySize, memoryInUse, threadCount, cpu,
                 "guideXOS", "Phase8", "x86_64");
-            return ApplicationServiceResult<SystemInformationSnapshot>.SuccessResult(
-                snapshot);
+            ApplicationServiceResult<SystemInformationSnapshot> result =
+                ApplicationServiceResult<SystemInformationSnapshot>.SuccessResult(
+                    snapshot);
+#if UEFI_TASKMANAGER_MEMORY_R2_PROBE
+            TaskManagerMemoryR2Probe.ObserveServiceSnapshot(memorySize,
+                memoryInUse, snapshot, result.Value);
+#endif
+            return result;
         }
     }
 

@@ -2,6 +2,8 @@
 
 **Date:** 2026-10-17 | **Classification:** Outcome B — FIX IMPLEMENTED, QUALIFICATION INCOMPLETE | **Release blocker:** Open; v0.2 release qualification is not complete.
 
+**Latest R2 update (2026-10-18):** Outcome F. The production A–F matrix and UI paths pass. A 15-minute production idle control grew by 340 pages; the 25-cycle Task Manager run grew by 2,185 pages over a similar duration, leaving roughly 1,888 pages above a linear idle-rate comparison. A diagnostic 25-lifetime inventory reconciles every B0–B5 run/page count but does not resolve the logical owner of the production residual. The v0.2 blocker remains open; see `Docs/UEFI_TASKMANAGER_MEMORY_DETAILS_R2_ALLOCATOR.md` for full evidence.
+
 ## Repository state
 
 - Repository: `D:\dev\guideXOSUEFI`
@@ -106,3 +108,13 @@ The required memory-stability gate **failed**. Allocator memory-in-use was 19,07
 3. Capture Memory Details and the post-close desktop; record allocator/free counters and check serial/debug output for faults or invalid frees.
 
 The changed tracked files are `guideXOS/DefaultApps/TaskManager.cs`, `Tests/TaskManagerMemoryDetailsRegression.ps1`, and this report. `git diff --check` passed. No commit was made because the acceptance result was not clean; nothing was pushed.
+
+## R2 final qualification follow-up — 2026-10-18
+
+R2 ran in an ordinary-copy sandbox at `C:\gxR2`; the live repository stayed on `main` at `b4af3c8fd92dcbd35ec594bd33e6b1d87d521d41`, with no live changes, commit, or push. The full unskipped build completed with exit code 0, `Build Complete`, 41/41 managed artifact agreement, and 9/9 Phase 35 modes.
+
+Six independent production QEMU boots A–F and a separate production desktop smoke used one frozen candidate. Its hashes are: kernel `EF76CFBC6A78661EF0FBD4C09CAE9F400BF14B2969C53F66BECAED64B454E759`, ramdisk `F7EFBFF3BC4B845303419DDF523EBC27DBFD01D9174EBEEF5F8A7009E8D780A8`, and EFI `4B88FEB3CCB28D83EE0CF20645DDAC31B48146709BFC89F44AA547012F20F599`. Task Manager activation/close, Memory Details, 25 entry/exit cycles, 50 mixed switches, Start Menu, desktop Files icon, and widgets passed. No allocator free failures, page-map inconsistencies, or CPU fault/panic serial markers were recorded.
+
+The R1 footer string leak was identified at the Processes-tab draw site and repaired by disposing only fresh owned formatting results after synchronous borrowed drawing. Other repeated redraw strings/arrays were also scoped or reused. The allocator statistic is `PageInUse × 4096`, a current live global-page measure. Despite the ownership fixes, E rose from 19,173,376 bytes / 4,681 pages to 28,123,136 bytes / 6,866 pages after 25 cycles and a 60-second cleanup wait: **+8,949,760 bytes / +2,185 pages**. It added 46 pages during the wait. The exact residual post-fix run owner is unresolved, so this is not a stability pass.
+
+The diagnostic G build demonstrated runtime `N/A` for an invalid snapshot and visible recovery on the next valid snapshot. A separate production idle control and diagnostic retained-run inventory are also recorded; the inventory reconciles allocator data but does not identify the production residual’s logical owner. Bare-metal qualification remains unavailable. The final R2 classification is **Outcome F**, and the v0.2 release blocker remains **open**. Full results, scenario totals, diagnostic limitations, and evidence paths are in `Docs/UEFI_TASKMANAGER_MEMORY_DETAILS_R2_ALLOCATOR.md`.

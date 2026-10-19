@@ -671,13 +671,19 @@ namespace guideXOS.OS {
             string input = !string.IsNullOrEmpty(request.TargetAppId)
                 ? request.TargetAppId : request.TargetNameOrAlias;
             AppLaunchResolution legacy = AppLaunchResolver.Resolve(input);
-            if (!legacy.Success || !TryGetById(legacy.AppId, out descriptor)) {
-                failure = LaunchResult.Failed(LaunchErrorCode.NotFound,
-                    legacy.FailureReason ?? "No matching application descriptor", null);
-                return false;
+            try {
+                if (!legacy.Success ||
+                        !TryGetById(legacy.AppId, out descriptor)) {
+                    failure = LaunchResult.Failed(LaunchErrorCode.NotFound,
+                        legacy.FailureReason ??
+                            "No matching application descriptor", null);
+                    return false;
+                }
+                matchedAlias = legacy.MatchedAlias;
+                return true;
+            } finally {
+                legacy.Dispose();
             }
-            matchedAlias = legacy.MatchedAlias;
-            return true;
         }
 
         public static bool RunSelfTest() {

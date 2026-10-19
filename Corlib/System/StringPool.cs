@@ -24,6 +24,7 @@ namespace System {
         
         // Initialization flag
         private static bool _initialized = false;
+
         
         // Common string literals (no allocation, just references)
         private static string _kbSuffix = " KB";
@@ -55,6 +56,12 @@ namespace System {
         /// Get a cached percentage string (e.g., "42%")
         /// </summary>
         public static string GetPercentage(int value) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            uint previousStringSite =
+                Allocator.CurrentDiagnosticStringSite;
+            Allocator.CurrentDiagnosticStringSite = 414;
+            try {
+#endif
             if (!_initialized) {
                 return value.ToString() + _percentSuffix;
             }
@@ -69,12 +76,24 @@ namespace System {
             }
             
             return _percentageStrings[value];
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            } finally {
+                Allocator.CurrentDiagnosticStringSite =
+                    previousStringSite;
+            }
+#endif
         }
         
         /// <summary>
         /// Get a cached number string
         /// </summary>
         public static string GetNumber(int value) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            uint previousStringSite =
+                Allocator.CurrentDiagnosticStringSite;
+            Allocator.CurrentDiagnosticStringSite = 412;
+            try {
+#endif
             if (!_initialized) {
                 return value.ToString();
             }
@@ -90,12 +109,24 @@ namespace System {
             }
             
             return _numberStrings[value];
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            } finally {
+                Allocator.CurrentDiagnosticStringSite =
+                    previousStringSite;
+            }
+#endif
         }
         
         /// <summary>
         /// Get a cached number string (ulong version)
         /// </summary>
         public static string GetNumber(ulong value) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            uint previousStringSite =
+                Allocator.CurrentDiagnosticStringSite;
+            Allocator.CurrentDiagnosticStringSite = 413;
+            try {
+#endif
             if (!_initialized) {
                 return value.ToString();
             }
@@ -113,6 +144,12 @@ namespace System {
             }
             
             return _numberStrings[intVal];
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            } finally {
+                Allocator.CurrentDiagnosticStringSite =
+                    previousStringSite;
+            }
+#endif
         }
         
         /// <summary>
@@ -120,6 +157,12 @@ namespace System {
         /// Uses simple array-based cache instead of Dictionary to avoid initialization issues
         /// </summary>
         public static string GetMemorySize(ulong bytes) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            uint previousStringSite =
+                Allocator.CurrentDiagnosticStringSite;
+            Allocator.CurrentDiagnosticStringSite = 411;
+            try {
+#endif
             if (!_initialized) {
                 ulong mbFallback = bytes / (1024UL * 1024UL);
                 if (mbFallback == 0) {
@@ -173,12 +216,24 @@ namespace System {
             }
             
             return result;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            } finally {
+                Allocator.CurrentDiagnosticStringSite =
+                    previousStringSite;
+            }
+#endif
         }
         
         /// <summary>
         /// Get a cached KB/s or MB/s string
         /// </summary>
         public static string GetTransferRate(int kbps) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            uint previousStringSite =
+                Allocator.CurrentDiagnosticStringSite;
+            Allocator.CurrentDiagnosticStringSite = 415;
+            try {
+#endif
             if (!_initialized) {
                 if (kbps >= 1024) {
                     return (kbps / 1024).ToString() + _mbpsSuffix;
@@ -193,12 +248,24 @@ namespace System {
             }
             string kbpsStr = GetNumber(kbps);
             return kbpsStr + _kbpsSuffix;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            } finally {
+                Allocator.CurrentDiagnosticStringSite =
+                    previousStringSite;
+            }
+#endif
         }
         
         /// <summary>
         /// Format uptime string efficiently (HH:MM:SS)
         /// </summary>
         public static string FormatUptime(ulong ticks) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            uint previousStringSite =
+                Allocator.CurrentDiagnosticStringSite;
+            Allocator.CurrentDiagnosticStringSite = 416;
+            try {
+#endif
             ulong totalSec = ticks / 1000UL;
             ulong s = totalSec % 60UL;
             ulong m = totalSec / 60UL % 60UL;
@@ -220,6 +287,12 @@ namespace System {
             string result = hStrPool + _colon + mStrPool + _colon + sStrPool;
             
             return result;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            } finally {
+                Allocator.CurrentDiagnosticStringSite =
+                    previousStringSite;
+            }
+#endif
         }
         
         /// <summary>
@@ -233,8 +306,20 @@ namespace System {
         /// Build a string with unit suffix efficiently
         /// </summary>
         public static string WithSuffix(int value, string suffix) {
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            uint previousStringSite =
+                Allocator.CurrentDiagnosticStringSite;
+            Allocator.CurrentDiagnosticStringSite = 417;
+            try {
+#endif
             string numStr = GetNumber(value);
             return numStr + suffix;
+#if UEFI_DIAGNOSTIC_RING3_PHASE35
+            } finally {
+                Allocator.CurrentDiagnosticStringSite =
+                    previousStringSite;
+            }
+#endif
         }
         
         /// <summary>

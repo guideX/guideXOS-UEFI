@@ -1,4 +1,5 @@
 using guideXOS.GUI;
+using guideXOS.Misc;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -95,11 +96,25 @@ namespace guideXOS.OS {
 
         public static AppLaunchResolution Resolve(string input) {
             InitializeDefaultDescriptors();
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            AppLaunchResolution result;
+            Allocator.MemoryR3Scope r3Scope1 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteLaunchResolution,
+                    0, 0, Allocator.CurrentMemoryR3LifetimeId);
+            try {
+                result = new AppLaunchResolution {
+                    Input = input,
+                    ResolvedKind = AppKind.Unknown,
+                    Success = false
+                };
+            } finally { r3Scope1.Dispose(); }
+#else
             var result = new AppLaunchResolution {
                 Input = input,
                 ResolvedKind = AppKind.Unknown,
                 Success = false
             };
+#endif
 
             if (string.IsNullOrEmpty(input)) {
                 result.FailureReason = "Empty input";

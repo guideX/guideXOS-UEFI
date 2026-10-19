@@ -16,6 +16,19 @@ namespace guideXOS.GUI {
 
         public static int Count => _count;
 
+        public static void ForgetWindow(Window window) {
+            if (window == null) return;
+            for (int i = _keys.Count - 1; i >= 0; i--) {
+                if (!object.ReferenceEquals(_keys[i], window)) continue;
+                _keys.RemoveAt(i);
+                _values.RemoveAt(i);
+            }
+            for (int i = _minimizedBySwitch.Count - 1; i >= 0; i--) {
+                if (object.ReferenceEquals(_minimizedBySwitch[i], window))
+                    _minimizedBySwitch.RemoveAt(i);
+            }
+        }
+
         private static int IndexOf(Window w) {
             for (int i = 0; i < _keys.Count; i++) if (_keys[i] == w) return i; return -1;
         }

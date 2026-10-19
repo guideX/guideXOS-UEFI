@@ -40,6 +40,9 @@ namespace guideXOS.OS {
                     descriptor == null ? null : descriptor.AppId);
                 return false;
             }
+            // The factory only needs the boolean and shared service access;
+            // it does not transfer ownership of the success result.
+            if (serviceResult != null) serviceResult.Dispose();
             return true;
         }
 
@@ -113,9 +116,28 @@ namespace guideXOS.OS {
                 return Failed(LaunchErrorCode.InitializationFailed,
                     "Application instance is unavailable", null);
             }
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            LaunchResult launchResult;
+            Allocator.MemoryR3Scope r3Scope1 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteFactoryLaunchResult,
+                    0, instance.Handle.Value,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+                launchResult = LaunchResult.Succeeded(instance.DescriptorId,
+                    instance.Handle, LaunchActivationState.Created);
+            } finally { r3Scope1.Dispose(); }
+            Allocator.MemoryR3Scope r3Scope2 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteApplicationFactoryResult,
+                    0, instance.Handle.Value,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+                return new ApplicationFactoryResult(instance, launchResult);
+            } finally { r3Scope2.Dispose(); }
+#else
             return new ApplicationFactoryResult(instance,
                 LaunchResult.Succeeded(instance.DescriptorId, instance.Handle,
                     LaunchActivationState.Created));
+#endif
         }
 
         public static ApplicationFactoryResult Failed(
@@ -149,6 +171,13 @@ namespace guideXOS.OS {
         internal bool WasAlreadyOwnedAt(int index) {
             return index >= 0 && index < _windowCount &&
                 _preexistingOwnership[index];
+        }
+
+        public override void Dispose() {
+            _windows.Dispose();
+            _preexistingOwnership.Dispose();
+            if (_launchResult != null) _launchResult.Dispose();
+            base.Dispose();
         }
     }
 
@@ -342,8 +371,20 @@ namespace guideXOS.OS {
             // Name/alias launches are resolved by the App Model before this
             // backend boundary.  Store the stable descriptor identity in the
             // instance context without changing the bounded request payload.
-            LaunchRequest factoryRequest = request == null ? null :
+            LaunchRequest factoryRequest;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3Scope3 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteFactoryRequestClone,
+                    0, Allocator.CurrentMemoryR3InstanceId,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+                factoryRequest = request == null ? null :
+                    request.WithTargetAppId(descriptor.AppId);
+            } finally { r3Scope3.Dispose(); }
+#else
+            factoryRequest = request == null ? null :
                 request.WithTargetAppId(descriptor.AppId);
+#endif
 
             _factoryLaunches++;
             ApplicationInstance instance;
@@ -357,6 +398,12 @@ namespace guideXOS.OS {
                 EmitFactoryFailure(descriptor, failure);
                 return true;
             }
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            if (factoryRequest != null)
+                Allocator.StampMemoryR3Object(factoryRequest,
+                    TaskManagerMemoryR3Probe.SiteFactoryRequestClone,
+                    0, instance.Handle.Value);
+#endif
 
             if (!reused) {
                 try {
@@ -381,6 +428,7 @@ namespace guideXOS.OS {
                 invoked = false;
             }
 
+            try {
             if (!invoked || factoryResult == null || !factoryResult.Success) {
                 _factoryFailures++;
                 CleanupFailedFactoryLaunch(instance, reused, factoryResult,
@@ -440,6 +488,9 @@ namespace guideXOS.OS {
             result = LaunchResult.Succeeded(descriptor.AppId, instance.Handle,
                 LaunchActivationState.Activated);
             return true;
+            } finally {
+                if (factoryResult != null) factoryResult.Dispose();
+            }
         }
 
         internal static void RecordCompatibilityFallback(string appId) {
@@ -1356,18 +1407,43 @@ namespace guideXOS.OS {
                 ApplicationInstance instance,
                 LaunchRequest request,
                 out ApplicationFactoryResult result) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3Scope4 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteTaskManagerFactory,
+                    0, instance == null ? 0 : instance.Handle.Value,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+#endif
             ApplicationServiceContext serviceContext;
             ApplicationServiceAccess services;
             if (!TryCreateApplicationServices(descriptor, instance,
                     out serviceContext, out services, out result)) return false;
+            bool serviceContextTransferred = false;
+            try {
             result = ApplicationFactoryResult.Succeeded(instance);
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            ulong windowFirstSequence =
+                Allocator.DiagnosticAllocationSequence + 1;
+#endif
             TaskManager manager = instance.GetOwnedWindowAt(0)
                 as TaskManager;
             if (manager == null) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                Allocator.MemoryR3Scope r3Scope5 = Allocator.EnterMemoryR3Scope(
+                        TaskManagerMemoryR3Probe.SiteTaskManagerWindowCreate,
+                        0, instance.Handle.Value,
+                        Allocator.CurrentMemoryR3LifetimeId);
+                try {
+#endif
                 manager = new TaskManager(500, 500, 760, 520,
                     serviceContext, services);
+                serviceContextTransferred = true;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                } finally { r3Scope5.Dispose(); }
+#endif
             }
             if (!result.AddWindow(manager)) {
+                result.Dispose();
                 result = ApplicationFactoryResult.Failed(
                     LaunchErrorCode.InitializationFailed,
                     "Task Manager window registration failed", descriptor.AppId);
@@ -1375,7 +1451,18 @@ namespace guideXOS.OS {
             }
             WindowManager.MoveToEnd(manager);
             manager.Visible = true;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            TaskManagerMemoryR3Probe.WindowCreated(manager, manager.OwnerId,
+                instance.Handle.Value, windowFirstSequence);
+#endif
             return true;
+            } finally {
+                if (!serviceContextTransferred && serviceContext != null)
+                    serviceContext.Dispose();
+            }
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3Scope4.Dispose(); }
+#endif
         }
     }
 

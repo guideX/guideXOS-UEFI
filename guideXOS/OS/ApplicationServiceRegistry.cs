@@ -355,6 +355,13 @@ namespace guideXOS.OS {
                 return false;
             }
 
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3Scope1 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteApplicationServiceContext,
+                    0, handle.Value,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+#endif
             string[] capabilities = new string[_registeredCount];
             int capabilityCount = 0;
             for (int i = 0; i < Capacity; i++) {
@@ -377,6 +384,9 @@ namespace guideXOS.OS {
                 instance.Handle, instance.DescriptorId, capabilities);
             capabilities.Dispose();
             return true;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3Scope1.Dispose(); }
+#endif
         }
 
         public static bool TryGetAccess(

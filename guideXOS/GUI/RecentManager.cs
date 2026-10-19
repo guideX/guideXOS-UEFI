@@ -22,12 +22,19 @@ namespace guideXOS.GUI {
         private static List<RecentDocumentEntry> _documents = new List<RecentDocumentEntry>();
 
         public static void AddProgram(string name, Image icon) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3Scope1 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteRecentProgramSnapshot,
+                    0, Allocator.CurrentMemoryR3InstanceId,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+#endif
             if (name == null) return;
             // FIXED: Remove duplicate by name and dispose its icon
             for (int i = 0; i < _programs.Count; i++) {
-                if (_programs.ToArray()[i].Name == name) { 
+                if (_programs[i].Name == name) {
                     // Dispose the old icon before removing
-                    var oldEntry = _programs.ToArray()[i];
+                    var oldEntry = _programs[i];
                     if (oldEntry.Icon != null) {
                         oldEntry.Icon.Dispose();
                     }
@@ -48,6 +55,9 @@ namespace guideXOS.GUI {
                 }
                 _programs.RemoveAt(_programs.Count - 1);
             }
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3Scope1.Dispose(); }
+#endif
         }
 
         public static void AddDocument(string path, Image icon = null) {

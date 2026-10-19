@@ -214,9 +214,11 @@ namespace guideXOS.GUI {
                     int fbX = X + xx;
                     img.RawData[yy * w + xx] = (int)Framebuffer.Graphics.GetPoint(fbX, fbY);
                 }
+#if UEFI_DIAGNOSTIC_START_MENU_STRESS || UEFI_DIAGNOSTIC_APP_RUNTIME
                 if ((yy & 255) == 255)
                     MarkBackgroundBlurProgress("CAPTURE_ROW_" + yy.ToString(),
                         w, h, pixelCount);
+#endif
             }
             MarkBackgroundBlurProgress("CAPTURED", w, h, pixelCount);
             // Box blur into temp buffers (horizontal + vertical), radius 3 to match previous look
@@ -533,17 +535,37 @@ namespace guideXOS.GUI {
                                 var icon = Desktop.Apps.Icon(ai) ?? Icons.DocumentIcon(32);
                                 ih = icon.Height;
                                 if (my >= iy2 && my <= iy2 + ih) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                                    Allocator.MemoryR3Scope r3Scope1 = Allocator.EnterMemoryR3Scope(
+                                            TaskManagerMemoryR3Probe.SiteStartMenuSelection,
+                                            OwnerId, 0,
+                                            Allocator.CurrentMemoryR3LifetimeId);
+                                    try {
+#endif
                                     string appName = Desktop.Apps.Name(ai);
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                                    if (appName == "Task Manager")
+                                        TaskManagerMemoryR3Probe.BeginBeforeLaunch();
+#endif
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
                                     Program.MarkUefiAppRuntime("START_ROW=index=" +
                                         i.ToString() + ";name=" + appName);
                                     Program.MarkUefiAppRuntime("START_SELECT=name=" +
                                         appName + ";route=all-programs;index=" + i.ToString());
 #endif
+#if UEFI_TASKMANAGER_MEMORY_R2_PROBE
+                                    TaskManagerMemoryR2Probe.BeginBeforeLaunch();
+#endif
                                     Desktop.LaunchApplication(appName);
                                     appName.Dispose();
                                     Visible = false;
                                     return;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                                    } finally {
+                                        r3Scope1.Dispose();
+                                        TaskManagerMemoryR3Probe.RestoreActiveLifetimeContext();
+                                    }
+#endif
                                 }
                             } else {
                                 // Window with ShowInStartMenu = true
@@ -606,6 +628,12 @@ namespace guideXOS.GUI {
         }
 
         public override void OnDraw() {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3Scope2 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteStartMenuDraw,
+                    OwnerId, 0, 0);
+            try {
+#endif
             if (!Visible) return;
 
             // Smart frame caching: reuse last frame if recent and no state change
@@ -945,6 +973,9 @@ namespace guideXOS.GUI {
                 }
             }
             _frameCache = cap; _frameCacheTick = (ulong)Timer.Ticks; _frameDirty = false;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3Scope2.Dispose(); }
+#endif
         }
 
         private void ToggleAllPrograms() {
@@ -954,13 +985,28 @@ namespace guideXOS.GUI {
         }
 
         private void BuildAllProgramsOrder() {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3Scope3 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteStartMenuWindowSnapshot,
+                    OwnerId, 0, 0);
+            try {
+#endif
             int n = Desktop.Apps.Length;
             _allProgramsOrder = _allProgramsOrder ?? new List<int>(n);
             _allProgramsOrder.Clear();
             for (int i = 0; i < n; i++) _allProgramsOrder.Add(i);
             
-            // Get windows with ShowInStartMenu = true
-            _allProgramsWindows = WindowManager.GetStartMenuWindows();
+            // Get windows with ShowInStartMenu = true. The list is owned by
+            // this Start Menu instance. Replace it only after the new
+            // snapshot has been built, then release the superseded container
+            // and its backing array without disposing any Window entries.
+            List<Window> previousWindows = _allProgramsWindows;
+            List<Window> currentWindows =
+                WindowManager.GetStartMenuWindows();
+            _allProgramsWindows = currentWindows;
+            if (previousWindows != null &&
+                    !object.ReferenceEquals(previousWindows, currentWindows))
+                previousWindows.Dispose();
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
             int layoutListH = Height - Padding * 2 -
                 (ShutdownBtnH + Gap + Padding);
@@ -986,6 +1032,17 @@ namespace guideXOS.GUI {
                 minName.Dispose();
                 if (min != i) { int tmp = _allProgramsOrder[i]; _allProgramsOrder[i] = _allProgramsOrder[min]; _allProgramsOrder[min] = tmp; }
             }
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3Scope3.Dispose(); }
+#endif
+        }
+
+        internal void ForgetWindow(Window window) {
+            if (_allProgramsWindows == null || window == null) return;
+            for (int i = _allProgramsWindows.Count - 1; i >= 0; i--) {
+                if (object.ReferenceEquals(_allProgramsWindows[i], window))
+                    _allProgramsWindows.RemoveAt(i);
+            }
         }
 
         private static int CompareIgnoreCase(string a, string b) {
@@ -999,6 +1056,12 @@ namespace guideXOS.GUI {
         }
 
         private string TruncateToWidth(string text, int maxW) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3Scope4 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteStartMenuTruncate,
+                    OwnerId, 0, 0);
+            try {
+#endif
             if (WindowManager.font.MeasureString(text) <= maxW) return text;
             // Leave space for ellipsis '...'
             string ell = "...";
@@ -1010,9 +1073,23 @@ namespace guideXOS.GUI {
                 if (w + chW + ellW > maxW) break;
                 w += chW;
             }
-            string sub = text.Substring(0, i) + ell;
+            string prefix = text.Substring(0, i);
+            string sub;
+            try {
+                sub = prefix + ell;
+            } finally {
+                // Concat copies the characters into a distinct result. This
+                // local substring has no remaining aliases after the copy.
+                if (prefix != null &&
+                        !object.ReferenceEquals(prefix, text) &&
+                        !object.ReferenceEquals(prefix, ell))
+                    prefix.Dispose();
+            }
             ell.Dispose();
             return sub;
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3Scope4.Dispose(); }
+#endif
         }
     }
 }

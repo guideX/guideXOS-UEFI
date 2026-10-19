@@ -13,9 +13,21 @@ namespace guideXOS.DefaultApps {
     /// Task Manager window with Processes, Performance, Tombstoned, and Memory Details tabs
     /// </summary>
     internal class TaskManager : Window {
+        private static readonly string[] PerformanceNavLabels = {
+            "CPU", "Memory", "Disk", "Network"
+        };
+        private static readonly uint[] PerformanceNavColors = {
+            0xFF5DADE2, 0xFF58D68D, 0xFFE67E22, 0xFF9B59B6
+        };
+
         private ApplicationServiceContext _serviceContext;
         private ApplicationServiceAccess _services;
-        private SystemInformationSnapshot _systemSnapshot;
+        private TaskManager _deferredObjectReleaseNext;
+        private ulong _systemSnapshotUptimeTicks;
+        private ulong _systemSnapshotMemorySizeBytes;
+        private ulong _systemSnapshotMemoryInUseBytes;
+        private int _systemSnapshotThreadCount;
+        private int _systemSnapshotCpuUsagePercent;
         private bool _systemSnapshotAvailable;
         // Tabs
         private int _tabH = 28;
@@ -58,14 +70,31 @@ namespace guideXOS.DefaultApps {
 
             // Method to resize chart if needed
             public void EnsureSize(int width, int height) {
-                if (image.Width != width || image.Height != height) {
+                if (image == null || image.Width != width || image.Height != height) {
                     // Create new chart with new dimensions
+                    DisposeBuffers();
                     image = new Image(width, height);
                     graphics = Graphics.FromImage(image);
                     graphics.FillRectangle(0, 0, width, height, 0xFF222222);
                     writeX = 0;
                     lastValue = 0;
                 }
+            }
+
+            private void DisposeBuffers() {
+                if (graphics != null) {
+                    graphics.Dispose();
+                    graphics = null;
+                }
+                if (image != null) {
+                    image.Dispose();
+                    image = null;
+                }
+            }
+
+            public override void Dispose() {
+                DisposeBuffers();
+                base.Dispose();
             }
         }
         private Chart _cpuChart;
@@ -109,8 +138,10 @@ namespace guideXOS.DefaultApps {
         private ulong _cumulativeAllocatedPages = 0;
         private ulong _cumulativeFreedPages = 0;
         private ulong _lastMemDetailUpdate = 0;
-        private List<ulong> _leakHistory; // track allocated-freed over time
-        private int _leakHistoryMaxSamples = 60; // 60 samples
+        private ulong[] _leakHistory; // fixed-capacity allocated-freed history
+        private int _leakHistoryCount;
+        private int _leakHistoryNext;
+        private const int _leakHistoryMaxSamples = 60;
         private bool _leakExists = false;
         private int _leakGrowthCounter = 0; // count consecutive growths
         private const int LeakThreshold = 5; // 5 consecutive growths = leak
@@ -138,6 +169,7 @@ namespace guideXOS.DefaultApps {
         private string _mdHeapUtilStr;
         private ulong _lastMemLabelUpdateTicks;
         private bool _lastMemoryLabelSnapshotAvailable;
+        private bool _lastMemoryLabelSnapshotValid;
         private const int MemLabelUpdateIntervalMs = 1000; // update labels once per second
 
         public TaskManager(int X, int Y, int Width = 760, int Height = 520)
@@ -148,7 +180,11 @@ namespace guideXOS.DefaultApps {
                 ApplicationServiceAccess services) : base(X, Y, Width, Height) {
             _serviceContext = serviceContext;
             _services = services;
-            _systemSnapshot = default(SystemInformationSnapshot);
+            _systemSnapshotUptimeTicks = 0;
+            _systemSnapshotMemorySizeBytes = 0;
+            _systemSnapshotMemoryInUseBytes = 0;
+            _systemSnapshotThreadCount = 0;
+            _systemSnapshotCpuUsagePercent = 0;
             _systemSnapshotAvailable = false;
             ShowMinimize = true;
             ShowInTaskbar = true;
@@ -176,7 +212,9 @@ namespace guideXOS.DefaultApps {
             _lastOwnerSampleTick = 0;
 
             // Initialize memory leak tracking with parallel arrays
-            _leakHistory = new List<ulong>(_leakHistoryMaxSamples);
+            _leakHistory = new ulong[_leakHistoryMaxSamples];
+            _leakHistoryCount = 0;
+            _leakHistoryNext = 0;
             _blameOwnerIds = new int[MAX_TRACKED_OWNERS];
             _ownerHistoryStart = new ulong[MAX_TRACKED_OWNERS];
             _ownerGrowthCounter = new int[MAX_TRACKED_OWNERS];
@@ -185,19 +223,74 @@ namespace guideXOS.DefaultApps {
 
         private void RefreshSystemSnapshot() {
             _systemSnapshotAvailable = false;
-            _systemSnapshot = default(SystemInformationSnapshot);
+            _systemSnapshotUptimeTicks = 0;
+            _systemSnapshotMemorySizeBytes = 0;
+            _systemSnapshotMemoryInUseBytes = 0;
+            _systemSnapshotThreadCount = 0;
+            _systemSnapshotCpuUsagePercent = 0;
             if (_serviceContext == null || _services == null ||
                     _services.SystemInformation == null) return;
             ApplicationServiceResult<SystemInformationSnapshot> result =
                 _services.SystemInformation.GetSnapshot(_serviceContext);
-            if (!result.Succeeded || !result.Value.IsWithinBounds()) return;
-            _systemSnapshot = result.Value;
-            _systemSnapshotAvailable = true;
+            try {
+                if (result != null && result.Succeeded) {
+                    SystemInformationSnapshot snapshot = result.Value;
+                    bool usedScalarFallback = snapshot.MemorySizeBytes == 0;
+                    if (usedScalarFallback) {
+                        // The custom NativeAOT path can zero scalar fields
+                        // projected through ApplicationServiceResult<T>.
+                        // Ring3Abi uses the same bounded kernel-counter
+                        // fallback; keep the immutable text from the service.
+                        ulong memorySize = Allocator.MemorySize;
+                        if (memorySize > 0) {
+                            ulong memoryInUse = Allocator.MemoryInUse;
+                            if (memoryInUse > memorySize)
+                                memoryInUse = memorySize;
+                            uint rawCpu = ThreadPool.CPUUsage;
+                            int cpu = rawCpu > 100 ? 100 : (int)rawCpu;
+                            int threadCount = ThreadPool.ThreadCount;
+                            if (threadCount < 0) threadCount = 0;
+                            snapshot = new SystemInformationSnapshot(
+                                Timer.Ticks, memorySize, memoryInUse,
+                                threadCount, cpu, snapshot.OsName,
+                                snapshot.OsVersion, snapshot.Architecture);
+                        }
+                    }
+                    if (snapshot.MemorySizeBytes > 0 &&
+                            snapshot.IsWithinBounds()) {
+                        _systemSnapshotUptimeTicks = snapshot.UptimeTicks;
+                        _systemSnapshotMemorySizeBytes =
+                            snapshot.MemorySizeBytes;
+                        _systemSnapshotMemoryInUseBytes =
+                            snapshot.MemoryInUseBytes;
+                        _systemSnapshotThreadCount = snapshot.ThreadCount;
+                        _systemSnapshotCpuUsagePercent =
+                            snapshot.CpuUsagePercent;
+                        _systemSnapshotAvailable = true;
+                    }
+#if UEFI_TASKMANAGER_MEMORY_R2_PROBE
+                    TaskManagerMemoryR2Probe.ObserveTaskManagerSnapshot(
+                        usedScalarFallback, snapshot.MemorySizeBytes,
+                        snapshot.MemoryInUseBytes,
+                        _systemSnapshotMemorySizeBytes,
+                        _systemSnapshotMemoryInUseBytes,
+                        _systemSnapshotAvailable);
+#endif
+                }
+            } finally {
+                if (result != null) result.Dispose();
+            }
+#if UEFI_TASKMANAGER_MEMORY_R2_PROBE
+            TaskManagerMemoryR2Probe.ApplyFallbackProbe(_currentTab,
+                ref _systemSnapshotMemorySizeBytes,
+                ref _systemSnapshotMemoryInUseBytes,
+                ref _systemSnapshotAvailable);
+#endif
         }
 
         private ulong CurrentUptimeTicks {
             get { return _systemSnapshotAvailable ?
-                _systemSnapshot.UptimeTicks : 0; }
+                _systemSnapshotUptimeTicks : 0; }
         }
 
         public override void OnSetVisible(bool value) {
@@ -382,7 +475,26 @@ namespace guideXOS.DefaultApps {
         }
 
         public override void OnDraw() {
+#if UEFI_TASKMANAGER_MEMORY_R2_PROBE
+            Y = BarHeight + 20;
+            Height = 650;
+            TaskManagerMemoryR2Probe.ObserveBeforeRefresh(_currentTab);
+#endif
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            TaskManagerMemoryR3Probe.ObserveBeforeRefresh(_currentTab);
+            Allocator.MemoryR3Scope r3Scope1 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteTaskManagerRefresh,
+                    OwnerId, ApplicationInstanceHandle.Value,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+                RefreshSystemSnapshot();
+            } finally { r3Scope1.Dispose(); }
+#else
             RefreshSystemSnapshot();
+#endif
+#if UEFI_TASKMANAGER_MEMORY_R2_PROBE
+            TaskManagerMemoryR2Probe.ObserveAfterRefresh(_currentTab);
+#endif
             base.OnDraw();
 
             // Perf tracking is now enabled OUTSIDE of draw loop (in Program.cs after all windows created)
@@ -421,8 +533,22 @@ namespace guideXOS.DefaultApps {
                 DrawPerformance(cx, contentY, cw, ch);
             else if (_currentTab == 2)
                 DrawTombstoned(cx, contentY, cw, ch);
-            else if (_currentTab == 3)
+            else if (_currentTab == 3) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                Allocator.MemoryR3Scope r3Scope2 = Allocator.EnterMemoryR3Scope(
+                        TaskManagerMemoryR3Probe.SiteMemoryDetailsDraw,
+                        OwnerId, ApplicationInstanceHandle.Value,
+                        Allocator.CurrentMemoryR3LifetimeId);
+                try {
+#endif
                 DrawMemoryDetails(cx, contentY, cw, ch);
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                } finally { r3Scope2.Dispose(); }
+#endif
+            }
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            TaskManagerMemoryR3Probe.ObserveAfterDraw(_currentTab);
+#endif
         }
 
         private void DrawTombstoned(int x, int y, int w, int h) {
@@ -606,7 +732,7 @@ namespace guideXOS.DefaultApps {
                     if (bytes == 0) {
                         // No owner-specific memory found - show global memory divided by window count for rough estimate
                         ulong globalMem = _systemSnapshotAvailable
-                            ? _systemSnapshot.MemoryInUseBytes : 0;
+                            ? _systemSnapshotMemoryInUseBytes : 0;
                         int winCount = WindowManager.Windows.Count;
                         if (winCount > 0)
                             bytes = globalMem / (ulong)winCount;
@@ -616,9 +742,15 @@ namespace guideXOS.DefaultApps {
                     bytes = 0;
                 }
 
-                // USE STRING POOL - eliminates major leak source
-                string memText = StringPool.GetMemorySize(bytes);
-                WindowManager.font.DrawString(cx + 6, dy + 6, memText);
+                // The global fallback changes as allocations change. Format
+                // this borrowed draw value as a short-lived owned string
+                // instead of retaining every exact byte value in StringPool.
+                string memText = FormatOwnedMemorySize(bytes);
+                try {
+                    WindowManager.font.DrawString(cx + 6, dy + 6, memText);
+                } finally {
+                    memText.Dispose();
+                }
                 cx += colMemW;
 
                 // Disk/Net per-window not implemented
@@ -669,12 +801,33 @@ namespace guideXOS.DefaultApps {
                 if (observation.IsActivated) activeInstances++;
                 if (observation.IsSuspended) suspendedInstances++;
             }
-            WindowManager.font.DrawString(
-                x,
-                btnY + (btnH / 2 - WindowManager.font.FontSize / 2),
-                "Instances: " + observedInstances.ToString() +
-                "  Active: " + activeInstances.ToString() +
-                "  Suspended: " + suspendedInstances.ToString());
+            // These values are rebuilt on every Processes-tab draw. Keep the
+            // numeric conversions and concatenation intermediates scoped to
+            // this call so redraws do not strand one allocator page per value.
+            string observedText = null;
+            string activeText = null;
+            string suspendedText = null;
+            string activeSummary = null;
+            string instanceSummary = null;
+            try {
+                observedText = observedInstances.ToString();
+                activeText = activeInstances.ToString();
+                suspendedText = suspendedInstances.ToString();
+                activeSummary = string.Concat(
+                    "Instances: ", observedText, "  Active: ", activeText);
+                instanceSummary = string.Concat(
+                    activeSummary, "  Suspended: ", suspendedText);
+                WindowManager.font.DrawString(
+                    x,
+                    btnY + (btnH / 2 - WindowManager.font.FontSize / 2),
+                    instanceSummary);
+            } finally {
+                instanceSummary?.Dispose();
+                activeSummary?.Dispose();
+                observedText?.Dispose();
+                activeText?.Dispose();
+                suspendedText?.Dispose();
+            }
         }
 
         private void DrawHeaderCell(int x, int y, int w, int h, string text) {
@@ -696,19 +849,14 @@ namespace guideXOS.DefaultApps {
                 return (period - t) * 100 / up;
         }
 
-        private static string ToMBString(ulong bytes) {
-            // Use StringPool instead of allocating new strings
-            return StringPool.GetMemorySize(bytes);
-        }
-
-        private static string ToKBpsString(int kbps) {
-            // Use StringPool for transfer rates
-            return StringPool.GetTransferRate(kbps);
-        }
-
-        private static string FormatUptime(ulong ticks) {
-            // Use StringPool for uptime formatting
-            return StringPool.FormatUptime(ticks);
+        private int GetPerformanceValue(int category) {
+            switch (category) {
+                case 0: return _cpuUtilPct;
+                case 1: return _memUtilPct;
+                case 2: return _diskUtilPct;
+                case 3: return _netUtilPct;
+                default: return 0;
+            }
         }
 
         private void DrawPerformance(int x, int y, int w, int h) {
@@ -718,7 +866,7 @@ namespace guideXOS.DefaultApps {
                 _lastPerfTick = now;
 
                 // CPU
-                _cpuUtilPct = _systemSnapshot.CpuUsagePercent;
+                _cpuUtilPct = _systemSnapshotCpuUsagePercent;
                 if (_cpuUtilPct < 0)
                     _cpuUtilPct = 0;
                 if (_cpuUtilPct > 100)
@@ -726,9 +874,9 @@ namespace guideXOS.DefaultApps {
                 UpdateChart(_cpuChart, _cpuUtilPct, 0xFF5DADE2);
 
                 // Memory - fix calculation
-                ulong totalMem = _systemSnapshot.MemorySizeBytes == 0
-                    ? 1UL : _systemSnapshot.MemorySizeBytes;
-                ulong usedMem = _systemSnapshot.MemoryInUseBytes;
+                ulong totalMem = _systemSnapshotMemorySizeBytes == 0
+                    ? 1UL : _systemSnapshotMemorySizeBytes;
+                ulong usedMem = _systemSnapshotMemoryInUseBytes;
                 _memUtilPct = CalculateMemoryPercent(usedMem, totalMem);
                 UpdateChart(_memChart, _memUtilPct, 0xFF58D68D);
 
@@ -751,7 +899,7 @@ namespace guideXOS.DefaultApps {
 
                 // Other labels
                 _procCount = WindowManager.Windows.Count;
-                _threadCount = _systemSnapshot.ThreadCount;
+                _threadCount = _systemSnapshotThreadCount;
 
                 // Sample owner bytes every ~1000ms to compute KB/s per owner
                 if ((long)(now - _lastOwnerSampleTick) >= 1000) {
@@ -784,10 +932,6 @@ namespace guideXOS.DefaultApps {
             Framebuffer.Graphics.FillRectangle(navX, y, navW, h, 0xFF181818);
 
             // Draw navigation items
-            string[] navLabels = { "CPU", "Memory", "Disk", "Network" };
-            uint[] navColors = { 0xFF5DADE2, 0xFF58D68D, 0xFFE67E22, 0xFF9B59B6 };
-            int[] navValues = { _cpuUtilPct, _memUtilPct, _diskUtilPct, _netUtilPct };
-
             int itemH = Math.Min(70, h / 4); // Divide space evenly
             int miniGraphW = 50;
             int miniGraphH = 30;
@@ -810,15 +954,18 @@ namespace guideXOS.DefaultApps {
                 int graphX = navX + 8;
                 int graphY = itemY + 32;
                 Chart chart = GetChartForCategory(i);
-                DrawMiniGraph(graphX, graphY, miniGraphW, miniGraphH, chart, navColors[i]);
+                DrawMiniGraph(graphX, graphY, miniGraphW, miniGraphH, chart,
+                    PerformanceNavColors[i]);
 
                 // Label and percentage
                 int textX = graphX + miniGraphW + 8;
                 int labelY = itemY + 8;
-                WindowManager.font.DrawString(textX, labelY, navLabels[i]);
+                WindowManager.font.DrawString(textX, labelY,
+                    PerformanceNavLabels[i]);
 
                 // USE STRING POOL - no more allocations here!
-                string pctText = StringPool.GetPercentage(navValues[i]);
+                string pctText = StringPool.GetPercentage(
+                    GetPerformanceValue(i));
                 int pctY = labelY + WindowManager.font.FontSize + 4;
                 WindowManager.font.DrawString(textX, pctY, pctText);
                 // NO DISPOSE NEEDED - pooled strings are reused
@@ -937,8 +1084,12 @@ namespace guideXOS.DefaultApps {
             detailY += WindowManager.font.FontSize + 6;
 
             WindowManager.font.DrawString(col1X, detailY, "Machine time:");
-            string uptimeStr = StringPool.FormatUptime(CurrentUptimeTicks);
-            WindowManager.font.DrawString(col2X, detailY, uptimeStr);
+            string uptimeStr = FormatOwnedUptime(CurrentUptimeTicks);
+            try {
+                WindowManager.font.DrawString(col2X, detailY, uptimeStr);
+            } finally {
+                uptimeStr.Dispose();
+            }
         }
 
         private void DrawMemDetail(int x, int y, int w, int h) {
@@ -968,27 +1119,40 @@ namespace guideXOS.DefaultApps {
             int col1X = x;
             int col2X = x + w / 2;
 
-            ulong total = _systemSnapshot.MemorySizeBytes;
-            ulong used = _systemSnapshot.MemoryInUseBytes;
+            ulong total = _systemSnapshotMemorySizeBytes;
+            ulong used = _systemSnapshotMemoryInUseBytes;
             ulong avail = total > used ? total - used : 0UL;
 
             WindowManager.font.DrawString(col1X, detailY, "In use:");
             // USE STRING POOL - single string, no concatenation allocations
-            string usedMBStr = StringPool.GetMemorySize(used);
+            string usedMBStr = FormatOwnedMemorySize(used);
             string memPctStr = StringPool.GetPercentage(_memUtilPct);
-            string usedStr = usedMBStr + " (" + memPctStr + ")";
-            WindowManager.font.DrawString(col2X, detailY, usedStr);
-            usedStr.Dispose(); // Dispose the concatenated result only
+            string usedStr = null;
+            try {
+                usedStr = string.Concat(usedMBStr, " (", memPctStr, ")");
+                WindowManager.font.DrawString(col2X, detailY, usedStr);
+            } finally {
+                if (usedStr != null) usedStr.Dispose();
+                usedMBStr.Dispose();
+            }
             detailY += WindowManager.font.FontSize + 6;
 
             WindowManager.font.DrawString(col1X, detailY, "Available:");
-            string availStr = StringPool.GetMemorySize(avail);
-            WindowManager.font.DrawString(col2X, detailY, availStr);
+            string availStr = FormatOwnedMemorySize(avail);
+            try {
+                WindowManager.font.DrawString(col2X, detailY, availStr);
+            } finally {
+                availStr.Dispose();
+            }
             detailY += WindowManager.font.FontSize + 6;
 
             WindowManager.font.DrawString(col1X, detailY, "Total:");
-            string totalStr = StringPool.GetMemorySize(total);
-            WindowManager.font.DrawString(col2X, detailY, totalStr);
+            string totalStr = FormatOwnedMemorySize(total);
+            try {
+                WindowManager.font.DrawString(col2X, detailY, totalStr);
+            } finally {
+                totalStr.Dispose();
+            }
             detailY += WindowManager.font.FontSize + 6;
 
             int topOwner = 0;
@@ -1006,10 +1170,17 @@ namespace guideXOS.DefaultApps {
                 string ownerIdStr = StringPool.GetNumber(topOwner);
                 string sign = topKbps > 0 ? "+" : "";
                 string kbpsStr = topKbps.ToString(); // Keep this as is since it can be negative
-                string ownerStr = "#" + ownerIdStr + " " + sign + kbpsStr + " KB/s";
-                WindowManager.font.DrawString(col2X, detailY, ownerStr);
-                ownerStr.Dispose();
-                kbpsStr.Dispose();
+                string ownerPrefix = null;
+                string ownerStr = null;
+                try {
+                    ownerPrefix = string.Concat("#", ownerIdStr, " ", sign);
+                    ownerStr = string.Concat(ownerPrefix, kbpsStr, " KB/s");
+                    WindowManager.font.DrawString(col2X, detailY, ownerStr);
+                } finally {
+                    if (ownerStr != null) ownerStr.Dispose();
+                    if (ownerPrefix != null) ownerPrefix.Dispose();
+                    kbpsStr.Dispose();
+                }
             } else {
                 WindowManager.font.DrawString(col2X, detailY, "N/A");
             }
@@ -1027,11 +1198,16 @@ namespace guideXOS.DefaultApps {
             WindowManager.font.DrawString(col1X, detailY, "Top tag:");
             if (topTag >= 0) {
                 string tagName = ((Allocator.AllocTag)topTag).ToString();
-                string tagBytes = StringPool.GetMemorySize(topTagBytes);
-                string tagStr = tagName + " " + tagBytes;
-                WindowManager.font.DrawString(col2X, detailY, tagStr);
-                tagStr.Dispose();
-                tagName.Dispose();
+                string tagBytes = FormatOwnedMemorySize(topTagBytes);
+                string tagStr = null;
+                try {
+                    tagStr = string.Concat(tagName, " ", tagBytes);
+                    WindowManager.font.DrawString(col2X, detailY, tagStr);
+                } finally {
+                    if (tagStr != null) tagStr.Dispose();
+                    tagName.Dispose();
+                    tagBytes.Dispose();
+                }
             } else {
                 WindowManager.font.DrawString(col2X, detailY, "N/A");
             }
@@ -1071,18 +1247,29 @@ namespace guideXOS.DefaultApps {
 
             WindowManager.font.DrawString(col1X, detailY, "Avg response time:");
             string respStr = StringPool.WithSuffix(_diskRespMs, " ms");
-            WindowManager.font.DrawString(col2X, detailY, respStr);
-            respStr.Dispose(); // This creates a new string, so dispose it
+            try {
+                WindowManager.font.DrawString(col2X, detailY, respStr);
+            } finally {
+                respStr.Dispose();
+            }
             detailY += WindowManager.font.FontSize + 6;
 
             WindowManager.font.DrawString(col1X, detailY, "Read speed:");
             string readStr = StringPool.GetTransferRate(_diskReadKBps);
-            WindowManager.font.DrawString(col2X, detailY, readStr);
+            try {
+                WindowManager.font.DrawString(col2X, detailY, readStr);
+            } finally {
+                readStr.Dispose();
+            }
             detailY += WindowManager.font.FontSize + 6;
 
             WindowManager.font.DrawString(col1X, detailY, "Write speed:");
             string writeStr = StringPool.GetTransferRate(_diskWriteKBps);
-            WindowManager.font.DrawString(col2X, detailY, writeStr);
+            try {
+                WindowManager.font.DrawString(col2X, detailY, writeStr);
+            } finally {
+                writeStr.Dispose();
+            }
         }
 
         private void DrawNetDetail(int x, int y, int w, int h) {
@@ -1114,22 +1301,38 @@ namespace guideXOS.DefaultApps {
 
             WindowManager.font.DrawString(col1X, detailY, "Send:");
             string sendStr = StringPool.GetTransferRate(_netSendKBps);
-            WindowManager.font.DrawString(col2X, detailY, sendStr);
+            try {
+                WindowManager.font.DrawString(col2X, detailY, sendStr);
+            } finally {
+                sendStr.Dispose();
+            }
             detailY += WindowManager.font.FontSize + 6;
 
             WindowManager.font.DrawString(col1X, detailY, "Receive:");
             string recvStr = StringPool.GetTransferRate(_netRecvKBps);
-            WindowManager.font.DrawString(col2X, detailY, recvStr);
+            try {
+                WindowManager.font.DrawString(col2X, detailY, recvStr);
+            } finally {
+                recvStr.Dispose();
+            }
             detailY += WindowManager.font.FontSize + 6;
 
             WindowManager.font.DrawString(col1X, detailY, "Sent bytes:");
-            string sentStr = StringPool.GetNumber(_bytesSent);
-            WindowManager.font.DrawString(col2X, detailY, sentStr);
+            string sentStr = FormatOwnedMemoryNumber(_bytesSent);
+            try {
+                WindowManager.font.DrawString(col2X, detailY, sentStr);
+            } finally {
+                sentStr.Dispose();
+            }
             detailY += WindowManager.font.FontSize + 6;
 
             WindowManager.font.DrawString(col1X, detailY, "Received bytes:");
-            string recvBytesStr = StringPool.GetNumber(_bytesRecv);
-            WindowManager.font.DrawString(col2X, detailY, recvBytesStr);
+            string recvBytesStr = FormatOwnedMemoryNumber(_bytesRecv);
+            try {
+                WindowManager.font.DrawString(col2X, detailY, recvBytesStr);
+            } finally {
+                recvBytesStr.Dispose();
+            }
         }
 
         private void UpdateChart(Chart chart, int valuePct, uint color) {
@@ -1197,8 +1400,9 @@ namespace guideXOS.DefaultApps {
 
         private void SampleOwnerBytes() {
             var snap = Allocator.GetOwnerListSnapshot();
-            if (snap == null || snap.Length == 0)
-                return;
+            if (snap == null) return;
+            try {
+                if (snap.Length == 0) return;
 
             // Build new snapshot values - removed lock to prevent deadlock
             // Clear KB/s tracking first
@@ -1269,11 +1473,70 @@ namespace guideXOS.DefaultApps {
                 }
             }
             _trackedOwnerCount = writeIdx;
+            } finally {
+                snap.Dispose();
+            }
         }
 
         public override void Dispose() {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            Allocator.MemoryR3Scope r3Scope3 = Allocator.EnterMemoryR3Scope(
+                    TaskManagerMemoryR3Probe.SiteTaskManagerDispose,
+                    OwnerId, ApplicationInstanceHandle.Value,
+                    Allocator.CurrentMemoryR3LifetimeId);
+            try {
+#endif
             DisposeMemoryDetailLabels();
+            _cpuChart?.Dispose();
+            _memChart?.Dispose();
+            _diskChart?.Dispose();
+            _netChart?.Dispose();
+            _cpuChart = null;
+            _memChart = null;
+            _diskChart = null;
+            _netChart = null;
+            _ownerIds?.Dispose();
+            _lastOwnerBytes?.Dispose();
+            _ownerKBps?.Dispose();
+            _leakHistory?.Dispose();
+            _blameOwnerIds?.Dispose();
+            _ownerHistoryStart?.Dispose();
+            _ownerGrowthCounter?.Dispose();
+            _ownerIds = null;
+            _lastOwnerBytes = null;
+            _ownerKBps = null;
+            _leakHistory = null;
+            _blameOwnerIds = null;
+            _ownerHistoryStart = null;
+            _ownerGrowthCounter = null;
+            _leakHistoryCount = 0;
+            _leakHistoryNext = 0;
+            if (Desktop.Apps != null)
+                Desktop.Apps.ClearWindowObject(this);
+            if (_serviceContext != null) _serviceContext.Dispose();
+            _serviceContext = null;
+            _services = null;
+#if UEFI_TASKMANAGER_MEMORY_R2_PROBE
+            TaskManagerMemoryR2Probe.MarkWindowDisposed();
+#endif
             base.Dispose();
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+            } finally { r3Scope3.Dispose(); }
+#endif
+        }
+
+        internal void QueueDeferredObjectRelease(TaskManager next) {
+            _deferredObjectReleaseNext = next;
+        }
+
+        internal TaskManager DeferredObjectReleaseNext =>
+            _deferredObjectReleaseNext;
+
+        internal TaskManager ReleaseObjectRunAfterCleanup() {
+            TaskManager next = _deferredObjectReleaseNext;
+            _deferredObjectReleaseNext = null;
+            ReleaseDisposedWindowObjectRun();
+            return next;
         }
 
         private void DisposeMemoryDetailLabels() {
@@ -1322,13 +1585,32 @@ namespace guideXOS.DefaultApps {
             // returns shared cached objects that must never be disposed here.
             bool snapshotAvailabilityChanged =
                 _lastMemoryLabelSnapshotAvailable != _systemSnapshotAvailable;
+            bool snapshotWithinBounds =
+                _systemSnapshotMemoryInUseBytes <=
+                    _systemSnapshotMemorySizeBytes;
+            bool memorySnapshotValid = _systemSnapshotAvailable &&
+                snapshotWithinBounds &&
+                _systemSnapshotMemorySizeBytes > 0;
+            bool snapshotValidityChanged =
+                _lastMemoryLabelSnapshotValid != memorySnapshotValid;
+            bool memoryLabelsRefreshed = false;
             if (_mdFreeCallsStr == null || snapshotAvailabilityChanged ||
+                    snapshotValidityChanged ||
                     (now >= _lastMemLabelUpdateTicks &&
                      now - _lastMemLabelUpdateTicks >=
                         (ulong)MemLabelUpdateIntervalMs)) {
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                Allocator.MemoryR3Scope r3Scope4 = Allocator.EnterMemoryR3Scope(
+                        TaskManagerMemoryR3Probe.SiteMemoryDetailsLabels,
+                        OwnerId, ApplicationInstanceHandle.Value,
+                        Allocator.CurrentMemoryR3LifetimeId);
+                try {
+#endif
                 DisposeMemoryDetailLabels();
                 _lastMemLabelUpdateTicks = now == 0 ? 1UL : now;
                 _lastMemoryLabelSnapshotAvailable = _systemSnapshotAvailable;
+                _lastMemoryLabelSnapshotValid = memorySnapshotValid;
+                memoryLabelsRefreshed = true;
 
                 _mdFreeCallsStr = FormatOwnedMemoryNumber(
                     Allocator.FreeCallCount);
@@ -1359,11 +1641,9 @@ namespace guideXOS.DefaultApps {
                     _mdFreeAllocRatioStr = CreateOwnedMemoryLabel("N/A");
                 }
 
-                if (_systemSnapshotAvailable &&
-                        _systemSnapshot.IsWithinBounds() &&
-                        _systemSnapshot.MemorySizeBytes > 0) {
-                    ulong heapSize = _systemSnapshot.MemorySizeBytes;
-                    ulong heapUsed = _systemSnapshot.MemoryInUseBytes;
+                if (memorySnapshotValid) {
+                    ulong heapSize = _systemSnapshotMemorySizeBytes;
+                    ulong heapUsed = _systemSnapshotMemoryInUseBytes;
                     ulong heapFree = heapSize - heapUsed;
                     _mdHeapSizeStr = FormatOwnedMemorySize(heapSize);
                     _mdHeapUsedStr = FormatOwnedMemorySize(heapUsed);
@@ -1377,7 +1657,20 @@ namespace guideXOS.DefaultApps {
                     _mdHeapFreeStr = CreateOwnedMemoryLabel("N/A");
                     _mdHeapUtilStr = CreateOwnedMemoryLabel("N/A");
                 }
+#if UEFI_TASKMANAGER_MEMORY_R3_PROBE
+                } finally { r3Scope4.Dispose(); }
+#endif
             }
+#if UEFI_TASKMANAGER_MEMORY_R2_PROBE
+            TaskManagerMemoryR2Probe.ObserveFallbackLabels(
+                memorySnapshotValid, memoryLabelsRefreshed,
+                _systemSnapshotAvailable, snapshotWithinBounds,
+                _systemSnapshotMemorySizeBytes,
+                _systemSnapshotMemoryInUseBytes,
+                _lastMemoryLabelSnapshotAvailable,
+                _lastMemoryLabelSnapshotValid,
+                now, _lastMemLabelUpdateTicks);
+#endif
 
             int rowY = y + 10;
             int labelX = x + 10;
@@ -1503,9 +1796,11 @@ namespace guideXOS.DefaultApps {
             if (value < 0) value = 0;
             if (value > 100) value = 100;
             string number = value.ToString();
-            string result = number + "%";
-            number.Dispose();
-            return result;
+            try {
+                return string.Concat(number, "%");
+            } finally {
+                number.Dispose();
+            }
         }
 
         private static string FormatOwnedMemorySize(ulong bytes) {
@@ -1524,41 +1819,66 @@ namespace guideXOS.DefaultApps {
         private static string FormatOwnedMemoryNumberWithSuffix(ulong value,
                                                                  string suffix) {
             string number = value.ToString();
-            string result = number + suffix;
-            number.Dispose();
-            return result;
+            try {
+                return string.Concat(number, suffix);
+            } finally {
+                number.Dispose();
+            }
+        }
+
+        private static string FormatOwnedTwoDigit(ulong value) {
+            string number = FormatOwnedMemoryNumber(value);
+            if (value >= 10UL) return number;
+            try {
+                return string.Concat("0", number);
+            } finally {
+                number.Dispose();
+            }
+        }
+
+        private static string FormatOwnedUptime(ulong ticks) {
+            ulong totalSeconds = ticks / 1000UL;
+            string hours = FormatOwnedMemoryNumber(totalSeconds / 3600UL);
+            string minutes = FormatOwnedTwoDigit(totalSeconds / 60UL % 60UL);
+            string seconds = FormatOwnedTwoDigit(totalSeconds % 60UL);
+            string prefix = null;
+            try {
+                prefix = string.Concat(hours, ":", minutes);
+                return string.Concat(prefix, ":", seconds);
+            } finally {
+                hours.Dispose();
+                minutes.Dispose();
+                seconds.Dispose();
+                if (prefix != null) prefix.Dispose();
+            }
         }
 
         private void UpdateMemoryDetailStats() {
-            // Track cumulative allocated/freed pages using the actual counters from Allocator
-            // This is more accurate than trying to infer from PageInUse changes
-            
-            // Use the Allocator's own counters for accurate tracking
-            _cumulativeFreedPages = Allocator.FreeSuccessCount; // Direct count of successful frees
-            
-            // Calculate allocations from current state
-            ulong currentPageInUse = Allocator._Info.PageInUse;
-            _cumulativeAllocatedPages = currentPageInUse >
-                ~0UL - _cumulativeFreedPages
-                    ? ~0UL
-                    : currentPageInUse + _cumulativeFreedPages;
+            // These allocator counters measure pages, unlike FreeSuccessCount,
+            // which counts successful freed runs.
+            _cumulativeAllocatedPages = Allocator.AllocatedPageTotal;
+            _cumulativeFreedPages = Allocator.FreedPageTotal;
 
             // Update leak detection
             ulong netGrowth = _cumulativeAllocatedPages >=
                 _cumulativeFreedPages
                     ? _cumulativeAllocatedPages - _cumulativeFreedPages
                     : 0UL;
-            _leakHistory.Add(netGrowth);
-            
-            // Keep history size limited
-            if (_leakHistory.Count > _leakHistoryMaxSamples) {
-                _leakHistory.RemoveAt(0);
-            }
+            int newestIndex = _leakHistoryNext;
+            _leakHistory[newestIndex] = netGrowth;
+            _leakHistoryNext++;
+            if (_leakHistoryNext >= _leakHistoryMaxSamples)
+                _leakHistoryNext = 0;
+            if (_leakHistoryCount < _leakHistoryMaxSamples)
+                _leakHistoryCount++;
 
             // Detect persistent growth (leak)
-            if (_leakHistory.Count >= 2) {
-                ulong prev = _leakHistory[_leakHistory.Count - 2];
-                ulong curr = _leakHistory[_leakHistory.Count - 1];
+            if (_leakHistoryCount >= 2) {
+                int previousIndex = newestIndex - 1;
+                if (previousIndex < 0)
+                    previousIndex = _leakHistoryMaxSamples - 1;
+                ulong prev = _leakHistory[previousIndex];
+                ulong curr = _leakHistory[newestIndex];
                 
                 if (curr > prev) {
                     _leakGrowthCounter++;
@@ -1567,10 +1887,10 @@ namespace guideXOS.DefaultApps {
                     }
                 } else {
                     _leakGrowthCounter = 0;
-                    if (_leakHistory.Count >= _leakHistoryMaxSamples) {
+                    if (_leakHistoryCount >= _leakHistoryMaxSamples) {
                         // Check if overall trend is stable
-                        ulong first = _leakHistory[0];
-                        ulong last = _leakHistory[_leakHistory.Count - 1];
+                        ulong first = _leakHistory[_leakHistoryNext];
+                        ulong last = _leakHistory[newestIndex];
                         if (last <= first || last - first <= 100UL) {
                             // Allow small growth margin without overflowing.
                             _leakExists = false;

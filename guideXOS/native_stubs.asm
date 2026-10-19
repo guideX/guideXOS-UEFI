@@ -60,8 +60,8 @@ ReadFreeCallerReturnAddress:
 
 ; Called from the NativeRuntimeMalloc diagnostic wrapper. The current wrapper
 ; saves eight registers and reserves 0x58 bytes; its caller return address
-; (the call from RhpNewArray) is at [rsp+0xA0] in this helper frame. Keep in
-; sync with the disassembled malloc wrapper.
+; (the call from RhpNewArray/RhpNewFast) is at [rsp+0xA0] in this helper frame.
+; Keep this offset aligned with the disassembled malloc wrapper.
 global ReadMallocCallerReturnAddress
 ReadMallocCallerReturnAddress:
     mov rax, [rsp + 0xA0]
