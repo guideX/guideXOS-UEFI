@@ -64,13 +64,10 @@ namespace guideXOS.Kernel.Drivers {
             _capsLock = _numLock = _scrollLock = false;
             _irqMarkerLogged = _downMarkerLogged = _upMarkerLogged = false;
 
-            // Force the device to Set 1. The controller translation bit is
-            // also enabled, so this remains deterministic on QEMU and on
-            // controllers that power up in Set 2.
-            if (!PS2Controller.SendDeviceCommand(false, 0xF0) ||
-                !PS2Controller.SendDeviceCommand(false, 0x01)) {
-                return false;
-            }
+            // Keep the keyboard in its default Set 2 mode. The i8042
+            // translation bit is enabled by PS2Controller, so scan codes
+            // arrive here in Set 1 form. Switching the device to Set 1 as
+            // well would make the controller translate those bytes again.
 
             if (!_handlerRegistered) {
                 Interrupts.EnableInterrupt(0x21, &OnInterrupt);
