@@ -1105,6 +1105,17 @@ public static class IDT {
                     break;
             }
 
+#if UEFI_DIAGNOSTIC_BM1
+            // Preserve a kernel fault before serial logging or any other
+            // diagnostic path can touch state that may itself be damaged.
+            if (irs != null && (irs->cs & 3UL) != 3UL) {
+                BareMetalMilestones.RecordFault(irq, actualErrorCode, irs->rip,
+                    irq == 14 ? Native.ReadCR2() : 0, Native.ReadCR3(),
+                    GetInterruptedRsp(irq, irs), irs->rflags);
+                for (;;) Native.Hlt();
+            }
+#endif
+
             ulong exceptionSequence = Native.IncrementExceptionSequence();
             SerialWriteExceptionSnapshot(exceptionSequence, irq,
                 actualErrorCode, hasErrorCode, &stack->rs, irs,
@@ -1164,6 +1175,9 @@ public static class IDT {
 
         // Timer IRQ0 (PIC -> vector 0x20). Drive scheduler here.
         if (irq == 0x20) {
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.RecordTimerTick();
+#endif
             // Debug: entering timer IRQ handler (no wait loop)
             _irq0Count++;
             bool logIrq0 = BootConsole.CurrentMode != guideXOS.BootMode.UEFI && _irq0Count <= 5;

@@ -67,7 +67,8 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(UefiDiagnosticMode)'=='BM1' or '$(UefiDiagnosticMode)'=='BM1FaultTest'">NDEBUG;UEFI_DIAGNOSTIC_BM1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions Condition="'$(UefiDiagnosticMode)'!='BM1' and '$(UefiDiagnosticMode)'!='BM1FaultTest'">NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>$(EDK2Path)\MdePkg\Include;$(EDK2Path)\MdePkg\Include\X64;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>

@@ -352,6 +352,9 @@ unsafe class Program {
     }
 
     internal static void MarkUefiWidgetsInitialized(int count, bool visible) {
+#if UEFI_DIAGNOSTIC_BM1
+        BareMetalMilestones.Record(10, visible ? 5u : (count == 0 ? 6u : 7u));
+#endif
 #if UEFI_DIAGNOSTIC_WIDGET || UEFI_DIAGNOSTIC_WIDGET_STRESS || UEFI_DIAGNOSTIC_WIDGET_SOAK
         if (!IsUefiMode) return;
         SerialBreadcrumb("WIDGETS_INITIALIZED=1,count=" + count.ToString() +
@@ -867,19 +870,36 @@ unsafe class Program {
             CursorBusy = Cursor;
 
             BootConsole.WriteLine("[WM] INIT");
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(10, 0);
+#endif
+            bool windowManagerInitialized = false;
             try {
                 WindowManager.Initialize();
+                windowManagerInitialized = true;
                 BootConsole.WriteLine("[WM] initialized");
             } catch {
                 BootConsole.WriteLine("[WM] initialization failed");
             }
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(10, windowManagerInitialized ? 1u : 9u);
+#endif
 
             BootConsole.WriteLine("[DESKTOP] INIT");
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(10, 2);
+#endif
             try {
                 Desktop.Initialize();
                 BootConsole.WriteLine("[DESKTOP] initialized");
+#if UEFI_DIAGNOSTIC_BM1
+                BareMetalMilestones.Record(10, 3);
+#endif
             } catch {
                 BootConsole.WriteLine("[DESKTOP] initialization failed");
+#if UEFI_DIAGNOSTIC_BM1
+                BareMetalMilestones.Record(10, 4);
+#endif
             }
 
             BootConsole.WriteLine("[KMAIN] Calling SMain");
@@ -1213,10 +1233,16 @@ unsafe class Program {
         _lastIconCacheRefresh = 0;
         _uefiRealIconMarkerEmitted = false;
 
+#if UEFI_DIAGNOSTIC_BM1
+        BareMetalMilestones.Record(11, 0);
+#endif
         BootConsole.WriteLine("[BOOT_MODE] UEFI");
         Framebuffer.RecoverUefiState();
         Framebuffer.TripleBuffered = false;
         Framebuffer.EnsureGraphics();
+#if UEFI_DIAGNOSTIC_BM1
+        BareMetalMilestones.Record(11, 1);
+#endif
 
         if (Framebuffer.Graphics == null || Framebuffer.Graphics.VideoMemory == null ||
             Framebuffer.Width <= 0 || Framebuffer.Height <= 0) {
@@ -1227,6 +1253,9 @@ unsafe class Program {
 
         // Establish the known safe last-resort background. SetupIcons then
         // lets BackgroundRotationManager replace it with the managed asset.
+#if UEFI_DIAGNOSTIC_BM1
+        BareMetalMilestones.Record(11, 2);
+#endif
         Framebuffer.Graphics.Clear(0xFF0D7D77u);
         // Render the desktop into the existing back buffer and publish only
         // completed frames. Drawing directly into the GOP framebuffer makes
@@ -1234,6 +1263,9 @@ unsafe class Program {
         // Start menu is being composed.
         Framebuffer.TripleBuffered = true;
         Wallpaper = null;
+#if UEFI_DIAGNOSTIC_BM1
+        BareMetalMilestones.Record(11, 3);
+#endif
         BootConsole.WriteLine("[FRAMEBUFFER] initialized");
         BootConsole.WriteLine("[UEFI] triple buffering enabled");
     }
@@ -1898,6 +1930,9 @@ unsafe class Program {
         SetUefiFrameBreadcrumb(6, 0, 600);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();
         Framebuffer.Update();
+#if UEFI_DIAGNOSTIC_BM1
+        BareMetalMilestones.DesktopFrame();
+#endif
 
         SetUefiFrameBreadcrumb(6, 1, 601);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();

@@ -70,7 +70,7 @@ namespace guideXOS.Misc {
         public uint FramebufferHeight;         // 0x48: Height in pixels
         public uint FramebufferPitch;          // 0x4C: Bytes per scanline
         public FramebufferFormat FramebufferFormat; // 0x50: Pixel format
-        public uint Reserved2;                 // 0x54
+        public uint Reserved2;                 // 0x54: native EFI GOP pixel format
 
         // ACPI (8 bytes @ 0x58)
         public ulong AcpiRsdp;                 // 0x58: ACPI RSDP pointer
@@ -150,7 +150,51 @@ namespace guideXOS.Misc {
     internal unsafe struct UefiBootMemoryHandoff {
         public ulong KernelSpanBytes;
         public fixed ulong PageTablePages[2049];
+#if UEFI_DIAGNOSTIC_BM1
+        public uint GopPixelFormat;
+        public uint GopRedMask;
+        public uint GopGreenMask;
+        public uint GopBlueMask;
+        public uint GopReservedMask;
+        public uint GopMetadataReserved;
+        public UefiBareMetalRecord Diagnostics;
+#endif
     }
+
+#if UEFI_DIAGNOSTIC_BM1
+    /// <summary>
+    /// Fixed, loader-owned BM1 evidence. It lives beside the page-table
+    /// handoff in the already mapped bootloader image and requires no heap.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    internal struct UefiBareMetalRecord {
+        public uint Magic;
+        public uint Stage;
+        public uint Substage;
+        public uint Sequence;
+        public uint FaultVector;
+        public uint FaultFlags;
+        public uint HeartbeatFrames;
+        public uint HeartbeatTicks;
+        public ulong FaultErrorCode;
+        public ulong FaultRip;
+        public ulong FaultCr2;
+        public ulong FaultCr3;
+        public ulong FaultRsp;
+        public ulong FaultRflags;
+        public ulong FramebufferCheckedBytes;
+        public ulong FramebufferDescriptorBase;
+        public ulong FramebufferDescriptorSize;
+        public ulong FramebufferDescriptorAttributes;
+        public uint FramebufferDescriptorType;
+        public uint FramebufferMapPagesChecked;
+        public uint FramebufferMapLeafFlags;
+        public uint FramebufferValidationFlags;
+        public uint FramebufferFailureCode;
+        public uint FramebufferDescriptorCount;
+        public ulong FramebufferDescriptorCoveredBytes;
+    }
+#endif
 
     /// <summary>
     /// Boot mode enumeration

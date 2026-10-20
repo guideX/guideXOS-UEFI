@@ -54,6 +54,14 @@ namespace guideXOS.Misc {
         /// <param name="bootInfo">UEFI boot information structure</param>
         [RuntimeExport("KMain")]
         public static void KMain(UefiBootInfo* bootInfo) {
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.RecordEarly(bootInfo, 1, 0);
+            if (!IsValidBm1BootInfo(bootInfo)) {
+                BareMetalMilestones.RecordEarly(bootInfo, 2, 1, true);
+                for (;;) Native.Hlt();
+            }
+            BareMetalMilestones.RecordEarly(bootInfo, 2, 0);
+#endif
             // CRITICAL: Output RAW debug marker FIRST before any managed code
             // This proves we reached the kernel entry point successfully
             SerialDebugMarker();
@@ -64,6 +72,10 @@ namespace guideXOS.Misc {
             
             // Validate bootInfo and framebuffer before entering managed startup.
             if (bootInfo == null || bootInfo->FramebufferBase == 0) {
+#if UEFI_DIAGNOSTIC_BM1
+                if (bootInfo != null)
+                    BareMetalMilestones.RecordEarly(bootInfo, 5, 1, true);
+#endif
                 for (;;) Native.Hlt();
             }
 
@@ -72,8 +84,21 @@ namespace guideXOS.Misc {
                 (UefiBootMemoryHandoff*)bootInfo->Reserved[2];
             if (memoryHandoff == null || memoryHandoff->KernelSpanBytes == 0 ||
                     bootInfo->Reserved[0] == 0 || bootInfo->Reserved[1] == 0) {
+#if UEFI_DIAGNOSTIC_BM1
+                BareMetalMilestones.RecordEarly(bootInfo, 3, 1, true);
+#endif
                 for (;;) Native.Hlt();
             }
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.InstallEarlyExceptionTrap(memoryHandoff);
+            if (bootInfo->MemoryMapEntryCount == 0 ||
+                bootInfo->MemoryMapDescriptorSize < 40 ||
+                bootInfo->MemoryMapEntryCount > 0xFFFF_FFFF_FFFF_FFFFUL /
+                    bootInfo->MemoryMapDescriptorSize) {
+                BareMetalMilestones.RecordEarly(bootInfo, 3, 2, true);
+                for (;;) Native.Hlt();
+            }
+#endif
             Allocator.Initialize((IntPtr)0x4000000,
                 bootInfo->Reserved[0], memoryHandoff->KernelSpanBytes);
             Allocator.ReserveAddressRange((IntPtr)0x4000000,
@@ -101,6 +126,18 @@ namespace guideXOS.Misc {
                     (ulong)memoryHandoff,
                     (ulong)sizeof(UefiBootMemoryHandoff));
             }
+#if UEFI_DIAGNOSTIC_BM1
+            ulong memoryMapBytes = bootInfo->MemoryMapEntryCount *
+                bootInfo->MemoryMapDescriptorSize;
+            Allocator.ReserveAddressRange((IntPtr)0x4000000,
+                bootInfo->MemoryMap, memoryMapBytes);
+            Allocator.ReserveAddressRange((IntPtr)0x4000000,
+                (ulong)bootInfo, (ulong)sizeof(UefiBootInfo));
+            if (bootInfo->FramebufferBase != 0 && bootInfo->FramebufferSize != 0)
+                Allocator.ReserveAddressRange((IntPtr)0x4000000,
+                    bootInfo->FramebufferBase, bootInfo->FramebufferSize);
+            BareMetalMilestones.RecordEarly(bootInfo, 3, 0);
+#endif
 #if UEFI_DIAGNOSTIC_STORAGE35Q
             BootConsole.WriteLine("[ALLOCATOR] kernelPhysical=" +
                 bootInfo->Reserved[0].ToString() + ",kernelVirtual=" +
@@ -127,6 +164,36 @@ namespace guideXOS.Misc {
             // immediately above, so InitializeModules now has its required
             // object-storage owner before any managed static is used.
             StartupCodeHelpers.InitializeModules(modulesPtr);
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Configure(bootInfo, memoryHandoff);
+            BareMetalMilestones.Record(4);
+
+            // Install the managed kernel IDT before any framebuffer operation
+            // or kernel splash transition. The assembly-only early IDT remains
+            // active until this diagnostic-capable handler replaces it.
+            IDT.Disable();
+            GDT.Initialize();
+            // GDT.Initialize changes CS. Refresh the temporary gates so their
+            // selector remains valid until the managed IDT replaces them.
+            BareMetalMilestones.InstallEarlyExceptionTrap(memoryHandoff);
+            {
+                const ulong kStackSize = 64 * 1024;
+                ulong rsp0 = (ulong)Allocator.Allocate(kStackSize) + kStackSize;
+                GDT.SetKernelStack(rsp0);
+            }
+            IDT.Initialize();
+            IDT.AllowUserSoftwareInterrupt(0x80);
+
+            BareMetalMilestones.Record(5, 0);
+            if (!BareMetalMilestones.ValidateFramebuffer(bootInfo,
+                    memoryHandoff)) {
+                for (;;) Native.Hlt();
+            }
+            BareMetalMilestones.Record(5, 1);
+#if UEFI_DIAGNOSTIC_BM1_FAULT_TEST
+            BareMetalMilestones.RunSyntheticFaultDisplayTest();
+#endif
+#endif
 #if UEFI_DIAGNOSTIC_RING3_PHASE32 || UEFI_DIAGNOSTIC_RING3_PHASE35 || UEFI_DIAGNOSTIC_APP_RUNTIME || UEFI_DIAGNOSTIC_STORAGE35Q
             Allocator.InitializeInvalidFreeDiagnostics();
 #endif
@@ -143,6 +210,9 @@ namespace guideXOS.Misc {
             BootConsole.WriteLine("[FBI] INIT");
             // Initialize framebuffer wrapper
             if (bootInfo->HasFramebuffer && bootInfo->FramebufferBase != 0) {
+#if UEFI_DIAGNOSTIC_BM1
+                BareMetalMilestones.Record(6, 0);
+#endif
                 Framebuffer.SetBootInfo(bootInfo);
                 Framebuffer.Initialize(
                     (ushort)bootInfo->FramebufferWidth,
@@ -150,9 +220,18 @@ namespace guideXOS.Misc {
                     (uint*)bootInfo->FramebufferBase
                 );
                 Framebuffer.Graphics.Clear(0x0); // Clear screen
+#if UEFI_DIAGNOSTIC_BM1
+                BareMetalMilestones.Record(6, 1);
+#endif
             }
             BootConsole.WriteLine("[BS] INIT");
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(7, 0);
+#endif
             BootSplash.Initialize("Team Nexgen", "guideXOS", "Version: 0.2 UEFI"); // Boot splash
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(7, 1);
+#endif
             
             // Try allocating a simple array to test if runtime works
             try {
@@ -171,6 +250,7 @@ namespace guideXOS.Misc {
             BootConsole.WriteLine("[ARCH] INITIALIZE");
             DetectArchitecture();
             
+#if !UEFI_DIAGNOSTIC_BM1
             BootConsole.WriteLine("[IDT] INITIALIZE");
             IDT.Disable(); // Initialize GDT/IDT
             
@@ -196,9 +276,16 @@ namespace guideXOS.Misc {
             BootConsole.WriteLine("[IDT] INIT");
             IDT.Initialize();
             IDT.AllowUserSoftwareInterrupt(0x80);
+#endif
             
             BootConsole.WriteLine("[INTERRUPTS] INIT");
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(8, 0);
+#endif
             Interrupts.Initialize();
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(8, 1);
+#endif
             
             // Keep interrupts disabled until PIC is configured below.
             // IDT.Enable();
@@ -209,6 +296,9 @@ namespace guideXOS.Misc {
             }
 
             // UEFI uses the bootloader-provided RSDP after ExitBootServices.
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(8, 2);
+#endif
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
                 if (bootInfo->AcpiRsdp != 0) {
                     ACPI.InitializeFromRsdp(bootInfo->AcpiRsdp);
@@ -219,6 +309,9 @@ namespace guideXOS.Misc {
                 ACPI.Initialize();
             }
             BootConsole.WriteLine("[ACPI] initialized");
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(8, 3);
+#endif
 #if UseAPIC
             BootConsole.WriteLine("[PIC] DISABLED");
             PIC.Disable();
@@ -231,6 +324,10 @@ namespace guideXOS.Misc {
 #else
             BootConsole.WriteLine("[PIC] ENABLED");
             PIC.Enable();
+#endif
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(8, 4);
+            BareMetalMilestones.Record(8, 5);
 #endif
             
             BootConsole.WriteLine("[TIMER] INIT"); 
@@ -278,6 +375,10 @@ namespace guideXOS.Misc {
                 ExitBootServicesRules.MarkExitBootServices();
                 BootConsole.WriteLine("[INPUT] Firmware input protocols retired; native input owns devices");
             }
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(8, 6);
+            BareMetalMilestones.Record(8, 7);
+#endif
 
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy)
                  SMBIOS.Initialize();
@@ -285,17 +386,31 @@ namespace guideXOS.Misc {
             SATA.ResetForBoot();
             PCI.Initialize();
             BootConsole.WriteLine("[PCI] enumerated");
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(8, 8);
+            BareMetalMilestones.Record(8, 9);
+#endif
 
             if (BootConsole.CurrentMode == guideXOS.BootMode.Legacy) {
                 IDE.Initialize();
                 SATA.Initialize();
                 ThreadPool.Initialize();
             } else if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+#if UEFI_DIAGNOSTIC_BM1
+                // BM1 must not issue ATA IDENTIFY or block I/O to a physical
+                // internal drive. Leave SATA uninitialized in this diagnostic
+                // build; the normal UEFI path below remains unchanged.
+                BootConsole.WriteLine("[BM1] AHCI/SATA device probing skipped");
+#else
                 // Boot services are already retired here; the native AHCI
                 // driver owns SATA discovery and I/O in the UEFI kernel.
                 SATA.Initialize();
+#endif
             }
 
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(9, 0);
+#endif
 #if !UseAPIC
             Native.Out8(0x21, 0xFF); // Master PIC: mask all IRQs (IRQ 0-7)
             Native.Out8(0xA1, 0xFF); // Slave PIC: mask all IRQs (IRQ 8-15)
@@ -313,6 +428,9 @@ namespace guideXOS.Misc {
             Native.Out8(0x3F8, (byte)'\n');
             
             BootConsole.WriteLine("[SCHED] ThreadPool.Initialize complete");
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(9, 1);
+#endif
 
 #if UEFI_DIAGNOSTIC_RING3
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
@@ -455,6 +573,9 @@ namespace guideXOS.Misc {
             BootConsole.WriteLine("[APIC] STI (Local APIC timer active)");
             Native.Sti();
 #endif
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(9, 2);
+#endif
 
             BootConsole.WriteLine("[BOOT] Post-STI continue");
 #if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_DIRECT || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26 || UEFI_DIAGNOSTIC_RING3_PHASE27 || UEFI_DIAGNOSTIC_RING3_PHASE28 || UEFI_DIAGNOSTIC_RING3_PHASE29 || UEFI_DIAGNOSTIC_RING3_PHASE30 || UEFI_DIAGNOSTIC_RING3_PHASE31
@@ -473,17 +594,29 @@ namespace guideXOS.Misc {
             //BootConsole.WriteLine("[CHECK_RAMDISK]");
             
             // UEFI: Initialize ramdisk and filesystem for File API support (PNG loading, etc.)
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(9, 3);
+#endif
             if (bootInfo->HasRamdisk && bootInfo->RamdiskBase != 0) {
                 BootConsole.WriteLine("[Initrd] initializing");
                 try {
                     Disk.Instance = new Ramdisk((IntPtr)bootInfo->RamdiskBase, bootInfo->RamdiskSize);
                     File.Instance = new RdskFS();
                     BootConsole.WriteLine("[FS] mounted");
+#if UEFI_DIAGNOSTIC_BM1
+                    BareMetalMilestones.Record(9, 4);
+#endif
                 } catch {
                     BootConsole.WriteLine("[FS] mount failed");
+#if UEFI_DIAGNOSTIC_BM1
+                    BareMetalMilestones.Record(9, 5);
+#endif
                 }
             } else {
                 BootConsole.WriteLine("[Initrd] unavailable");
+#if UEFI_DIAGNOSTIC_BM1
+                BareMetalMilestones.Record(9, 5);
+#endif
             }
 
 #if UEFI_DIAGNOSTIC_STORAGE35Q
@@ -524,6 +657,9 @@ namespace guideXOS.Misc {
 
             // Call main kernel entry - this returns after GUI is set up!
             //BootConsole.WriteLine("[CALLING_KERNEL_MAIN]");
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(9, 6);
+#endif
             KernelMain();
 
 #if UEFI_DIAGNOSTIC_RING3 || UEFI_DIAGNOSTIC_RING3_DIRECT || UEFI_DIAGNOSTIC_RING3_PHASE15 || UEFI_DIAGNOSTIC_RING3_PHASE24 || UEFI_DIAGNOSTIC_RING3_PHASE25 || UEFI_DIAGNOSTIC_RING3_PHASE26 || UEFI_DIAGNOSTIC_RING3_PHASE27 || UEFI_DIAGNOSTIC_RING3_PHASE28 || UEFI_DIAGNOSTIC_RING3_PHASE29 || UEFI_DIAGNOSTIC_RING3_PHASE30 || UEFI_DIAGNOSTIC_RING3_PHASE31
@@ -551,6 +687,37 @@ namespace guideXOS.Misc {
                 Native.Hlt();
             }
         }
+
+#if UEFI_DIAGNOSTIC_BM1
+        private static bool IsValidBm1BootInfo(UefiBootInfo* bootInfo) {
+            if (bootInfo == null ||
+                bootInfo->Magic != 0x49425847u ||
+                bootInfo->Version != 1 ||
+                bootInfo->Size != sizeof(UefiBootInfo) ||
+                bootInfo->BootMode != guideXOS.BootMode.UEFI ||
+                !bootInfo->HasMemoryMap || bootInfo->MemoryMap == 0 ||
+                bootInfo->MemoryMapEntryCount == 0 ||
+                bootInfo->MemoryMapEntryCount > 65536 ||
+                bootInfo->MemoryMapDescriptorSize < 40 ||
+                bootInfo->MemoryMapDescriptorSize > 4096 ||
+                bootInfo->MemoryMapEntryCount > 0xFFFF_FFFF_FFFF_FFFFUL /
+                    bootInfo->MemoryMapDescriptorSize ||
+                sizeof(UefiBootMemoryHandoff) != 16568 ||
+                sizeof(UefiBareMetalRecord) != 144) return false;
+
+            ulong mapBytes = bootInfo->MemoryMapEntryCount *
+                bootInfo->MemoryMapDescriptorSize;
+            if (bootInfo->MemoryMap > 0xFFFF_FFFF_FFFF_FFFFUL - mapBytes)
+                return false;
+
+            uint sum = 0;
+            uint wordCount = (uint)(bootInfo->Size / sizeof(uint));
+            uint* words = (uint*)bootInfo;
+            for (uint i = 0; i < wordCount; i++) sum += words[i];
+            return sum == 0;
+        }
+#endif
+
         /// <summary>
         /// LEGACY Multiboot entry point (for GRUB2 compatibility)
         /// This is the old entry point that receives MultibootInfo
@@ -661,6 +828,9 @@ namespace guideXOS.Misc {
         /// Main kernel initialization (shared by both entry points)
         /// </summary>
         private static void KernelMain() {
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(9, 7);
+#endif
             Native.Out8(0x3F8, (byte)'K');
             Native.Out8(0x3F8, (byte)'E');
             Native.Out8(0x3F8, (byte)'R');
@@ -684,6 +854,9 @@ namespace guideXOS.Misc {
             Native.Out8(0x3F8, (byte)'\n');
             BootConsole.WriteLine("[KERNELMAIN]");
             BootConsole.NewLine();
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.Record(9, 8);
+#endif
             Program.KMain(); // Call the main OS initialization - this sets up GUI, drivers, etc.
         }
         /// <summary>

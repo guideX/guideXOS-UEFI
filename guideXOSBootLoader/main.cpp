@@ -747,9 +747,29 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     v1BootInfo->FramebufferWidth  = GOP->Mode->Info->HorizontalResolution;
     v1BootInfo->FramebufferHeight = GOP->Mode->Info->VerticalResolution;
     v1BootInfo->FramebufferPitch  = GOP->Mode->Info->PixelsPerScanLine * 4u; // 32 bpp
+#if defined(UEFI_DIAGNOSTIC_BM1)
+    v1BootInfo->FramebufferSize   = (uint64_t)GOP->Mode->FrameBufferSize;
+    v1BootInfo->Reserved2         = (uint32_t)GOP->Mode->Info->PixelFormat;
+
+    switch (GOP->Mode->Info->PixelFormat) {
+        case PixelRedGreenBlueReserved8BitPerColor:
+            v1BootInfo->FramebufferFormat = guideXOS::FramebufferFormat::R8G8B8A8;
+            break;
+        case PixelBlueGreenRedReserved8BitPerColor:
+            v1BootInfo->FramebufferFormat = guideXOS::FramebufferFormat::B8G8R8A8;
+            break;
+        default:
+            // Preserve GOP's full native format/masks in the loader handoff.
+            // The normal graphics wrapper still only supports the two 32-bit
+            // channel orders; BM1's direct renderer handles GOP bit masks.
+            v1BootInfo->FramebufferFormat = guideXOS::FramebufferFormat::Unknown;
+            break;
+    }
+#else
     v1BootInfo->FramebufferSize   = (uint64_t)v1BootInfo->FramebufferPitch *
                                    (uint64_t)v1BootInfo->FramebufferHeight;
     v1BootInfo->FramebufferFormat = guideXOS::FramebufferFormat::B8G8R8A8; // typical GOP
+#endif
 
     if (v1BootInfo->FramebufferBase != 0 && v1BootInfo->FramebufferSize != 0)
         v1BootInfo->Flags |= (1u << 1); // framebuffer valid
@@ -1043,6 +1063,18 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
             return st;
         }
     }
+
+#if defined(UEFI_DIAGNOSTIC_BM1)
+    // BuildIdentityPageTables clears its loader-owned handoff record before
+    // constructing the tables. Publish GOP metadata only after that reset.
+    guideXOS::paging::BootMemoryHandoff* gopHandoff =
+        guideXOS::paging::GetBootMemoryHandoff();
+    gopHandoff->GopPixelFormat = (UINT32)GOP->Mode->Info->PixelFormat;
+    gopHandoff->GopRedMask = GOP->Mode->Info->PixelInformation.RedMask;
+    gopHandoff->GopGreenMask = GOP->Mode->Info->PixelInformation.GreenMask;
+    gopHandoff->GopBlueMask = GOP->Mode->Info->PixelInformation.BlueMask;
+    gopHandoff->GopReservedMask = GOP->Mode->Info->PixelInformation.ReservedMask;
+#endif
 
     // Map kernel virtual addresses to their physical backing
     {

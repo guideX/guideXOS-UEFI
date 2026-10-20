@@ -27,6 +27,12 @@
 		<!-- Allow skipping ISO build to avoid lock issues -->
 		<SkipISO Condition="'$(SkipISO)'==''">false</SkipISO>
 	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'BM1' or '$(UefiDiagnosticMode)' == 'BM1FaultTest'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_BM1</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(UefiDiagnosticMode)' == 'BM1FaultTest'">
+		<DefineConstants>$(DefineConstants);UEFI_DIAGNOSTIC_BM1_FAULT_TEST</DefineConstants>
+	</PropertyGroup>
 
 	<!-- Diagnostic UEFI modes are opt-in build variants. The normal build
 	     intentionally retains the continuous recovered desktop as its default. -->
@@ -207,9 +213,10 @@
 		<PropertyGroup>
 			<_NasmExe Condition="Exists('$(MSBuildStartupDirectory)\Tools\nasm.exe')">$(MSBuildStartupDirectory)\Tools\nasm.exe</_NasmExe>
 			<_NasmExe Condition="'$(_NasmExe)'=='' and Exists('$(MSBuildProjectDirectory)\..\Tools\nasm.exe')">$(MSBuildProjectDirectory)\..\Tools\nasm.exe</_NasmExe>
+			<_NasmBm1Define Condition="'$(UefiDiagnosticMode)'=='BM1' or '$(UefiDiagnosticMode)'=='BM1FaultTest'">-DUEFI_DIAGNOSTIC_BM1=1</_NasmBm1Define>
 		</PropertyGroup>
 		<Message Text="[Native] Building native stubs via NASM: $(_NasmExe)" Importance="high" />
-		<Exec Condition="'$(_NasmExe)' != ''" Command="&quot;$(_NasmExe)&quot; -f win64 &quot;$(MSBuildProjectDirectory)\native_stubs.asm&quot; -o &quot;$(MSBuildProjectDirectory)\native_stubs.obj&quot;" />
+		<Exec Condition="'$(_NasmExe)' != ''" Command="&quot;$(_NasmExe)&quot; $(_NasmBm1Define) -f win64 &quot;$(MSBuildProjectDirectory)\native_stubs.asm&quot; -o &quot;$(MSBuildProjectDirectory)\native_stubs.obj&quot;" />
 		<Warning Condition="'$(_NasmExe)' == ''" Text="NASM not found; cannot build native stubs. Install NASM or provide native libraries implementing required symbols." />
 	</Target>
 

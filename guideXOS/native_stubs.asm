@@ -25,6 +25,19 @@ __modules_a:
 extern KMain
 global KMainWrapper
 KMainWrapper:
+%ifdef UEFI_DIAGNOSTIC_BM1
+    ; The boot handoff supplies the normal Microsoft x64 callee-entry stack
+    ; geometry. Install an exception table before any managed boot-info read.
+    ; The boot-info pointer is kept in a nonvolatile register across this call.
+    push r12
+    mov r12, rcx
+    sub rsp, 0x20
+    lea rcx, [rel bm1_kernel_emergency_record]
+    call InstallBm1EarlyExceptionIdt
+    add rsp, 0x20
+    mov rcx, r12
+    pop r12
+%endif
     ; The boot handoff already supplies the Microsoft x64 ABI frame.
     jmp KMain
 
@@ -88,6 +101,260 @@ TriggerFaultBytesProbe:
     mov r15, 0xDDDDDDDD
     ud2
     ret
+
+%ifdef UEFI_DIAGNOSTIC_BM1
+; Opt-in BM1FaultTest only. This canonical low-half address is outside every
+; range mapped by the UEFI handoff and intentionally raises a real #PF in the
+; isolated guest so the BM1 IDT path captures vector, RIP, CR2, and the frame.
+global TriggerBm1PageFault
+TriggerBm1PageFault:
+    mov rax, 0x0000700000000000
+    mov rax, [rax]
+    ret
+
+; Preserve early BM stage state even before the boot-info handoff record has
+; been validated. RCX=stage and RDX=substage (Microsoft x64 ABI).
+global SetBm1EarlyStage
+SetBm1EarlyStage:
+    mov [rel bm1_kernel_emergency_record + 4], ecx
+    mov [rel bm1_kernel_emergency_record + 8], edx
+    inc dword [rel bm1_kernel_emergency_record + 12]
+    ret
+
+; Early BM1 exception table used until the managed IDT has been initialized.
+; It has no allocator, runtime, serial, or framebuffer dependency. The handler
+; writes the CPU context into a fixed record and halts.
+global InstallBm1EarlyExceptionIdt
+InstallBm1EarlyExceptionIdt:
+    cli
+    mov [rel bm1_early_record], rcx
+    lea r10, [rel bm1_early_idt]
+%macro BM1_INSTALL_GATE 1
+    lea r8, [rel bm1_early_isr_%1]
+    mov [r10 + (%1 * 16) + 0], r8w
+    mov ax, cs
+    mov [r10 + (%1 * 16) + 2], ax
+    mov byte [r10 + (%1 * 16) + 4], 0
+    mov byte [r10 + (%1 * 16) + 5], 0x8E
+    mov rax, r8
+    shr rax, 16
+    mov [r10 + (%1 * 16) + 6], ax
+    shr rax, 16
+    mov [r10 + (%1 * 16) + 8], eax
+    mov dword [r10 + (%1 * 16) + 12], 0
+%endmacro
+    BM1_INSTALL_GATE 0
+    BM1_INSTALL_GATE 1
+    BM1_INSTALL_GATE 2
+    BM1_INSTALL_GATE 3
+    BM1_INSTALL_GATE 4
+    BM1_INSTALL_GATE 5
+    BM1_INSTALL_GATE 6
+    BM1_INSTALL_GATE 7
+    BM1_INSTALL_GATE 8
+    BM1_INSTALL_GATE 9
+    BM1_INSTALL_GATE 10
+    BM1_INSTALL_GATE 11
+    BM1_INSTALL_GATE 12
+    BM1_INSTALL_GATE 13
+    BM1_INSTALL_GATE 14
+    BM1_INSTALL_GATE 15
+    BM1_INSTALL_GATE 16
+    BM1_INSTALL_GATE 17
+    BM1_INSTALL_GATE 18
+    BM1_INSTALL_GATE 19
+    BM1_INSTALL_GATE 20
+    BM1_INSTALL_GATE 21
+    BM1_INSTALL_GATE 22
+    BM1_INSTALL_GATE 23
+    BM1_INSTALL_GATE 24
+    BM1_INSTALL_GATE 25
+    BM1_INSTALL_GATE 26
+    BM1_INSTALL_GATE 27
+    BM1_INSTALL_GATE 28
+    BM1_INSTALL_GATE 29
+    BM1_INSTALL_GATE 30
+    BM1_INSTALL_GATE 31
+    mov word [rel bm1_early_idtr], (32 * 16) - 1
+    lea rax, [rel bm1_early_idt]
+    mov [rel bm1_early_idtr + 2], rax
+    lidt [rel bm1_early_idtr]
+    ret
+
+%macro BM1_EARLY_ISR_NO_ERROR 1
+global bm1_early_isr_%1
+bm1_early_isr_%1:
+    push qword 0
+    push qword %1
+    jmp bm1_early_exception_common
+%endmacro
+
+%macro BM1_EARLY_ISR_ERROR 1
+global bm1_early_isr_%1
+bm1_early_isr_%1:
+    push qword %1
+    jmp bm1_early_exception_common
+%endmacro
+
+BM1_EARLY_ISR_NO_ERROR 0
+BM1_EARLY_ISR_NO_ERROR 1
+BM1_EARLY_ISR_NO_ERROR 2
+BM1_EARLY_ISR_NO_ERROR 3
+BM1_EARLY_ISR_NO_ERROR 4
+BM1_EARLY_ISR_NO_ERROR 5
+BM1_EARLY_ISR_NO_ERROR 6
+BM1_EARLY_ISR_NO_ERROR 7
+BM1_EARLY_ISR_ERROR 8
+BM1_EARLY_ISR_NO_ERROR 9
+BM1_EARLY_ISR_ERROR 10
+BM1_EARLY_ISR_ERROR 11
+BM1_EARLY_ISR_ERROR 12
+BM1_EARLY_ISR_ERROR 13
+BM1_EARLY_ISR_ERROR 14
+BM1_EARLY_ISR_NO_ERROR 15
+BM1_EARLY_ISR_NO_ERROR 16
+BM1_EARLY_ISR_ERROR 17
+BM1_EARLY_ISR_NO_ERROR 18
+BM1_EARLY_ISR_NO_ERROR 19
+BM1_EARLY_ISR_NO_ERROR 20
+BM1_EARLY_ISR_ERROR 21
+BM1_EARLY_ISR_NO_ERROR 22
+BM1_EARLY_ISR_NO_ERROR 23
+BM1_EARLY_ISR_NO_ERROR 24
+BM1_EARLY_ISR_NO_ERROR 25
+BM1_EARLY_ISR_NO_ERROR 26
+BM1_EARLY_ISR_NO_ERROR 27
+BM1_EARLY_ISR_NO_ERROR 28
+BM1_EARLY_ISR_ERROR 29
+BM1_EARLY_ISR_ERROR 30
+BM1_EARLY_ISR_NO_ERROR 31
+
+bm1_early_exception_common:
+    cli
+    mov rdi, [rel bm1_early_record]
+    test rdi, rdi
+    jz .bm1_early_halt
+    mov edx, [rsp]
+    mov [rdi + 16], edx             ; FaultVector
+    mov dword [rdi + 20], 1         ; FaultFlags
+    mov dword [rdi + 8], 0xFFFFFFFE ; Early-fault substage
+    inc dword [rdi + 12]            ; Sequence
+    mov rdx, [rsp + 8]
+    mov [rdi + 32], rdx             ; FaultErrorCode
+    mov rdx, [rsp + 16]
+    mov [rdi + 40], rdx             ; FaultRip
+    xor edx, edx
+    cmp dword [rsp], 14
+    jne .bm1_early_no_page_fault
+    mov rdx, cr2
+.bm1_early_no_page_fault:
+    mov [rdi + 48], rdx             ; FaultCr2
+    mov rdx, cr3
+    mov [rdi + 56], rdx             ; FaultCr3
+    lea rdx, [rsp + 40]
+    mov [rdi + 64], rdx             ; Interrupted FaultRsp
+    mov rdx, [rsp + 32]
+    mov [rdi + 72], rdx             ; FaultRflags
+    mov dx, 0x3F8
+    mov al, 'B'
+    out dx, al
+    mov al, 'M'
+    out dx, al
+    mov al, '1'
+    out dx, al
+    mov al, 'E'
+    out dx, al
+    mov al, ':'
+    out dx, al
+    mov al, 'V'
+    out dx, al
+    mov al, '='
+    out dx, al
+    mov ecx, [rdi + 16]
+    call bm1_early_serial_hex64
+    mov al, ':'
+    out dx, al
+    mov al, 'R'
+    out dx, al
+    mov al, '='
+    out dx, al
+    mov rcx, [rdi + 40]
+    call bm1_early_serial_hex64
+    mov al, ':'
+    out dx, al
+    mov al, 'E'
+    out dx, al
+    mov al, '='
+    out dx, al
+    mov rcx, [rdi + 32]
+    call bm1_early_serial_hex64
+    mov al, ':'
+    out dx, al
+    mov al, 'C'
+    out dx, al
+    mov al, '='
+    out dx, al
+    mov rcx, [rdi + 48]
+    call bm1_early_serial_hex64
+    mov al, ':'
+    out dx, al
+    mov al, 'P'
+    out dx, al
+    mov al, '='
+    out dx, al
+    mov rcx, [rdi + 56]
+    call bm1_early_serial_hex64
+    mov al, ':'
+    out dx, al
+    mov al, 'S'
+    out dx, al
+    mov al, '='
+    out dx, al
+    mov rcx, [rdi + 64]
+    call bm1_early_serial_hex64
+    mov al, ':'
+    out dx, al
+    mov al, 'F'
+    out dx, al
+    mov al, '='
+    out dx, al
+    mov rcx, [rdi + 72]
+    call bm1_early_serial_hex64
+    mov al, ':'
+    out dx, al
+    mov al, 'B'
+    out dx, al
+    mov al, '='
+    out dx, al
+    xor ecx, ecx
+    mov ecx, [rdi + 4]
+    call bm1_early_serial_hex64
+    mov al, 0x0A
+    out dx, al
+.bm1_early_halt:
+    hlt
+    jmp .bm1_early_halt
+
+bm1_early_serial_hex64:
+    mov r8, rcx
+    mov ecx, 16
+.bm1_early_serial_hex_loop:
+    mov rax, r8
+    shr rax, 60
+    and al, 0x0F
+    cmp al, 9
+    jbe .bm1_early_serial_decimal
+    add al, 'A' - 10
+    jmp .bm1_early_serial_emit
+.bm1_early_serial_decimal:
+    add al, '0'
+.bm1_early_serial_emit:
+    out dx, al
+    shl r8, 4
+    dec ecx
+    jnz .bm1_early_serial_hex_loop
+    ret
+%endif
 
 global Nop
 Nop:
@@ -345,6 +612,16 @@ section .data align=8
 r3_resume_rsp: dq 0
 align 8
 exception_sequence_counter: dq 0
+%ifdef UEFI_DIAGNOSTIC_BM1
+align 8
+bm1_early_record: dq 0
+bm1_early_idtr: times 10 db 0
+
+section .bss align=16
+bm1_early_idt: resb 32 * 16
+align 8
+bm1_kernel_emergency_record: resb 144
+%endif
 
 section .text
 global IncrementExceptionSequence

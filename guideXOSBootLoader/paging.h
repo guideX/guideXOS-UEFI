@@ -27,14 +27,61 @@ namespace paging
         EFI_PHYSICAL_ADDRESS Pml4Phys;
     };
 
-    // BootInfo v1 keeps a fixed-size reserved area. This external handoff
-    // carries the kernel image span and a zero-terminated page-table list.
+    // BootInfo v1 keeps its fixed size. This loader-owned handoff carries the
+    // kernel span, page-table list, GOP format masks, and fixed BM1 evidence.
     static constexpr UINTN MAX_PT_PAGES = 2048;
+#if defined(UEFI_DIAGNOSTIC_BM1)
+    struct BareMetalDiagnosticRecord
+    {
+        UINT32 Magic;
+        UINT32 Stage;
+        UINT32 Substage;
+        UINT32 Sequence;
+        UINT32 FaultVector;
+        UINT32 FaultFlags;
+        UINT32 HeartbeatFrames;
+        UINT32 HeartbeatTicks;
+        UINT64 FaultErrorCode;
+        UINT64 FaultRip;
+        UINT64 FaultCr2;
+        UINT64 FaultCr3;
+        UINT64 FaultRsp;
+        UINT64 FaultRflags;
+        UINT64 FramebufferCheckedBytes;
+        UINT64 FramebufferDescriptorBase;
+        UINT64 FramebufferDescriptorSize;
+        UINT64 FramebufferDescriptorAttributes;
+        UINT32 FramebufferDescriptorType;
+        UINT32 FramebufferMapPagesChecked;
+        UINT32 FramebufferMapLeafFlags;
+        UINT32 FramebufferValidationFlags;
+        UINT32 FramebufferFailureCode;
+        UINT32 FramebufferDescriptorCount;
+        UINT64 FramebufferDescriptorCoveredBytes;
+    };
+#endif
+
     struct BootMemoryHandoff
     {
         UINT64 KernelSpanBytes;
         UINT64 PageTablePages[MAX_PT_PAGES + 1];
+#if defined(UEFI_DIAGNOSTIC_BM1)
+        UINT32 GopPixelFormat;
+        UINT32 GopRedMask;
+        UINT32 GopGreenMask;
+        UINT32 GopBlueMask;
+        UINT32 GopReservedMask;
+        UINT32 GopMetadataReserved;
+        BareMetalDiagnosticRecord Diagnostics;
+#endif
     };
+
+#if defined(UEFI_DIAGNOSTIC_BM1)
+    static_assert(sizeof(BareMetalDiagnosticRecord) == 144,
+        "C# and UEFI BM1 diagnostic record layouts must match");
+    static_assert(sizeof(BootMemoryHandoff) == 16568,
+        "C# and UEFI BM1 handoff layouts must match");
+#endif
 
     // Build a minimal identity-mapped page table set for the ranges provided.
     // All pages are mapped RW, executable (NX not set) to keep it minimal.

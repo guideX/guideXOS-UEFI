@@ -62,7 +62,7 @@ namespace guideXOS
         uint32_t FramebufferHeight;        // Height in pixels
         uint32_t FramebufferPitch;         // Bytes per scanline
         FramebufferFormat FramebufferFormat; // Pixel format
-        uint32_t Reserved2;
+        uint32_t Reserved2;             // Native EFI GOP pixel format
 
         // ACPI (8 bytes)
         uint64_t AcpiRsdp;                 // ACPI RSDP pointer
