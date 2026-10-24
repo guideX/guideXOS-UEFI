@@ -58,6 +58,12 @@ namespace paging
         UINT32 FramebufferFailureCode;
         UINT32 FramebufferDescriptorCount;
         UINT64 FramebufferDescriptorCoveredBytes;
+        // BM3B v1 extension; keep all BM1 fields and offsets unchanged.
+        UINT64 FaultRdi;
+        UINT64 FaultCr4;
+        UINT64 FaultEffectiveAddress;
+        UINT32 FaultCaptureFlags;
+        UINT32 FaultRecordVersion;
     };
 #endif
 
@@ -77,10 +83,10 @@ namespace paging
     };
 
 #if defined(UEFI_DIAGNOSTIC_BM1)
-    static_assert(sizeof(BareMetalDiagnosticRecord) == 144,
-        "C# and UEFI BM1 diagnostic record layouts must match");
-    static_assert(sizeof(BootMemoryHandoff) == 16568,
-        "C# and UEFI BM1 handoff layouts must match");
+    static_assert(sizeof(BareMetalDiagnosticRecord) == 176,
+        "C# and UEFI BM3B diagnostic record layouts must match");
+    static_assert(sizeof(BootMemoryHandoff) == 16600,
+        "C# and UEFI BM3B handoff layouts must match");
 #endif
 
     // Build a minimal identity-mapped page table set for the ranges provided.

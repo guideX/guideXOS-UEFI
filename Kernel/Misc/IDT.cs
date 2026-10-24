@@ -1109,9 +1109,14 @@ public static class IDT {
             // Preserve a kernel fault before serial logging or any other
             // diagnostic path can touch state that may itself be damaged.
             if (irs != null && (irs->cs & 3UL) != 3UL) {
+                // RDI comes from the assembly-saved entry frame, not the
+                // handler's live RDI, which is free to change after entry.
+                ulong savedRdi = stack->rs.rdi;
+                ulong savedCr4 = Native.ReadCR4();
                 BareMetalMilestones.RecordFault(irq, actualErrorCode, irs->rip,
                     irq == 14 ? Native.ReadCR2() : 0, Native.ReadCR3(),
-                    GetInterruptedRsp(irq, irs), irs->rflags);
+                    GetInterruptedRsp(irq, irs), irs->rflags, savedRdi,
+                    savedCr4);
                 for (;;) Native.Hlt();
             }
 #endif

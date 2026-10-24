@@ -702,8 +702,8 @@ namespace guideXOS.Misc {
                 bootInfo->MemoryMapDescriptorSize > 4096 ||
                 bootInfo->MemoryMapEntryCount > 0xFFFF_FFFF_FFFF_FFFFUL /
                     bootInfo->MemoryMapDescriptorSize ||
-                sizeof(UefiBootMemoryHandoff) != 16568 ||
-                sizeof(UefiBareMetalRecord) != 144) return false;
+                sizeof(UefiBootMemoryHandoff) != 16600 ||
+                sizeof(UefiBareMetalRecord) != 176) return false;
 
             ulong mapBytes = bootInfo->MemoryMapEntryCount *
                 bootInfo->MemoryMapDescriptorSize;

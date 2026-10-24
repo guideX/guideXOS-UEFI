@@ -390,6 +390,11 @@ ReadCR3:
     mov rax, cr3
     ret
 
+global ReadCR4
+ReadCR4:
+    mov rax, cr4
+    ret
+
 global WriteCR3
 WriteCR3:
     mov cr3, rcx

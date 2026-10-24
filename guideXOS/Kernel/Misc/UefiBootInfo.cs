@@ -193,6 +193,13 @@ namespace guideXOS.Misc {
         public uint FramebufferFailureCode;
         public uint FramebufferDescriptorCount;
         public ulong FramebufferDescriptorCoveredBytes;
+        // BM3B v1 extension. Appended so every BM1 field remains at its
+        // established offset in the loader/kernel handoff.
+        public ulong FaultRdi;
+        public ulong FaultCr4;
+        public ulong FaultEffectiveAddress;
+        public uint FaultCaptureFlags;
+        public uint FaultRecordVersion;
     }
 #endif
 

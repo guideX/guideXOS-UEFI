@@ -23,6 +23,14 @@ namespace guideXOS.Misc {
         private const ulong PteWriteThrough = 1UL << 3;
         private const ulong PteCacheDisable = 1UL << 4;
         private const ushort DiagnosticSerialPort = 0x3F8;
+        private const ulong Cr4La57 = 1UL << 12;
+        // Version-1 capture flags: LA57, RDI canonical, effective address
+        // canonical, and unsigned RDI+8 wrap, respectively.
+        private const uint FaultFlagLa57 = 1u << 0;
+        private const uint FaultFlagRdiCanonical = 1u << 1;
+        private const uint FaultFlagAddressCanonical = 1u << 2;
+        private const uint FaultFlagAddressOverflow = 1u << 3;
+        private const uint FaultRecordExtensionVersion = 1;
 
         private static UefiBareMetalRecord* _record;
         private static UefiBootInfo* _bootInfo;
@@ -327,10 +335,23 @@ namespace guideXOS.Misc {
         }
 
         public static void RecordFault(int vector, ulong errorCode, ulong rip,
-                ulong cr2, ulong cr3, ulong rsp, ulong rflags) {
+                ulong cr2, ulong cr3, ulong rsp, ulong rflags, ulong rdi,
+                ulong cr4) {
             UefiBareMetalRecord* record = _record;
             if (record == null || record->Magic != RecordMagic ||
                 record->FaultFlags != 0) return;
+            bool la57 = (cr4 & Cr4La57) != 0;
+            bool addressOverflow = rdi > 0xFFFF_FFFF_FFFF_FFF7UL;
+            // x86-64 address generation wraps at 64 bits. Track unsigned
+            // overflow explicitly while evaluating that architectural value.
+            ulong effectiveAddress = unchecked(rdi + 8UL);
+            uint captureFlags = la57 ? FaultFlagLa57 : 0u;
+            if (IsCanonicalAddress(rdi, la57))
+                captureFlags |= FaultFlagRdiCanonical;
+            if (IsCanonicalAddress(effectiveAddress, la57))
+                captureFlags |= FaultFlagAddressCanonical;
+            if (addressOverflow)
+                captureFlags |= FaultFlagAddressOverflow;
             record->FaultVector = (uint)vector;
             record->FaultFlags = 1;
             record->FaultErrorCode = errorCode;
@@ -339,6 +360,11 @@ namespace guideXOS.Misc {
             record->FaultCr3 = cr3;
             record->FaultRsp = rsp;
             record->FaultRflags = rflags;
+            record->FaultRdi = rdi;
+            record->FaultCr4 = cr4;
+            record->FaultEffectiveAddress = effectiveAddress;
+            record->FaultCaptureFlags = captureFlags;
+            record->FaultRecordVersion = FaultRecordExtensionVersion;
             record->Substage = 0xFFFF_FFFFu;
             record->Sequence++;
             WriteSerialText('B', 'M', '1', 'F', ':');
@@ -355,10 +381,39 @@ namespace guideXOS.Misc {
             WriteSerialHex(rsp, 16);
             WriteSerialByte(':');
             WriteSerialHex(rflags, 16);
+            WriteSerialByte(':');
+            WriteSerialByte('D');
+            WriteSerialByte('=');
+            WriteSerialHex(rdi, 16);
+            WriteSerialByte(':');
+            WriteSerialByte('A');
+            WriteSerialByte('=');
+            WriteSerialHex(effectiveAddress, 16);
+            WriteSerialByte(':');
+            WriteSerialByte('4');
+            WriteSerialByte('=');
+            WriteSerialHex(cr4, 16);
+            WriteSerialByte(':');
+            WriteSerialByte('C');
+            WriteSerialByte('=');
+            WriteSerialHex(captureFlags, 8);
+            WriteSerialByte(':');
+            WriteSerialByte('X');
+            WriteSerialByte('=');
+            WriteSerialHex(FaultRecordExtensionVersion, 8);
             WriteSerialByte('\n');
             if (_bootInfo != null &&
                 (record->FramebufferValidationFlags & FramebufferValid) ==
                     FramebufferValid) DrawFaultScreen();
+        }
+
+        private static bool IsCanonicalAddress(ulong address, bool la57) {
+            int width = la57 ? 57 : 48;
+            ulong signBit = 1UL << (width - 1);
+            ulong upper = address >> width;
+            ulong expectedUpper = (address & signBit) == 0
+                ? 0UL : 0xFFFF_FFFF_FFFF_FFFFUL >> width;
+            return upper == expectedUpper;
         }
 
         public static void RecordTimerTick() {
@@ -579,12 +634,19 @@ namespace guideXOS.Misc {
                 (int)_bootInfo->FramebufferHeight, background);
             DrawMilestoneStripWithoutFault();
             DrawFaultValue('V', _record->FaultVector, 72);
-            DrawFaultValue('E', _record->FaultErrorCode, 96);
-            DrawFaultValue('R', _record->FaultRip, 120);
-            DrawFaultValue('C', _record->FaultCr2, 144);
-            DrawFaultValue('P', _record->FaultCr3, 168);
-            DrawFaultValue('S', _record->FaultRsp, 192);
-            DrawFaultValue('F', _record->FaultRflags, 216);
+            DrawFaultValue('E', _record->FaultErrorCode, 92);
+            DrawFaultValue('R', _record->FaultRip, 112);
+            DrawFaultValue('D', _record->FaultRdi, 136);
+            DrawFaultValue('A', _record->FaultEffectiveAddress, 156);
+            DrawFaultValue('4', _record->FaultCr4, 176);
+            DrawFaultBit('L', (_record->FaultCaptureFlags & FaultFlagLa57) != 0, 196);
+            DrawFaultBit('I', (_record->FaultCaptureFlags & FaultFlagRdiCanonical) != 0, 216);
+            DrawFaultBit('N', (_record->FaultCaptureFlags & FaultFlagAddressCanonical) != 0, 236);
+            DrawFaultBit('O', (_record->FaultCaptureFlags & FaultFlagAddressOverflow) != 0, 256);
+            DrawFaultValue('C', _record->FaultCr2, 276);
+            DrawFaultValue('P', _record->FaultCr3, 296);
+            DrawFaultValue('S', _record->FaultRsp, 316);
+            DrawFaultValue('F', _record->FaultRflags, 336);
         }
 
         private static void DrawMilestoneStripWithoutFault() {
@@ -609,6 +671,11 @@ namespace guideXOS.Misc {
                 int digit = (int)((value >> shift) & 0xFUL);
                 DrawChar(28 + i * 14, y, HexChar(digit), 2, 0xFFFFFFFFu);
             }
+        }
+
+        private static void DrawFaultBit(char label, bool value, int y) {
+            DrawChar(8, y, label, 2, 0xFFFFFFFFu);
+            DrawChar(28, y, value ? '1' : '0', 2, 0xFFFFFFFFu);
         }
 
         private static char HexChar(int digit) => digit < 10
@@ -648,6 +715,10 @@ namespace guideXOS.Misc {
                 case 'D': return 0b11110100011000110001100011000111110UL;
                 case 'E': return 0b11111100001000011110100001000011111UL;
                 case 'F': return 0b11111100001000011110100001000010000UL;
+                case 'I': return 0b11111001000010000100001000010011111UL;
+                case 'L': return 0b10000100001000010000100001000011111UL;
+                case 'N': return 0b10001110011010110011100011000110001UL;
+                case 'O': return 0b01110100011000110001100011000101110UL;
                 case 'P': return 0b11110100011000111110100001000010000UL;
                 case 'R': return 0b11110100011000111110101001001010001UL;
                 case 'S': return 0b01111100001000001110000010000111110UL;

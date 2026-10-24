@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the staged BM1 ESP as a UEFI El Torito diagnostic ISO."""
+"""Package a staged UEFI ESP as a UEFI El Torito diagnostic ISO."""
 
 from __future__ import annotations
 
@@ -221,6 +221,8 @@ def main() -> int:
                         help="separately named diagnostic ISO output")
     parser.add_argument("--mkisofs", type=Path, required=True,
                         help="repository Tools/mkisofs.exe")
+    parser.add_argument("--label", default="GUIDEXOS_BM1",
+                        help="ISO volume label (default: %(default)s)")
     args = parser.parse_args()
 
     esp = args.esp.resolve()
@@ -245,7 +247,7 @@ def main() -> int:
                      stage / "BOOTX64.EFI")
         shutil.copy2(esp / "kernel.elf", stage / "kernel.elf")
         shutil.copy2(esp / "ramdisk.img", stage / "ramdisk.img")
-        command = [str(mkisofs), "-o", str(output), "-V", "GUIDEXOS_BM1",
+        command = [str(mkisofs), "-o", str(output), "-V", args.label,
                    "-relaxed-filenames", "-J", "-R", "-eltorito-alt-boot",
                    "-eltorito-boot", efi_image.name, "-no-emul-boot",
                    str(stage)]

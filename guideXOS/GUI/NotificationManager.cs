@@ -68,12 +68,8 @@ namespace guideXOS.GUI {
         }
 
         internal static void ResetForKernelBoot() {
-            if (Notifications != null) {
-                for (int i = Notifications.Count - 1; i >= 0; i--) {
-                    Notify notification = Notifications[i];
-                    if (notification != null) notification.Dispose();
-                }
-            }
+            // Previous boot objects may belong to a different allocator. Drop the root
+            // without traversing or disposing the old notification and animation graph.
             Notifications = new List<Notify>();
         }
 
