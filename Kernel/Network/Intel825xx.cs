@@ -7,7 +7,7 @@ using static guideXOS.Misc.MMIO;
 using static guideXOS.NETv4;
 namespace guideXOS {
     internal unsafe class Intel825xx {
-        public static uint IOBase;
+        public static ulong IOBase;
 
         public static RXDescriptor* RXDescs;
         public static TXDescriptor* TXDescs;
@@ -40,105 +40,8 @@ namespace guideXOS {
                         BootConsole.Write("\n");
                     }
                     
-                    if (
-                     vendorID == 0x8086 &&
-                     (
-                        deviceID == 0x1000 || //Intel82542
-                        deviceID == 0x1001 || //Intel82543GC
-                        deviceID == 0x1004 || //Intel82543GC
-                        deviceID == 0x1008 || //Intel82544EI
-                        deviceID == 0x1009 || //Intel82544EI
-                        deviceID == 0x100C || //Intel82543EI
-                        deviceID == 0x100D || //Intel82544GC
-                        deviceID == 0x100E || //Intel82540EM
-                        deviceID == 0x100F || //Intel82545EM
-                        deviceID == 0x1010 || //Intel82546EB
-                        deviceID == 0x1011 || //Intel82545EM
-                        deviceID == 0x1012 || //Intel82546EB
-                        deviceID == 0x1013 || //Intel82541EI
-                        deviceID == 0x1014 || //Intel82541ER
-                        deviceID == 0x1015 || //Intel82540EM
-                        deviceID == 0x1016 || //Intel82540EP
-                        deviceID == 0x1017 || //Intel82540EP
-                        deviceID == 0x1018 || //Intel82541EI
-                        deviceID == 0x1019 || //Intel82547EI
-                        deviceID == 0x101A || //Intel82547EI
-                        deviceID == 0x101D || //Intel82546EB
-                        deviceID == 0x101E || //Intel82540EP
-                        deviceID == 0x1026 || //Intel82545GM
-                        deviceID == 0x1027 || //Intel82545GM
-                        deviceID == 0x1028 || //Intel82545GM
-                        deviceID == 0x1049 || //Intel82566MM_ICH8
-                        deviceID == 0x104A || //Intel82566DM_ICH8
-                        deviceID == 0x104B || //Intel82566DC_ICH8
-                        deviceID == 0x104C || //Intel82562V_ICH8
-                        deviceID == 0x104D || //Intel82566MC_ICH8
-                        deviceID == 0x105E || //Intel82571EB
-                        deviceID == 0x105F || //Intel82571EB
-                        deviceID == 0x1060 || //Intel82571EB
-                        deviceID == 0x1075 || //Intel82547EI
-                        deviceID == 0x1076 || //Intel82541GI
-                        deviceID == 0x1077 || //Intel82547EI
-                        deviceID == 0x1078 || //Intel82541ER
-                        deviceID == 0x1079 || //Intel82546EB
-                        deviceID == 0x107A || //Intel82546EB
-                        deviceID == 0x107B || //Intel82546EB
-                        deviceID == 0x107C || //Intel82541PI
-                        deviceID == 0x107D || //Intel82572EI
-                        deviceID == 0x107E || //Intel82572EI
-                        deviceID == 0x107F || //Intel82572EI
-                        deviceID == 0x108A || //Intel82546GB
-                        deviceID == 0x108B || //Intel82573E
-                        deviceID == 0x108C || //Intel82573E
-                        deviceID == 0x1096 || //Intel80003ES2LAN
-                        deviceID == 0x1098 || //Intel80003ES2LAN
-                        deviceID == 0x1099 || //Intel82546GB
-                        deviceID == 0x109A || //Intel82573L
-                        deviceID == 0x10A4 || //Intel82571EB
-                        deviceID == 0x10A7 || //Intel82575
-                        deviceID == 0x10A9 || //Intel82575_serdes
-                        deviceID == 0x10B5 || //Intel82546GB
-                        deviceID == 0x10B9 || //Intel82572EI
-                        deviceID == 0x10BA || //Intel80003ES2LAN
-                        deviceID == 0x10BB || //Intel80003ES2LAN
-                        deviceID == 0x10BC || //Intel82571EB
-                        deviceID == 0x10BD || //Intel82566DM_ICH9
-                        deviceID == 0x10C4 || //Intel82562GT_ICH8
-                        deviceID == 0x10C5 || //Intel82562G_ICH8
-                        deviceID == 0x10C9 || //Intel82576
-                        deviceID == 0x10D3 || //Intel82574L
-                        deviceID == 0x10A9 || //Intel82575_quadcopper
-                        deviceID == 0x10CB || //Intel82567V_ICH9
-                        deviceID == 0x10E5 || //Intel82567LM_4_ICH9
-                        deviceID == 0x10EA || //Intel82577LM
-                        deviceID == 0x10EB || //Intel82577LC
-                        deviceID == 0x10EF || //Intel82578DM
-                        deviceID == 0x10F0 || //Intel82578DC
-                        deviceID == 0x10F5 || //Intel82567LM_ICH9_egDellE6400Notebook
-                        deviceID == 0x1502 || //Intel82579LM
-                        deviceID == 0x1503 || //Intel82579V
-                        deviceID == 0x150A || //Intel82576NS
-                        deviceID == 0x150E || //Intel82580
-                        deviceID == 0x1521 || //IntelI350
-                        deviceID == 0x1533 || //IntelI210
-                        deviceID == 0x157B || //IntelI210
-                        deviceID == 0x153A || //IntelI217LM
-                        deviceID == 0x153B || //IntelI217VA
-                        deviceID == 0x1559 || //IntelI218V
-                        deviceID == 0x155A || //IntelI218LM
-                        deviceID == 0x15A0 || //IntelI218LM2
-                        deviceID == 0x15A1 || //IntelI218V
-                        deviceID == 0x15A2 || //IntelI218LM3
-                        deviceID == 0x15A3 || //IntelI218V3
-                        deviceID == 0x156F || //IntelI219LM
-                        deviceID == 0x1570 || //IntelI219V
-                        deviceID == 0x15B7 || //IntelI219LM2
-                        deviceID == 0x15B8 || //IntelI219V2
-                        deviceID == 0x15BB || //IntelI219LM3
-                        deviceID == 0x15D7 || //IntelI219LM
-                        deviceID == 0x15E3    //IntelI219LM
-                        )
-                    ) {
+                    if (Intel825xxHardware.IsSupported(vendorID, deviceID,
+                            PCI.Devices[i].ClassID, PCI.Devices[i].SubClassID)) {
                         device = PCI.Devices[i];
                         BootConsole.Write("[Intel825xx] Matched device: 0x");
                         BootConsole.Write(deviceID.ToString("X4"));
@@ -156,9 +59,10 @@ namespace guideXOS {
             RXCurrentIndex = 0;
             TXCurrentIndex = 0;
 
-            device.WriteRegister(0x04, 0x04 | 0x02 | 0x01);
-
-            IOBase = (uint)(device.Bar0 & (~0xF));
+            if (!PCI.TryMapIntel825xxBar0(device, PciMmioResource.Required825xxBytes, out IOBase)) {
+                BootConsole.WriteLine("[Intel825xx] BAR0 is invalid or unmapped; controller remains disabled");
+                return;
+            }
 
             Reset();
 

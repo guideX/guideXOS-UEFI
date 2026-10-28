@@ -31,6 +31,26 @@ namespace guideXOS.Misc {
         private const uint FaultFlagAddressCanonical = 1u << 2;
         private const uint FaultFlagAddressOverflow = 1u << 3;
         private const uint FaultRecordExtensionVersion = 1;
+        private const int DisplayPointerCheckpointWordCount = 12;
+        private const ulong DisplayStaticBaseObjectSize = 32;
+        private const ulong Cr4La57Mask = 1UL << 12;
+        private const uint PointerCheckpointPresent = 1u << 31;
+        private const uint PointerCheckpointTaggedBase = 1u << 0;
+        private const uint PointerCheckpointHasPreInitData = 1u << 1;
+        private const uint PointerCheckpointBaseCanonical = 1u << 2;
+        private const uint PointerCheckpointBaseAligned = 1u << 3;
+        private const uint PointerCheckpointBaseMapped = 1u << 4;
+        private const uint PointerCheckpointUseSiteFieldCanonical = 1u << 5;
+        private const uint PointerCheckpointUseSiteFieldMapped = 1u << 6;
+        private const uint PointerCheckpointUseSiteReferenceRead = 1u << 7;
+        private const uint PointerCheckpointUseSiteReferenceCanonical = 1u << 8;
+        private const uint PointerCheckpointRootTargetCanonical = 1u << 9;
+        private const uint PointerCheckpointRootTargetMapped = 1u << 10;
+        private const uint PointerCheckpointRootTargetTypeMatches = 1u << 11;
+        private const uint PointerCheckpointObjectFieldCanonical = 1u << 12;
+        private const uint PointerCheckpointObjectFieldMapped = 1u << 13;
+        private const uint PointerCheckpointObjectReferenceRead = 1u << 14;
+        private const uint PointerCheckpointObjectReferenceCanonical = 1u << 15;
 
         private static UefiBareMetalRecord* _record;
         private static UefiBootInfo* _bootInfo;
@@ -88,6 +108,161 @@ namespace guideXOS.Misc {
             _record = handoff == null ? null : &handoff->Diagnostics;
             if (_record == null) return;
             _record->Magic = RecordMagic;
+        }
+
+        // Capture the GC static base and field slot without dereferencing the
+        // array reference. P0 runs before InitializeModules, when the base is
+        // an encoded EEType token and the field slot is not allocated storage.
+        public static void RecordDisplayPointerCheckpoint(
+                UefiBootInfo* bootInfo, UefiBootMemoryHandoff* handoff,
+                uint stageId) {
+            if (bootInfo == null || handoff == null) return;
+            UefiBareMetalRecord* record = &handoff->Diagnostics;
+            if (record->Magic != RecordMagic) return;
+            CaptureDisplayPointerCheckpoint(record, bootInfo, stageId);
+        }
+
+        public static void RecordDisplayPointerCheckpoint(uint stageId) {
+            UefiBareMetalRecord* record = _record;
+            UefiBootInfo* bootInfo = _bootInfo;
+            if (record == null || bootInfo == null ||
+                record->Magic != RecordMagic) return;
+            CaptureDisplayPointerCheckpoint(record, bootInfo, stageId);
+        }
+
+        private static void CaptureDisplayPointerCheckpoint(
+                UefiBareMetalRecord* record, UefiBootInfo* bootInfo,
+                uint stageId) {
+            int rowIndex;
+            switch (stageId) {
+                case 0: rowIndex = 0; break;
+                case 2: rowIndex = 1; break;
+                case 3: rowIndex = 2; break;
+                case 4: rowIndex = 3; break;
+                case 5: rowIndex = 4; break;
+                default: return;
+            }
+
+            DisplayManager.GetAvailableResolutionsStaticAddresses(
+                out ulong staticBase, out ulong fieldAddress);
+            ulong* allWords = record->DisplayPointerCheckpoints;
+            ulong* row = allWords + rowIndex * DisplayPointerCheckpointWordCount;
+            ulong cr4 = Native.ReadCR4();
+            bool la57 = (cr4 & Cr4La57Mask) != 0;
+            uint flags = PointerCheckpointPresent;
+            ulong useSiteReference = 0;
+            ulong rootTarget = 0;
+            ulong observedEEType = 0;
+            ulong objectFieldAddress = 0;
+            ulong objectReference = 0;
+
+            if (stageId == 0) {
+                // The initial GC-static cell encodes EEType plus state flags.
+                // Preserve the expected static-base EEType, but never read the
+                // candidate field slot or the encoded base token.
+                if ((staticBase & 1UL) != 0)
+                    flags |= PointerCheckpointTaggedBase;
+                if ((staticBase & 2UL) != 0)
+                    flags |= PointerCheckpointHasPreInitData;
+                if ((staticBase & 3UL) == 3UL)
+                    observedEEType = staticBase & ~3UL;
+            } else if (!la57 && IsCanonicalAddress(staticBase, la57) &&
+                    (staticBase & 7UL) == 0) {
+                flags |= PointerCheckpointBaseCanonical |
+                    PointerCheckpointBaseAligned;
+
+                // First capture the exact slot the generated field access uses.
+                // The value is retained as an integer; it is never dereferenced.
+                if (IsIdentityMappedRange(staticBase, sizeof(ulong))) {
+                    flags |= PointerCheckpointBaseMapped;
+                    rootTarget = *(ulong*)staticBase;
+
+                    if (IsCanonicalAddress(fieldAddress, la57)) {
+                        flags |= PointerCheckpointUseSiteFieldCanonical;
+                        if (IsIdentityMappedRange(fieldAddress, sizeof(ulong))) {
+                            flags |= PointerCheckpointUseSiteFieldMapped;
+                            useSiteReference = *(ulong*)fieldAddress;
+                            flags |= PointerCheckpointUseSiteReferenceRead;
+                            if (IsCanonicalAddress(useSiteReference, la57))
+                                flags |= PointerCheckpointUseSiteReferenceCanonical;
+                        }
+                    }
+
+                    // Some runtimes publish a handle slot where generated
+                    // NativeAOT accessors expect the static-base object. Validate
+                    // the target before reading its EEType or field storage.
+                    if (rootTarget != 0 &&
+                            IsCanonicalAddress(rootTarget, la57)) {
+                        flags |= PointerCheckpointRootTargetCanonical;
+                        if (IsIdentityMappedRange(rootTarget,
+                                DisplayStaticBaseObjectSize)) {
+                            flags |= PointerCheckpointRootTargetMapped;
+                            observedEEType = *(ulong*)rootTarget;
+                            ulong* allCheckpointWords = record->DisplayPointerCheckpoints;
+                            ulong expectedEEType = allCheckpointWords[9];
+                            if (expectedEEType != 0 &&
+                                    observedEEType == expectedEEType)
+                                flags |= PointerCheckpointRootTargetTypeMatches;
+
+                            if ((flags & PointerCheckpointRootTargetTypeMatches) != 0 &&
+                                    rootTarget <= ~0UL - 16UL) {
+                                objectFieldAddress = rootTarget + 16UL;
+                                if (IsCanonicalAddress(objectFieldAddress, la57)) {
+                                    flags |= PointerCheckpointObjectFieldCanonical;
+                                    if (IsIdentityMappedRange(objectFieldAddress,
+                                            sizeof(ulong))) {
+                                        flags |= PointerCheckpointObjectFieldMapped;
+                                        objectReference = *(ulong*)objectFieldAddress;
+                                        flags |= PointerCheckpointObjectReferenceRead;
+                                        if (IsCanonicalAddress(objectReference, la57))
+                                            flags |= PointerCheckpointObjectReferenceCanonical;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            row[0] = stageId;
+            row[1] = flags;
+            row[2] = (uint)bootInfo->BootMode;
+            row[3] = record->Stage;
+            row[4] = record->Substage;
+            row[5] = staticBase;
+            row[6] = fieldAddress;
+            row[7] = useSiteReference;
+            row[8] = observedEEType;
+            row[9] = stageId == 0 ? observedEEType :
+                record->DisplayPointerCheckpoints[9];
+            row[10] = objectFieldAddress;
+            row[11] = objectReference;
+
+            WriteSerialText('B', 'M', '3', 'C', ':');
+            WriteSerialHex(stageId, 8);
+            WriteSerialByte(':');
+            WriteSerialHex(flags, 8);
+            WriteSerialByte(':');
+            WriteSerialHex((uint)bootInfo->BootMode, 8);
+            WriteSerialByte(':');
+            WriteSerialHex(record->Stage, 8);
+            WriteSerialByte(':');
+            WriteSerialHex(record->Substage, 8);
+            WriteSerialByte(':');
+            WriteSerialHex(staticBase, 16);
+            WriteSerialByte(':');
+            WriteSerialHex(fieldAddress, 16);
+            WriteSerialByte(':');
+            WriteSerialHex(useSiteReference, 16);
+            WriteSerialByte(':');
+            WriteSerialHex(rootTarget, 16);
+            WriteSerialByte(':');
+            WriteSerialHex(observedEEType, 16);
+            WriteSerialByte(':');
+            WriteSerialHex(objectFieldAddress, 16);
+            WriteSerialByte(':');
+            WriteSerialHex(objectReference, 16);
+            WriteSerialByte('\n');
         }
 
         public static void Record(uint stage, uint substage = 0) {
@@ -647,6 +822,17 @@ namespace guideXOS.Misc {
             DrawFaultValue('P', _record->FaultCr3, 296);
             DrawFaultValue('S', _record->FaultRsp, 316);
             DrawFaultValue('F', _record->FaultRflags, 336);
+            ulong* checkpoints = _record->DisplayPointerCheckpoints;
+            DrawFaultCheckpoint('0', checkpoints[5], 'B',
+                checkpoints[6], 'S', 360);
+            DrawFaultCheckpoint('2', checkpoints[1 * DisplayPointerCheckpointWordCount + 6], 'S',
+                checkpoints[1 * DisplayPointerCheckpointWordCount + 7], 'V', 382);
+            DrawFaultCheckpoint('3', checkpoints[2 * DisplayPointerCheckpointWordCount + 6], 'S',
+                checkpoints[2 * DisplayPointerCheckpointWordCount + 7], 'V', 404);
+            DrawFaultCheckpoint('4', checkpoints[3 * DisplayPointerCheckpointWordCount + 6], 'S',
+                checkpoints[3 * DisplayPointerCheckpointWordCount + 7], 'V', 426);
+            DrawFaultCheckpoint('5', checkpoints[4 * DisplayPointerCheckpointWordCount + 6], 'S',
+                checkpoints[4 * DisplayPointerCheckpointWordCount + 7], 'V', 448);
         }
 
         private static void DrawMilestoneStripWithoutFault() {
@@ -676,6 +862,22 @@ namespace guideXOS.Misc {
         private static void DrawFaultBit(char label, bool value, int y) {
             DrawChar(8, y, label, 2, 0xFFFFFFFFu);
             DrawChar(28, y, value ? '1' : '0', 2, 0xFFFFFFFFu);
+        }
+
+        private static void DrawFaultCheckpoint(char stage, ulong first,
+                char firstLabel, ulong second, char secondLabel, int y) {
+            DrawChar(8, y, stage, 2, 0xFFFFFFFFu);
+            DrawChar(26, y, firstLabel, 2, 0xFFFFFFFFu);
+            DrawChar(252, y, secondLabel, 2, 0xFFFFFFFFu);
+            for (int i = 0; i < 16; i++) {
+                int shift = 60 - i * 4;
+                DrawChar(42 + i * 13, y,
+                    HexChar((int)((first >> shift) & 0xFUL)), 2,
+                    0xFFFFFFFFu);
+                DrawChar(268 + i * 13, y,
+                    HexChar((int)((second >> shift) & 0xFUL)), 2,
+                    0xFFFFFFFFu);
+            }
         }
 
         private static char HexChar(int digit) => digit < 10

@@ -103,6 +103,30 @@ namespace guideXOS.Misc {
                 bootInfo->Reserved[0], memoryHandoff->KernelSpanBytes);
             Allocator.ReserveAddressRange((IntPtr)0x4000000,
                 bootInfo->Reserved[1], memoryHandoff->KernelSpanBytes);
+            const ulong maximumCanonicalAddress = 0x00007FFFFFFFFFFFUL;
+            ulong memoryMapBytes = 0;
+            bool validUefiMemoryMap = bootInfo->HasMemoryMap &&
+                bootInfo->MemoryMap != 0 &&
+                bootInfo->MemoryMapEntryCount > 0 &&
+                bootInfo->MemoryMapEntryCount <= 65536 &&
+                bootInfo->MemoryMapDescriptorSize >= 40 &&
+                bootInfo->MemoryMapDescriptorSize <= 4096 &&
+                bootInfo->MemoryMapEntryCount <= 0xFFFFFFFFFFFFFFFFUL /
+                    bootInfo->MemoryMapDescriptorSize;
+            if (validUefiMemoryMap) {
+                memoryMapBytes = bootInfo->MemoryMapEntryCount *
+                    bootInfo->MemoryMapDescriptorSize;
+                validUefiMemoryMap = memoryMapBytes != 0 &&
+                    bootInfo->MemoryMap <= maximumCanonicalAddress &&
+                    memoryMapBytes - 1 <= maximumCanonicalAddress -
+                        bootInfo->MemoryMap;
+            }
+            if (validUefiMemoryMap) {
+                // PCI MMIO validation runs after ExitBootServices, so retain
+                // the loader-owned descriptor buffer for the device lifetime.
+                Allocator.ReserveAddressRange((IntPtr)0x4000000,
+                    bootInfo->MemoryMap, memoryMapBytes);
+            }
             // The bootloader's EfiLoaderData pages remain live after
             // ExitBootServices. Keep the kernel allocator from reusing the
             // ramdisk range: RdskFS reads its entries in place for the whole
@@ -127,10 +151,6 @@ namespace guideXOS.Misc {
                     (ulong)sizeof(UefiBootMemoryHandoff));
             }
 #if UEFI_DIAGNOSTIC_BM1
-            ulong memoryMapBytes = bootInfo->MemoryMapEntryCount *
-                bootInfo->MemoryMapDescriptorSize;
-            Allocator.ReserveAddressRange((IntPtr)0x4000000,
-                bootInfo->MemoryMap, memoryMapBytes);
             Allocator.ReserveAddressRange((IntPtr)0x4000000,
                 (ulong)bootInfo, (ulong)sizeof(UefiBootInfo));
             if (bootInfo->FramebufferBase != 0 && bootInfo->FramebufferSize != 0)
@@ -163,10 +183,15 @@ namespace guideXOS.Misc {
             // overwrites the image metadata.  The allocator is initialized
             // immediately above, so InitializeModules now has its required
             // object-storage owner before any managed static is used.
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.RecordDisplayPointerCheckpoint(bootInfo,
+                memoryHandoff, 0);
+#endif
             StartupCodeHelpers.InitializeModules(modulesPtr);
 #if UEFI_DIAGNOSTIC_BM1
             BareMetalMilestones.Configure(bootInfo, memoryHandoff);
             BareMetalMilestones.Record(4);
+            BareMetalMilestones.RecordDisplayPointerCheckpoint(2);
 
             // Install the managed kernel IDT before any framebuffer operation
             // or kernel splash transition. The assembly-only early IDT remains
@@ -222,6 +247,7 @@ namespace guideXOS.Misc {
                 Framebuffer.Graphics.Clear(0x0); // Clear screen
 #if UEFI_DIAGNOSTIC_BM1
                 BareMetalMilestones.Record(6, 1);
+                BareMetalMilestones.RecordDisplayPointerCheckpoint(3);
 #endif
             }
             BootConsole.WriteLine("[BS] INIT");
@@ -384,7 +410,9 @@ namespace guideXOS.Misc {
                  SMBIOS.Initialize();
             BootConsole.WriteLine("[PCI] INIT");
             SATA.ResetForBoot();
-            PCI.Initialize();
+            PCI.Initialize(validUefiMemoryMap ? bootInfo->MemoryMap : 0,
+                validUefiMemoryMap ? bootInfo->MemoryMapEntryCount : 0,
+                validUefiMemoryMap ? bootInfo->MemoryMapDescriptorSize : 0);
             BootConsole.WriteLine("[PCI] enumerated");
 #if UEFI_DIAGNOSTIC_BM1
             BareMetalMilestones.Record(8, 8);
@@ -702,8 +730,8 @@ namespace guideXOS.Misc {
                 bootInfo->MemoryMapDescriptorSize > 4096 ||
                 bootInfo->MemoryMapEntryCount > 0xFFFF_FFFF_FFFF_FFFFUL /
                     bootInfo->MemoryMapDescriptorSize ||
-                sizeof(UefiBootMemoryHandoff) != 16600 ||
-                sizeof(UefiBareMetalRecord) != 176) return false;
+                sizeof(UefiBootMemoryHandoff) != 17080 ||
+                sizeof(UefiBareMetalRecord) != 656) return false;
 
             ulong mapBytes = bootInfo->MemoryMapEntryCount *
                 bootInfo->MemoryMapDescriptorSize;

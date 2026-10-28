@@ -64,6 +64,8 @@ namespace paging
         UINT64 FaultEffectiveAddress;
         UINT32 FaultCaptureFlags;
         UINT32 FaultRecordVersion;
+        // BM3C: five fixed 12-word pointer checkpoints (P0/P2/P3/P4/P5).
+        UINT64 DisplayPointerCheckpoints[5][12];
     };
 #endif
 
@@ -83,10 +85,10 @@ namespace paging
     };
 
 #if defined(UEFI_DIAGNOSTIC_BM1)
-    static_assert(sizeof(BareMetalDiagnosticRecord) == 176,
-        "C# and UEFI BM3B diagnostic record layouts must match");
-    static_assert(sizeof(BootMemoryHandoff) == 16600,
-        "C# and UEFI BM3B handoff layouts must match");
+    static_assert(sizeof(BareMetalDiagnosticRecord) == 656,
+        "C# and UEFI BM3C diagnostic record layouts must match");
+    static_assert(sizeof(BootMemoryHandoff) == 17080,
+        "C# and UEFI BM3C handoff layouts must match");
 #endif
 
     // Build a minimal identity-mapped page table set for the ranges provided.

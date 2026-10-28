@@ -1,5 +1,6 @@
 using guideXOS.Graph;
 using guideXOS.FS;
+using Internal.Runtime.CompilerServices;
 
 namespace guideXOS.Kernel.Drivers {
     public struct Resolution {
@@ -20,6 +21,22 @@ namespace guideXOS.Kernel.Drivers {
             new(800, 600), new(1024, 768), new(1152, 864), new(1280, 720), new(1280, 768), new(1280, 800),
             new(1366, 768), new(1440, 900), new(1600, 900), new(1680, 1050), new(1920, 1080)
         };
+
+#if UEFI_DIAGNOSTIC_BM1
+        // The BM3B NativeAOT layout puts _svga in the first GC-static slot
+        // and the AvailableResolutions auto-property backing field in the
+        // next slot. Taking these addresses does not read either reference.
+        internal static unsafe void GetAvailableResolutionsStaticAddresses(
+                out ulong staticBaseAddress, out ulong fieldAddress) {
+            ulong firstReferenceSlot =
+                (ulong)(nuint)Unsafe.AsPointer(ref _svga);
+            staticBaseAddress = firstReferenceSlot >= (ulong)sizeof(nint)
+                ? firstReferenceSlot - (ulong)sizeof(nint) : ~0UL;
+            fieldAddress = firstReferenceSlot <=
+                    ~0UL - (ulong)sizeof(nint)
+                ? firstReferenceSlot + (ulong)sizeof(nint) : ~0UL;
+        }
+#endif
 
         static bool EnsureSvga() {
             if (_svgaChecked) return _svga != null;

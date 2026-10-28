@@ -167,7 +167,7 @@ namespace guideXOS.Misc {
     /// handoff in the already mapped bootloader image and requires no heap.
     /// </summary>
     [StructLayout(LayoutKind.Sequential, Pack = 8)]
-    internal struct UefiBareMetalRecord {
+    internal unsafe struct UefiBareMetalRecord {
         public uint Magic;
         public uint Stage;
         public uint Substage;
@@ -200,6 +200,11 @@ namespace guideXOS.Misc {
         public ulong FaultEffectiveAddress;
         public uint FaultCaptureFlags;
         public uint FaultRecordVersion;
+        // BM3C records five bounded snapshots: P0, P2, P3, P4, and P5.
+        // Each row stores stage, flags, boot mode, BM stage/substage,
+        // accessor base, generated use-site field/value, root target,
+        // validated target EEType, and target field/value.
+        public fixed ulong DisplayPointerCheckpoints[60];
     }
 #endif
 

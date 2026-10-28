@@ -203,9 +203,11 @@ namespace Internal.Runtime.CompilerHelpers {
                         }
                     }
 
-                    var handle = malloc((ulong)sizeof(IntPtr));
-                    *(IntPtr*)handle = Unsafe.As<object, IntPtr>(ref obj);
-                    *pBlock = handle;
+                    // NativeAOT GC-static accessors treat this cell as the
+                    // static-base object itself. Publishing a malloc-backed
+                    // handle here adds an indirection that generated field
+                    // accessors do not follow.
+                    *pBlock = Unsafe.As<object, IntPtr>(ref obj);
                 }
             }
         }

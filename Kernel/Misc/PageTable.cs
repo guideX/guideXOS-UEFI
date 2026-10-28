@@ -92,8 +92,10 @@ namespace guideXOS {
         /// as identity-mapped, writable, uncached, and non-executable memory.
         /// </summary>
         public static bool MapMmioRange(ulong physicalAddress, ulong length) {
+            const ulong maximumCanonicalAddress = 0x00007FFFFFFFFFFFUL;
             if (physicalAddress == 0 || length == 0 ||
-                physicalAddress > 0xFFFFFFFFFFFFFFFFUL - (length - 1)) return false;
+                physicalAddress > maximumCanonicalAddress ||
+                length - 1 > maximumCanonicalAddress - physicalAddress) return false;
 
             ulong firstPage = physicalAddress & ~0xFFFUL;
             ulong lastPage = (physicalAddress + length - 1) & ~0xFFFUL;
@@ -110,6 +112,10 @@ namespace guideXOS {
                 const ulong writeThrough = 1UL << 3;
                 const ulong cacheDisable = 1UL << 4;
                 const ulong noExecute = 1UL << 63;
+                ulong existingEntry = *pte;
+                if ((existingEntry & present) != 0 &&
+                    (existingEntry & PageMask) != (address & PageMask))
+                    return false;
                 *pte = (address & PageMask) | present | writable |
                        writeThrough | cacheDisable | noExecute;
                 Native.Invlpg(address);

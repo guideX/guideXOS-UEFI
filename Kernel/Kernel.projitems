@@ -43,6 +43,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Drivers\LocalAPICTimer.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Drivers\PCI.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Drivers\PCIExpress.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Drivers\PciMmioResource.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Drivers\Intel825xxHardware.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Drivers\PIC.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Drivers\PIT.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Drivers\Power.cs" />

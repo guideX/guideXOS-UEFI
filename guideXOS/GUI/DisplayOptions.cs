@@ -73,6 +73,9 @@ namespace guideXOS.GUI {
         }
 
         private void InitializeDisplayOptions() {
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.RecordDisplayPointerCheckpoint(4);
+#endif
             IsResizable = false;
             ShowInTaskbar = false;
             ShowMaximize = false;
@@ -83,6 +86,9 @@ namespace guideXOS.GUI {
             _lastBackgroundPath = null;
             
             // Initialize resolution list
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.RecordDisplayPointerCheckpoint(5);
+#endif
             var list = DisplayManager.AvailableResolutions;
             if (list != null && list.Length > 0) {
                 var cur = DisplayManager.Current;
