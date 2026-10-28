@@ -15,7 +15,7 @@ namespace paging
     // old 512-entry tracking limit could leave newly allocated tables
     // inaccessible after CR3 is switched.
     // Extra trailing entry remains zero and terminates the handoff list.
-    static BootMemoryHandoff g_bootMemoryHandoff;
+    static BootMemoryHandoffStorage g_bootMemoryHandoffStorage;
     static UINTN g_ptPageCount = 0;
 
     static EFI_STATUS AllocTable(EFI_SYSTEM_TABLE* SystemTable, EFI_PHYSICAL_ADDRESS* outPhys)
@@ -31,7 +31,7 @@ namespace paging
         
         // Track this page for later self-mapping
         if (g_ptPageCount < MAX_PT_PAGES) {
-            g_bootMemoryHandoff.PageTablePages[g_ptPageCount++] = *outPhys;
+            g_bootMemoryHandoffStorage.Legacy.PageTablePages[g_ptPageCount++] = *outPhys;
         }
         
         return EFI_SUCCESS;
@@ -175,7 +175,7 @@ namespace paging
         if (!SystemTable || !rangesBegin || !rangesEnd || !sizesBegin || !out) return EFI_INVALID_PARAMETER;
 
         // Reset page table tracking
-        SetMem(&g_bootMemoryHandoff, sizeof(g_bootMemoryHandoff), 0);
+        SetMem(&g_bootMemoryHandoffStorage, sizeof(g_bootMemoryHandoffStorage), 0);
         g_ptPageCount = 0;
 
         EFI_PHYSICAL_ADDRESS pml4Phys = 0;
@@ -195,7 +195,7 @@ namespace paging
             UINTN currentCount = g_ptPageCount;
             for (UINTN i = mappedCount; i < currentCount; ++i) {
                 st = MapIdentityRange(SystemTable, pml4Phys,
-                    g_bootMemoryHandoff.PageTablePages[i], EFI_PAGE_SIZE);
+                    g_bootMemoryHandoffStorage.Legacy.PageTablePages[i], EFI_PAGE_SIZE);
                 if (EFI_ERROR(st)) return st;
             }
             mappedCount = currentCount;
@@ -218,7 +218,7 @@ namespace paging
             UINTN currentCount = g_ptPageCount;
             for (UINTN i = mappedCount; i < currentCount; ++i) {
                 EFI_STATUS st = MapIdentityRange(SystemTable, pml4Phys,
-                    g_bootMemoryHandoff.PageTablePages[i], EFI_PAGE_SIZE);
+                    g_bootMemoryHandoffStorage.Legacy.PageTablePages[i], EFI_PAGE_SIZE);
                 if (EFI_ERROR(st)) return st;
             }
             mappedCount = currentCount;
@@ -228,7 +228,12 @@ namespace paging
 
     BootMemoryHandoff* GetBootMemoryHandoff()
     {
-        return &g_bootMemoryHandoff;
+        return &g_bootMemoryHandoffStorage.Legacy;
+    }
+
+    PciResourceHandoff* GetPciResourceHandoff()
+    {
+        return &g_bootMemoryHandoffStorage.PciResources;
     }
 }
 }

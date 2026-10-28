@@ -37,6 +37,9 @@ namespace guideXOS
     static const uint32_t BOOTINFO_FLAG_SIMPLE_POINTER   = (1u << 3);
     static const uint32_t BOOTINFO_FLAG_ABSOLUTE_POINTER = (1u << 4);
     static const uint32_t BOOTINFO_FLAG_TEXT_INPUT_EX    = (1u << 5);
+    // New consumers may read the versioned PCI resource block appended to
+    // the unchanged BootMemoryHandoff v1 prefix. Old readers ignore the bit.
+    static const uint32_t BOOTINFO_FLAG_PCI_RESOURCE_HANDOFF = (1u << 6);
 
     struct BootInfo
     {

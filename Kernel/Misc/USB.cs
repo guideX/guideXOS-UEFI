@@ -172,70 +172,262 @@ namespace guideXOS.Misc {
         }
 
         /// <summary>
-        /// Validate the xHCI PCI BAR shape and report the safe MMIO frontier.
-        /// The assigned BAR aperture length is not available through the
-        /// current PCI/UEFI handoff, so this diagnostic does not map or read
-        /// controller registers.
+        /// Match the firmware's copied BAR resource against the kernel PCI
+        /// scan, map only the capability header as UC read-only memory, and
+        /// parse its fixed capability registers. This path has no MMIO writes.
         /// </summary>
-        public static void ReportXhciInitializationFrontier() {
+        internal static void ReportXhciInitializationFrontier(
+                UefiBootInfo* bootInfo, UefiPciResourceHandoff* handoff) {
             if (PCI.Devices == null) {
                 BootConsole.WriteLine("[USB][XHCI] stop=pci-not-initialized");
                 return;
             }
-
-            const int diagnosticLimit = 8;
-            int candidates = 0;
-            int suppressed = 0;
-            for (int i = 0; i < PCI.Devices.Count; i++) {
-                PCIDevice device = PCI.Devices[i];
-                if (device == null || !XhciDiscovery.IsXhciFunction(
-                    device.ClassID, device.SubClassID, device.ProgIF)) {
-                    continue;
-                }
-                if (WasXhciFunctionReported(i, device)) continue;
-
-                candidates++;
-                if (candidates > diagnosticLimit) {
-                    suppressed++;
-                    continue;
-                }
-
-                string address = $"pci={device.Bus:x2}:{device.Slot:x2}.{device.Function:x1} " +
-                    $"id={device.VendorID:x4}:{device.DeviceID:x4}";
-                BootConsole.WriteLine($"[USB][XHCI] controller=found {address}");
-
-                XhciDiscovery.BarInfo bar;
-                XhciDiscovery.BarStatus barStatus = XhciDiscovery.TryParseMemoryBar(
-                    device.Bar0, device.Bar1, hasUpperBar: true, out bar);
-                if (barStatus != XhciDiscovery.BarStatus.Valid) {
-                    BootConsole.WriteLine(
-                        $"[USB][XHCI] bar-resource=invalid status={barStatus} {address}");
-                    BootConsole.WriteLine(
-                        $"[USB][XHCI] mmio-access=unavailable capability-header=not-read " +
-                        $"capabilities=not-decoded {address}");
-                    continue;
-                }
-
+            if (handoff == null) {
                 BootConsole.WriteLine(
-                    $"[USB][XHCI] bar-shape=validated base=0x{bar.BaseAddress:x} " +
-                    $"width={(bar.Is64Bit ? 64 : 32)} prefetchable={bar.IsPrefetchable} {address}");
-
-                BootConsole.WriteLine(
-                    $"[USB][XHCI] bar-resource=unverified reason=aperture-size-unavailable {address}");
-                BootConsole.WriteLine(
-                    $"[USB][XHCI] mmio-access=unavailable reason=resource-bounds-unverified " +
-                    $"capability-header=not-read capabilities=not-decoded {address}");
-            }
-
-            if (candidates == 0) {
-                BootConsole.WriteLine(
-                    "[USB][XHCI] stop=no-controller-found stage=pci-discovery-complete");
+                    "[USB][XHCI] stop=resource-handoff-unavailable " +
+                    "reason=legacy-loader-or-invalid-extension; capability-read=not-attempted");
                 return;
             }
 
-            BootConsole.WriteLine(
-                $"[USB][XHCI] stop=bar-aperture-size-unavailable candidates={candidates} " +
-                $"suppressed={suppressed}; xHCI MMIO/DMA untouched");
+            if (sizeof(UefiPciResourceHandoff) != 528) {
+                BootConsole.WriteLine(
+                    "[USB][XHCI] stop=resource-handoff-invalid reason=kernel-layout");
+                return;
+            }
+            if (handoff->EntryCount > XhciDiscovery.MaximumFirmwareResources) {
+                BootConsole.WriteLine(
+                    "[USB][XHCI] stop=resource-handoff-invalid reason=entry-count");
+                return;
+            }
+
+            XhciDiscovery.FirmwareResourceEntry[] entries =
+                new XhciDiscovery.FirmwareResourceEntry[(int)handoff->EntryCount];
+            byte* storage = handoff->EntryStorage;
+            XhciDiscovery.FirmwareResourceEntry* source =
+                (XhciDiscovery.FirmwareResourceEntry*)storage;
+            for (int i = 0; i < entries.Length; i++) entries[i] = source[i];
+
+            if (!XhciDiscovery.TryValidateResourceContract(handoff->Magic,
+                    handoff->Version, handoff->EntrySize, handoff->EntryCount,
+                    handoff->DiscoveryStatus, entries,
+                    out XhciDiscovery.ResourceFailure contractFailure)) {
+                BootConsole.WriteLine(
+                    $"[USB][XHCI] stop=resource-handoff-rejected reason={contractFailure} " +
+                    $"firmware-status={handoff->DiscoveryStatus}; capability-read=not-attempted");
+                return;
+            }
+
+            if (!FirmwareResourcesMatchKernelDiscovery(entries)) {
+                BootConsole.WriteLine(
+                    "[USB][XHCI] stop=resource-handoff-rejected " +
+                    "reason=firmware-kernel-discovery-mismatch; capability-read=not-attempted");
+                return;
+            }
+
+            if (entries.Length == 0) {
+                BootConsole.WriteLine(
+                    "[USB][XHCI] stop=no-controller-found source=efi-pci-io; " +
+                    "capability-read=not-attempted");
+                return;
+            }
+
+            for (int i = 0; i < entries.Length; i++) {
+                XhciDiscovery.FirmwareResourceEntry entry = entries[i];
+                string address = $"pci={entry.Segment:x4}:{entry.Bus:x2}:" +
+                    $"{entry.Device:x2}.{entry.Function:x1} " +
+                    $"id={entry.VendorId:x4}:{entry.DeviceId:x4}";
+                if (!TryFindPciDevice(entry, out PCIDevice device,
+                        out bool identityValid)) {
+                    BootConsole.WriteLine(
+                        $"[USB][XHCI] resource-rejected reason=" +
+                        $"{(identityValid ? "pci-function-missing" : "pci-identity-mismatch")} {address}");
+                    continue;
+                }
+
+                if (!XhciDiscovery.TryValidateFirmwareResource(entry,
+                        device.Segment, (byte)device.Bus, (byte)device.Slot,
+                        (byte)device.Function, device.VendorID, device.DeviceID,
+                        device.ClassID, device.SubClassID, device.ProgIF,
+                        device.Bar0, device.Bar1,
+                        out XhciDiscovery.ResourceFailure resourceFailure)) {
+                    BootConsole.WriteLine(
+                        $"[USB][XHCI] resource-rejected reason={resourceFailure} {address}");
+                    continue;
+                }
+
+                if (!MmioMappingDoesNotOverlapOtherMemory(bootInfo, entry)) {
+                    BootConsole.WriteLine(
+                        $"[USB][XHCI] mmio-map=blocked reason=memory-map-conflict-or-invalid " +
+                        $"base=0x{entry.MmioBase:x} {address}");
+                    BootConsole.WriteLine(
+                        $"[USB][XHCI] capability-read=not-attempted {address}");
+                    continue;
+                }
+
+                if (!PageTable.TryMapMmioAccess(entry.MmioBase,
+                        entry.ApertureLength, 0,
+                        XhciDiscovery.CapabilityHeaderLength,
+                        out byte* registers)) {
+                    BootConsole.WriteLine(
+                        $"[USB][XHCI] mmio-map=failed reason=range-pat-or-page-table " +
+                        $"base=0x{entry.MmioBase:x} length=0x{entry.ApertureLength:x} {address}");
+                    BootConsole.WriteLine(
+                        $"[USB][XHCI] capability-read=not-attempted {address}");
+                    continue;
+                }
+
+                MappedXhciMmioReader reader = new(registers, entry.ApertureLength,
+                    XhciDiscovery.CapabilityHeaderLength);
+                if (!XhciDiscovery.TryReadCapabilities(reader,
+                        entry.ApertureLength,
+                        out XhciDiscovery.Capabilities capabilities,
+                        out XhciDiscovery.CapabilityFailure capabilityFailure)) {
+                    BootConsole.WriteLine(
+                        $"[USB][XHCI] capability-read=failed source=hardware-mmio " +
+                        $"reason={capabilityFailure} {address}");
+                    continue;
+                }
+
+                BootConsole.WriteLine(
+                    $"[USB][XHCI] capability-read=hardware-mmio source=efi-pci-io " +
+                    $"base=0x{entry.MmioBase:x} aperture=0x{entry.ApertureLength:x} {address}");
+                BootConsole.WriteLine(
+                    $"[USB][XHCI] capabilities version=0x{capabilities.ControllerVersion:x4} " +
+                    $"caplength=0x{capabilities.CapabilityLength:x2} " +
+                    $"slots={capabilities.MaximumDeviceSlots} " +
+                    $"interrupters={capabilities.AdvertisedInterruptResources} " +
+                    $"ports={capabilities.RootPortCount} " +
+                    $"scratchpads={capabilities.ScratchpadBufferCount} " +
+                    $"ctx64={capabilities.Uses64ByteContexts} " +
+                    $"addr64={capabilities.Supports64BitAddresses} " +
+                    $"dboff=0x{capabilities.DoorbellOffset:x} " +
+                    $"rtsoff=0x{capabilities.RuntimeRegisterOffset:x}");
+            }
+        }
+
+        private static bool TryFindPciDevice(
+                XhciDiscovery.FirmwareResourceEntry entry,
+                out PCIDevice result, out bool identityValid) {
+            result = null;
+            identityValid = true;
+            bool foundBdf = false;
+            for (int i = 0; i < PCI.Devices.Count; i++) {
+                PCIDevice candidate = PCI.Devices[i];
+                if (candidate == null || candidate.Segment != entry.Segment ||
+                    candidate.Bus != entry.Bus || candidate.Slot != entry.Device ||
+                    candidate.Function != entry.Function) continue;
+                if (candidate.VendorID != entry.VendorId ||
+                    candidate.DeviceID != entry.DeviceId ||
+                    !XhciDiscovery.IsXhciFunction(candidate.ClassID,
+                        candidate.SubClassID, candidate.ProgIF)) {
+                    identityValid = false;
+                    return false;
+                }
+                if (!foundBdf) {
+                    result = candidate;
+                    foundBdf = true;
+                } else if (result.Bar0 != candidate.Bar0 ||
+                           result.Bar1 != candidate.Bar1) {
+                    identityValid = false;
+                    return false;
+                }
+            }
+            return foundBdf;
+        }
+
+        private static bool MmioMappingDoesNotOverlapOtherMemory(
+                UefiBootInfo* bootInfo,
+                XhciDiscovery.FirmwareResourceEntry entry) {
+            if (bootInfo == null || !bootInfo->HasMemoryMap ||
+                bootInfo->MemoryMap == 0 || bootInfo->MemoryMapEntryCount == 0 ||
+                bootInfo->MemoryMapEntryCount > 65536 ||
+                bootInfo->MemoryMapDescriptorSize < 40 ||
+                bootInfo->MemoryMapDescriptorSize > 4096 ||
+                bootInfo->MemoryMapEntryCount >
+                    0xFFFF_FFFF_FFFF_FFFFUL / bootInfo->MemoryMapDescriptorSize)
+                return false;
+
+            if (!XhciDiscovery.TryBuildMmioMappingPlan(entry.MmioBase,
+                    entry.ApertureLength, 0,
+                    XhciDiscovery.CapabilityHeaderLength,
+                    XhciDiscovery.PageSize, out XhciDiscovery.MmioMappingPlan plan) ||
+                plan.PageCount == 0 || plan.PageCount > 16) return false;
+
+            ulong mapBytes = bootInfo->MemoryMapEntryCount *
+                bootInfo->MemoryMapDescriptorSize;
+            if (bootInfo->MemoryMap > 0xFFFF_FFFF_FFFF_FFFFUL - mapBytes)
+                return false;
+            ulong mappedLength = plan.PageCount * XhciDiscovery.PageSize;
+            ulong mappedEnd = plan.FirstPhysicalPage + mappedLength - 1;
+            byte* map = (byte*)bootInfo->MemoryMap;
+            for (ulong i = 0; i < bootInfo->MemoryMapEntryCount; i++) {
+                byte* descriptor = map + i * bootInfo->MemoryMapDescriptorSize;
+                uint type = *(uint*)descriptor;
+                ulong descriptorBase = *(ulong*)(descriptor + 8);
+                ulong pageCount = *(ulong*)(descriptor + 24);
+                if (pageCount == 0 || pageCount >
+                    0xFFFF_FFFF_FFFF_FFFFUL / XhciDiscovery.PageSize) continue;
+                ulong descriptorLength = pageCount * XhciDiscovery.PageSize;
+                if (descriptorBase > 0xFFFF_FFFF_FFFF_FFFFUL -
+                        (descriptorLength - 1)) continue;
+                ulong descriptorEnd = descriptorBase + descriptorLength - 1;
+                if (descriptorBase <= mappedEnd && plan.FirstPhysicalPage <= descriptorEnd &&
+                    type != 11) { // EfiMemoryMappedIO is the only accepted overlap.
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool FirmwareResourcesMatchKernelDiscovery(
+                XhciDiscovery.FirmwareResourceEntry[] entries) {
+            int uniqueControllers = 0;
+            for (int i = 0; i < PCI.Devices.Count; i++) {
+                PCIDevice device = PCI.Devices[i];
+                if (device == null || !XhciDiscovery.IsXhciFunction(
+                        device.ClassID, device.SubClassID, device.ProgIF) ||
+                    WasXhciFunctionReported(i, device)) continue;
+                uniqueControllers++;
+
+                bool resourceFound = false;
+                for (int j = 0; j < entries.Length; j++) {
+                    XhciDiscovery.FirmwareResourceEntry entry = entries[j];
+                    if (entry.Segment == device.Segment && entry.Bus == device.Bus &&
+                        entry.Device == device.Slot && entry.Function == device.Function &&
+                        entry.VendorId == device.VendorID && entry.DeviceId == device.DeviceID) {
+                        resourceFound = true;
+                        break;
+                    }
+                }
+                if (!resourceFound) return false;
+            }
+            return uniqueControllers == entries.Length;
+        }
+
+        private sealed class MappedXhciMmioReader : XhciDiscovery.IReadOnlyMmioReader {
+            private readonly byte* _registers;
+            private readonly ulong _resourceLength;
+            private readonly ulong _mappedAccessLength;
+
+            public MappedXhciMmioReader(byte* registers, ulong resourceLength,
+                    ulong mappedAccessLength) {
+                _registers = registers;
+                _resourceLength = resourceLength;
+                _mappedAccessLength = mappedAccessLength;
+            }
+
+            public bool IsMapped => _registers != null;
+
+            public bool TryRead32(ulong offset, out uint value) {
+                value = 0;
+                if (!IsMapped || (offset & 3UL) != 0 ||
+                    !XhciDiscovery.IsSubrangeWithinResource(
+                        _resourceLength, offset, sizeof(uint)) ||
+                    !XhciDiscovery.IsSubrangeWithinResource(
+                        _mappedAccessLength, offset, sizeof(uint))) return false;
+                value = Native.ReadMmio32((ulong)(_registers + offset));
+                return true;
+            }
         }
 
         private static bool WasXhciFunctionReported(int index, PCIDevice device) {

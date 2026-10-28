@@ -1,4 +1,5 @@
 using guideXOS.Misc;
+using guideXOS.Kernel.Drivers;
 
 namespace guideXOS {
     public static unsafe class PageTable {
@@ -117,6 +118,88 @@ namespace guideXOS {
                 if (address == lastPage) return true;
                 if (address > 0xFFFFFFFFFFFFFFFFUL - 0x1000UL) return false;
             }
+        }
+
+        /// <summary>
+        /// Establish a supervisor-only, read-only, NX identity mapping for the
+        /// page span needed by a validated MMIO access. Unlike MapMmioRange,
+        /// this path requires empty target leaves and uses a PAT entry proven
+        /// to mean UC before installing any target PTE.
+        /// </summary>
+        internal static bool TryMapMmioAccess(ulong physicalAddress,
+                ulong resourceLength, ulong accessOffset, ulong accessLength,
+                out byte* accessPointer) {
+            accessPointer = null;
+            if (!CPUIDHelper.HasPAT() ||
+                physicalAddress < 0x100000UL ||
+                !XhciDiscovery.TryBuildMmioMappingPlan(physicalAddress,
+                    resourceLength, accessOffset, accessLength,
+                    XhciDiscovery.PageSize, out XhciDiscovery.MmioMappingPlan plan) ||
+                plan.PageCount == 0 || plan.PageCount > 16) return false;
+
+            ulong patValue = Native.Rdmsr(0x277UL);
+            if (!XhciDiscovery.TryBuildUncachedPteFlags(patValue,
+                    out ulong cacheFlags)) return false;
+
+            ulong* root = CurrentRoot;
+            if (root == null) return false;
+            ulong** leafEntries = stackalloc ulong*[(int)plan.PageCount];
+            for (ulong i = 0; i < plan.PageCount; i++) {
+                ulong pageAddress = plan.FirstPhysicalPage + i * XhciDiscovery.PageSize;
+                if (!TryGetOrCreateMmioPte(root, pageAddress,
+                        out leafEntries[(int)i])) return false;
+
+                // Do not retag an existing mapping: it may be an unrelated
+                // alias or still have cacheable lines. Only install into an
+                // empty identity slot after all pages pass preflight.
+                if (*leafEntries[(int)i] != 0) return false;
+            }
+
+            // All pages passed preflight. Only now update leaves, so a later
+            // conflict cannot leave a partially installed MMIO access span.
+            for (ulong i = 0; i < plan.PageCount; i++) {
+                ulong pageAddress = plan.FirstPhysicalPage + i * XhciDiscovery.PageSize;
+                *leafEntries[(int)i] = pageAddress | cacheFlags;
+                Native.Invlpg(pageAddress);
+            }
+
+            accessPointer = (byte*)plan.FirstPhysicalPage + plan.FirstPageOffset;
+            return true;
+        }
+
+        private static bool TryGetOrCreateMmioPte(ulong* root,
+                ulong virtualAddress, out ulong* leafEntry) {
+            leafEntry = null;
+            if (root == null || virtualAddress == 0 ||
+                virtualAddress > XhciDiscovery.MaximumIdentityMappedAddress ||
+                (virtualAddress & 0xFFFUL) != 0) return false;
+
+            ulong* table = root;
+            for (int level = 0; level < 3; level++) {
+                int shift = 39 - (level * 9);
+                ulong index = (virtualAddress >> shift) & 0x1FFUL;
+                ulong entry = table[index];
+                if ((entry & 1UL) != 0) {
+                    if ((entry & 0b100UL) != 0 || (entry & 0b10UL) == 0 ||
+                        (entry & (1UL << 7)) != 0) return false;
+                    table = (ulong*)(entry & PageMask);
+                    if (table == null) return false;
+                    continue;
+                }
+                if (entry != 0) return false;
+
+                ulong* next = (ulong*)Allocator.Allocate(0x1000);
+                ulong nextAddress = (ulong)next;
+                if (next == null || (nextAddress & 0xFFFUL) != 0 ||
+                    nextAddress > XhciDiscovery.MaximumIdentityMappedAddress) return false;
+                Native.Stosb(next, 0, 0x1000);
+                table[index] = (nextAddress & PageMask) | 0b11UL;
+                table = next;
+            }
+
+            ulong leafIndex = (virtualAddress >> 12) & 0x1FFUL;
+            leafEntry = &table[leafIndex];
+            return true;
         }
 
         public static void MapOnRootTracked(ulong* rootPml4, ulong virtualAddress,

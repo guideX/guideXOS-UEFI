@@ -75,6 +75,13 @@ namespace guideXOS.Misc {
             var info = cpuid(1, 0);
             return (info.EDX & (1u << 9)) != 0;
         }
+
+        /// <summary>Check CPUID.1:EDX.PAT before reading IA32_PAT.</summary>
+        public static bool HasPAT() {
+            if (!IsCPUIDSupported() || GetMaxLeaf() < 1) return false;
+            var info = cpuid(1, 0);
+            return (info.EDX & (1u << 16)) != 0;
+        }
         
         /// <summary>
         /// Check if CPU supports PAE (Physical Address Extension)

@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 using guideXOS.Kernel.Drivers;
 
 internal static class Program {
@@ -19,6 +20,13 @@ internal static class Program {
         RejectsMalformedCapabilities();
         RejectsUnavailableMmioWithoutReading();
         ReadsOnlyCapabilityWords();
+        ValidatesFirmwareResourceHandoff();
+        ParsesFirmwareBarResources();
+        RejectsUnsafeFirmwareResources();
+        PlansBoundedMmioMappings();
+        ValidatesUncachedPageAttributes();
+        RejectsAccessBeforeMapping();
+        PreservesReadOnlyAccessContract();
         Console.WriteLine("xHCI discovery tests: PASS (" +
                           _assertions + " assertions)");
     }
@@ -268,6 +276,238 @@ internal static class Program {
         Check(failingReader.ReadCount == 4, "reader stops on first failed dword");
     }
 
+    private static void ValidatesFirmwareResourceHandoff() {
+        XhciDiscovery.ResourceFailure failure;
+        XhciDiscovery.FirmwareResourceEntry[] entries = { Valid32BitResource() };
+        Check(Marshal.SizeOf<XhciDiscovery.FirmwareResourceEntry>() == 64,
+              "firmware resource entry layout is exactly 64 bytes");
+        Check(XhciDiscovery.TryValidateResourceContract(
+              XhciDiscovery.ResourceContractMagic,
+              XhciDiscovery.ResourceContractVersion,
+              XhciDiscovery.FirmwareResourceEntrySize, 1,
+              XhciDiscovery.ResourceDiscoveryComplete, entries, out failure),
+              "complete versioned resource handoff accepted");
+        Check(!XhciDiscovery.TryValidateResourceContract(0, 1, 64, 1, 1,
+              entries, out failure) && failure == XhciDiscovery.ResourceFailure.ContractMalformed,
+              "bad resource handoff signature rejected");
+        Check(!XhciDiscovery.TryValidateResourceContract(
+              XhciDiscovery.ResourceContractMagic, 2, 64, 1, 1,
+              entries, out failure) && failure == XhciDiscovery.ResourceFailure.ContractUnsupported,
+              "unsupported resource handoff version rejected");
+        Check(!XhciDiscovery.TryValidateResourceContract(
+              XhciDiscovery.ResourceContractMagic, 1, 63, 1, 1,
+              entries, out failure) && failure == XhciDiscovery.ResourceFailure.ContractMalformed,
+              "wrong firmware entry size rejected");
+        Check(!XhciDiscovery.TryValidateResourceContract(
+              XhciDiscovery.ResourceContractMagic, 1, 64, 2, 1,
+              entries, out failure) && failure == XhciDiscovery.ResourceFailure.ContractTruncated,
+              "entry count beyond copied storage rejected");
+        Check(!XhciDiscovery.TryValidateResourceContract(
+              XhciDiscovery.ResourceContractMagic, 1, 64, 9, 1,
+              new XhciDiscovery.FirmwareResourceEntry[9], out failure) &&
+              failure == XhciDiscovery.ResourceFailure.ContractTruncated,
+              "entry count beyond contract maximum rejected");
+        Check(!XhciDiscovery.TryValidateResourceContract(
+              XhciDiscovery.ResourceContractMagic, 1, 64, 1,
+              XhciDiscovery.ResourceDiscoveryIncomplete, entries, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.DiscoveryIncomplete,
+              "partial firmware discovery rejected");
+
+        XhciDiscovery.FirmwareResourceEntry duplicate = Valid32BitResource();
+        Check(!XhciDiscovery.TryValidateResourceContract(
+              XhciDiscovery.ResourceContractMagic, 1, 64, 2, 1,
+              new[] { Valid32BitResource(), duplicate }, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.DuplicateController,
+              "duplicate controller BAR association rejected");
+    }
+
+    private static void ParsesFirmwareBarResources() {
+        XhciDiscovery.ResourceFailure failure;
+        Check(XhciDiscovery.TryValidateFirmwareResource(Valid32BitResource(),
+              0, 0, 20, 0, 0x8086, 0x1234, 0x0C, 0x03, 0x30,
+              0xE0000000U, 0, out failure),
+              "32-bit GetBarAttributes memory resource matches BAR0");
+
+        XhciDiscovery.FirmwareResourceEntry resource = Valid32BitResource();
+        resource.AddressWidth = 64;
+        resource.BarConfigurationBase = 0x00000001FEC01000UL;
+        resource.MmioBase = 0x00000001FEC01000UL;
+        resource.ResourceMaximum = 0x00000001FEC10FFFUL;
+        Check(XhciDiscovery.TryValidateFirmwareResource(resource,
+              0, 0, 20, 0, 0x8086, 0x1234, 0x0C, 0x03, 0x30,
+              0xFEC01004U, 1U, out failure),
+              "64-bit firmware resource matches reconstructed BAR0/BAR1");
+
+        resource = Valid32BitResource();
+        Check(!XhciDiscovery.TryValidateFirmwareResource(resource,
+              0, 0, 21, 0, 0x8086, 0x1234, 0x0C, 0x03, 0x30,
+              0xE0000000U, 0, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.ControllerMismatch,
+              "resource associated with another BDF rejected");
+        resource = Valid32BitResource();
+        Check(!XhciDiscovery.TryValidateFirmwareResource(resource,
+              0, 0, 20, 0, 0x8086, 0x1235, 0x0C, 0x03, 0x30,
+              0xE0000000U, 0, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.ControllerMismatch,
+              "resource associated with another device ID rejected");
+    }
+
+    private static void RejectsUnsafeFirmwareResources() {
+        XhciDiscovery.ResourceFailure failure;
+        XhciDiscovery.FirmwareResourceEntry resource = Valid32BitResource();
+        resource.ApertureLength = 0;
+        Check(!Validate32(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.ZeroLength,
+              "missing aperture length rejected");
+
+        resource = Valid32BitResource();
+        resource.MmioBase = 0xFFFFFFFFFFFFFF00UL;
+        resource.BarConfigurationBase = resource.MmioBase;
+        resource.ApertureLength = 0x200UL;
+        Check(!Validate32(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.RangeOverflow,
+              "overflowing firmware resource range rejected");
+
+        resource = Valid32BitResource();
+        resource.ResourceType = 1;
+        Check(!Validate32(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.InvalidResourceType,
+              "I/O resource descriptor rejected");
+
+        resource = Valid32BitResource();
+        resource.TranslationOffset = 0x1000;
+        Check(!Validate32(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.UnsupportedTranslation,
+              "non-identity resource translation rejected");
+
+        resource = Valid32BitResource();
+        resource.ResourceMaximum++;
+        Check(!Validate32(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.MissingAperture,
+              "contradictory descriptor maximum rejected");
+
+        resource = Valid32BitResource();
+        resource.SpecificFlags = 0x02;
+        Check(!Validate32(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.InvalidMemoryAttributes,
+              "cacheable resource attributes rejected");
+
+        resource = Valid32BitResource();
+        resource.SpecificFlags = 0x40;
+        Check(!Validate32(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.InvalidMemoryAttributes,
+              "reserved resource attributes rejected");
+
+        resource = Valid32BitResource();
+        resource.AddressWidth = 64;
+        Check(!Validate32(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.InvalidBar,
+              "descriptor address width contradicting BAR type rejected");
+
+        resource = Valid32BitResource();
+        resource.GeneralFlags = 0x80;
+        Check(!Validate32(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.InvalidMemoryAttributes,
+              "reserved general resource flags rejected");
+
+        resource = Valid32BitResource();
+        resource.Device = 32;
+        Check(!XhciDiscovery.TryValidateFirmwareResource(resource,
+              0, 0, 32, 0, 0x8086, 0x1234, 0x0C, 0x03, 0x30,
+              0xE0000000U, 0, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.InvalidBdf,
+              "out-of-range PCI device number rejected");
+    }
+
+    private static void PlansBoundedMmioMappings() {
+        Check(XhciDiscovery.TryBuildMmioMappingPlan(0xE0000FF0UL,
+              0x1000UL, 0, 0x20, XhciDiscovery.PageSize,
+              out XhciDiscovery.MmioMappingPlan plan),
+              "unaligned BAR capability window receives mapping plan");
+        Check(plan.FirstPhysicalPage == 0xE0000000UL &&
+              plan.FirstPageOffset == 0xFF0UL && plan.PageCount == 2,
+              "mapping plan rounds page span and preserves BAR page offset");
+        Check(!XhciDiscovery.TryBuildMmioMappingPlan(0xE0000000UL,
+              0x1000UL, 0xFF0UL, 0x20UL, 4096,
+              out plan), "access beyond firmware aperture gets no mapping plan");
+        Check(!XhciDiscovery.TryBuildMmioMappingPlan(
+              XhciDiscovery.MaximumIdentityMappedAddress - 1, 4, 0, 4, 4096,
+              out plan), "mapping range overflow rejected before page rounding");
+        Check(!XhciDiscovery.TryBuildMmioMappingPlan(0xE0000000UL,
+              0x1000UL, 0, 0x20UL, 3000, out plan),
+              "non-power-of-two page size rejected");
+    }
+
+    private static void ValidatesUncachedPageAttributes() {
+        Check(XhciDiscovery.TryBuildUncachedPteFlags(
+              0x0007040600070406UL, out ulong flags),
+              "standard PAT table provides an exact UC encoding");
+        Check((flags & 0x18UL) == 0x18UL && (flags & 0x80UL) == 0,
+              "UC PAT selector is chosen without assuming a PAT bit");
+        Check((flags & 0x2UL) == 0 && (flags & (1UL << 63)) != 0,
+              "MMIO leaf is read-only and non-executable");
+        Check(!XhciDiscovery.TryBuildUncachedPteFlags(
+              0x0606060606060606UL, out flags),
+              "PAT without an exact UC entry is rejected");
+    }
+
+    private static void RejectsAccessBeforeMapping() {
+        XhciDiscovery.Capabilities capabilities;
+        XhciDiscovery.CapabilityFailure failure;
+        FakeReader reader = new FakeReader(ValidRegisters(), isMapped: false);
+        Check(!XhciDiscovery.TryReadCapabilities(reader, 0x10000,
+              out capabilities, out failure) &&
+              failure == XhciDiscovery.CapabilityFailure.AccessUnavailable,
+              "register access rejected before successful mapping");
+        Check(reader.ReadCount == 0,
+              "unmapped access rejection issues no synthetic reads");
+    }
+
+    private static void PreservesReadOnlyAccessContract() {
+        FakeReader reader = new FakeReader(ValidRegisters());
+        XhciDiscovery.Capabilities capabilities;
+        XhciDiscovery.CapabilityFailure failure;
+        Check(XhciDiscovery.TryReadCapabilities(reader, 0x10000,
+              out capabilities, out failure),
+              "synthetic register block remains readable");
+        Check(reader.ReadCount == 7 && reader.WriteCount == 0,
+              "synthetic capability path performs reads only");
+        Check(typeof(XhciDiscovery.IReadOnlyMmioReader).GetMethod("TryWrite32") == null,
+              "MMIO access interface exposes no write method");
+    }
+
+    private static XhciDiscovery.FirmwareResourceEntry Valid32BitResource() {
+        const ulong baseAddress = 0xE0000000UL;
+        const ulong length = 0x10000UL;
+        return new XhciDiscovery.FirmwareResourceEntry {
+            Segment = 0,
+            Bus = 0,
+            Device = 20,
+            Function = 0,
+            BarIndex = 0,
+            AddressWidth = 32,
+            ResourceType = 0,
+            GeneralFlags = 0x0F,
+            SpecificFlags = 0x01,
+            VendorId = 0x8086,
+            DeviceId = 0x1234,
+            Reserved = 0,
+            BarConfigurationBase = baseAddress,
+            MmioBase = baseAddress,
+            ApertureLength = length,
+            ResourceMaximum = baseAddress + length - 1,
+            TranslationOffset = 0,
+            SupportedAttributes = 0
+        };
+    }
+
+    private static bool Validate32(XhciDiscovery.FirmwareResourceEntry entry,
+            out XhciDiscovery.ResourceFailure failure) {
+        return XhciDiscovery.TryValidateFirmwareResource(entry,
+            0, 0, 20, 0, 0x8086, 0x1234, 0x0C, 0x03, 0x30,
+            0xE0000000U, 0, out failure);
+    }
+
     private static uint[] ValidRegisters() {
         uint[] registers = new uint[7];
         registers[0] = (0x0100U << 16) | 0x20U;
@@ -283,13 +523,18 @@ internal static class Program {
     private sealed class FakeReader : XhciDiscovery.IReadOnlyMmioReader {
         private readonly uint[] _registers;
         private readonly ulong _failAtOffset;
+        private readonly bool _isMapped;
 
         public int ReadCount { get; private set; }
+        public int WriteCount { get; private set; }
         public ulong LastOffset { get; private set; }
+        public bool IsMapped => _isMapped;
 
-        public FakeReader(uint[] registers, ulong failAtOffset = ulong.MaxValue) {
+        public FakeReader(uint[] registers, ulong failAtOffset = ulong.MaxValue,
+                bool isMapped = true) {
             _registers = registers;
             _failAtOffset = failAtOffset;
+            _isMapped = isMapped;
         }
 
         public bool TryRead32(ulong offset, out uint value) {

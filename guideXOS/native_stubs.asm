@@ -469,6 +469,13 @@ In32:
     in eax, dx
     ret
 
+; One native load keeps MMIO capability reads out of the managed optimizer.
+; RCX is the mapped virtual address under the Microsoft x64 ABI.
+global ReadMmio32
+ReadMmio32:
+    mov eax, dword [rcx]
+    ret
+
 ; rep helpers
 ; Stosb(void* p, byte value, ulong count) => RCX=p, RDX=value, R8=count
 

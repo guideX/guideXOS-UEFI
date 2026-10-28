@@ -30,6 +30,8 @@ Forbidden:
 #include <Protocol/LoadedImage.h>
 #include <Protocol/SimplePointer.h>
 #include <Protocol/AbsolutePointer.h>
+#include <Protocol/PciIo.h>
+#include <IndustryStandard/Acpi10.h>
 #include <Guid/Acpi.h>
 #include <Guid/FileInfo.h>
 #include "bootinfo.h"          // legacy, gradually being phased out
@@ -38,6 +40,7 @@ Forbidden:
 #include "uefi_shim.h"         // UEFI shims for freestanding environment
 #include "debug_helpers.h"     // Post-ExitBootServices debugging
 #include "paging.h"            // minimal identity page tables
+#include "pci_resource_parser.h" // bounded QWORD BAR descriptor parser
 #include "boot_splash.h"       // boot splash screen
 
 // MSVC intrinsics
@@ -540,6 +543,164 @@ static void DiscoverAcpiForLoader(
 // Simple memset for BootInfo
 static void ZeroBootInfo(BootInfo* bi) {
     SetMem(bi, sizeof(BootInfo), 0);
+}
+
+static bool IsXhciPciClass(UINT8 classCode, UINT8 subclass,
+                           UINT8 programmingInterface) {
+    return classCode == 0x0C && subclass == 0x03 &&
+        programmingInterface == 0x30;
+}
+
+// Copy authoritative BAR0 resource information from EFI_PCI_IO_PROTOCOL into
+// loader-owned storage. This routine reads PCI configuration and firmware
+// descriptors only; it never writes PCI configuration or controller MMIO.
+static void DiscoverXhciPciResources(EFI_SYSTEM_TABLE* SystemTable) {
+    using namespace guideXOS::paging;
+
+    PciResourceHandoff* handoff = GetPciResourceHandoff();
+    if (handoff == nullptr) return;
+    SetMem(handoff, sizeof(*handoff), 0);
+    handoff->Magic = PCI_RESOURCE_HANDOFF_MAGIC;
+    handoff->Version = PCI_RESOURCE_HANDOFF_VERSION;
+    handoff->EntrySize = (UINT16)sizeof(PciMmioResourceEntry);
+    handoff->DiscoveryStatus = PciResourceDiscoveryFailed;
+
+    if (SystemTable == nullptr || SystemTable->BootServices == nullptr) return;
+
+    EFI_HANDLE* handles = nullptr;
+    UINTN handleCount = 0;
+    EFI_STATUS status = SystemTable->BootServices->LocateHandleBuffer(
+        ByProtocol, &gEfiPciIoProtocolGuid, nullptr, &handleCount, &handles);
+    if (status == EFI_NOT_FOUND) {
+        handoff->DiscoveryStatus = PciResourceDiscoveryNoPciIo;
+        return;
+    }
+    if (EFI_ERROR(status) || handles == nullptr || handleCount > 4096) {
+        handoff->DiscoveryStatus = PciResourceDiscoveryFailed;
+        if (handles != nullptr) SystemTable->BootServices->FreePool(handles);
+        return;
+    }
+
+    UINTN xhciCount = 0;
+    bool incomplete = false;
+    for (UINTN handleIndex = 0; handleIndex < handleCount; ++handleIndex) {
+        EFI_PCI_IO_PROTOCOL* pci = nullptr;
+        status = SystemTable->BootServices->HandleProtocol(
+            handles[handleIndex], &gEfiPciIoProtocolGuid, (void**)&pci);
+        if (EFI_ERROR(status) || pci == nullptr || pci->Pci.Read == nullptr ||
+            pci->GetLocation == nullptr || pci->GetBarAttributes == nullptr) {
+            incomplete = true;
+            break;
+        }
+
+        UINTN segment = 0, bus = 0, device = 0, function = 0;
+        UINT32 identity = 0, classRegister = 0;
+        status = pci->GetLocation(pci, &segment, &bus, &device, &function);
+        if (EFI_ERROR(status) || segment > 0xFFFF || bus > 0xFF ||
+            device > 31 || function > 7) {
+            incomplete = true;
+            break;
+        }
+        status = pci->Pci.Read(pci, EfiPciIoWidthUint32, 0, 1, &identity);
+        if (EFI_ERROR(status)) { incomplete = true; break; }
+        status = pci->Pci.Read(pci, EfiPciIoWidthUint32, 8, 1, &classRegister);
+        if (EFI_ERROR(status)) { incomplete = true; break; }
+
+        UINT16 vendorId = (UINT16)(identity & 0xFFFF);
+        UINT16 deviceId = (UINT16)(identity >> 16);
+        UINT8 programmingInterface = (UINT8)(classRegister >> 8);
+        UINT8 subclass = (UINT8)(classRegister >> 16);
+        UINT8 classCode = (UINT8)(classRegister >> 24);
+        if (!IsXhciPciClass(classCode, subclass, programmingInterface)) {
+            continue;
+        }
+
+        ++xhciCount;
+        if (xhciCount > MAX_PCI_XHCI_RESOURCES) {
+            incomplete = true;
+            handoff->DiscoveryStatus = PciResourceDiscoveryTruncated;
+            break;
+        }
+
+        UINT32 barLow = 0, barHigh = 0;
+        status = pci->Pci.Read(pci, EfiPciIoWidthUint32, 0x10, 1, &barLow);
+        if (EFI_ERROR(status)) { incomplete = true; break; }
+        UINT32 memoryType = (barLow >> 1) & 0x3;
+        UINT8 addressWidth = memoryType == 0 ? 32 :
+            (memoryType == 2 ? 64 : 0);
+        if (addressWidth == 0 || (barLow & 1) != 0 || (barLow & 8) != 0) {
+            incomplete = true;
+            break;
+        }
+        if (addressWidth == 64) {
+            status = pci->Pci.Read(pci, EfiPciIoWidthUint32, 0x14, 1, &barHigh);
+            if (EFI_ERROR(status)) { incomplete = true; break; }
+        }
+        UINT64 barBase = (UINT64)(barLow & 0xFFFFFFF0u);
+        if (addressWidth == 64) barBase |= (UINT64)barHigh << 32;
+        if (barBase == 0) { incomplete = true; break; }
+
+        UINT64 supportedAttributes = 0;
+        VOID* resources = nullptr;
+        status = pci->GetBarAttributes(pci, 0, &supportedAttributes, &resources);
+        if (EFI_ERROR(status) || resources == nullptr) {
+            if (resources != nullptr) SystemTable->BootServices->FreePool(resources);
+            incomplete = true;
+            break;
+        }
+
+        static_assert(sizeof(EFI_ACPI_ADDRESS_SPACE_DESCRIPTOR) ==
+            guideXOS::pci_resource::QWORD_ADDRESS_DESCRIPTOR_SIZE,
+            "EDK2 and bounded PCI resource parser layouts must agree");
+        guideXOS::pci_resource::QwordMemoryResource descriptor = {};
+        bool descriptorValid =
+            guideXOS::pci_resource::TryParseSingleQwordMemoryResource(
+                (const UINT8*)resources,
+                guideXOS::pci_resource::SINGLE_QWORD_RESOURCE_SIZE,
+                &descriptor) &&
+            descriptor.AddressWidth == addressWidth &&
+            descriptor.Base == barBase;
+
+        if (!descriptorValid) {
+            SystemTable->BootServices->FreePool(resources);
+            incomplete = true;
+            break;
+        }
+
+        PciMmioResourceEntry& entry = handoff->Entries[handoff->EntryCount++];
+        entry.Segment = (UINT16)segment;
+        entry.Bus = (UINT8)bus;
+        entry.Device = (UINT8)device;
+        entry.Function = (UINT8)function;
+        entry.BarIndex = 0;
+        entry.AddressWidth = addressWidth;
+        entry.ResourceType = ACPI_ADDRESS_SPACE_TYPE_MEM;
+        entry.GeneralFlags = descriptor.GeneralFlags;
+        entry.SpecificFlags = descriptor.SpecificFlags;
+        entry.VendorId = vendorId;
+        entry.DeviceId = deviceId;
+        entry.Reserved = 0;
+        entry.BarConfigurationBase = barBase;
+        entry.MmioBase = descriptor.Base;
+        entry.ApertureLength = descriptor.Length;
+        entry.ResourceMaximum = descriptor.Maximum;
+        entry.TranslationOffset = descriptor.TranslationOffset;
+        entry.SupportedAttributes = supportedAttributes;
+
+        SystemTable->BootServices->FreePool(resources);
+    }
+
+    SystemTable->BootServices->FreePool(handles);
+    if (handoff->DiscoveryStatus != PciResourceDiscoveryTruncated) {
+        if (incomplete) {
+            handoff->EntryCount = 0;
+            handoff->DiscoveryStatus = PciResourceDiscoveryIncomplete;
+        } else {
+            handoff->DiscoveryStatus = PciResourceDiscoveryComplete;
+        }
+    } else {
+        handoff->EntryCount = 0;
+    }
 }
 
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
@@ -1062,6 +1223,18 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
             Print(L"Failed to build identity page tables\n");
             return st;
         }
+    }
+
+    // BuildIdentityPageTables clears its loader-owned handoff storage. Discover
+    // BAR0 resource provenance now, while PCI I/O firmware protocols are valid,
+    // and copy only fixed-width values into the adjacent loader image data.
+    DiscoverXhciPciResources(SystemTable);
+    v1BootInfo->Flags |= guideXOS::BOOTINFO_FLAG_PCI_RESOURCE_HANDOFF;
+    {
+        guideXOS::paging::PciResourceHandoff* resources =
+            guideXOS::paging::GetPciResourceHandoff();
+        Print(L"[XHCI-RESOURCE] status=%u entries=%u\n",
+              resources->DiscoveryStatus, resources->EntryCount);
     }
 
 #if defined(UEFI_DIAGNOSTIC_BM1)

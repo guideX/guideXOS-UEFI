@@ -62,6 +62,10 @@ static unsafe class Native {
     [DllImport("*")]
     public static extern uint In32(uint port);
 
+    // Single ordered load used for read-only memory-mapped device registers.
+    [DllImport("*")]
+    public static extern uint ReadMmio32(ulong address);
+
     [DllImport("*")]
     public static extern void Stosd(void* p, uint value, ulong count);
 

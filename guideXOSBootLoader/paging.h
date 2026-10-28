@@ -2,6 +2,7 @@
 
 #include <Uefi.h>
 #include <stdint.h>
+#include <stddef.h>
 
 // Minimal x86_64 paging builder for UEFI->kernel handoff.
 // Builds identity-mapped 4KiB pages for a small set of physical ranges.
@@ -82,6 +83,72 @@ namespace paging
 #endif
     };
 
+    // Append this versioned contract after the fixed BootMemoryHandoff v1
+    // prefix. BootInfo.Reserved[2] continues to point at that unchanged prefix;
+    // new kernels read this extension only when the new BootInfo flag is set.
+    static constexpr UINT32 PCI_RESOURCE_HANDOFF_MAGIC = 0x52505847u; // GXPR
+    static constexpr UINT16 PCI_RESOURCE_HANDOFF_VERSION = 1;
+    static constexpr UINTN MAX_PCI_XHCI_RESOURCES = 8;
+
+    enum PciResourceDiscoveryStatus : UINT32
+    {
+        PciResourceDiscoveryNotRun = 0,
+        PciResourceDiscoveryComplete = 1,
+        PciResourceDiscoveryNoPciIo = 2,
+        PciResourceDiscoveryFailed = 3,
+        PciResourceDiscoveryIncomplete = 4,
+        PciResourceDiscoveryTruncated = 5
+    };
+
+    struct PciMmioResourceEntry
+    {
+        UINT16 Segment;
+        UINT8 Bus;
+        UINT8 Device;
+        UINT8 Function;
+        UINT8 BarIndex;
+        UINT8 AddressWidth;
+        UINT8 ResourceType;
+        UINT8 GeneralFlags;
+        UINT8 SpecificFlags;
+        UINT16 VendorId;
+        UINT16 DeviceId;
+        UINT16 Reserved;
+        UINT64 BarConfigurationBase;
+        UINT64 MmioBase;
+        UINT64 ApertureLength;
+        UINT64 ResourceMaximum;
+        UINT64 TranslationOffset;
+        UINT64 SupportedAttributes;
+    };
+
+    struct PciResourceHandoff
+    {
+        UINT32 Magic;
+        UINT16 Version;
+        UINT16 EntrySize;
+        UINT32 EntryCount;
+        UINT32 DiscoveryStatus;
+        PciMmioResourceEntry Entries[MAX_PCI_XHCI_RESOURCES];
+    };
+
+    // Keep the original handoff object byte-for-byte compatible. The new
+    // resource contract is adjacent loader-owned storage, not a new pointer
+    // into temporary firmware allocation.
+    struct BootMemoryHandoffStorage
+    {
+        BootMemoryHandoff Legacy;
+        PciResourceHandoff PciResources;
+    };
+
+    static_assert(sizeof(PciMmioResourceEntry) == 64,
+        "C# and UEFI PCI resource entry layouts must match");
+    static_assert(sizeof(PciResourceHandoff) == 528,
+        "C# and UEFI PCI resource handoff layouts must match");
+    static_assert(offsetof(BootMemoryHandoffStorage, PciResources) ==
+        sizeof(BootMemoryHandoff),
+        "PCI resource contract must immediately follow the legacy handoff");
+
 #if defined(UEFI_DIAGNOSTIC_BM1)
     static_assert(sizeof(BareMetalDiagnosticRecord) == 176,
         "C# and UEFI BM3B diagnostic record layouts must match");
@@ -130,5 +197,6 @@ namespace paging
     // The kernel allocator uses identity addresses. Publish the linked image
     // span and page-table backing pages so it can reserve both kernel aliases.
     BootMemoryHandoff* GetBootMemoryHandoff();
+    PciResourceHandoff* GetPciResourceHandoff();
 }
 }

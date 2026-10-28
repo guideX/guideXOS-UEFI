@@ -45,6 +45,42 @@ namespace guideXOS.Misc {
             _kMainWrapperAddr = (IntPtr)(delegate*<UefiBootInfo*, void>)&KMainWrapper;
         }
 
+        private static bool IsRangeInLoaderMemoryMap(UefiBootInfo* bootInfo,
+                ulong rangeBase, ulong rangeLength) {
+            if (bootInfo == null || !bootInfo->HasMemoryMap ||
+                bootInfo->MemoryMap == 0 || bootInfo->MemoryMapEntryCount == 0 ||
+                bootInfo->MemoryMapEntryCount > 65536 ||
+                bootInfo->MemoryMapDescriptorSize < 40 ||
+                bootInfo->MemoryMapDescriptorSize > 4096 || rangeLength == 0 ||
+                bootInfo->MemoryMapEntryCount >
+                    0xFFFF_FFFF_FFFF_FFFFUL / bootInfo->MemoryMapDescriptorSize ||
+                rangeBase > 0xFFFF_FFFF_FFFF_FFFFUL - (rangeLength - 1))
+                return false;
+
+            ulong mapBytes = bootInfo->MemoryMapEntryCount *
+                bootInfo->MemoryMapDescriptorSize;
+            if (bootInfo->MemoryMap > 0xFFFF_FFFF_FFFF_FFFFUL - mapBytes)
+                return false;
+            ulong rangeEnd = rangeBase + rangeLength - 1;
+            byte* map = (byte*)bootInfo->MemoryMap;
+            for (ulong i = 0; i < bootInfo->MemoryMapEntryCount; i++) {
+                byte* descriptor = map + i * bootInfo->MemoryMapDescriptorSize;
+                uint type = *(uint*)descriptor;
+                if (type != 1 && type != 2) continue; // EfiLoaderCode/Data
+                ulong physicalStart = *(ulong*)(descriptor + 8);
+                ulong pageCount = *(ulong*)(descriptor + 24);
+                if (pageCount == 0 || pageCount >
+                    0xFFFF_FFFF_FFFF_FFFFUL / 4096UL) continue;
+                ulong descriptorLength = pageCount * 4096UL;
+                if (physicalStart > 0xFFFF_FFFF_FFFF_FFFFUL -
+                        (descriptorLength - 1)) continue;
+                ulong descriptorEnd = physicalStart + descriptorLength - 1;
+                if (rangeBase >= physicalStart && rangeEnd <= descriptorEnd)
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>
         /// NEW UEFI entry point called from UEFI bootloader
         /// This is the modern entry point that receives guideXOS::BootInfo
@@ -89,6 +125,25 @@ namespace guideXOS.Misc {
 #endif
                 for (;;) Native.Hlt();
             }
+            UefiPciResourceHandoff* pciResourceHandoff = null;
+            if (bootInfo->HasPciResourceHandoff) {
+                ulong baseAddress = (ulong)memoryHandoff;
+                ulong baseSize = (ulong)sizeof(UefiBootMemoryHandoff);
+                ulong extensionSize = (ulong)sizeof(UefiPciResourceHandoff);
+                if (extensionSize == 528 &&
+                    baseAddress <= 0xFFFF_FFFF_FFFF_FFFFUL - baseSize &&
+                    baseAddress + baseSize <=
+                        0xFFFF_FFFF_FFFF_FFFFUL - extensionSize &&
+                    IsRangeInLoaderMemoryMap(bootInfo, baseAddress + baseSize,
+                        extensionSize)) {
+                    pciResourceHandoff = (UefiPciResourceHandoff*)(
+                        baseAddress + baseSize);
+                } else {
+                    BootConsole.WriteLine(
+                        "[USB][XHCI] resource-handoff=unavailable " +
+                        "reason=loader-range-invalid");
+                }
+            }
 #if UEFI_DIAGNOSTIC_BM1
             BareMetalMilestones.InstallEarlyExceptionTrap(memoryHandoff);
             if (bootInfo->MemoryMapEntryCount == 0 ||
@@ -125,6 +180,11 @@ namespace guideXOS.Misc {
                 Allocator.ReserveAddressRange((IntPtr)0x4000000,
                     (ulong)memoryHandoff,
                     (ulong)sizeof(UefiBootMemoryHandoff));
+                if (pciResourceHandoff != null) {
+                    Allocator.ReserveAddressRange((IntPtr)0x4000000,
+                        (ulong)pciResourceHandoff,
+                        (ulong)sizeof(UefiPciResourceHandoff));
+                }
             }
 #if UEFI_DIAGNOSTIC_BM1
             ulong memoryMapBytes = bootInfo->MemoryMapEntryCount *
@@ -387,7 +447,8 @@ namespace guideXOS.Misc {
             PCI.Initialize();
             BootConsole.WriteLine("[PCI] enumerated");
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
-                USB.ReportXhciInitializationFrontier();
+                USB.ReportXhciInitializationFrontier(bootInfo,
+                    pciResourceHandoff);
             }
 #if UEFI_DIAGNOSTIC_BM1
             BareMetalMilestones.Record(8, 8);

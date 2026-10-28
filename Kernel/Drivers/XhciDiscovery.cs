@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 
 namespace guideXOS.Kernel.Drivers {
     /// <summary>
@@ -34,6 +35,72 @@ namespace guideXOS.Kernel.Drivers {
             RegisterRangeOutOfBounds
         }
 
+        public enum ResourceFailure {
+            None,
+            ContractMalformed,
+            ContractUnsupported,
+            ContractTruncated,
+            DiscoveryIncomplete,
+            ControllerMismatch,
+            InvalidBdf,
+            InvalidBarIndex,
+            InvalidResourceType,
+            InvalidAddressWidth,
+            InvalidMemoryAttributes,
+            MissingAperture,
+            ZeroLength,
+            RangeOverflow,
+            UnsupportedTranslation,
+            BarMismatch,
+            InvalidBar,
+            DuplicateController
+        }
+
+        public const uint ResourceContractMagic = 0x52505847U; // "GXPR"
+        public const ushort ResourceContractVersion = 1;
+        public const ushort FirmwareResourceEntrySize = 64;
+        public const uint ResourceDiscoveryComplete = 1;
+        public const uint ResourceDiscoveryNoPciIo = 2;
+        public const uint ResourceDiscoveryFailed = 3;
+        public const uint ResourceDiscoveryIncomplete = 4;
+        public const uint ResourceDiscoveryTruncated = 5;
+        public const uint MaximumFirmwareResources = 8;
+        public const ulong PageSize = 4096;
+
+        /// <summary>
+        /// One firmware-owned descriptor copied out of EFI_PCI_IO_PROTOCOL.
+        /// The layout is shared with the C++ loader's post-ExitBootServices
+        /// handoff and is intentionally fixed at 64 bytes.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential, Pack = 1, Size = FirmwareResourceEntrySize)]
+        public struct FirmwareResourceEntry {
+            public ushort Segment;
+            public byte Bus;
+            public byte Device;
+            public byte Function;
+            public byte BarIndex;
+            public byte AddressWidth;
+            public byte ResourceType;
+            public byte GeneralFlags;
+            public byte SpecificFlags;
+            public ushort VendorId;
+            public ushort DeviceId;
+            public ushort Reserved;
+            public ulong BarConfigurationBase;
+            public ulong MmioBase;
+            public ulong ApertureLength;
+            public ulong ResourceMaximum;
+            public ulong TranslationOffset;
+            public ulong SupportedAttributes;
+        }
+
+        public struct MmioMappingPlan {
+            public ulong FirstPhysicalPage;
+            public ulong PageCount;
+            public ulong FirstPageOffset;
+            public ulong AccessLength;
+        }
+
         public struct BarInfo {
             public ulong BaseAddress;
             public bool Is64Bit;
@@ -60,6 +127,7 @@ namespace guideXOS.Kernel.Drivers {
 
         /// <summary>A deliberately read-only MMIO seam for hosted fixtures.</summary>
         public interface IReadOnlyMmioReader {
+            bool IsMapped { get; }
             bool TryRead32(ulong offset, out uint value);
         }
 
@@ -120,6 +188,176 @@ namespace guideXOS.Kernel.Drivers {
             return accessLength <= resourceLength - offset;
         }
 
+        public static bool TryValidateResourceContract(uint magic,
+                ushort version, ushort entrySize, uint entryCount,
+                uint discoveryStatus, FirmwareResourceEntry[] entries,
+                out ResourceFailure failure) {
+            failure = ResourceFailure.None;
+            if (magic != ResourceContractMagic || entrySize != FirmwareResourceEntrySize) {
+                failure = ResourceFailure.ContractMalformed;
+                return false;
+            }
+            if (version != ResourceContractVersion) {
+                failure = ResourceFailure.ContractUnsupported;
+                return false;
+            }
+            if (entryCount > MaximumFirmwareResources || entries == null ||
+                entryCount > (uint)entries.Length) {
+                failure = ResourceFailure.ContractTruncated;
+                return false;
+            }
+            if (discoveryStatus != ResourceDiscoveryComplete) {
+                failure = ResourceFailure.DiscoveryIncomplete;
+                return false;
+            }
+
+            for (int i = 0; i < (int)entryCount; i++) {
+                FirmwareResourceEntry current = entries[i];
+                for (int j = 0; j < i; j++) {
+                    FirmwareResourceEntry previous = entries[j];
+                    if (current.Segment == previous.Segment &&
+                        current.Bus == previous.Bus &&
+                        current.Device == previous.Device &&
+                        current.Function == previous.Function &&
+                        current.BarIndex == previous.BarIndex) {
+                        failure = ResourceFailure.DuplicateController;
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Check firmware provenance against the kernel's independently read
+        /// PCI identity and BAR0 configuration. The supported translation is
+        /// deliberately identity-only; other host/PCI address translations
+        /// are reported and rejected.
+        /// </summary>
+        public static bool TryValidateFirmwareResource(
+                FirmwareResourceEntry entry,
+                ushort expectedSegment, byte expectedBus, byte expectedDevice,
+                byte expectedFunction, ushort expectedVendorId,
+                ushort expectedDeviceId, byte classCode, byte subclass,
+                byte programmingInterface, uint bar0Low, uint bar0High,
+                out ResourceFailure failure) {
+            failure = ResourceFailure.None;
+            if (entry.Segment != expectedSegment || entry.Bus != expectedBus ||
+                entry.Device != expectedDevice || entry.Function != expectedFunction ||
+                entry.VendorId != expectedVendorId || entry.DeviceId != expectedDeviceId ||
+                !IsXhciFunction(classCode, subclass, programmingInterface)) {
+                failure = ResourceFailure.ControllerMismatch;
+                return false;
+            }
+            if (entry.Device > 31 || entry.Function > 7) {
+                failure = ResourceFailure.InvalidBdf;
+                return false;
+            }
+            if (entry.BarIndex != 0) {
+                failure = ResourceFailure.InvalidBarIndex;
+                return false;
+            }
+            if (entry.ResourceType != 0) {
+                failure = ResourceFailure.InvalidResourceType;
+                return false;
+            }
+            if (entry.AddressWidth != 32 && entry.AddressWidth != 64) {
+                failure = ResourceFailure.InvalidAddressWidth;
+                return false;
+            }
+
+            // Accept only ordinary, static, non-prefetchable memory resources.
+            // The kernel maps this range UC regardless of any firmware cache
+            // hint, but cacheable, write-combining, translated, or reserved
+            // address-space descriptors are outside this contract.
+            if ((entry.SpecificFlags & 0xF8) != 0 ||
+                (entry.SpecificFlags & 0x06) != 0 ||
+                (entry.GeneralFlags & 0xF0) != 0 || entry.Reserved != 0) {
+                failure = ResourceFailure.InvalidMemoryAttributes;
+                return false;
+            }
+            if (entry.ApertureLength == 0) {
+                failure = ResourceFailure.ZeroLength;
+                return false;
+            }
+            if (entry.MmioBase == 0 ||
+                entry.MmioBase > 0xFFFFFFFFFFFFFFFFUL - (entry.ApertureLength - 1)) {
+                failure = ResourceFailure.RangeOverflow;
+                return false;
+            }
+            ulong computedMaximum = entry.MmioBase + entry.ApertureLength - 1;
+            if (entry.ResourceMaximum != computedMaximum) {
+                failure = ResourceFailure.MissingAperture;
+                return false;
+            }
+            if (entry.MmioBase < 0x100000UL ||
+                (entry.AddressWidth == 32 && entry.ResourceMaximum > 0xFFFFFFFFUL)) {
+                failure = ResourceFailure.InvalidAddressWidth;
+                return false;
+            }
+            if (entry.TranslationOffset != 0) {
+                failure = ResourceFailure.UnsupportedTranslation;
+                return false;
+            }
+            if (entry.BarConfigurationBase != entry.MmioBase) {
+                failure = ResourceFailure.BarMismatch;
+                return false;
+            }
+
+            BarStatus barStatus = TryParseMemoryBar(bar0Low, bar0High,
+                hasUpperBar: true, out BarInfo bar);
+            if (barStatus != BarStatus.Valid || bar.IsPrefetchable ||
+                bar.Is64Bit != (entry.AddressWidth == 64) ||
+                bar.BaseAddress != entry.MmioBase ||
+                !IsPhysicalRangeMappable(entry.MmioBase, entry.ApertureLength)) {
+                failure = ResourceFailure.InvalidBar;
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>Build the page-aligned physical span needed for one bounded access.</summary>
+        public static bool TryBuildMmioMappingPlan(ulong resourceBase,
+                ulong resourceLength, ulong accessOffset, ulong accessLength,
+                ulong pageSize, out MmioMappingPlan plan) {
+            plan = new MmioMappingPlan();
+            if (pageSize == 0 || (pageSize & (pageSize - 1)) != 0 ||
+                !IsPhysicalRangeMappable(resourceBase, resourceLength) ||
+                !IsSubrangeWithinResource(resourceLength, accessOffset, accessLength) ||
+                resourceBase > MaximumIdentityMappedAddress - accessOffset) return false;
+
+            ulong accessBase = resourceBase + accessOffset;
+            if (accessBase > MaximumIdentityMappedAddress - (accessLength - 1)) return false;
+            ulong lastByte = accessBase + accessLength - 1;
+            ulong firstPage = accessBase & ~(pageSize - 1);
+            ulong lastPage = lastByte & ~(pageSize - 1);
+            ulong pageCount = ((lastPage - firstPage) / pageSize) + 1;
+            plan.FirstPhysicalPage = firstPage;
+            plan.PageCount = pageCount;
+            plan.FirstPageOffset = accessBase - firstPage;
+            plan.AccessLength = accessLength;
+            return true;
+        }
+
+        /// <summary>Return a 4 KiB PTE selector for an exact UC PAT entry.</summary>
+        public static bool TryBuildUncachedPteFlags(ulong patValue, out ulong flags) {
+            const ulong present = 1UL;
+            const ulong noExecute = 1UL << 63;
+            const ulong writeThrough = 1UL << 3;
+            const ulong cacheDisable = 1UL << 4;
+            const ulong pat = 1UL << 7;
+            flags = 0;
+            for (int index = 0; index < 8; index++) {
+                if (((patValue >> (index * 8)) & 0xFFUL) != 0) continue;
+                flags = present | noExecute |
+                    ((index & 1) != 0 ? writeThrough : 0) |
+                    ((index & 2) != 0 ? cacheDisable : 0) |
+                    ((index & 4) != 0 ? pat : 0);
+                return true;
+            }
+            return false;
+        }
+
         /// <summary>
         /// Read and validate only the fixed capability header. A caller must
         /// supply a trusted resource length and a read-only access object.
@@ -132,6 +370,10 @@ namespace guideXOS.Kernel.Drivers {
             capabilities = new Capabilities();
             failure = CapabilityFailure.None;
             if (reader == null) {
+                failure = CapabilityFailure.AccessUnavailable;
+                return false;
+            }
+            if (!reader.IsMapped) {
                 failure = CapabilityFailure.AccessUnavailable;
                 return false;
             }

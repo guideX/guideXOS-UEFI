@@ -128,6 +128,13 @@ namespace guideXOS.Misc {
         public bool HasTextInputEx => (Flags & 0x20) != 0;
 
         /// <summary>
+        /// The loader appended the versioned PCI resource contract immediately
+        /// after UefiBootMemoryHandoff. Older BootInfo v1 producers leave this
+        /// bit clear and remain compatible.
+        /// </summary>
+        public bool HasPciResourceHandoff => (Flags & 0x40) != 0;
+
+        /// <summary>
         /// Convert to VBEInfo for legacy compatibility
         /// </summary>
         public VBEInfo ToVBEInfo() {
@@ -159,6 +166,23 @@ namespace guideXOS.Misc {
         public uint GopMetadataReserved;
         public UefiBareMetalRecord Diagnostics;
 #endif
+    }
+
+    /// <summary>
+    /// Fixed, adjacent extension to the loader-owned memory handoff. Entries
+    /// contain copied values only; no EFI protocol or temporary pool pointers
+    /// survive ExitBootServices.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal unsafe struct UefiPciResourceHandoff {
+        public const int MaximumEntries = 8;
+
+        public uint Magic;
+        public ushort Version;
+        public ushort EntrySize;
+        public uint EntryCount;
+        public uint DiscoveryStatus;
+        public fixed byte EntryStorage[MaximumEntries * 64];
     }
 
 #if UEFI_DIAGNOSTIC_BM1

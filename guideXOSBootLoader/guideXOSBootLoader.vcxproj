@@ -113,6 +113,7 @@
     <ClInclude Include="fb_console.h" />
     <ClInclude Include="uefi_shim.h" />
     <ClInclude Include="paging.h" />
+    <ClInclude Include="pci_resource_parser.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="trampoline.asm" />
