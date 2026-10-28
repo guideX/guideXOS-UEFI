@@ -386,6 +386,9 @@ namespace guideXOS.Misc {
             SATA.ResetForBoot();
             PCI.Initialize();
             BootConsole.WriteLine("[PCI] enumerated");
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
+                USB.ReportXhciInitializationFrontier();
+            }
 #if UEFI_DIAGNOSTIC_BM1
             BareMetalMilestones.Record(8, 8);
             BareMetalMilestones.Record(8, 9);

@@ -171,6 +171,41 @@ namespace guideXOS.Misc {
             USB.DeviceAddr = 0;
         }
 
+        /// <summary>
+        /// Report the current UEFI xHCI initialization frontier without touching
+        /// controller registers or preparing DMA. PCI discovery is available,
+        /// but this checkout does not contain an xHCI driver.
+        /// </summary>
+        public static void ReportXhciInitializationFrontier() {
+            if (PCI.Devices == null) {
+                BootConsole.WriteLine("[USB][XHCI] stop=pci-not-initialized");
+                return;
+            }
+
+            int candidates = 0;
+            for (int i = 0; i < PCI.Devices.Count; i++) {
+                PCIDevice device = PCI.Devices[i];
+                if (device == null || device.ClassID != 0x0C ||
+                    device.SubClassID != 0x03 || device.ProgIF != 0x30) {
+                    continue;
+                }
+
+                candidates++;
+                BootConsole.WriteLine(
+                    $"[USB][XHCI] candidate pci={device.Bus:x2}:{device.Slot:x2}.{device.Function:x1} " +
+                    $"id={device.VendorID:x4}:{device.DeviceID:x4}");
+            }
+
+            if (candidates == 0) {
+                BootConsole.WriteLine(
+                    "[USB][XHCI] stop=no-controller-found stage=pci-discovery-complete");
+                return;
+            }
+
+            BootConsole.WriteLine(
+                $"[USB][XHCI] stop=driver-unavailable stage=pci-discovery-complete candidates={candidates}; MMIO/DMA untouched");
+        }
+
         public static void StartPolling() {
             new Thread(&LoopPoll).Start();
         }
