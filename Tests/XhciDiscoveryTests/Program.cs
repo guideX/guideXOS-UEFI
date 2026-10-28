@@ -350,6 +350,12 @@ internal static class Program {
               0xE0000000U, 0, out failure) &&
               failure == XhciDiscovery.ResourceFailure.ControllerMismatch,
               "resource associated with another device ID rejected");
+
+        resource = Valid32BitResource();
+        resource.BarConfigurationBase += 0x1000;
+        Check(!Validate32(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.BarMismatch,
+              "firmware resource base contradicting PCI BAR0 rejected");
     }
 
     private static void RejectsUnsafeFirmwareResources() {
