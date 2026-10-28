@@ -378,7 +378,7 @@ namespace guideXOS.OS {
             LaunchRequest request;
             ShellObjectResolution resolution;
             LaunchResult failure;
-            if (!ModernShellAdapter.TryCreateLaunchRequest(actionId,
+            if (!ModernShellAdapter.TryCreateTypedActionLaunchRequest(actionId,
                     out target, out request, out resolution, out failure)) {
                 return failure ?? LaunchResult.Failed(
                     LaunchErrorCode.NotFound,

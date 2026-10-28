@@ -857,6 +857,149 @@ namespace guideXOS.OS {
             Check(shellOk, "shell typed request", ref passed, ref failed,
                 ref failure);
 
+            bool serverFilesIdOk = ModernShellAdapter.TryCreateLaunchRequest(
+                "gxos.shell.files", out shellTarget, out shellRequest,
+                out shellResolution, out shellFailure) &&
+                shellTarget.ShellObjectId == "gxos.shell.computerfiles" &&
+                shellTarget.TargetKind == ApplicationShellTargetKind.Virtual &&
+                shellRequest.SourceShellObjectId ==
+                    "gxos.shell.computerfiles" &&
+                shellRequest.TargetAppId == "gxos.builtin.files" &&
+                shellResolution.Input == "gxos.shell.files" &&
+                shellResolution.MatchedAlias == "gxos.shell.files";
+            Check(serverFilesIdOk, "Server shell identity bridge",
+                ref passed, ref failed, ref failure);
+
+            string[] serverFilesAliases = new string[] {
+                "Files", "File Manager", "FileExplorer"
+            };
+            bool serverFilesAliasesOk = true;
+            for (int i = 0; i < serverFilesAliases.Length; i++) {
+                string serverAlias = serverFilesAliases[i];
+                if (!ModernShellAdapter.TryCreateLaunchRequest(serverAlias,
+                        out shellTarget, out shellRequest, out shellResolution,
+                        out shellFailure) ||
+                        shellTarget.ShellObjectId != "gxos.shell.computerfiles" ||
+                        shellRequest.TargetAppId != "gxos.builtin.files" ||
+                        shellResolution.MatchedAlias != serverAlias) {
+                    serverFilesAliasesOk = false;
+                    break;
+                }
+            }
+            Check(serverFilesAliasesOk, "Server shell alias bridge",
+                ref passed, ref failed, ref failure);
+
+            bool csharpShellIdPreserved =
+                ModernShellAdapter.TryCreateLaunchRequest(
+                    "gxos.shell.computerfiles", out shellTarget,
+                    out shellRequest, out shellResolution, out shellFailure) &&
+                shellTarget.ShellObjectId == "gxos.shell.computerfiles" &&
+                shellRequest.TargetAppId == "gxos.builtin.files";
+            Check(csharpShellIdPreserved, "C# shell identity preserved",
+                ref passed, ref failed, ref failure);
+
+            int descriptorCountBeforeRepeatedResolution = Count;
+            bool repeatedResolutionStable = true;
+            for (int i = 0; i < 8; i++) {
+                if (!ModernShellAdapter.TryCreateLaunchRequest(
+                        "gxos.shell.files", out shellTarget, out shellRequest,
+                        out shellResolution, out shellFailure) ||
+                        shellTarget.ShellObjectId !=
+                            "gxos.shell.computerfiles" ||
+                        shellRequest.TargetAppId != "gxos.builtin.files") {
+                    repeatedResolutionStable = false;
+                    break;
+                }
+            }
+            Check(repeatedResolutionStable &&
+                  Count == descriptorCountBeforeRepeatedResolution,
+                  "repeated Server shell resolution is stable", ref passed,
+                  ref failed, ref failure);
+
+            bool rootTargetKindPreserved =
+                ModernShellAdapter.TryCreateLaunchRequest("Root",
+                    out shellTarget, out shellRequest, out shellResolution,
+                    out shellFailure) &&
+                shellResolution.Kind == ShellObjectKind.FileSystemLocation &&
+                shellTarget.TargetKind == ApplicationShellTargetKind.FileSystem &&
+                shellRequest.ShellTargetKind ==
+                    ApplicationShellTargetKind.FileSystem;
+            Check(rootTargetKindPreserved, "filesystem shell target preserved",
+                ref passed, ref failed, ref failure);
+
+            bool deviceTargetKindPreserved =
+                ModernShellAdapter.TryCreateLaunchRequest("USB Drive 0",
+                    out shellTarget, out shellRequest, out shellResolution,
+                    out shellFailure) &&
+                shellResolution.Kind == ShellObjectKind.DeviceVolume &&
+                shellTarget.TargetKind == ApplicationShellTargetKind.FileSystem &&
+                shellTarget.CanonicalTarget == "USB Drive 0" &&
+                shellRequest.ShellTargetKind ==
+                    ApplicationShellTargetKind.FileSystem;
+            Check(deviceTargetKindPreserved, "device volume target preserved",
+                ref passed, ref failed, ref failure);
+
+            bool validTypedAction =
+                ModernShellAdapter.TryCreateTypedActionLaunchRequest(
+                    "Install to Hard Drive", out shellTarget, out shellRequest,
+                    out shellResolution, out shellFailure) &&
+                shellTarget.TargetKind == ApplicationShellTargetKind.Action &&
+                shellRequest.ShellTargetKind ==
+                    ApplicationShellTargetKind.Action &&
+                shellRequest.ShellTargetValue == "HDInstaller";
+            Check(validTypedAction, "typed shell action preserved", ref passed,
+                ref failed, ref failure);
+
+            bool nonActionRejectedByActionRoute =
+                !ModernShellAdapter.TryCreateTypedActionLaunchRequest(
+                    "gxos.shell.files", out shellTarget, out shellRequest,
+                    out shellResolution, out shellFailure) &&
+                shellFailure != null &&
+                shellFailure.ErrorCode == LaunchErrorCode.UnsupportedTarget &&
+                shellRequest == null;
+            Check(nonActionRejectedByActionRoute,
+                "non-action rejected by typed action route", ref passed,
+                ref failed, ref failure);
+
+            bool unsupportedServerObjectRejected =
+                !ModernShellAdapter.TryCreateLaunchRequest(
+                    "gxos.shell.this-system", out shellTarget,
+                    out shellRequest, out shellResolution, out shellFailure) &&
+                shellFailure != null && shellFailure.ErrorCode ==
+                    LaunchErrorCode.UnsupportedTarget;
+            Check(unsupportedServerObjectRejected,
+                "unsupported Server shell object is explicit", ref passed,
+                ref failed, ref failure);
+
+            bool emptyShellRequestMalformed =
+                !ModernShellAdapter.TryCreateLaunchRequest(string.Empty,
+                    out shellTarget, out shellRequest, out shellResolution,
+                    out shellFailure) && shellFailure != null &&
+                shellFailure.ErrorCode == LaunchErrorCode.MalformedRequest;
+            Check(emptyShellRequestMalformed,
+                "empty shell request is malformed", ref passed, ref failed,
+                ref failure);
+
+            string overlongShellInput = new string('x',
+                LaunchRequest.MaxTextLength + 1);
+            bool overlongShellRequestMalformed =
+                !ModernShellAdapter.TryCreateLaunchRequest(overlongShellInput,
+                    out shellTarget, out shellRequest, out shellResolution,
+                    out shellFailure) && shellFailure != null &&
+                shellFailure.ErrorCode == LaunchErrorCode.MalformedRequest;
+            Check(overlongShellRequestMalformed,
+                "overlong shell request is malformed", ref passed, ref failed,
+                ref failure);
+
+            bool unsupportedServerAliasRejected =
+                !ModernShellAdapter.TryCreateLaunchRequest("Documents",
+                    out shellTarget, out shellRequest, out shellResolution,
+                    out shellFailure) && shellFailure != null &&
+                shellFailure.ErrorCode == LaunchErrorCode.UnsupportedTarget;
+            Check(unsupportedServerAliasRejected,
+                "unsupported Server shell alias is explicit", ref passed,
+                ref failed, ref failure);
+
             bool unknownShellRejected = !ModernShellAdapter.TryCreateLaunchRequest(
                 "Unknown shell object", out shellTarget, out shellRequest,
                 out shellResolution, out shellFailure) &&
@@ -864,6 +1007,16 @@ namespace guideXOS.OS {
                 shellFailure.ErrorCode == LaunchErrorCode.NotFound;
             Check(unknownShellRejected, "unknown shell bounded failure",
                 ref passed, ref failed, ref failure);
+
+            bool unknownServerShellRejected =
+                !ModernShellAdapter.TryCreateLaunchRequest(
+                    "gxos.shell.not-real", out shellTarget, out shellRequest,
+                    out shellResolution, out shellFailure) &&
+                shellFailure != null &&
+                shellFailure.ErrorCode == LaunchErrorCode.NotFound;
+            Check(unknownServerShellRejected,
+                "unknown Server shell ID remains not found", ref passed,
+                ref failed, ref failure);
 
             AppLaunchResolver.EmitSelfTestSummary("AppModelPhase1", passed,
                 failed, failure);
@@ -1123,6 +1276,46 @@ namespace guideXOS.OS {
         }
     }
 
+    /// <summary>
+    /// Compatibility bridge for Server shell identities that are backed by an
+    /// equivalent existing C# shell object. Unsupported Server identities are
+    /// recognized explicitly so they do not fall through as unknown names.
+    /// This adapter is static and allocation-free; shell registry
+    /// initialization remains owned by ShellObjectRegistry.
+    /// </summary>
+    internal static class ServerShellObjectCompatibilityAdapter {
+        private const string CSharpFilesShellId = "gxos.shell.computerfiles";
+
+        internal static bool TryMapToCSharpShellId(string input,
+                                                   out string csharpShellId) {
+            csharpShellId = null;
+            if (input == "gxos.shell.files" || input == "Files" ||
+                    input == "File Manager" || input == "FileExplorer") {
+                csharpShellId = CSharpFilesShellId;
+                return true;
+            }
+            return false;
+        }
+
+        internal static bool IsKnownUnsupportedServerObject(string input) {
+            return input == "gxos.shell.desktop" ||
+                input == "Desktop" || input == "Desktop Home" ||
+                input == "Go to Desktop" ||
+                input == "gxos.shell.this-system" || input == "This System" ||
+                input == "Computer" ||
+                input == "gxos.shell.documents" || input == "Documents" ||
+                input == "gxos.shell.pictures" || input == "Pictures" ||
+                input == "gxos.shell.music" || input == "Music" ||
+                input == "gxos.shell.network" || input == "Network" ||
+                input == "gxos.shell.settings" || input == "Settings" ||
+                input == "System Settings" || input == "Display Options" ||
+                input == "Display Settings" || input == "Desktop Background" ||
+                input == "Wallpaper" ||
+                input == "gxos.shell.control-panel" || input == "Control Panel" ||
+                input == "gxos.shell.trash-open" || input == "Trash";
+        }
+    }
+
     public static class ModernShellAdapter {
         public static bool TryCreateLaunchRequest(
             string input, out ShellObjectTarget target,
@@ -1130,12 +1323,36 @@ namespace guideXOS.OS {
             out LaunchResult failure) {
             target = null;
             request = null;
-            resolution = ShellObjectRegistry.Resolve(input);
+            resolution = null;
             failure = null;
+            if (string.IsNullOrEmpty(input) ||
+                    input.Length > LaunchRequest.MaxTextLength) {
+                failure = LaunchResult.Failed(LaunchErrorCode.MalformedRequest,
+                    "Shell object input is empty or exceeds its bound", null);
+                return false;
+            }
+
+            string csharpShellId;
+            bool mappedServerIdentity =
+                ServerShellObjectCompatibilityAdapter.TryMapToCSharpShellId(
+                    input, out csharpShellId);
+            resolution = ShellObjectRegistry.Resolve(mappedServerIdentity
+                ? csharpShellId : input);
             if (!resolution.Success) {
+                if (ServerShellObjectCompatibilityAdapter
+                        .IsKnownUnsupportedServerObject(input)) {
+                    failure = LaunchResult.Failed(
+                        LaunchErrorCode.UnsupportedTarget,
+                        "Server shell object has no C# launch backend", null);
+                    return false;
+                }
                 failure = LaunchResult.Failed(LaunchErrorCode.NotFound,
                     resolution.FailureReason, null);
                 return false;
+            }
+            if (mappedServerIdentity) {
+                resolution.Input = input;
+                resolution.MatchedAlias = input;
             }
 
             ApplicationShellTargetKind targetKind;
@@ -1173,6 +1390,24 @@ namespace guideXOS.OS {
                 return false;
             }
             return true;
+        }
+
+        public static bool TryCreateTypedActionLaunchRequest(
+            string input, out ShellObjectTarget target,
+            out LaunchRequest request, out ShellObjectResolution resolution,
+            out LaunchResult failure) {
+            if (!TryCreateLaunchRequest(input, out target, out request,
+                    out resolution, out failure)) return false;
+            if (target.TargetKind == ApplicationShellTargetKind.Action) {
+                return true;
+            }
+
+            failure = LaunchResult.Failed(LaunchErrorCode.UnsupportedTarget,
+                "Shell object is not a typed system action",
+                resolution.AppId);
+            target = null;
+            request = null;
+            return false;
         }
     }
 
