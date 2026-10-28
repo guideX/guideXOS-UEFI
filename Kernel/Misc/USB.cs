@@ -172,9 +172,10 @@ namespace guideXOS.Misc {
         }
 
         /// <summary>
-        /// Report the current UEFI xHCI initialization frontier without touching
-        /// controller registers or preparing DMA. PCI discovery is available,
-        /// but this checkout does not contain an xHCI driver.
+        /// Validate the xHCI PCI BAR shape and report the safe MMIO frontier.
+        /// The assigned BAR aperture length is not available through the
+        /// current PCI/UEFI handoff, so this diagnostic does not map or read
+        /// controller registers.
         /// </summary>
         public static void ReportXhciInitializationFrontier() {
             if (PCI.Devices == null) {
@@ -182,18 +183,48 @@ namespace guideXOS.Misc {
                 return;
             }
 
+            const int diagnosticLimit = 8;
             int candidates = 0;
+            int suppressed = 0;
             for (int i = 0; i < PCI.Devices.Count; i++) {
                 PCIDevice device = PCI.Devices[i];
-                if (device == null || device.ClassID != 0x0C ||
-                    device.SubClassID != 0x03 || device.ProgIF != 0x30) {
+                if (device == null || !XhciDiscovery.IsXhciFunction(
+                    device.ClassID, device.SubClassID, device.ProgIF)) {
+                    continue;
+                }
+                if (WasXhciFunctionReported(i, device)) continue;
+
+                candidates++;
+                if (candidates > diagnosticLimit) {
+                    suppressed++;
                     continue;
                 }
 
-                candidates++;
+                string address = $"pci={device.Bus:x2}:{device.Slot:x2}.{device.Function:x1} " +
+                    $"id={device.VendorID:x4}:{device.DeviceID:x4}";
+                BootConsole.WriteLine($"[USB][XHCI] controller=found {address}");
+
+                XhciDiscovery.BarInfo bar;
+                XhciDiscovery.BarStatus barStatus = XhciDiscovery.TryParseMemoryBar(
+                    device.Bar0, device.Bar1, hasUpperBar: true, out bar);
+                if (barStatus != XhciDiscovery.BarStatus.Valid) {
+                    BootConsole.WriteLine(
+                        $"[USB][XHCI] bar-resource=invalid status={barStatus} {address}");
+                    BootConsole.WriteLine(
+                        $"[USB][XHCI] mmio-access=unavailable capability-header=not-read " +
+                        $"capabilities=not-decoded {address}");
+                    continue;
+                }
+
                 BootConsole.WriteLine(
-                    $"[USB][XHCI] candidate pci={device.Bus:x2}:{device.Slot:x2}.{device.Function:x1} " +
-                    $"id={device.VendorID:x4}:{device.DeviceID:x4}");
+                    $"[USB][XHCI] bar-shape=validated base=0x{bar.BaseAddress:x} " +
+                    $"width={(bar.Is64Bit ? 64 : 32)} prefetchable={bar.IsPrefetchable} {address}");
+
+                BootConsole.WriteLine(
+                    $"[USB][XHCI] bar-resource=unverified reason=aperture-size-unavailable {address}");
+                BootConsole.WriteLine(
+                    $"[USB][XHCI] mmio-access=unavailable reason=resource-bounds-unverified " +
+                    $"capability-header=not-read capabilities=not-decoded {address}");
             }
 
             if (candidates == 0) {
@@ -203,7 +234,20 @@ namespace guideXOS.Misc {
             }
 
             BootConsole.WriteLine(
-                $"[USB][XHCI] stop=driver-unavailable stage=pci-discovery-complete candidates={candidates}; MMIO/DMA untouched");
+                $"[USB][XHCI] stop=bar-aperture-size-unavailable candidates={candidates} " +
+                $"suppressed={suppressed}; xHCI MMIO/DMA untouched");
+        }
+
+        private static bool WasXhciFunctionReported(int index, PCIDevice device) {
+            for (int i = 0; i < index; i++) {
+                PCIDevice previous = PCI.Devices[i];
+                if (previous != null && XhciDiscovery.IsXhciFunction(
+                    previous.ClassID, previous.SubClassID, previous.ProgIF) &&
+                    previous.Segment == device.Segment &&
+                    previous.Bus == device.Bus && previous.Slot == device.Slot &&
+                    previous.Function == device.Function) return true;
+            }
+            return false;
         }
 
         public static void StartPolling() {
