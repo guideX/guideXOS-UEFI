@@ -200,6 +200,116 @@ def expected_record_path(root: Path, phase: str, record_name: str) -> Path:
     return root / "out" / "dotnet" / PHASE_DIRS[phase] / record_name
 
 
+def _source_fingerprint_bindings(record: dict[str, Any], item: dict[str, Any] | None) -> tuple[bool, bool]:
+    """Report whether a build record binds source revision and build inputs."""
+    item = item or {}
+    source_keys = ("sourceCommit", "sourceRevision", "repositoryCommit", "builderCommit")
+    input_keys = ("sourceFingerprint", "buildInputFingerprint", "buildInputsSha256", "toolchainFingerprint")
+    source_bound = any(
+        isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{40}", value.strip()) is not None
+        for container in (record, item)
+        for key in source_keys
+        if (value := container.get(key)) is not None
+    )
+    inputs_bound = any(
+        isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value.strip()) is not None
+        for container in (record, item)
+        for key in input_keys
+        if (value := container.get(key)) is not None
+    )
+    return source_bound, inputs_bound
+
+
+def _build_output_root(path: Path, phase: str) -> Path | None:
+    """Return the explicit dotnet root containing the recorded phase output."""
+    phase_dir = PHASE_DIRS[phase].casefold()
+    for parent in (path, *path.parents):
+        if parent.name.casefold() == phase_dir:
+            return parent.parent
+    return None
+
+
+def _matching_build_outputs(
+    payload: Any,
+    expected_hash: str | None,
+    output_name: str | None,
+    search_roots: list[Path],
+    recorded_paths: list[Path],
+) -> list[dict[str, Any]]:
+    """Search only known phase output layouts and explicitly recorded paths."""
+    if not expected_hash or not output_name:
+        return []
+
+    candidates: set[Path] = set(recorded_paths)
+    for root in search_roots:
+        phase_root = root / PHASE_DIRS[payload.phase]
+        # Phase builders publish directly under <mode>/publish. Phases 34-35
+        # also archive known outputs under payloads/<mode>/publish.
+        candidates.update(phase_root.glob(f"*/publish/{output_name}"))
+        candidates.update(phase_root.glob(f"payloads/*/publish/{output_name}"))
+
+    matches: list[dict[str, Any]] = []
+    for path in sorted(candidates, key=lambda value: str(value).casefold()):
+        try:
+            if not path.is_file():
+                continue
+            digest = sha256_file(path)
+            if digest != expected_hash.upper():
+                continue
+            matches.append(
+                {
+                    "path": str(path.resolve()),
+                    "sha256": digest,
+                    "bytes": path.stat().st_size,
+                }
+            )
+        except OSError:
+            continue
+    return matches
+
+
+def audit_staging_lineage(roots: list[Path]) -> dict[str, Any]:
+    """Summarize byte-identical staged EXE/GXMI pairs across explicit roots."""
+    reports: list[dict[str, Any]] = []
+    grouped: dict[str, list[str]] = {}
+    for root_arg in roots:
+        root = root_arg.resolve()
+        stage = root / "ramdisk_src" / "Native"
+        pairs: list[tuple[str, str, str]] = []
+        for payload in PAYLOADS:
+            exe = stage / f"{payload.basename}.exe"
+            descriptor = stage / f"{payload.basename}.gxmi"
+            if not exe.is_file() or not descriptor.is_file():
+                continue
+            pairs.append((f"{payload.phase}/{payload.variant}", sha256_file(exe), sha256_file(descriptor)))
+        complete = len(pairs) == len(PAYLOADS)
+        signature = None
+        if complete:
+            signature = sha256_bytes(
+                "\n".join(f"{key}|{exe_hash}|{descriptor_hash}" for key, exe_hash, descriptor_hash in pairs).encode("utf-8")
+            )
+            grouped.setdefault(signature, []).append(str(root))
+        reports.append(
+            {
+                "root": str(root),
+                "completePairCount": len(pairs),
+                "requiredPairCount": len(PAYLOADS),
+                "complete": complete,
+                "pairSetSha256": signature,
+            }
+        )
+    return {
+        "roots": reports,
+        "identicalCompletePairSets": [
+            {"pairSetSha256": signature, "rootCount": len(group_roots), "roots": group_roots}
+            for signature, group_roots in sorted(grouped.items())
+        ],
+        "sharedCompletePairCount": max(
+            (len(group_roots) for group_roots in grouped.values()), default=0
+        ),
+    }
+
+
 def validate_descriptor_and_image(
     payload: Any, exe_path: Path, descriptor_path: Path
 ) -> tuple[dict[str, Any], list[str]]:
@@ -246,6 +356,7 @@ def validate_descriptor_and_image(
         "executableBytes": len(image),
         "descriptorSha256": descriptor_hash,
         "descriptorBytes": len(descriptor),
+        "descriptorArtifactSha256": descriptor_digest.hex().upper(),
         "descriptorFlags": f"0x{flags:08X}",
     }, issues
 
@@ -319,6 +430,24 @@ def validate_artifacts(root: Path) -> dict[str, Any]:
         }
 
         if item:
+            phase_data = phase_record.get("record", {})
+            source_commit_bound, input_fingerprint_bound = _source_fingerprint_bindings(
+                phase_data, item
+            )
+            metadata.update(
+                {
+                    "recordedExecutableSha256": str(item.get("sha256", "")).upper() or None,
+                    "recordedExecutableBytes": item.get("length"),
+                    "buildRecordGeneratedBy": phase_data.get("generatedBy"),
+                    "buildRecordTarget": phase_data.get("target"),
+                    "buildRecordTargetOs": phase_data.get("targetOs"),
+                    "buildRecordSdkProject": phase_data.get("sdkProject"),
+                    "buildRecordProject": item.get("project"),
+                    "buildRecordMode": item.get("mode"),
+                    "sourceCommitBound": source_commit_bound,
+                    "inputFingerprintBound": input_fingerprint_bound,
+                }
+            )
             raw_build_path = item.get("path")
             if not isinstance(raw_build_path, str) or not raw_build_path:
                 row_issues.append("BUILD_OUTPUT_PATH_MISSING")
@@ -360,6 +489,47 @@ def validate_artifacts(root: Path) -> dict[str, Any]:
         if build_path and build_path.is_file() and exe_path.is_file():
             if sha256_file(build_path) != sha256_file(exe_path) or build_path.stat().st_size != exe_path.stat().st_size:
                 row_issues.append("BUILD_STAGE_BYTE_MISMATCH")
+
+        recorded_hash = metadata.get("recordedExecutableSha256")
+        output_hash = metadata.get("buildOutputSha256")
+        staged_hash = metadata.get("executableSha256")
+        record_matches_output = bool(recorded_hash and output_hash == recorded_hash)
+        record_matches_stage = bool(recorded_hash and staged_hash == recorded_hash)
+        output_matches_stage = bool(output_hash and staged_hash == output_hash)
+        descriptor_binds_stage = bool(
+            staged_hash
+            and metadata.get("descriptorSha256")
+            and metadata.get("descriptorArtifactSha256") == staged_hash
+            and not any(
+                issue.startswith("DESCRIPTOR_")
+                for issue in row_issues
+            )
+        )
+        metadata.update(
+            {
+                "recordHashMatchesOutput": record_matches_output,
+                "recordHashMatchesStage": record_matches_stage,
+                "buildOutputMatchesStage": output_matches_stage,
+                "descriptorBindsStagedExecutable": descriptor_binds_stage,
+                "provenanceComplete": bool(
+                    record_matches_output
+                    and output_matches_stage
+                    and descriptor_binds_stage
+                    and metadata.get("sourceCommitBound")
+                    and metadata.get("inputFingerprintBound")
+                ),
+            }
+        )
+        if not recorded_hash or not output_hash or not staged_hash:
+            metadata["provenanceClassification"] = "INCOMPLETE_SOURCE_CHAIN"
+        elif record_matches_output and output_matches_stage and descriptor_binds_stage:
+            metadata["provenanceClassification"] = "RECORD_OUTPUT_STAGE_MATCH"
+        elif record_matches_stage and not record_matches_output and descriptor_binds_stage:
+            metadata["provenanceClassification"] = "RECORD_STAGE_MATCH_OUTPUT_DIVERGED"
+        elif record_matches_output and not output_matches_stage and descriptor_binds_stage:
+            metadata["provenanceClassification"] = "RECORD_OUTPUT_MATCH_STAGE_DIVERGED"
+        else:
+            metadata["provenanceClassification"] = "MULTIWAY_HASH_DIVERGENCE"
 
         rows.append(
             {
@@ -730,6 +900,7 @@ def compare_staged_payloads(source_root: Path, receiving_root: Path) -> list[dic
 
 def audit(target: Path, candidates: list[Path]) -> dict[str, Any]:
     target = target.resolve()
+    explicit_roots = [target, *(candidate.resolve() for candidate in candidates)]
     candidates_report: list[dict[str, Any]] = []
     for candidate_arg in candidates:
         candidate = candidate_arg.resolve()
@@ -737,6 +908,43 @@ def audit(target: Path, candidates: list[Path]) -> dict[str, Any]:
         contract = compare_contracts(candidate, target)
         comparisons = compare_staged_payloads(candidate, target)
         runtime_candidate = audit_runtime(target, candidate)
+        source_rows = {
+            (row["phase"], row["variant"]): row
+            for row in source["artifacts"]
+        }
+        search_roots = {target, candidate}
+        recorded_paths_by_key: dict[tuple[str, str], list[Path]] = {}
+        for payload, row in zip(PAYLOADS, source["artifacts"]):
+            output_path = row.get("buildOutputPath")
+            if not output_path:
+                continue
+            path = Path(output_path)
+            recorded_paths_by_key[(payload.phase, payload.variant)] = [path]
+            build_root = _build_output_root(path, payload.phase)
+            if build_root is not None:
+                search_roots.add(build_root)
+        for comparison, payload in zip(comparisons, PAYLOADS):
+            provenance = source_rows.get((payload.phase, payload.variant), {})
+            comparison["sourceProvenanceClassification"] = provenance.get(
+                "provenanceClassification", "INCOMPLETE_SOURCE_CHAIN"
+            )
+            comparison["recordedExecutableSha256"] = provenance.get(
+                "recordedExecutableSha256"
+            )
+            comparison["buildOutputSha256"] = provenance.get("buildOutputSha256")
+            comparison["sourceStagedSha256"] = provenance.get("executableSha256")
+            comparison["descriptorArtifactSha256"] = provenance.get(
+                "descriptorArtifactSha256"
+            )
+            comparison["provenanceComplete"] = provenance.get("provenanceComplete", False)
+            output_path = provenance.get("buildOutputPath")
+            comparison["matchingBuildOutputCandidates"] = _matching_build_outputs(
+                payload,
+                comparison.get("receivingExecutableSha256"),
+                Path(output_path).name if output_path else None,
+                sorted(search_roots, key=lambda value: str(value).casefold()),
+                recorded_paths_by_key.get((payload.phase, payload.variant), []),
+            )
         candidate_verified = source["verified"]
         all_pairs_match = len(comparisons) == len(PAYLOADS) and all(row["samePair"] for row in comparisons)
         eligible = candidate_verified and contract["compatible"] and all_pairs_match
@@ -754,6 +962,37 @@ def audit(target: Path, candidates: list[Path]) -> dict[str, Any]:
                 row["classification"] = "BUILD_CONTRACT_MISMATCH"
             else:
                 row["classification"] = "REUSABLE_CANDIDATE" if row["samePair"] else "REBUILD_VARIANT"
+        source_classifications: dict[str, int] = {}
+        for row in source["artifacts"]:
+            key = row.get("provenanceClassification", "INCOMPLETE_SOURCE_CHAIN")
+            source_classifications[key] = source_classifications.get(key, 0) + 1
+        record_output_matches = sum(
+            1 for row in source["artifacts"] if row.get("recordHashMatchesOutput")
+        )
+        record_stage_matches = sum(
+            1 for row in source["artifacts"] if row.get("recordHashMatchesStage")
+        )
+        output_stage_matches = sum(
+            1 for row in source["artifacts"] if row.get("buildOutputMatchesStage")
+        )
+        matching_output_candidate_count = sum(
+            bool(row.get("matchingBuildOutputCandidates")) for row in comparisons
+        )
+        recovery_actions: list[str] = []
+        if record_output_matches != len(PAYLOADS):
+            recovery_actions.append("RECORDS_DO_NOT_MATCH_ALL_CURRENT_BUILD_OUTPUTS")
+        if output_stage_matches != len(PAYLOADS):
+            recovery_actions.append("BUILD_OUTPUTS_DO_NOT_MATCH_ALL_STAGED_EXECUTABLES")
+        if not candidate_verified:
+            recovery_actions.append("NATIVE_IDENTITY_GENERATOR_HAS_NOT_ACCEPTED_THE_SOURCE_CHAIN")
+        if sum(1 for row in source["artifacts"] if row.get("sourceCommitBound")) != len(PAYLOADS) or sum(
+            1 for row in source["artifacts"] if row.get("inputFingerprintBound")
+        ) != len(PAYLOADS):
+            recovery_actions.append("SOURCE_OR_BUILD_INPUT_FINGERPRINTS_ARE_INCOMPLETE")
+        if not contract["compatible"]:
+            recovery_actions.append("BUILD_CONTRACT_FINGERPRINTS_DIFFER")
+        if not runtime_candidate.get("localBuildPrerequisitesPresent"):
+            recovery_actions.append("RECEIVING_CHECKOUT_RUNTIME_PREREQUISITES_ARE_INCOMPLETE")
         candidates_report.append(
             {
                 "root": str(candidate),
@@ -763,6 +1002,37 @@ def audit(target: Path, candidates: list[Path]) -> dict[str, Any]:
                 "buildContract": contract,
                 "samePairCount": sum(1 for row in comparisons if row["samePair"]),
                 "requiredArtifactCount": len(PAYLOADS),
+                "lineageSummary": {
+                    "provenanceClassificationCounts": source_classifications,
+                    "recordHashMatchesCurrentOutputCount": record_output_matches,
+                    "recordHashMatchesStageCount": record_stage_matches,
+                    "currentOutputMatchesStageCount": output_stage_matches,
+                    "sourceCommitBoundCount": sum(
+                        1 for row in source["artifacts"] if row.get("sourceCommitBound")
+                    ),
+                    "inputFingerprintBoundCount": sum(
+                        1 for row in source["artifacts"] if row.get("inputFingerprintBound")
+                    ),
+                    "provenanceCompleteCount": sum(
+                        1 for row in source["artifacts"] if row.get("provenanceComplete")
+                    ),
+                    "receivingStageHashFoundInKnownBuildOutputsCount": matching_output_candidate_count,
+                },
+                "buildOutputSearch": {
+                    "roots": [str(path) for path in sorted(search_roots, key=lambda value: str(value).casefold())],
+                    "patterns": ["<phase>/<mode>/publish/<recorded-executable-name>", "<phase>/payloads/<mode>/publish/<recorded-executable-name>", "recorded output path"],
+                    "recursiveDriveScan": False,
+                },
+                "recoveryPrerequisites": {
+                    "nativeGeneratorAcceptedSource": candidate_verified,
+                    "allBuildRecordsMatchCurrentOutputs": record_output_matches == len(PAYLOADS),
+                    "allCurrentOutputsMatchStage": output_stage_matches == len(PAYLOADS),
+                    "buildContractCompatible": contract["compatible"],
+                    "runtimeLocalBuildPrerequisitesPresent": bool(
+                        runtime_candidate.get("localBuildPrerequisitesPresent")
+                    ),
+                    "requiredNextEvidence": recovery_actions,
+                },
                 "fullSetReusableCandidate": eligible,
                 "refusalReasons": refused,
                 "artifacts": comparisons,
@@ -779,6 +1049,7 @@ def audit(target: Path, candidates: list[Path]) -> dict[str, Any]:
             "identity": git_metadata(target),
             "runtimeDependencies": runtime,
         },
+        "stagingLineage": audit_staging_lineage(explicit_roots),
         "requiredProofArtifactCount": len(PAYLOADS),
         "candidateCount": len(candidates_report),
         "candidates": candidates_report,

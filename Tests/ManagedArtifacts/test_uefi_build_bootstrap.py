@@ -174,6 +174,27 @@ class UefiBuildBootstrapTests(unittest.TestCase):
         self.assertTrue(report["buildContract"]["compatible"])
         self.assertTrue(report["fullSetReusableCandidate"])
         self.assertEqual(report["samePairCount"], len(identities.PAYLOADS))
+        first = report["sourceArtifactAudit"]["artifacts"][0]
+        self.assertFalse(first["sourceCommitBound"])
+        self.assertFalse(first["inputFingerprintBound"])
+        self.assertFalse(first["provenanceComplete"])
+
+    def test_provenance_fingerprints_require_immutable_hash_values(self) -> None:
+        source_bound, inputs_bound = bootstrap._source_fingerprint_bindings(
+            {"sourceCommit": "main", "buildInputFingerprint": "generated"}, None
+        )
+        self.assertFalse(source_bound)
+        self.assertFalse(inputs_bound)
+
+        source_bound, inputs_bound = bootstrap._source_fingerprint_bindings(
+            {
+                "sourceCommit": "A" * 40,
+                "buildInputFingerprint": "B" * 64,
+            },
+            None,
+        )
+        self.assertTrue(source_bound)
+        self.assertTrue(inputs_bound)
 
     def test_missing_artifact_is_reported_and_refused(self) -> None:
         exe, _, _ = self._source_paths("Phase29", "success")
@@ -212,7 +233,63 @@ class UefiBuildBootstrapTests(unittest.TestCase):
         report = self._report()["candidates"][0]
         row = next(row for row in report["sourceArtifactAudit"]["artifacts"] if row["phase"] == "Phase29" and row["variant"] == "success")
         self.assertIn("BUILD_STAGE_BYTE_MISMATCH", row["issues"])
+        self.assertEqual(row["provenanceClassification"], "RECORD_OUTPUT_MATCH_STAGE_DIVERGED")
+        self.assertTrue(row["recordHashMatchesOutput"])
+        self.assertFalse(row["buildOutputMatchesStage"])
         self.assertFalse(report["fullSetReusableCandidate"])
+
+    def test_record_and_stage_agreement_exposes_replaced_build_output(self) -> None:
+        exe, _, record_path = self._source_paths("Phase34", "success")
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        payload = next(p for p in identities.PAYLOADS if p.phase == "Phase34" and p.variant == "success")
+        item = next(entry for entry in record["payloads"] if entry["name"] == payload.build_mode)
+        build_output = Path(item["path"])
+        build_output.write_bytes(_synthetic_pe(9034))
+
+        row = next(
+            row for row in bootstrap.validate_artifacts(self.source.root)["artifacts"]
+            if row["phase"] == "Phase34" and row["variant"] == "success"
+        )
+        self.assertEqual(row["provenanceClassification"], "RECORD_STAGE_MATCH_OUTPUT_DIVERGED")
+        self.assertTrue(row["recordHashMatchesStage"])
+        self.assertFalse(row["recordHashMatchesOutput"])
+        self.assertIn("BUILD_RECORD_HASH_MISMATCH", row["issues"])
+
+    def test_receiving_stage_hash_search_finds_bounded_candidate_output(self) -> None:
+        payload = next(p for p in identities.PAYLOADS if p.phase == "Phase30" and p.variant == "reader")
+        stage = self.target.root / "ramdisk_src" / "Native"
+        exe = stage / f"{payload.basename}.exe"
+        changed = _synthetic_pe(9030)
+        exe.write_bytes(changed)
+        (stage / f"{payload.basename}.gxmi").write_bytes(_synthetic_gxmi(payload, changed))
+
+        source_record = bootstrap.expected_record_path(self.source.root, "Phase30", payload.record_name)
+        data = json.loads(source_record.read_text(encoding="utf-8"))
+        item = next(entry for entry in data["payloads"] if entry["name"] == payload.build_mode)
+        output_name = Path(item["path"]).name
+        alternate = (
+            self.source.root / "out" / "dotnet" / bootstrap.PHASE_DIRS["Phase30"]
+            / "alternate" / "publish" / output_name
+        )
+        alternate.parent.mkdir(parents=True, exist_ok=True)
+        alternate.write_bytes(changed)
+
+        report = self._report()["candidates"][0]
+        row = next(row for row in report["artifacts"] if row["phase"] == "Phase30" and row["variant"] == "reader")
+        matches = row["matchingBuildOutputCandidates"]
+        self.assertEqual([match["path"] for match in matches], [str(alternate.resolve())])
+        self.assertEqual(matches[0]["sha256"], _sha(changed))
+        self.assertFalse(report["fullSetReusableCandidate"])
+
+    def test_shared_staging_lineage_is_reported_without_mutation(self) -> None:
+        report = self._report()
+        self.assertEqual(report["stagingLineage"]["sharedCompletePairCount"], 2)
+        group = report["stagingLineage"]["identicalCompletePairSets"][0]
+        self.assertEqual(group["rootCount"], 2)
+        self.assertEqual(
+            {Path(root).name for root in group["roots"]},
+            {self.source.root.name, self.target.root.name},
+        )
 
     def test_missing_runtime_dependency_is_reported(self) -> None:
         result = bootstrap.audit_runtime(self.target.root)
