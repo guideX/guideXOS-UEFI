@@ -6,17 +6,17 @@
 
 ## Verdict
 
-The production-configured RC2 payload and ISO were built from an isolated copy, the hosted regression gates passed, and the exact ISO passed archive and payload-identity checks. The ISO has not completed OVMF guest acceptance. Two managed launches stopped during legacy BIOS firmware loading. A third QAC-managed launch used the repository's pflash method, but QEMU became unresponsive before QMP produced its greeting. QAC marked the reservation degraded because its process census could not identify another QEMU process. That process was left untouched.
+The production-configured RC2 payload and ISO were built from an isolated copy, the hosted regression gates passed, and the exact ISO passed archive and payload-identity checks. A clean QAC-managed pflash cold boot reached the live desktop once; its captured 1280×800 screen shows no BM diagnostic overlay. Full OVMF guest acceptance is still incomplete: no application interactions or additional independent boots were completed.
 
-No guest acceptance step is counted as passed. This is Outcome B, not a guest regression determination: the guest could not be observed well enough to determine whether it booted. Under the release gate, RC2 is not yet ready for owner physical acceptance. No physical acceptance is claimed.
+The boot-to-desktop and no-overlay checks passed on that one run. Calculator, Display Options, Disk Manager, Task Manager, Console/netinit, WAV Player, repeated cold boots, soak, and warm reset were not tested in the guest. This is Outcome B, not a guest regression determination. Under the release gate, RC2 is not yet ready for owner physical acceptance. No physical acceptance is claimed.
 
 ## Repository state and provenance
 
 - Release integration began on branch main at 829f8d5, the recorded pre-integration base. The current repository state was treated as authoritative; accepted local BM2/BM3C/BM4A work was consolidated in the first commit below.
-- The product-source and packaging-tool head before this report is 7e57a5e. This report is a documentation-only follow-up visible in repository history.
-- The release integration and tooling commits are local on main. The branch was four commits ahead of origin/main before this report and will be five commits ahead after it. No reset, clean, stash, rebase, merge, branch switch, worktree, cherry-pick, push, or mass staging was used.
+- The product payload tree used for the ISO was based on 901112a and included the Phase 31–35 proof-staging path fixes later committed as 5221d74 and 442abea. Those two commits change qualification tooling, not kernel product code. The ISO packager is committed as 7e57a5e; qualification notes were committed afterward.
+- The release integration and tooling commits are local on main. The branch was four commits ahead of origin/main before qualification documentation and is six commits ahead after the documentation evidence update. No reset, clean, stash, rebase, merge, branch switch, worktree, cherry-pick, push, or mass staging was used.
 - The pre-existing BM2, BM3B, BM3C, BM4A, and RC1 ISO files remain in ISO and were not overwritten. The pre-existing test bin/obj directories remain untracked. The existing nested NativeAOT runtime work was preserved and not staged or modified.
-- Tracked source and index state were clean before this report was added; after its commit, no tracked changes remain. The RC2 ISO is an intentional untracked release artifact; prior untracked ISO and test outputs remain preserved.
+- Tracked source and index state were clean before qualification documentation; after the evidence update commit, no tracked changes remain. The RC2 ISO is an intentional untracked release artifact; prior untracked ISO and test outputs remain preserved.
 
 Local commits:
 
@@ -26,6 +26,7 @@ Local commits:
 | 5221d74 | Correct Phase 31 native link-response lookup in qualification staging. |
 | 442abea | Correct managed proof link-response paths in Phases 32–35. |
 | 7e57a5e | Add the production UEFI RC2 ISO packager. |
+| b64d605 | Record the initial hosted-ready / guest-pending qualification; updated with the later QEMU boot evidence in this report. |
 
 The isolated candidate was copied from the product-source tree at 901112a. It also contained the later Phase 31–35 staging-script path fixes, which are build/qualification tooling changes and do not change kernel product code. The RC2 packaging helper is committed as 7e57a5e. The resulting ISO and payload hashes below identify the exact candidate artifact.
 
@@ -100,9 +101,12 @@ QAC was online and idle before the attempts. All attempts were launched through 
 
 1. The first QAC-managed launch exited with QEMU's “could not load PC BIOS” error while using the BIOS firmware option.
 2. The retry with native Windows path separators exited with the same firmware-loading error.
-3. The pflash retry used OVMF.fd (SHA-256 2DF617A6FD1BAE41EC7C0E3BCECA96C928A5A88D8DC198468D34733393AB2792) and the exact RC2 ISO. QAC granted reservation 71881549bff7423981e6216ac2dcb713 and launched QEMU PID 26864 at 2026-10-29T01:32:57.664Z. QAC then marked the reservation degraded because process census was incomplete; it reported PID 23712 with executable identity unavailable. QEMU accepted the QMP TCP connection but sent no QMP greeting within the 20-second client timeout. Windows reported the admitted QEMU process as unresponsive. The session was ended through its QAC terminal; QAC released the reservation, and no managed session remained. PID 23712 was left untouched.
+3. A pflash retry used OVMF.fd (SHA-256 2DF617A6FD1BAE41EC7C0E3BCECA96C928A5A88D8DC198468D34733393AB2792) and the exact RC2 ISO. QAC granted reservation 71881549bff7423981e6216ac2dcb713 and launched QEMU PID 26864 at 2026-10-29T01:32:57.664Z. QAC marked it degraded because process census was incomplete and reported PID 23712 with executable identity unavailable. QEMU accepted the QMP TCP connection but sent no QMP greeting within 20 seconds; Windows reported this QEMU process as unresponsive. It was ended through its QAC terminal. PID 23712 was left untouched.
+4. After a later healthy/idle QAC snapshot, a headless pflash retry used the exact ISO, 4 GiB guest memory, and QMP port 44412. QAC granted reservation 6877361c0caf4ba78a3d41b0b670893d and launched QEMU PID 15652 at 2026-10-29T01:38:53.700Z. This session was not degraded. QMP returned status running; OVMF launched the ISO's UEFI DVD entry; the loader loaded the exact kernel ELF and 57,132,084-byte RAMDISK; serial output records ExitBootServices, kernel/desktop initialization, and continuing heartbeat frames. A QMP screendump captured the 1280×800 desktop at E:\guideXOS-RC2-qualification-20261028\qemu-screens\rc2-boot1.png. Visual inspection confirms the normal wallpaper and Files/Docs/Images/Audio icons with no BM diagnostic overlay.
 
-No splash, desktop, application, cursor, keyboard, netinit, soak, warm reset, or cold-boot acceptance result was obtained. Do not count any of these as passed. When QAC can provide a healthy, non-degraded session, retry the exact ISO and capture a controllable screen/serial/QMP trace before running the acceptance sequence.
+After capturing the screen, host command processes began returning Windows process-initialization errors. The admitted QEMU session was stopped through its QAC terminal; QEMU PID 15652 and QMP port 44412 were then confirmed absent. Subsequent QAC status/queue calls timed out, so a final reservation census could not be read and no new run was started. The planned 1 GiB retry was not performed.
+
+This is one successful cold boot to the desktop, not a completed QEMU acceptance run. No application, cursor, keyboard, netinit, soak, warm reset, or additional cold-boot test is claimed. When QAC is responsive and can provide a healthy session, continue with the exact ISO and complete the remaining acceptance sequence.
 
 ## Compatibility, limitations, and deferred work
 
@@ -120,7 +124,7 @@ Use the established FAT32 removable-media procedure. Before preparing media, ver
 
 On HP AIDA_LPT, record actual results for:
 
-1. Boot RC2 twice; confirm v0.2 splash, no BM debug tiles, graphical desktop, no startup exception, and responsive built-in touchpad.
+1. Boot RC2 from USB; confirm v0.2 splash, no BM debug tiles, graphical desktop, no startup exception, and responsive built-in touchpad.
 2. Open Start. Launch Calculator from a desktop shortcut and Start menu; perform a basic calculation. Confirm single click selects and double click launches desktop shortcuts.
 3. Open Display Options, inspect the resolution list, close it, and reopen it.
 4. Open Disk Manager for read-only inspection only.
@@ -134,4 +138,4 @@ Record device/model, firmware mode, exact ISO hash, dates, actual application ou
 
 ## Release gate and publication
 
-The hosted build, managed-artifact identity, focused regressions, and ISO structure checks pass. The QEMU/OVMF guest gate does not. RC2 is therefore hosted-ready with guest qualification pending, and is not yet declared ready for owner acceptance under the release gate. Physical testing must not be described as completed until the owner tests this exact hash and reports results. No final v0.2 release is accepted, the ISO has not been published, the public website was not modified, and no commit was pushed.
+The hosted build, managed-artifact identity, focused regressions, and ISO structure checks pass. One QEMU/OVMF cold boot reached the normal desktop, but the application and repeat-boot guest gates remain incomplete. RC2 is therefore hosted-ready with guest qualification pending, and is not yet declared ready for owner acceptance under the release gate. Physical testing must not be described as completed until the owner tests this exact hash and reports results. No final v0.2 release is accepted, the ISO has not been published, the public website was not modified, and no commit was pushed.
