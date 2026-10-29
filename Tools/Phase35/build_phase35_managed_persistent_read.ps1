@@ -143,7 +143,7 @@ foreach ($mode in $modes) {
     $archiveArtifact = Join-Path (Join-Path $payloadRoot 'publish') $artifact.Name
     $archiveMap = Join-Path $payloadRoot 'guidexos.map'
     $archiveLinkResponse = Join-Path $payloadRoot `
-        'obj\Release\net9.0\guidexos-x64\native\link.rsp'
+        'obj\x64\Release\net9.0\guidexos-x64\native\link.rsp'
     New-Item -ItemType Directory -Force -Path `
         (Split-Path -Parent $archiveArtifact), `
         (Split-Path -Parent $archiveLinkResponse) | Out-Null
@@ -151,7 +151,7 @@ foreach ($mode in $modes) {
     Copy-Item -LiteralPath (Join-Path $output 'guidexos.map') `
         -Destination $archiveMap -Force
     Copy-Item -LiteralPath (Join-Path $output `
-        'obj\Release\net9.0\guidexos-x64\native\link.rsp') `
+        'obj\x64\Release\net9.0\guidexos-x64\native\link.rsp') `
         -Destination $archiveLinkResponse -Force
     foreach ($recordName in @('phase26-managed-proof-build.json',
             'user-managed-proof-build.json')) {
