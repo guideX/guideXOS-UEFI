@@ -1,0 +1,819 @@
+{
+  "artifact": {
+    "buildOutput": {
+      "length": 706048,
+      "path": "build\\phase29\\success\\publish\\guideXOS.Phase29ManagedNotificationProof.exe",
+      "sha256": "275C4F166F6964478A68D08E61B22BAB23507CF2B07F32C1BB7EE90EE52B0F56"
+    },
+    "buildStageByteAgreement": true,
+    "descriptor": {
+      "length": 260,
+      "path": "stage\\guideXOS.Phase29ManagedNotificationProof.gxmi",
+      "sha256": "5F02FB7EF7827639B0E1A27F97AF3BEAE9FC8399B5BB0649981958D78EEA0BA9"
+    },
+    "fullSetNativeAudit": {
+      "detail": "managed artifact identity error: Phase29 build record has no mode 'title-failure': E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\runs\\phase29-success-retry1\\evidence\\native-audit-root\\out\\dotnet\\phase29-managed-notification\\phase29-managed-notification-build.json",
+      "exitCode": 1,
+      "logPath": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\runs\\phase29-success-retry1\\evidence\\partial-full-set-native-audit.txt",
+      "status": "REJECTED_PARTIAL_SET"
+    },
+    "map": {
+      "path": "build\\phase29\\success\\guidexos.map",
+      "sha256": "957EA86F6FFFFE9DD1AC2B8ABC186A7971D68D88245A19FD1B7ABA8CD249B2F3"
+    },
+    "nativeIdentityRow": {
+      "allowlist_equals_executable": "",
+      "build_equals_staged": "true",
+      "build_output_path": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\runs\\phase29-success-retry1\\build\\phase29\\success\\publish\\guideXOS.Phase29ManagedNotificationProof.exe",
+      "classification": "compiled allowlist stale",
+      "coff_timestamp": "0",
+      "coff_timestamp_offset": "0xE0",
+      "debug_directory_timestamp_offsets": "0x97E10",
+      "debug_directory_timestamps": "0x00000000",
+      "descriptor_artifact_sha256": "275C4F166F6964478A68D08E61B22BAB23507CF2B07F32C1BB7EE90EE52B0F56",
+      "descriptor_equals_executable": "true",
+      "descriptor_file_sha256": "5F02FB7EF7827639B0E1A27F97AF3BEAE9FC8399B5BB0649981958D78EEA0BA9",
+      "descriptor_flags": "0x0000081F",
+      "descriptor_path": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\runs\\phase29-success-retry1\\stage\\guideXOS.Phase29ManagedNotificationProof.gxmi",
+      "executable_bytes": "706048",
+      "executable_path": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\runs\\phase29-success-retry1\\stage\\guideXOS.Phase29ManagedNotificationProof.exe",
+      "kernel_accepted_sha256": "",
+      "normalized_fields": "PE COFF TimeDateStamp; IMAGE_DEBUG_DIRECTORY TimeDateStamp",
+      "normalized_sha256": "275C4F166F6964478A68D08E61B22BAB23507CF2B07F32C1BB7EE90EE52B0F56",
+      "phase": "Phase29",
+      "ramdisk_equals_source": "",
+      "raw_sha256": "275C4F166F6964478A68D08E61B22BAB23507CF2B07F32C1BB7EE90EE52B0F56",
+      "variant": "success"
+    },
+    "phase23StaticVerification": {
+      "allowedPhaseHelpers": [
+        "guidexos_pal_abi_version",
+        "guidexos_pal_service_request",
+        "guidexos_pal_syscall5"
+      ],
+      "inspectStdout": "",
+      "inspectionPath": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\runs\\phase29-success-retry1\\evidence\\success-inspection.json",
+      "inspectionSha256": "6D5BC24BD1AA64754E47C503A59B7CD68EBDA723F111562647464E5641559D96",
+      "linkResponsePath": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\runs\\phase29-success-retry1\\build\\phase29\\success\\obj\\Release\\net9.0\\guidexos-x64\\native\\link.rsp",
+      "linkResponseSha256": "56F8A08FBCC931004268642FDF40623D82FFF06BFD24F6B463E75F8875C08F4B",
+      "phase26SyscallObjectSha256": "4362680D4233E26A146C13DA0C23B3153C3240975E33DF423FB4CE4C4C8314F4",
+      "result": {
+        "artifact": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\runs\\phase29-success-retry1\\build\\phase29\\success\\publish\\guideXOS.Phase29ManagedNotificationProof.exe",
+        "artifactSha256": "275c4f166f6964478a68d08e61b22bab23507cf2b07f32c1bb7ee90ee52b0f56",
+        "directKernelImports": 0,
+        "entryPoint": "0x0000401000001430",
+        "imageBase": "0x0000401000000000",
+        "managedCodeExecuted": false,
+        "mapEvidence": {
+          "finalUnresolvedSymbols": 0,
+          "gcFrozenObjectCount": 30,
+          "palSymbolCount": 17,
+          "palSymbols": [
+            "guidexos_pal_abi_version",
+            "guidexos_pal_fail_fast",
+            "guidexos_pal_memcpy",
+            "guidexos_pal_memmove",
+            "guidexos_pal_memset",
+            "guidexos_pal_monotonic_frequency",
+            "guidexos_pal_monotonic_ticks",
+            "guidexos_pal_random_bytes",
+            "guidexos_pal_service_request",
+            "guidexos_pal_syscall5",
+            "guidexos_pal_system_time_ns",
+            "guidexos_pal_thread_id",
+            "guidexos_pal_thread_stack_bounds",
+            "guidexos_pal_vm_commit",
+            "guidexos_pal_vm_protect",
+            "guidexos_pal_vm_release",
+            "guidexos_pal_vm_reserve"
+          ],
+          "runtimeHelperCount": 904,
+          "tlsThreadStaticCount": 44,
+          "writableStaticCount": 383
+        },
+        "negativeTestCount": 13,
+        "negativeTests": [
+          {
+            "case": "stock Windows NativeAOT image presented as GUIDEXOS",
+            "reason": "TARGET_IDENTITY",
+            "result": "REJECTED"
+          },
+          {
+            "case": "incorrect target identity",
+            "reason": "TARGET_IDENTITY",
+            "result": "REJECTED"
+          },
+          {
+            "case": "incorrect ILC build identity",
+            "reason": "ILC_BUILD_IDENTITY",
+            "result": "REJECTED"
+          },
+          {
+            "case": "wrong runtime source commit",
+            "reason": "RUNTIME_SOURCE_COMMIT",
+            "result": "REJECTED"
+          },
+          {
+            "case": "wrong runtime-pack hash",
+            "reason": "RUNTIME_PACK_HASH",
+            "result": "REJECTED"
+          },
+          {
+            "case": "wrong PAL schema",
+            "reason": "PAL_SCHEMA",
+            "result": "REJECTED"
+          },
+          {
+            "case": "unknown PAL symbol",
+            "reason": "UNKNOWN_PAL_SYMBOL",
+            "result": "REJECTED"
+          },
+          {
+            "case": "Windows DLL import",
+            "reason": "WINDOWS_DLL_IMPORT",
+            "result": "REJECTED"
+          },
+          {
+            "case": "direct kernel import",
+            "reason": "DIRECT_PINVOKE",
+            "result": "REJECTED"
+          },
+          {
+            "case": "invalid TLS metadata",
+            "reason": "TLS_METADATA_INVALID",
+            "result": "REJECTED"
+          },
+          {
+            "case": "unknown runtime metadata",
+            "reason": "UNKNOWN_RUNTIME_METADATA",
+            "result": "REJECTED"
+          },
+          {
+            "case": "RWX section",
+            "reason": "RWX_SECTION",
+            "result": "REJECTED"
+          },
+          {
+            "case": "descriptor version mismatch",
+            "reason": "DESCRIPTOR_VERSION",
+            "result": "REJECTED"
+          }
+        ],
+        "relocations": false,
+        "result": "PASS",
+        "rwxSections": 0,
+        "schema": 1,
+        "target": "guidexos-x64",
+        "targetOs": "guidexos",
+        "tlsDirectoryPresent": false,
+        "tlsModel": "X3: user GS base owns a guideXOS TLS vector at offset 0x58; vector[_tls_index] selects the process/thread-private runtime block; the loader owns initialization and cleanup; no Windows TLS imports",
+        "windowsDllImports": 0
+      },
+      "verifierOutputSha256": "D1DBCDC328DE15C7091AD16BE5817CB00CC052E7CF371522C5F6AE06B6372069",
+      "verifierPath": "Tools/Phase23/verify_guidexos_artifact.py",
+      "verifyStdout": ""
+    },
+    "stagedExecutable": {
+      "length": 706048,
+      "path": "stage\\guideXOS.Phase29ManagedNotificationProof.exe",
+      "sha256": "275C4F166F6964478A68D08E61B22BAB23507CF2B07F32C1BB7EE90EE52B0F56"
+    }
+  },
+  "build": {
+    "buildRecord": {
+      "length": 1278,
+      "path": "build/phase29/phase29-managed-notification-build.json",
+      "sha256": "58E5E74C93FAFD489E1286F36F690817372ECFDD146EB2EB2AA25C0ADD5B24AD"
+    },
+    "phase26ScriptSha256": "E654F19C7BC4DE79B9980A02E5698B38159D95C38AF273FEF800ABCDA5B0F710",
+    "projectProperty": "Phase29Mode=Success",
+    "script": "Tools/Phase29/build_phase29_managed_notification.ps1",
+    "scriptSha256": "1455D0CD5678D5DF7E5A6F650F04B0A62B407F0AB5325D110CAC09D30A8FE443",
+    "stageScriptSha256": "D875D8A3AD45D7AEC7B88EB1A45F6D58BBC093B1E0727671FF26B9DA4D648221",
+    "variant": "success"
+  },
+  "identityAuthority": "Tools/ManagedArtifacts/managed_artifacts.py",
+  "limitations": [
+    "This record supplements, and does not replace, the native managed-artifact identity generator.",
+    "The Phase 23 production manifest has no package archive SHA-256 fields; archive hashes here are measured content identities, not independent authenticity claims.",
+    "A one-variant build cannot satisfy the whole 41-variant identity set."
+  ],
+  "recordType": "supplementary-build-provenance",
+  "runtime": {
+    "allowedGeneratedArtifactCount": 6,
+    "commit": "9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3",
+    "gitStatusEntries": 65,
+    "lockedTemplateCount": 5,
+    "lockedTrackedFileCount": 54,
+    "locks": [
+      {
+        "path": "Tools/Phase20/runtime-source.lock.json",
+        "sha256": "5DC606154D76EE6293AB966586F2BD00E3D67E044E0B204ECB6A3A3B717E2EA5"
+      },
+      {
+        "path": "Tools/Phase21/runtime-source.lock.json",
+        "sha256": "546D1B1788695C0110C44AD3C313CD33F87A5A95CAE9A345452320D818FCF04B"
+      },
+      {
+        "path": "Tools/Phase22/runtime-source.lock.json",
+        "sha256": "4EACCCC0108C5C0C23A8A59853AD750C336FED81E03B61C9A1C8A42BC0BC2113"
+      },
+      {
+        "path": "Tools/Phase23/runtime-source.lock.json",
+        "sha256": "19DF0D20DEFC2FDA9BA09C7AFD7B6C28026AB1D0053D3EB9CCA318D02D03BEAC"
+      },
+      {
+        "path": "Tools/Phase23/runtime-source-cache-recovery.lock.json",
+        "sha256": "2B9C3ADE7DEF3FB11CEB7D8627859E622F83ECFD81BF90475D279257B211A659"
+      }
+    ],
+    "patchRecords": [
+      {
+        "path": "out/dotnet/phase21-source-patch/phase21-source-patch-record.json",
+        "recoveredFromVerifiedCache": true,
+        "sha256": "1F1E7925942C75B04CFD003DA2E451960D3A662DB074D4EB5D5AB02046F780DC"
+      },
+      {
+        "path": "out/dotnet/phase22-source-patch/phase22-source-patch-record.json",
+        "recoveredFromVerifiedCache": true,
+        "sha256": "31639A631E2A0AF633B999CDB4DC73B56FA7CA0A4005433A748679D7E5FC0229"
+      },
+      {
+        "path": "out/dotnet/phase23-source-patch/phase23-ilc-source-patch-record.json",
+        "recoveredFromVerifiedCache": true,
+        "sha256": "5B4BB23A13760B7C2A7D9810E8E3B8CABFAA1F0C7644804A33501F0900AA40A4"
+      }
+    ],
+    "templates": [
+      {
+        "path": "src/coreclr/gc/env/gcenv.guidexos.inl",
+        "repositoryTemplateCanonicalized": true,
+        "runtimeCopyVerified": true,
+        "sha256": "5CDA443C594151A0B5F2AAE4B5C942C62907AC2E343A74FE72A93786DB466032"
+      },
+      {
+        "path": "src/coreclr/gc/guidexos/gcenv.guidexos.cpp",
+        "repositoryTemplateCanonicalized": true,
+        "runtimeCopyVerified": true,
+        "sha256": "5EC86639BFEDE33F2334BF47F1CDBB63A4AD4D0C13BD8B5F522DFD1746261817"
+      },
+      {
+        "path": "src/coreclr/nativeaot/Runtime/guidexos/AsmOffsets.cpp",
+        "repositoryTemplateCanonicalized": true,
+        "runtimeCopyVerified": true,
+        "sha256": "9FD182583152263AD42C85AC215584AC616C3CBC5EE537FBDFCB152CF9DA2625"
+      },
+      {
+        "path": "src/coreclr/nativeaot/Runtime/guidexos/GuidexosGcPal.h",
+        "repositoryTemplateCanonicalized": true,
+        "runtimeCopyVerified": true,
+        "sha256": "6941FA435D25E44F981321C21DBBE1B50366AD9F38900F7E274D8321144FD881"
+      },
+      {
+        "path": "src/coreclr/nativeaot/Runtime/guidexos/PalRedhawkInline.h",
+        "repositoryTemplateCanonicalized": true,
+        "runtimeCopyVerified": true,
+        "sha256": "13E5E76C97816E215487B20B55FCB587E2298DAE7495B16A4F4565808FCC6500"
+      }
+    ]
+  },
+  "runtimePackageEvidence": {
+    "packageArchiveHashesAreSupplementaryMeasurements": true,
+    "path": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\evidence\\runtime-package-content-evidence.json",
+    "sha256": "43AB6205CC614D47CFD829B20666E61A5CF6F79A7AC022B1F11A39F0366C24C6",
+    "verifiedPack": {
+      "assets": [
+        {
+          "length": 30186,
+          "name": "Runtime.VxsortDisabled.lib",
+          "sha256": "32925F71666FC23AE435162075BD82CDDE887BCB0A26ED2312FA86A15F22C252"
+        },
+        {
+          "length": 5517882,
+          "name": "Runtime.WorkstationGC.lib",
+          "sha256": "E486351F470C4562C217A24938BC070EBD8AE112CF6D7EF97770CA6A2056E50F"
+        },
+        {
+          "length": 7336,
+          "name": "bootstrapper.obj",
+          "sha256": "D92FFC0793E365515A0BFC0D3A1A7DBB7146D68D224B5A63FB903FD88E259EC3"
+        },
+        {
+          "length": 15021,
+          "name": "guidexos_link_shim.obj",
+          "sha256": "88D3EF7B6FF217A70B952F75E99EB51B119DBFC1C6BE54F1CD24F704E00182C6"
+        },
+        {
+          "length": 3941,
+          "name": "guidexos_nativeaot_pal_contract.obj",
+          "sha256": "8F673AAB5D4B21B3D78E4257949F2E1E7A1DC6044235FE2EAC96E639B148B5E3"
+        },
+        {
+          "length": 43500,
+          "name": "standalonegc-disabled.lib",
+          "sha256": "C7766998A1EE0514EB8E999CAB7D90BE1C8DE599BF0A9EA30B0A0A542B9CBB53"
+        },
+        {
+          "length": 956762,
+          "name": "zlibstatic.lib",
+          "sha256": "F6A2DC6141570018122BA31B1F34B2D9F6541D701453E2375B3C7A220973E4AB"
+        }
+      ],
+      "manifest": {
+        "path": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\inputs\\phase23-runtime-pack\\guidexos-runtime-pack.manifest.json",
+        "schema": 2,
+        "sha256": "B9E1D6D4078F453C6B495379953BCCC1AA11311B9CF8A5595D8030762B0544B2"
+      },
+      "packageArchiveHashesAreSupplementaryMeasurements": true,
+      "packages": [
+        {
+          "file": "microsoft.dotnet.ilcompiler.9.0.0.nupkg",
+          "id": "Microsoft.DotNet.ILCompiler",
+          "length": 42562402,
+          "sha256": "E4E0BB1D6057A0BFD9B2F5357001A05B9320E740BF054F377D5426F363E2C41A",
+          "version": "9.0.0"
+        },
+        {
+          "file": "runtime.guidexos-x64.microsoft.dotnet.ilcompiler.9.0.0.nupkg",
+          "id": "runtime.guidexos-x64.Microsoft.DotNet.ILCompiler",
+          "length": 5853529,
+          "sha256": "FDAEA2A4222985FB06A0D42DFFD5838DCF0726FDEA17C0139585925331A250E8",
+          "version": "9.0.0"
+        },
+        {
+          "file": "runtime.win-x64.microsoft.dotnet.ilcompiler.9.0.0.nupkg",
+          "id": "runtime.win-x64.Microsoft.DotNet.ILCompiler",
+          "length": 81801976,
+          "sha256": "0E3E1D91A1994607F6DCED80E961E921D75E015C1F9A77EAD6A7A597EE8DDD2A",
+          "version": "9.0.0"
+        }
+      ],
+      "privateIlc": {
+        "length": 156160,
+        "path": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\inputs\\private-ilc\\ilc.exe",
+        "sha256": "268E0499447281B75ACBB6935DA5E710190D84285D16E38AF96E610786F1775D"
+      }
+    }
+  },
+  "schema": 1,
+  "source": {
+    "branch": "BUILD_INFRA",
+    "dirtyState": [
+      " M Tools/Phase23/recover_source_patch_evidence.ps1",
+      " M Tools/Phase23/verify_guidexos_artifact.py",
+      " M Tools/Phase26/build_phase26_managed_proof.ps1",
+      " M Tools/Phase29/build_phase29_managed_notification.ps1",
+      "?? Tests/ManagedArtifacts/test_build1c_trusted.py",
+      "?? Tools/ManagedArtifacts/Invoke-BUILD1C.ps1",
+      "?? Tools/ManagedArtifacts/build1c_trusted.py"
+    ],
+    "revision": "4d093edac6fce2db61940e4eb813f9099ff373c5"
+  },
+  "sourceInputFingerprint": {
+    "fileCount": 79,
+    "files": [
+      {
+        "length": 254,
+        "path": "GuideXos.User/Directory.Build.props",
+        "sha256": "0234D3AD739BFE16E5AD8981A9CE6FC3983C2EB77DCD4B441E7ADDFD6A297411"
+      },
+      {
+        "length": 2230,
+        "path": "GuideXos.User/GuideXos.User.csproj",
+        "sha256": "FC8E84F895C536061566A01AC0F3F03DBFCF44EDACB2C0CE94205D50A0E4C41D"
+      },
+      {
+        "length": 18781,
+        "path": "GuideXos.User/GuideXos.cs",
+        "sha256": "66802FC536C3A0CA4AB14F990D9A3E00FD7A48607D1004131583A56E6A7FAAAD"
+      },
+      {
+        "length": 45125,
+        "path": "GuideXos.User/GuideXosInternalAbi.cs",
+        "sha256": "0A0630088A9AAF7F68D55DD3E8DC727F546CB83BFFD19537388508EFA4F1C195"
+      },
+      {
+        "length": 1204,
+        "path": "Tools/Find-VcVars64.ps1",
+        "sha256": "91AF08C840A913701774A9DAF549508BF1D429026DEF037654D753825CAF2460"
+      },
+      {
+        "length": 4413,
+        "path": "Tools/ManagedArtifacts/Invoke-BUILD1C.ps1",
+        "sha256": "841B40657F4302DF27E2A1B39BD59754E05ED1652E2DCD6AD5B5AB1999CAAE3D"
+      },
+      {
+        "length": 3145,
+        "path": "Tools/ManagedArtifacts/Normalize-PeTimestamps.ps1",
+        "sha256": "6C18794C71190D6A34D55FD20AE4636D2411702BC1BD9653DA990897269052F1"
+      },
+      {
+        "length": 40525,
+        "path": "Tools/ManagedArtifacts/build1c_trusted.py",
+        "sha256": "317A42022C88535AC760C84F324DFEB404E8894D34F1E57CCE0DD14D637A9313"
+      },
+      {
+        "length": 7793,
+        "path": "Tools/ManagedArtifacts/compare_ramdisks.py",
+        "sha256": "8C98E561937F77BD5443EF88C9E0882E8105E08C15C83073033FB0A675C278FF"
+      },
+      {
+        "length": 28724,
+        "path": "Tools/ManagedArtifacts/managed_artifacts.py",
+        "sha256": "BAE48463DD64B1A7814B975DE59368BD6F7C18F2C0ECFF3A7B3198C5CFF26F2A"
+      },
+      {
+        "length": 50331,
+        "path": "Tools/ManagedArtifacts/uefi_build_bootstrap.py",
+        "sha256": "63F90FA300C40A0AA863EDA2F4C8BD0A90DE534E80D75B076C731C102609A22B"
+      },
+      {
+        "length": 3200,
+        "path": "Tools/Phase19/README.md",
+        "sha256": "99DA85892ED460FC08420A2D3F4D98B121E299C25885FBCC362A4E5E5B7149F8"
+      },
+      {
+        "length": 806,
+        "path": "Tools/Phase19/guidexos-nativeaot-target.props",
+        "sha256": "A97BE01CF5F8148D02DB59E86974ECC78AAF047FD6B3E8FE7FC17457CBAD67B9"
+      },
+      {
+        "length": 3294,
+        "path": "Tools/Phase19/guidexos_nativeaot_pal_contract.cpp",
+        "sha256": "1EBA39AC56A0A3C399A9C6881A5875944EB0BDA5C9C02810BAB0C55EE94398B1"
+      },
+      {
+        "length": 2168,
+        "path": "Tools/Phase19/guidexos_nativeaot_pal_contract.h",
+        "sha256": "2ADB696EC4789D5ED0763CB3BB9A49CB0FDBF7CB00EC5374EE40CDED1005E6A7"
+      },
+      {
+        "length": 8855,
+        "path": "Tools/Phase19/pal-contract.json",
+        "sha256": "B7D30BEE0FC9060E2E2D0238D96C1518456F999C4D434C8167CF6C19C52DDA46"
+      },
+      {
+        "length": 10159,
+        "path": "Tools/Phase19/phase19_runtime_audit.py",
+        "sha256": "3A65056634395027D8900E5A03F0C5BE77F5FFD6DDB6240FE4B9B318DD7B61B0"
+      },
+      {
+        "length": 2567,
+        "path": "Tools/Phase19/runtime-pack.lock.json",
+        "sha256": "D2A030E690700BBA5A40FC05C1BACDB3554DF84BDEFCFEE5B80711C99699E350"
+      },
+      {
+        "length": 2570,
+        "path": "Tools/Phase20/README.md",
+        "sha256": "2F838ABD045C7E60D5CA8583AE4504A4A2E9AF3D767B3AD9FE1499F6640925C7"
+      },
+      {
+        "length": 2970,
+        "path": "Tools/Phase20/build_pinned_runtime_source.ps1",
+        "sha256": "DA591C9F40D49C54515731D7A37A5750D4511D1395F94D2B5C11B8FA187530F6"
+      },
+      {
+        "length": 8499,
+        "path": "Tools/Phase20/phase20_source_audit.ps1",
+        "sha256": "C91E49DC2A732AA664684622964A44B5BD0C6C7597A1494EB065DB18C33EE756"
+      },
+      {
+        "length": 2605,
+        "path": "Tools/Phase20/runtime-source.lock.json",
+        "sha256": "5DC606154D76EE6293AB966586F2BD00E3D67E044E0B204ECB6A3A3B717E2EA5"
+      },
+      {
+        "length": 1250,
+        "path": "Tools/Phase20/verify_guidexos_runtime_pack.ps1",
+        "sha256": "DF81F7B063ED7573B0A3E5485D8DB0001646A1ECCBD2E58BF8A266F4BD47E225"
+      },
+      {
+        "length": 7503,
+        "path": "Tools/Phase21/README.md",
+        "sha256": "A164307785DC128AD40BE1FD5A98E3EBC2AF728C3A3420A6C56A6B5A2E894551"
+      },
+      {
+        "length": 12962,
+        "path": "Tools/Phase21/apply_phase21_patch.ps1",
+        "sha256": "069F38F74C5CC47D465701D5A83D47C8DA7496EC45FF3C1D04DA69744E0064EB"
+      },
+      {
+        "length": 3081,
+        "path": "Tools/Phase21/build_guidexos_runtime_source.ps1",
+        "sha256": "F8A9C04111C28AF4C65B9095ED91066A5CBDD786CD99A4BE80AA56343F0E96C4"
+      },
+      {
+        "length": 4538,
+        "path": "Tools/Phase21/compile_guidexos_gcenv.ps1",
+        "sha256": "46C16A93076DE1694D4643C7B90800158F4D328945C3AC9ADD5E3A43DB5F8624"
+      },
+      {
+        "length": 11789,
+        "path": "Tools/Phase21/phase21_gc_inventory.ps1",
+        "sha256": "34462BEC69CFBAC29B33190527C3530F6B5349319770987E12122EC12306349B"
+      },
+      {
+        "length": 7722,
+        "path": "Tools/Phase21/phase21_platform_audit.ps1",
+        "sha256": "6F26F6C5D9FCD7AAC0F458F2DD8A587BF2F63E341FCA3CDF93B7C10C621D74FC"
+      },
+      {
+        "length": 11562,
+        "path": "Tools/Phase21/phase21_source_audit.ps1",
+        "sha256": "136B4AB6AFF86EB16760C8FD637B70C17B0836A4CC0A1CC992AA77E459B93251"
+      },
+      {
+        "length": 2423,
+        "path": "Tools/Phase21/runtime-source.lock.json",
+        "sha256": "546D1B1788695C0110C44AD3C313CD33F87A5A95CAE9A345452320D818FCF04B"
+      },
+      {
+        "length": 511,
+        "path": "Tools/Phase21/runtime/src/coreclr/gc/env/gcenv.guidexos.inl",
+        "sha256": "92B6CA5FFAB107280407AD601800BFD1445B4A5ACAD6AB9BC9ACB55394B525F8"
+      },
+      {
+        "length": 9101,
+        "path": "Tools/Phase21/runtime/src/coreclr/gc/guidexos/gcenv.guidexos.cpp",
+        "sha256": "7156A75D08C166E552309EA389D1BD779837BE1D2A9114C8A1B50EF994D7E5B0"
+      },
+      {
+        "length": 970,
+        "path": "Tools/Phase21/runtime/src/coreclr/nativeaot/Runtime/guidexos/AsmOffsets.cpp",
+        "sha256": "331B89BBB0EB107905B492FB6763AC471FB30AF0B833D77CD0BD1A6462D216D8"
+      },
+      {
+        "length": 638,
+        "path": "Tools/Phase21/runtime/src/coreclr/nativeaot/Runtime/guidexos/GuidexosGcPal.h",
+        "sha256": "9EDD03ADE8AD7F09B4E916349907ED2568B7C6708CAE57F7823B2D1AF6CAEE4F"
+      },
+      {
+        "length": 6144,
+        "path": "Tools/Phase21/upgrade_phase21_cache.ps1",
+        "sha256": "DC46303193637EED0BDD8014F94ABB7526243E8A0B338CA305978792FAFBC161"
+      },
+      {
+        "length": 3404,
+        "path": "Tools/Phase22/README.md",
+        "sha256": "4D693BDF2AC254A90F746DFA21679AEFB466F9612AF12921683B181B63FC3EC2"
+      },
+      {
+        "length": 21342,
+        "path": "Tools/Phase22/apply_phase22_patch.ps1",
+        "sha256": "573C6E35D43C7151B6EEBE137B1805F35F21FC7A2DF01697F8FB45E546B4672E"
+      },
+      {
+        "length": 6451,
+        "path": "Tools/Phase22/build_guidexos_native_runtime.ps1",
+        "sha256": "C0CC46AA3225C2DCDB3B376EE4EAF0AA8FCBF96C589ADE55902FF98D0579B332"
+      },
+      {
+        "length": 79,
+        "path": "Tools/Phase22/runtime-identifier.graph.json",
+        "sha256": "733922FDC59889E3D1321C3D651A4885B80D52FED49CD4F0AE465FC392F28FE3"
+      },
+      {
+        "length": 913,
+        "path": "Tools/Phase22/runtime-source.lock.json",
+        "sha256": "4EACCCC0108C5C0C23A8A59853AD750C336FED81E03B61C9A1C8A42BC0BC2113"
+      },
+      {
+        "length": 3823,
+        "path": "Tools/Phase22/runtime/src/coreclr/nativeaot/Runtime/guidexos/PalRedhawkInline.h",
+        "sha256": "95D3F033EAADA7B2860294744E54F4FB8665189D43AA522CBB716A4FDDE25447"
+      },
+      {
+        "length": 10170,
+        "path": "Tools/Phase22/stage_guidexos_runtime_pack.ps1",
+        "sha256": "4B4638938443670D8888FB3EFBEA924B4974EAEB46E8C233E386D65D0E302FCD"
+      },
+      {
+        "length": 281,
+        "path": "Tools/Phase23/NuGet.Phase23.config",
+        "sha256": "9B62AD34BE773832C33D318B5E37DC6DBCE7962B4BC9849EE5E5C5BC931634D9"
+      },
+      {
+        "length": 4800,
+        "path": "Tools/Phase23/README.md",
+        "sha256": "DA9292A3ECE833FABAEF541EAB6E00EA912D24B1402E70A6FD8EDB64EE4E8F6F"
+      },
+      {
+        "length": 14955,
+        "path": "Tools/Phase23/apply_phase23_ilc_patch.ps1",
+        "sha256": "A40664B56853F4D6795BE215CF16DB50315DA37DDF5BDDE9C93A8FEB1D78169D"
+      },
+      {
+        "length": 1943,
+        "path": "Tools/Phase23/build_guidexos_link_shim.ps1",
+        "sha256": "ACD2AF7ECBCA10AA4CD3FD369BBE557747F61863A945B04D423335F446F7A5E1"
+      },
+      {
+        "length": 4711,
+        "path": "Tools/Phase23/build_private_ilcompiler.ps1",
+        "sha256": "FA4F7178D2906C3562129CD750C0139B8DE92C4A34AB7EB5979A589251A7FFD3"
+      },
+      {
+        "length": 5421,
+        "path": "Tools/Phase23/build_user_managed_proof.ps1",
+        "sha256": "61957F2E04948967DD9C9BB8E3C7B376B600C6B2B0D91B3AEB603363F3D1B583"
+      },
+      {
+        "length": 31026,
+        "path": "Tools/Phase23/guidexos_link_shim.cpp",
+        "sha256": "FCE3F0566FDC415B6622AC33D67B18677539C133AF7D619DE26C2F3AE1D9D46D"
+      },
+      {
+        "length": 16299,
+        "path": "Tools/Phase23/recover_source_patch_evidence.ps1",
+        "sha256": "AA8994BD5B4339AE9C214B19B74048560A11B5244F718556A9EAE1A0D0ACAAA0"
+      },
+      {
+        "length": 12331,
+        "path": "Tools/Phase23/runtime-source-cache-recovery.lock.json",
+        "sha256": "2B9C3ADE7DEF3FB11CEB7D8627859E622F83ECFD81BF90475D279257B211A659"
+      },
+      {
+        "length": 3395,
+        "path": "Tools/Phase23/runtime-source.lock.json",
+        "sha256": "19DF0D20DEFC2FDA9BA09C7AFD7B6C28026AB1D0053D3EB9CCA318D02D03BEAC"
+      },
+      {
+        "length": 4299,
+        "path": "Tools/Phase23/runtime/Microsoft.NETCore.Native.Guidexos.targets",
+        "sha256": "A4215DC62E7069D626F7FCDBFC402EC7BF3CFFC982EC82C6E61F258032611438"
+      },
+      {
+        "length": 22680,
+        "path": "Tools/Phase23/stage_guidexos_private_pack.ps1",
+        "sha256": "E5061BA2BA3A936102413BE77BEF6FDF276402BB42313A9619A632FAD2D86C3A"
+      },
+      {
+        "length": 12930,
+        "path": "Tools/Phase23/verify_guidexos_artifact.py",
+        "sha256": "547B66ADB39C2DF503D818034BAAA032741EA9A7CD1B2B6A6A8B5E5E1B0BB8D7"
+      },
+      {
+        "length": 2589,
+        "path": "Tools/Phase24/README.md",
+        "sha256": "39511AA6CE5887A91DED3215A2F8B3253BCDF2735B5109847DDB0DA10662E657"
+      },
+      {
+        "length": 4465,
+        "path": "Tools/Phase24/build_phase24_descriptor.py",
+        "sha256": "36D066662203991F05847F3955EBB17EEC5F43011E9B2E1C45A24CCE93627838"
+      },
+      {
+        "length": 1926,
+        "path": "Tools/Phase24/stage_phase24_image.ps1",
+        "sha256": "09403A97071ECE6CB4CE3151A91320D2771ABCF6D7E26B7A9D889055651AAB90"
+      },
+      {
+        "length": 8585,
+        "path": "Tools/Phase24/verify_phase24.py",
+        "sha256": "B16AA6A9E79B75C43EC6BE08738A9EA79B85BB3C976B71209C59F611114F1D21"
+      },
+      {
+        "length": 3605,
+        "path": "Tools/Phase26/bootstrap.asm",
+        "sha256": "7154E0D58451EDA6D938C9F9ED7BEE8DE5246AEE53830BC6DE640FA049750D9E"
+      },
+      {
+        "length": 581,
+        "path": "Tools/Phase26/build_phase26_bootstrap_descriptor.py",
+        "sha256": "8B67230767E3207B92C2F2394ED116A7CF0A5FADA90865E94B499D1B0887F30C"
+      },
+      {
+        "length": 1304,
+        "path": "Tools/Phase26/build_phase26_descriptor.py",
+        "sha256": "81533439E901F1E2799E268E281EBFB1C1C0114103B0E8C76FC1427FA38AD76D"
+      },
+      {
+        "length": 50634,
+        "path": "Tools/Phase26/build_phase26_managed_proof.ps1",
+        "sha256": "E654F19C7BC4DE79B9980A02E5698B38159D95C38AF273FEF800ABCDA5B0F710"
+      },
+      {
+        "length": 248,
+        "path": "Tools/Phase26/guidexos_link_shim.cpp",
+        "sha256": "AEF53487187CF7380E7FBF3AE43E61A2DE21FDDFFC01D5B21E0DC59F043D7D12"
+      },
+      {
+        "length": 4879,
+        "path": "Tools/Phase26/guidexos_phase26_pal_contract.cpp",
+        "sha256": "F6B1B9E3E46B56707793E3C41708AF66EABDD5A94A9C86A8AFA9B6E0EF5DA0BD"
+      },
+      {
+        "length": 676,
+        "path": "Tools/Phase26/guidexos_phase26_syscall.asm",
+        "sha256": "FDC0589FB320D32210CAE86E0AD9CEDDFBCE63B10F93CCAC51028B60394FE3F4"
+      },
+      {
+        "length": 2572,
+        "path": "Tools/Phase26/stage_phase26_bootstrap.ps1",
+        "sha256": "C4BD7EB671C2EF2DD7303F9E807F0CA03B9FF19795DDA5710AB2F38B5D2E35B0"
+      },
+      {
+        "length": 1544,
+        "path": "Tools/Phase26/stage_phase26_image.ps1",
+        "sha256": "0D49C95A21D92E231A727970DE620BA05E461CAA5B7898D48C6642CD7969EEE5"
+      },
+      {
+        "length": 31458,
+        "path": "Tools/Phase29/_guidexos_phase29_link_shim.cpp",
+        "sha256": "73F46C602104274762AEEB076CB67DB840C4BBCDA376F9A5635BB796E17FB945"
+      },
+      {
+        "length": 1378,
+        "path": "Tools/Phase29/build_phase29_descriptor.py",
+        "sha256": "6BD842FC2692076EC09EA6864C7D5E9667D0C567A9EC2B7B3F315F1A05B75FBB"
+      },
+      {
+        "length": 5573,
+        "path": "Tools/Phase29/build_phase29_managed_notification.ps1",
+        "sha256": "1455D0CD5678D5DF7E5A6F650F04B0A62B407F0AB5325D110CAC09D30A8FE443"
+      },
+      {
+        "length": 4867,
+        "path": "Tools/Phase29/guidexos_phase29_pal_contract.cpp",
+        "sha256": "8BA9AA601F080FEC584AAEDEB841F47CB46F6214633D12473983F09FBD98D4FA"
+      },
+      {
+        "length": 2179,
+        "path": "Tools/Phase29/stage_phase29_image.ps1",
+        "sha256": "D875D8A3AD45D7AEC7B88EB1A45F6D58BBC093B1E0727671FF26B9DA4D648221"
+      },
+      {
+        "length": 406,
+        "path": "Tools/Phase34/phase34_flags.py",
+        "sha256": "B09B707DAAF1064289B1EB59CB175C1E38CA4F5C2230DBFE3FD68448B3698E27"
+      },
+      {
+        "length": 347,
+        "path": "Tools/Phase35/phase35_flags.py",
+        "sha256": "AD811C36D1A78ADED0871283D2D9D7AC626A2941A4F36E65D27EA388833CA2F3"
+      },
+      {
+        "length": 18959,
+        "path": "Tools/inspect_managed_image.py",
+        "sha256": "6B1AC52B1227C0BF4A4B3701B33F72DA61730FB941688AE4D14D51812130B8D9"
+      },
+      {
+        "length": 1919,
+        "path": "UserManagedNotificationProof/Program.cs",
+        "sha256": "9CBB9D216CCE02032EB1852A0983E81553981A95D8C8A42C11AD6C525132B187"
+      },
+      {
+        "length": 3708,
+        "path": "UserManagedNotificationProof/guideXOS.UserManagedNotificationProof.csproj",
+        "sha256": "309A150F1A72278544DC6F12E10FE6918E37A1FA734BFD685C326EBE2D0A0E1B"
+      }
+    ],
+    "sha256": "69E089EC37FB4F56BC8C9B6192232E3AA97ADECC8FD86676D1926D6E7DB63CA4"
+  },
+  "toolchain": {
+    "cl": {
+      "fileVersion": "14.51.36260.0",
+      "path": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe",
+      "sha256": "B0A1818EBAE6DA7F18230A84E76CE839212584AC4C2AB55B97A0D5268085DA57"
+    },
+    "dotnet": {
+      "path": "C:\\Program Files\\dotnet\\dotnet.exe",
+      "sdks": [
+        "10.0.403 [C:\\Program Files\\dotnet\\sdk]"
+      ],
+      "version": "10.0.403"
+    },
+    "git": "git version 2.54.0.windows.1",
+    "lib": {
+      "fileVersion": "14.51.36260.0",
+      "path": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\lib.exe",
+      "sha256": "D8DAE02A50C7571C6C0EA5CD7A853830AACA8FAD13F8F4BE147828D51DD4ADEC"
+    },
+    "link": {
+      "fileVersion": "14.51.36260.0",
+      "path": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\link.exe",
+      "sha256": "A8C42E25C91CA2453E1110540AC08F0FC12D7539454A11B9AF8BAEECB469837D"
+    },
+    "nasm": {
+      "path": "D:\\dev\\guideXOSUEFI_BUILD_INFRA\\Tools\\nasm.exe",
+      "sha256": "4B02C81BEEE52C7CBF34A6B1F652910CE4E28F3E7B499E8914161AF94E5326A6",
+      "version": "NASM version 2.15.05 compiled on Aug 28 2020"
+    },
+    "powershell": {
+      "path": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "version": "5.1.26100.9711"
+    },
+    "python": {
+      "path": "C:\\Users\\guideX\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+      "version": "3.12.14"
+    },
+    "runtimeDotnet": {
+      "path": "D:\\dev\\guideXOSUEFI_BUILD_INFRA\\out\\rt\\.dotnet\\dotnet.exe",
+      "version": "9.0.100-rc.2.24474.11"
+    },
+    "vcvars64": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat",
+    "visualStudioRoot": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community",
+    "windowsSdk": "10.0.26100.0"
+  },
+  "variant": "success"
+}

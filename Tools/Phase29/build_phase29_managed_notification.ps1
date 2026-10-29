@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
     [string]$Phase23Pack = '',
-    [string]$OutputRoot = ''
+    [string]$OutputRoot = '',
+    [ValidateSet('all', 'success', 'title-failure', 'body-failure', 'invalid-type', 'failfast')]
+    [string]$Variant = 'all',
+    [string]$ShimSourcePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,7 +27,16 @@ foreach ($path in @($phase26Builder, $palSource, $Phase23Pack, $project)) {
     }
 }
 
-$shimSource = Join-Path $PSScriptRoot '_guidexos_phase29_link_shim.cpp'
+if ([string]::IsNullOrWhiteSpace($ShimSourcePath)) {
+    $shimSource = Join-Path $PSScriptRoot '_guidexos_phase29_link_shim.cpp'
+}
+else {
+    $shimSource = [IO.Path]::GetFullPath($ShimSourcePath)
+    $shimParent = Split-Path -Parent $shimSource
+    if (-not (Test-Path -LiteralPath $shimParent -PathType Container)) {
+        throw "The Phase 29 shim destination directory is absent: $shimParent"
+    }
+}
 $shimText = Get-Content -LiteralPath (Join-Path $root 'Tools\Phase23\guidexos_link_shim.cpp') -Raw
 $shimDeclaration = @'
 
@@ -64,6 +76,10 @@ $modes = @(
     [ordered]@{ Name = 'invalid-type'; Mode = 'InvalidType'; Result = 35 },
     [ordered]@{ Name = 'failfast'; Mode = 'FailFast'; Result = -1 }
 )
+if ($Variant -ne 'all') {
+    $modes = @($modes | Where-Object { $_.Name -eq $Variant })
+    if ($modes.Count -ne 1) { throw "Unknown Phase 29 variant selection: $Variant" }
+}
 
 . (Join-Path $PSScriptRoot '..\ManagedArtifacts\Normalize-PeTimestamps.ps1')
 
@@ -74,6 +90,7 @@ foreach ($mode in $modes) {
     & (Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -ExecutionPolicy Bypass -File $phase26Builder `
         -Phase23Pack $Phase23Pack -PackRoot $pack -OutputRoot $output `
         -ProjectPath $project -PalSource $palSource -ShimSource $shimSource `
+        -ShimIncludeDirectories @($PSScriptRoot) `
         -ProjectProperties @('Phase29Mode=' + $mode.Mode)
     if ($LASTEXITCODE -ne 0) {
         throw "Phase 29 $($mode.Name) payload build failed: $LASTEXITCODE"

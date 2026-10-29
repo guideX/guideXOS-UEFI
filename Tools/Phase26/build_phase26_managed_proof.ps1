@@ -6,6 +6,7 @@ param(
     [string]$ProjectPath = '',
     [string]$PalSource = '',
     [string]$ShimSource = '',
+    [string[]]$ShimIncludeDirectories = @(),
     [string]$SyscallSource = '',
     [string[]]$ProjectProperties = @()
 )
@@ -486,8 +487,10 @@ $compileArgs = @('/nologo', '/c', '/O1', '/GS-', '/GR-', '/EHs-c-', '/Zl',
     '/D_CRT_SECURE_NO_WARNINGS', "/Fo$palObject", $palSource)
 & $compiler.FullName @compileArgs 2>&1
 if ($LASTEXITCODE -ne 0) { throw "Phase 26 PAL compilation failed with exit code $LASTEXITCODE." }
+$shimIncludeArgs = @($ShimIncludeDirectories | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+    ForEach-Object { '/I' + [IO.Path]::GetFullPath($_) })
 $compileArgs = @('/nologo', '/c', '/O1', '/GS-', '/GR-', '/EHs-c-', '/Zl',
-    '/D_CRT_SECURE_NO_WARNINGS', "/Fo$shimObject", $shimSource)
+    '/D_CRT_SECURE_NO_WARNINGS') + $shimIncludeArgs + @("/Fo$shimObject", $shimSource)
 & $compiler.FullName @compileArgs 2>&1
 if ($LASTEXITCODE -ne 0) { throw "Phase 26 link-shim compilation failed with exit code $LASTEXITCODE." }
 & $nasm -f win64 $syscallSource -o $syscallObject

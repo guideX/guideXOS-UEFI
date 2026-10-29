@@ -55,7 +55,9 @@ def reject(condition: bool, code: str) -> None:
 
 
 def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    # Windows PowerShell 5.1's Set-Content -Encoding UTF8 emits a BOM. Accept
+    # that supported build output while keeping every content check unchanged.
+    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def validate_manifest(manifest: dict[str, Any], root: Path) -> None:
@@ -137,13 +139,19 @@ def validate_link(link_text: str) -> None:
     reject("maincrtstartup" in lowered or "winmaincrtstartup" in lowered, "WINDOWS_CRT_STARTUP")
 
 
-def validate_map(map_path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+def validate_map(
+    map_path: Path,
+    manifest: dict[str, Any],
+    allowed_phase_helpers: list[str] | None = None,
+    require_all_symbols: bool = True,
+) -> dict[str, Any]:
     text = map_path.read_text(errors="replace")
     symbols = sorted(set(re.findall(r"guidexos_pal_[A-Za-z0-9_]+", text)))
-    allowed = set(manifest.get("phase19PalSymbols", []))
+    allowed = set(manifest.get("phase19PalSymbols", [])) | set(allowed_phase_helpers or [])
     reject(not allowed, "PAL_SYMBOL_MANIFEST")
     reject(bool(set(symbols) - allowed), "UNKNOWN_PAL_SYMBOL")
-    reject(not set(allowed).issubset(symbols), "PAL_SYMBOL_MISSING")
+    if require_all_symbols:
+        reject(not set(allowed).issubset(symbols), "PAL_SYMBOL_MISSING")
     return {
         "palSymbols": symbols,
         "palSymbolCount": len(symbols),
@@ -212,6 +220,17 @@ def main() -> int:
     parser.add_argument("inspection", type=Path)
     parser.add_argument("link_map", type=Path)
     parser.add_argument("link_rsp", type=Path)
+    parser.add_argument(
+        "--allowed-phase-helper",
+        action="append",
+        default=[],
+        help="Explicit phase-owned PAL helper declared by the supported build record.",
+    )
+    parser.add_argument(
+        "--allow-pal-subset",
+        action="store_true",
+        help="For a phase-specific payload, allow unused manifest PAL exports to be absent from the link map.",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -224,7 +243,12 @@ def main() -> int:
     validate_manifest(manifest, args.manifest.parent)
     validate_image(inspection)
     validate_link(args.link_rsp.read_text(errors="replace"))
-    map_evidence = validate_map(args.link_map, manifest)
+    map_evidence = validate_map(
+        args.link_map,
+        manifest,
+        args.allowed_phase_helper,
+        require_all_symbols=not args.allow_pal_subset,
+    )
     negatives = run_negative_matrix(manifest, inspection, args.link_rsp.read_text(errors="replace"))
     result = {
         "schema": 1,

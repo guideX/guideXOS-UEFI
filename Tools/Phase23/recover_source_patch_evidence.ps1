@@ -31,6 +31,23 @@ function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToUpperInvariant()
 }
 
+function Get-CanonicalTextSha256([string]$Path) {
+    $utf8 = [Text.UTF8Encoding]::new($false, $true)
+    $text = $utf8.GetString([IO.File]::ReadAllBytes($Path))
+    $text = $text.Replace("`r`n", "`n")
+    if ($text.Contains("`r")) {
+        throw "Repository template contains a lone carriage return: $Path"
+    }
+    $bytes = $utf8.GetBytes($text)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace('-', '').ToUpperInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
 function Resolve-OutputDirectory([string]$Path) {
     $fullPath = [IO.Path]::GetFullPath($Path)
     $linkTarget = $null
@@ -161,7 +178,7 @@ foreach ($entry in $cacheLock.requiredTemplates) {
         throw "Required repository template is missing: $relativePath. No evidence records were written."
     }
     $expectedHash = ([string]$entry.sha256).ToUpperInvariant()
-    if ((Get-Sha256 $templatePath) -ne $expectedHash -or (Get-Sha256 $runtimePath) -ne $expectedHash) {
+    if ((Get-CanonicalTextSha256 $templatePath) -ne $expectedHash -or (Get-Sha256 $runtimePath) -ne $expectedHash) {
         throw "Required repository template hash mismatch: $relativePath. No evidence records were written."
     }
 }

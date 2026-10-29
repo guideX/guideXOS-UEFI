@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "runtimeCommit": "9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3",
+  "runtimePackSourceManifestSha256": "B7EC1CF49C73D49A8DEB8E4DDA41E94DC7806ECDC06AE6C65EE586B87465FE3A",
+  "materializedManifestSha256": "B9E1D6D4078F453C6B495379953BCCC1AA11311B9CF8A5595D8030762B0544B2",
+  "manifestSchemaPreserved": 2,
+  "pathRebasedCopy": true,
+  "packageHashesAreSupplementaryMeasurements": true,
+  "privateIlc": {
+    "length": 156160,
+    "sha256": "268E0499447281B75ACBB6935DA5E710190D84285D16E38AF96E610786F1775D",
+    "matchesBuildRecord": true,
+    "matchesCompilerPackage": true
+  },
+  "packages": [
+    {
+      "file": "microsoft.dotnet.ilcompiler.9.0.0.nupkg",
+      "packageId": "Microsoft.DotNet.ILCompiler",
+      "version": "9.0.0",
+      "length": 42562402,
+      "sha256": "E4E0BB1D6057A0BFD9B2F5357001A05B9320E740BF054F377D5426F363E2C41A",
+      "nuspec": "Microsoft.DotNet.ILCompiler.nuspec",
+      "embeddedIlcSha256": "268E0499447281B75ACBB6935DA5E710190D84285D16E38AF96E610786F1775D",
+      "claim": "measured content hash and embedded identity; not an independent package-source authenticity claim"
+    },
+    {
+      "file": "runtime.guidexos-x64.microsoft.dotnet.ilcompiler.9.0.0.nupkg",
+      "packageId": "runtime.guidexos-x64.Microsoft.DotNet.ILCompiler",
+      "version": "9.0.0",
+      "length": 5853529,
+      "sha256": "FDAEA2A4222985FB06A0D42DFFD5838DCF0726FDEA17C0139585925331A250E8",
+      "nuspec": "runtime.win-x64.Microsoft.DotNet.ILCompiler.nuspec",
+      "embeddedIlcSha256": null,
+      "claim": "measured content hash and embedded identity; not an independent package-source authenticity claim"
+    },
+    {
+      "file": "runtime.win-x64.microsoft.dotnet.ilcompiler.9.0.0.nupkg",
+      "packageId": "runtime.win-x64.Microsoft.DotNet.ILCompiler",
+      "version": "9.0.0",
+      "length": 81801976,
+      "sha256": "0E3E1D91A1994607F6DCED80E961E921D75E015C1F9A77EAD6A7A597EE8DDD2A",
+      "nuspec": "runtime.win-x64.Microsoft.DotNet.ILCompiler.nuspec",
+      "embeddedIlcSha256": "268E0499447281B75ACBB6935DA5E710190D84285D16E38AF96E610786F1775D",
+      "claim": "measured content hash and embedded identity; not an independent package-source authenticity claim"
+    }
+  ],
+  "runtimeAssets": [
+    {
+      "name": "Runtime.VxsortDisabled.lib",
+      "sha256": "32925F71666FC23AE435162075BD82CDDE887BCB0A26ED2312FA86A15F22C252",
+      "localPath": "D:\\dev\\guideXOSUEFI_BUILD_INFRA\\out\\rt\\artifacts\\obj\\coreclr\\guidexos.x64.Release\\nativeaot\\Runtime\\Full\\Runtime.VxsortDisabled.lib",
+      "verified": true
+    },
+    {
+      "name": "Runtime.WorkstationGC.lib",
+      "sha256": "E486351F470C4562C217A24938BC070EBD8AE112CF6D7EF97770CA6A2056E50F",
+      "localPath": "D:\\dev\\guideXOSUEFI_BUILD_INFRA\\out\\rt\\artifacts\\obj\\coreclr\\guidexos.x64.Release\\nativeaot\\Runtime\\Full\\Runtime.WorkstationGC.lib",
+      "verified": true
+    },
+    {
+      "name": "bootstrapper.obj",
+      "sha256": "D92FFC0793E365515A0BFC0D3A1A7DBB7146D68D224B5A63FB903FD88E259EC3",
+      "localPath": "D:\\dev\\guideXOSUEFI_BUILD_INFRA\\out\\rt\\artifacts\\obj\\coreclr\\guidexos.x64.Release\\nativeaot\\Bootstrap\\base\\CMakeFiles\\bootstrapper.dir\\__\\main.cpp.obj",
+      "verified": true
+    },
+    {
+      "name": "guidexos_link_shim.obj",
+      "sha256": "88D3EF7B6FF217A70B952F75E99EB51B119DBFC1C6BE54F1CD24F704E00182C6",
+      "localPath": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\inputs\\phase23-runtime-pack\\guidexos_link_shim.obj",
+      "verified": true
+    },
+    {
+      "name": "guidexos_nativeaot_pal_contract.obj",
+      "sha256": "8F673AAB5D4B21B3D78E4257949F2E1E7A1DC6044235FE2EAC96E639B148B5E3",
+      "localPath": "E:\\guideXOSUEFI_BUILD_INFRA_BUILD1C\\inputs\\phase19-runtime-pack\\guidexos_nativeaot_pal_contract.obj",
+      "verified": true
+    },
+    {
+      "name": "standalonegc-disabled.lib",
+      "sha256": "C7766998A1EE0514EB8E999CAB7D90BE1C8DE599BF0A9EA30B0A0A542B9CBB53",
+      "localPath": "D:\\dev\\guideXOSUEFI_BUILD_INFRA\\out\\rt\\artifacts\\obj\\coreclr\\guidexos.x64.Release\\nativeaot\\Runtime\\Full\\standalonegc-disabled.lib",
+      "verified": true
+    },
+    {
+      "name": "zlibstatic.lib",
+      "sha256": "F6A2DC6141570018122BA31B1F34B2D9F6541D701453E2375B3C7A220973E4AB",
+      "localPath": "D:\\dev\\guideXOSUEFI_BUILD_INFRA\\out\\rt\\artifacts\\obj\\coreclr\\guidexos.x64.Release\\_deps\\fetchzlibng-build\\zlibstatic.lib",
+      "verified": true
+    }
+  ]
+}
