@@ -10,4 +10,10 @@
     <Compile Include="Program.cs" />
     <Compile Include="../../Kernel/Drivers/XhciDiscovery.cs" Link="XhciDiscovery.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="../Fixtures/xhci_resource_handoff_v1.hex">
+      <Link>Fixtures/xhci_resource_handoff_v1.hex</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>

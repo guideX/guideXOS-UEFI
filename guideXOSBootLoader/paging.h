@@ -143,8 +143,36 @@ namespace paging
 
     static_assert(sizeof(PciMmioResourceEntry) == 64,
         "C# and UEFI PCI resource entry layouts must match");
+    static_assert(alignof(PciMmioResourceEntry) == 8 &&
+        offsetof(PciMmioResourceEntry, Segment) == 0 &&
+        offsetof(PciMmioResourceEntry, Bus) == 2 &&
+        offsetof(PciMmioResourceEntry, Device) == 3 &&
+        offsetof(PciMmioResourceEntry, Function) == 4 &&
+        offsetof(PciMmioResourceEntry, BarIndex) == 5 &&
+        offsetof(PciMmioResourceEntry, AddressWidth) == 6 &&
+        offsetof(PciMmioResourceEntry, ResourceType) == 7 &&
+        offsetof(PciMmioResourceEntry, GeneralFlags) == 8 &&
+        offsetof(PciMmioResourceEntry, SpecificFlags) == 9 &&
+        offsetof(PciMmioResourceEntry, VendorId) == 10 &&
+        offsetof(PciMmioResourceEntry, DeviceId) == 12 &&
+        offsetof(PciMmioResourceEntry, Reserved) == 14 &&
+        offsetof(PciMmioResourceEntry, BarConfigurationBase) == 16 &&
+        offsetof(PciMmioResourceEntry, MmioBase) == 24 &&
+        offsetof(PciMmioResourceEntry, ApertureLength) == 32 &&
+        offsetof(PciMmioResourceEntry, ResourceMaximum) == 40 &&
+        offsetof(PciMmioResourceEntry, TranslationOffset) == 48 &&
+        offsetof(PciMmioResourceEntry, SupportedAttributes) == 56,
+        "C# and UEFI PCI resource entry field offsets/alignment must match");
     static_assert(sizeof(PciResourceHandoff) == 528,
         "C# and UEFI PCI resource handoff layouts must match");
+    static_assert(alignof(PciResourceHandoff) == 8 &&
+        offsetof(PciResourceHandoff, Magic) == 0 &&
+        offsetof(PciResourceHandoff, Version) == 4 &&
+        offsetof(PciResourceHandoff, EntrySize) == 6 &&
+        offsetof(PciResourceHandoff, EntryCount) == 8 &&
+        offsetof(PciResourceHandoff, DiscoveryStatus) == 12 &&
+        offsetof(PciResourceHandoff, Entries) == 16,
+        "C# and UEFI PCI handoff header offsets/alignment must match");
     static_assert(offsetof(BootMemoryHandoffStorage, PciResources) ==
         sizeof(BootMemoryHandoff),
         "PCI resource contract must immediately follow the legacy handoff");

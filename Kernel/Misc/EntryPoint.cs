@@ -446,10 +446,6 @@ namespace guideXOS.Misc {
             SATA.ResetForBoot();
             PCI.Initialize();
             BootConsole.WriteLine("[PCI] enumerated");
-            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
-                USB.ReportXhciInitializationFrontier(bootInfo,
-                    pciResourceHandoff);
-            }
 #if UEFI_DIAGNOSTIC_BM1
             BareMetalMilestones.Record(8, 8);
             BareMetalMilestones.Record(8, 9);
@@ -492,6 +488,14 @@ namespace guideXOS.Misc {
             Native.Out8(0x3F8, (byte)'\n');
             
             BootConsole.WriteLine("[SCHED] ThreadPool.Initialize complete");
+            // ThreadPool.Initialize enables EFER.NXE. Run the optional MMIO
+            // mapper only afterward because its identity PTEs are read-only
+            // and NX; installing those entries before NXE could fault on access.
+            if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI &&
+                bootInfo->HasXhciCapabilityProbe) {
+                USB.ReportXhciInitializationFrontier(bootInfo,
+                    pciResourceHandoff);
+            }
 #if UEFI_DIAGNOSTIC_BM1
             BareMetalMilestones.Record(9, 1);
 #endif

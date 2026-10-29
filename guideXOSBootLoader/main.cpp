@@ -551,6 +551,31 @@ static bool IsXhciPciClass(UINT8 classCode, UINT8 subclass,
         programmingInterface == 0x30;
 }
 
+// The xHCI capability probe is opt-in per UEFI boot entry. Parse only a
+// bounded token from the loader image's firmware-provided LoadOptions; a
+// missing, malformed, or oversized option string leaves the probe disabled.
+static bool HasXhciCapabilityProbeOption(EFI_HANDLE ImageHandle,
+                                         EFI_SYSTEM_TABLE* SystemTable) {
+    if (ImageHandle == nullptr || SystemTable == nullptr ||
+        SystemTable->BootServices == nullptr) return false;
+
+    EFI_LOADED_IMAGE_PROTOCOL* loadedImage = nullptr;
+    EFI_STATUS status = SystemTable->BootServices->HandleProtocol(
+        ImageHandle, &gEfiLoadedImageProtocolGuid, (void**)&loadedImage);
+    if (EFI_ERROR(status) || loadedImage == nullptr ||
+        loadedImage->LoadOptions == nullptr || loadedImage->LoadOptionsSize == 0 ||
+        (loadedImage->LoadOptionsSize % sizeof(CHAR16)) != 0 ||
+        loadedImage->LoadOptionsSize > 4096 * sizeof(CHAR16)) return false;
+
+    static const char option[] = "--xhci-capability-probe";
+    const UINTN optionLength = sizeof(option) - 1;
+    const uint16_t* loadOptions =
+        (const uint16_t*)loadedImage->LoadOptions;
+    const UINTN optionCount = loadedImage->LoadOptionsSize / sizeof(CHAR16);
+    return guideXOS::pci_resource::ContainsExactAsciiOption(
+        loadOptions, optionCount, option, optionLength);
+}
+
 // Copy authoritative BAR0 resource information from EFI_PCI_IO_PROTOCOL into
 // loader-owned storage. This routine reads PCI configuration and firmware
 // descriptors only; it never writes PCI configuration or controller MMIO.
@@ -1230,6 +1255,10 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     // and copy only fixed-width values into the adjacent loader image data.
     DiscoverXhciPciResources(SystemTable);
     v1BootInfo->Flags |= guideXOS::BOOTINFO_FLAG_PCI_RESOURCE_HANDOFF;
+    if (HasXhciCapabilityProbeOption(ImageHandle, SystemTable)) {
+        v1BootInfo->Flags |= guideXOS::BOOTINFO_FLAG_XHCI_CAPABILITY_PROBE;
+        Print(L"[XHCI-PROBE] enabled by image LoadOptions\n");
+    }
     {
         guideXOS::paging::PciResourceHandoff* resources =
             guideXOS::paging::GetPciResourceHandoff();

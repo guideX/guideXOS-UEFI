@@ -66,6 +66,19 @@ namespace guideXOS.Kernel.Drivers {
         public const uint ResourceDiscoveryTruncated = 5;
         public const uint MaximumFirmwareResources = 8;
         public const ulong PageSize = 4096;
+        public const uint XhciCapabilityProbeBootFlag = 0x80;
+
+        public struct ControllerIdentity {
+            public ushort Segment;
+            public byte Bus;
+            public byte Device;
+            public byte Function;
+            public ushort VendorId;
+            public ushort DeviceId;
+            public byte ClassCode;
+            public byte Subclass;
+            public byte ProgrammingInterface;
+        }
 
         /// <summary>
         /// One firmware-owned descriptor copied out of EFI_PCI_IO_PROTOCOL.
@@ -135,6 +148,44 @@ namespace guideXOS.Kernel.Drivers {
                                           byte programmingInterface) =>
             classCode == 0x0C && subclass == 0x03 &&
             programmingInterface == 0x30;
+
+        public static bool IsCapabilityProbeEnabled(uint bootFlags) =>
+            (bootFlags & XhciCapabilityProbeBootFlag) != 0;
+
+        /// <summary>Require a one-to-one BDF and device identity match.</summary>
+        public static bool MatchFirmwareResourcesToControllers(
+                FirmwareResourceEntry[] entries, ControllerIdentity[] controllers) {
+            if (entries == null || controllers == null ||
+                entries.Length != controllers.Length ||
+                entries.Length > MaximumFirmwareResources) return false;
+
+            bool[] matched = new bool[entries.Length];
+            for (int i = 0; i < controllers.Length; i++) {
+                ControllerIdentity controller = controllers[i];
+                if (controller.Device > 31 || controller.Function > 7 ||
+                    !IsXhciFunction(controller.ClassCode, controller.Subclass,
+                        controller.ProgrammingInterface)) return false;
+
+                int matchIndex = -1;
+                for (int j = 0; j < entries.Length; j++) {
+                    FirmwareResourceEntry entry = entries[j];
+                    if (entry.Segment != controller.Segment ||
+                        entry.Bus != controller.Bus || entry.Device != controller.Device ||
+                        entry.Function != controller.Function ||
+                        entry.VendorId != controller.VendorId ||
+                        entry.DeviceId != controller.DeviceId) continue;
+                    if (matchIndex >= 0 || entry.BarIndex != 0) return false;
+                    matchIndex = j;
+                }
+                if (matchIndex < 0 || matched[matchIndex]) return false;
+                matched[matchIndex] = true;
+            }
+
+            for (int i = 0; i < matched.Length; i++) {
+                if (!matched[i]) return false;
+            }
+            return true;
+        }
 
         public static BarStatus TryParseMemoryBar(uint low, uint high,
                                                    bool hasUpperBar,

@@ -28,6 +28,43 @@ inline uint64_t ReadLittleEndian64(const uint8_t* bytes) {
     return value;
 }
 
+// Match a single exact ASCII command-line token in firmware's UTF-16
+// LoadOptions buffer. The caller owns byte-size validation and bounds the
+// supplied unit count; a NUL terminates the option list.
+inline bool ContainsExactAsciiOption(const uint16_t* loadOptions,
+        size_t optionCount, const char* option, size_t optionLength) {
+    if (loadOptions == nullptr || option == nullptr || optionLength == 0)
+        return false;
+
+    size_t index = 0;
+    while (index < optionCount) {
+        while (index < optionCount &&
+               (loadOptions[index] == ' ' || loadOptions[index] == '\t' ||
+                loadOptions[index] == '\r' || loadOptions[index] == '\n')) {
+            ++index;
+        }
+        if (index >= optionCount || loadOptions[index] == 0) break;
+
+        const size_t tokenStart = index;
+        while (index < optionCount && loadOptions[index] != 0 &&
+               loadOptions[index] != ' ' && loadOptions[index] != '\t' &&
+               loadOptions[index] != '\r' && loadOptions[index] != '\n') {
+            ++index;
+        }
+        if (index - tokenStart == optionLength) {
+            size_t character = 0;
+            while (character < optionLength &&
+                   loadOptions[tokenStart + character] ==
+                       (uint8_t)option[character]) {
+                ++character;
+            }
+            if (character == optionLength) return true;
+        }
+        if (index < optionCount && loadOptions[index] == 0) break;
+    }
+    return false;
+}
+
 // Parse the single QWORD memory descriptor supported by the MI3 contract.
 // UEFI permits a list of descriptors for a BAR; this bounded form rejects
 // multiple descriptors rather than walking an unbounded firmware list.

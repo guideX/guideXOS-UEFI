@@ -1,4 +1,6 @@
 using System;
+using System.Buffers.Binary;
+using System.IO;
 using System.Runtime.InteropServices;
 using guideXOS.Kernel.Drivers;
 
@@ -12,6 +14,7 @@ internal static class Program {
 
     private static void Main() {
         IdentifiesXhciClassCode();
+        KeepsCapabilityProbeDisabledByDefault();
         Parses32BitBar();
         Parses64BitBar();
         RejectsInvalidBars();
@@ -21,14 +24,27 @@ internal static class Program {
         RejectsUnavailableMmioWithoutReading();
         ReadsOnlyCapabilityWords();
         ValidatesFirmwareResourceHandoff();
+        ValidatesSharedHandoffAbiFixture();
+        AssociatesMultipleControllersByIdentity();
         ParsesFirmwareBarResources();
         RejectsUnsafeFirmwareResources();
         PlansBoundedMmioMappings();
         ValidatesUncachedPageAttributes();
         RejectsAccessBeforeMapping();
         PreservesReadOnlyAccessContract();
+        ContinuesAfterSyntheticProbeFailure();
         Console.WriteLine("xHCI discovery tests: PASS (" +
                           _assertions + " assertions)");
+    }
+
+    private static void KeepsCapabilityProbeDisabledByDefault() {
+        Check(!XhciDiscovery.IsCapabilityProbeEnabled(0),
+              "capability probe disabled when no boot option is present");
+        Check(!XhciDiscovery.IsCapabilityProbeEnabled(0x40),
+              "resource handoff flag alone does not enable the probe");
+        Check(XhciDiscovery.IsCapabilityProbeEnabled(
+                  XhciDiscovery.XhciCapabilityProbeBootFlag),
+              "explicit capability probe boot flag enables the probe");
     }
 
     private static void IdentifiesXhciClassCode() {
@@ -312,6 +328,11 @@ internal static class Program {
               XhciDiscovery.ResourceDiscoveryIncomplete, entries, out failure) &&
               failure == XhciDiscovery.ResourceFailure.DiscoveryIncomplete,
               "partial firmware discovery rejected");
+        Check(!XhciDiscovery.TryValidateResourceContract(
+              XhciDiscovery.ResourceContractMagic, 2, 64, 1,
+              XhciDiscovery.ResourceDiscoveryComplete, entries, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.ContractUnsupported,
+              "handoff version mismatch rejected");
 
         XhciDiscovery.FirmwareResourceEntry duplicate = Valid32BitResource();
         Check(!XhciDiscovery.TryValidateResourceContract(
@@ -319,6 +340,127 @@ internal static class Program {
               new[] { Valid32BitResource(), duplicate }, out failure) &&
               failure == XhciDiscovery.ResourceFailure.DuplicateController,
               "duplicate controller BAR association rejected");
+    }
+
+    private static void ValidatesSharedHandoffAbiFixture() {
+        string fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures",
+            "xhci_resource_handoff_v1.hex");
+        string fixtureText = File.ReadAllText(fixturePath);
+        string fixtureHex = string.Concat(fixtureText.Split(
+            new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries));
+        byte[] fixture = Convert.FromHexString(fixtureHex);
+        Check(fixture.Length == 16 + 2 * XhciDiscovery.FirmwareResourceEntrySize,
+              "shared firmware handoff fixture has fixed header and two entries");
+        Check(Marshal.SizeOf<XhciDiscovery.FirmwareResourceEntry>() == 64,
+              "C# firmware resource entry size matches the loader ABI");
+        Check(16 + XhciDiscovery.MaximumFirmwareResources *
+                    Marshal.SizeOf<XhciDiscovery.FirmwareResourceEntry>() == 528,
+              "C# handoff capacity matches the 528-byte loader contract");
+
+        Check(ResourceEntryOffsetsMatch(),
+              "all C# resource entry field offsets match the packed C++ layout");
+
+        uint magic = BinaryPrimitives.ReadUInt32LittleEndian(fixture.AsSpan(0, 4));
+        ushort version = BinaryPrimitives.ReadUInt16LittleEndian(fixture.AsSpan(4, 2));
+        ushort entrySize = BinaryPrimitives.ReadUInt16LittleEndian(fixture.AsSpan(6, 2));
+        uint count = BinaryPrimitives.ReadUInt32LittleEndian(fixture.AsSpan(8, 4));
+        uint status = BinaryPrimitives.ReadUInt32LittleEndian(fixture.AsSpan(12, 4));
+        Check(magic == XhciDiscovery.ResourceContractMagic && version == 1 &&
+              entrySize == 64 && count == 2 &&
+              status == XhciDiscovery.ResourceDiscoveryComplete,
+              "C# parses the shared C++ serialized handoff header");
+
+        XhciDiscovery.FirmwareResourceEntry first =
+            MemoryMarshal.Read<XhciDiscovery.FirmwareResourceEntry>(
+                fixture.AsSpan(16, 64));
+        XhciDiscovery.FirmwareResourceEntry second =
+            MemoryMarshal.Read<XhciDiscovery.FirmwareResourceEntry>(
+                fixture.AsSpan(80, 64));
+        Check(first.Segment == 0 && first.Bus == 0 && first.Device == 20 &&
+              first.Function == 0 && first.VendorId == 0x8086 &&
+              first.DeviceId == 0x1234 && first.MmioBase == 0xE0000000UL &&
+              first.ApertureLength == 0x10000UL,
+              "shared fixture first 32-bit controller entry decoded at expected offsets");
+        Check(second.Segment == 0 && second.Bus == 2 && second.Device == 3 &&
+              second.Function == 1 && second.VendorId == 0x8086 &&
+              second.DeviceId == 0x5678 &&
+              second.MmioBase == 0x00000001FEC01000UL &&
+              second.ApertureLength == 0x10000UL,
+              "shared fixture second 64-bit controller entry decoded at expected offsets");
+        Check(XhciDiscovery.TryValidateResourceContract(magic, version, entrySize,
+                  count, status, new[] { first, second },
+                  out XhciDiscovery.ResourceFailure failure),
+              "shared fixture passes C# contract validation");
+        Check(XhciDiscovery.TryValidateFirmwareResource(first, 0, 0, 20, 0,
+                  0x8086, 0x1234, 0x0C, 0x03, 0x30, 0xE0000000U, 0,
+                  out failure),
+              "shared fixture first controller identity and BAR validate");
+        Check(XhciDiscovery.TryValidateFirmwareResource(second, 0, 2, 3, 1,
+                  0x8086, 0x5678, 0x0C, 0x03, 0x30, 0xFEC01004U, 1,
+                  out failure),
+              "shared fixture second controller identity and 64-bit BAR validate");
+    }
+
+    private static bool ResourceEntryOffsetsMatch() {
+        Type type = typeof(XhciDiscovery.FirmwareResourceEntry);
+        string[] fields = {
+            nameof(XhciDiscovery.FirmwareResourceEntry.Segment),
+            nameof(XhciDiscovery.FirmwareResourceEntry.Bus),
+            nameof(XhciDiscovery.FirmwareResourceEntry.Device),
+            nameof(XhciDiscovery.FirmwareResourceEntry.Function),
+            nameof(XhciDiscovery.FirmwareResourceEntry.BarIndex),
+            nameof(XhciDiscovery.FirmwareResourceEntry.AddressWidth),
+            nameof(XhciDiscovery.FirmwareResourceEntry.ResourceType),
+            nameof(XhciDiscovery.FirmwareResourceEntry.GeneralFlags),
+            nameof(XhciDiscovery.FirmwareResourceEntry.SpecificFlags),
+            nameof(XhciDiscovery.FirmwareResourceEntry.VendorId),
+            nameof(XhciDiscovery.FirmwareResourceEntry.DeviceId),
+            nameof(XhciDiscovery.FirmwareResourceEntry.Reserved),
+            nameof(XhciDiscovery.FirmwareResourceEntry.BarConfigurationBase),
+            nameof(XhciDiscovery.FirmwareResourceEntry.MmioBase),
+            nameof(XhciDiscovery.FirmwareResourceEntry.ApertureLength),
+            nameof(XhciDiscovery.FirmwareResourceEntry.ResourceMaximum),
+            nameof(XhciDiscovery.FirmwareResourceEntry.TranslationOffset),
+            nameof(XhciDiscovery.FirmwareResourceEntry.SupportedAttributes)
+        };
+        int[] expected = { 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14,
+                           16, 24, 32, 40, 48, 56 };
+        for (int i = 0; i < fields.Length; i++) {
+            if (Marshal.OffsetOf(type, fields[i]).ToInt32() != expected[i]) return false;
+        }
+        return true;
+    }
+
+    private static void AssociatesMultipleControllersByIdentity() {
+        XhciDiscovery.FirmwareResourceEntry first = Valid32BitResource();
+        XhciDiscovery.FirmwareResourceEntry second = new() {
+            Segment = 0, Bus = 2, Device = 3, Function = 1, BarIndex = 0,
+            VendorId = 0x8086, DeviceId = 0x5678
+        };
+        XhciDiscovery.ControllerIdentity firstController = new() {
+            Segment = 0, Bus = 0, Device = 20, Function = 0,
+            VendorId = 0x8086, DeviceId = 0x1234,
+            ClassCode = 0x0C, Subclass = 0x03, ProgrammingInterface = 0x30
+        };
+        XhciDiscovery.ControllerIdentity secondController = new() {
+            Segment = 0, Bus = 2, Device = 3, Function = 1,
+            VendorId = 0x8086, DeviceId = 0x5678,
+            ClassCode = 0x0C, Subclass = 0x03, ProgrammingInterface = 0x30
+        };
+
+        Check(XhciDiscovery.MatchFirmwareResourcesToControllers(
+                  new[] { first, second }, new[] { secondController, firstController }),
+              "multiple controllers associate by PCI location and device identity independent of order");
+        Check(!XhciDiscovery.MatchFirmwareResourcesToControllers(
+                  new[] { first }, new[] { firstController, secondController }),
+              "missing controller resource rejected");
+        Check(!XhciDiscovery.MatchFirmwareResourcesToControllers(
+                  new[] { first, first }, new[] { firstController, secondController }),
+              "ambiguous duplicate resource association rejected");
+        secondController.DeviceId++;
+        Check(!XhciDiscovery.MatchFirmwareResourcesToControllers(
+                  new[] { first, second }, new[] { firstController, secondController }),
+              "controller device identity mismatch rejected");
     }
 
     private static void ParsesFirmwareBarResources() {
@@ -480,6 +622,24 @@ internal static class Program {
               "synthetic capability path performs reads only");
         Check(typeof(XhciDiscovery.IReadOnlyMmioReader).GetMethod("TryWrite32") == null,
               "MMIO access interface exposes no write method");
+    }
+
+    private static void ContinuesAfterSyntheticProbeFailure() {
+        FakeReader failedReader = new FakeReader(ValidRegisters(), failAtOffset: 0x0CUL);
+        FakeReader succeedingReader = new FakeReader(ValidRegisters());
+        XhciDiscovery.Capabilities capabilities;
+        XhciDiscovery.CapabilityFailure failedReadFailure;
+        XhciDiscovery.CapabilityFailure successFailure;
+        bool firstSucceeded = XhciDiscovery.TryReadCapabilities(failedReader,
+            0x10000, out capabilities, out failedReadFailure);
+        bool secondSucceeded = XhciDiscovery.TryReadCapabilities(succeedingReader,
+            0x10000, out capabilities, out successFailure);
+        Check(!firstSucceeded && failedReadFailure == XhciDiscovery.CapabilityFailure.ReadFailed,
+              "a failed synthetic controller read is isolated to that controller");
+        Check(secondSucceeded && successFailure == XhciDiscovery.CapabilityFailure.None,
+              "later controller capability probe can proceed after a rejected read");
+        Check(failedReader.WriteCount == 0 && succeedingReader.WriteCount == 0,
+              "success and failure paths do not write controller registers");
     }
 
     private static XhciDiscovery.FirmwareResourceEntry Valid32BitResource() {

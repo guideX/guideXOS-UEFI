@@ -255,6 +255,10 @@ namespace guideXOS.Misc {
                     continue;
                 }
 
+                BootConsole.WriteLine(
+                    $"[USB][XHCI] controller=matched bar0=validated " +
+                    $"base=0x{entry.MmioBase:x} aperture=0x{entry.ApertureLength:x} {address}");
+
                 if (!MmioMappingDoesNotOverlapOtherMemory(bootInfo, entry)) {
                     BootConsole.WriteLine(
                         $"[USB][XHCI] mmio-map=blocked reason=memory-map-conflict-or-invalid " +
@@ -275,6 +279,10 @@ namespace guideXOS.Misc {
                         $"[USB][XHCI] capability-read=not-attempted {address}");
                     continue;
                 }
+
+                BootConsole.WriteLine(
+                    $"[USB][XHCI] mmio-map=success attributes=uc,read-only,nx " +
+                    $"access=0x{XhciDiscovery.CapabilityHeaderLength:x} {address}");
 
                 MappedXhciMmioReader reader = new(registers, entry.ApertureLength,
                     XhciDiscovery.CapabilityHeaderLength);
@@ -366,10 +374,10 @@ namespace guideXOS.Misc {
                 ulong descriptorBase = *(ulong*)(descriptor + 8);
                 ulong pageCount = *(ulong*)(descriptor + 24);
                 if (pageCount == 0 || pageCount >
-                    0xFFFF_FFFF_FFFF_FFFFUL / XhciDiscovery.PageSize) continue;
+                    0xFFFF_FFFF_FFFF_FFFFUL / XhciDiscovery.PageSize) return false;
                 ulong descriptorLength = pageCount * XhciDiscovery.PageSize;
                 if (descriptorBase > 0xFFFF_FFFF_FFFF_FFFFUL -
-                        (descriptorLength - 1)) continue;
+                        (descriptorLength - 1)) return false;
                 ulong descriptorEnd = descriptorBase + descriptorLength - 1;
                 if (descriptorBase <= mappedEnd && plan.FirstPhysicalPage <= descriptorEnd &&
                     type != 11) { // EfiMemoryMappedIO is the only accepted overlap.
@@ -381,27 +389,30 @@ namespace guideXOS.Misc {
 
         private static bool FirmwareResourcesMatchKernelDiscovery(
                 XhciDiscovery.FirmwareResourceEntry[] entries) {
+            if (entries == null || PCI.Devices == null) return false;
+            XhciDiscovery.ControllerIdentity[] controllers =
+                new XhciDiscovery.ControllerIdentity[entries.Length];
             int uniqueControllers = 0;
             for (int i = 0; i < PCI.Devices.Count; i++) {
                 PCIDevice device = PCI.Devices[i];
                 if (device == null || !XhciDiscovery.IsXhciFunction(
                         device.ClassID, device.SubClassID, device.ProgIF) ||
                     WasXhciFunctionReported(i, device)) continue;
-                uniqueControllers++;
-
-                bool resourceFound = false;
-                for (int j = 0; j < entries.Length; j++) {
-                    XhciDiscovery.FirmwareResourceEntry entry = entries[j];
-                    if (entry.Segment == device.Segment && entry.Bus == device.Bus &&
-                        entry.Device == device.Slot && entry.Function == device.Function &&
-                        entry.VendorId == device.VendorID && entry.DeviceId == device.DeviceID) {
-                        resourceFound = true;
-                        break;
-                    }
-                }
-                if (!resourceFound) return false;
+                if (uniqueControllers >= controllers.Length) return false;
+                controllers[uniqueControllers++] = new XhciDiscovery.ControllerIdentity {
+                    Segment = device.Segment,
+                    Bus = (byte)device.Bus,
+                    Device = (byte)device.Slot,
+                    Function = (byte)device.Function,
+                    VendorId = device.VendorID,
+                    DeviceId = device.DeviceID,
+                    ClassCode = device.ClassID,
+                    Subclass = device.SubClassID,
+                    ProgrammingInterface = device.ProgIF
+                };
             }
-            return uniqueControllers == entries.Length;
+            return uniqueControllers == entries.Length &&
+                XhciDiscovery.MatchFirmwareResourcesToControllers(entries, controllers);
         }
 
         private sealed class MappedXhciMmioReader : XhciDiscovery.IReadOnlyMmioReader {

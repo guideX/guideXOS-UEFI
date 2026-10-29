@@ -135,6 +135,14 @@ namespace guideXOS.Misc {
         public bool HasPciResourceHandoff => (Flags & 0x40) != 0;
 
         /// <summary>
+        /// The loader observed the explicit --xhci-capability-probe image
+        /// load option. Capability MMIO access stays disabled when this bit is
+        /// absent, including for older loaders that do not set it.
+        /// </summary>
+        public bool HasXhciCapabilityProbe =>
+            guideXOS.Kernel.Drivers.XhciDiscovery.IsCapabilityProbeEnabled(Flags);
+
+        /// <summary>
         /// Convert to VBEInfo for legacy compatibility
         /// </summary>
         public VBEInfo ToVBEInfo() {

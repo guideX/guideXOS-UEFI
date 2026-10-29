@@ -40,6 +40,9 @@ namespace guideXOS
     // New consumers may read the versioned PCI resource block appended to
     // the unchanged BootMemoryHandoff v1 prefix. Old readers ignore the bit.
     static const uint32_t BOOTINFO_FLAG_PCI_RESOURCE_HANDOFF = (1u << 6);
+    // Explicit UEFI image LoadOptions opt-in for read-only xHCI capability
+    // discovery. Absent by default and ignored by older BootInfo v1 readers.
+    static const uint32_t BOOTINFO_FLAG_XHCI_CAPABILITY_PROBE = (1u << 7);
 
     struct BootInfo
     {

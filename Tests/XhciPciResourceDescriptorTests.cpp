@@ -15,6 +15,17 @@ static void Check(bool condition, const char* message) {
     }
 }
 
+static size_t MakeUtf16Options(const char* text, uint16_t* output,
+        size_t capacity) {
+    size_t length = 0;
+    while (text[length] != '\0' && length + 1 < capacity) {
+        output[length] = (uint8_t)text[length];
+        ++length;
+    }
+    output[length] = 0;
+    return length + 1;
+}
+
 static void WriteLittleEndian64(uint8_t* bytes, uint64_t value) {
     for (unsigned int i = 0; i < 8; ++i)
         bytes[i] = (uint8_t)(value >> (i * 8));
@@ -45,7 +56,45 @@ static void MakeResource(uint8_t* bytes, uint8_t width,
 
 int main() {
     using guideXOS::pci_resource::QwordMemoryResource;
+    using guideXOS::pci_resource::ContainsExactAsciiOption;
     using guideXOS::pci_resource::TryParseSingleQwordMemoryResource;
+
+    static const char probeOption[] = "--xhci-capability-probe";
+    uint16_t loadOptions[128];
+    size_t optionCount = MakeUtf16Options(
+        "--other\t--xhci-capability-probe\r--last", loadOptions,
+        sizeof(loadOptions) / sizeof(loadOptions[0]));
+    Check(ContainsExactAsciiOption(loadOptions, optionCount, probeOption,
+          sizeof(probeOption) - 1),
+          "exact opt-in token found among bounded UTF-16 options");
+    optionCount = MakeUtf16Options(
+        "--xhci-capability-probe-extra", loadOptions,
+        sizeof(loadOptions) / sizeof(loadOptions[0]));
+    Check(!ContainsExactAsciiOption(loadOptions, optionCount, probeOption,
+          sizeof(probeOption) - 1),
+          "extended token does not enable capability probe");
+    optionCount = MakeUtf16Options(
+        "prefix--xhci-capability-probe", loadOptions,
+        sizeof(loadOptions) / sizeof(loadOptions[0]));
+    Check(!ContainsExactAsciiOption(loadOptions, optionCount, probeOption,
+          sizeof(probeOption) - 1),
+          "embedded option substring does not enable capability probe");
+    optionCount = MakeUtf16Options(
+        "\"--xhci-capability-probe\"", loadOptions,
+        sizeof(loadOptions) / sizeof(loadOptions[0]));
+    Check(!ContainsExactAsciiOption(loadOptions, optionCount, probeOption,
+          sizeof(probeOption) - 1),
+          "quoted option does not match the exact diagnostic token");
+    optionCount = MakeUtf16Options("--xhci-capability-probe", loadOptions,
+        sizeof(loadOptions) / sizeof(loadOptions[0]));
+    Check(!ContainsExactAsciiOption(loadOptions, 8, probeOption,
+          sizeof(probeOption) - 1),
+          "truncated UTF-16 option buffer is rejected");
+    Check(!ContainsExactAsciiOption(nullptr, optionCount, probeOption,
+          sizeof(probeOption) - 1),
+          "missing UTF-16 option buffer is rejected");
+    Check(!ContainsExactAsciiOption(loadOptions, optionCount, probeOption, 0),
+          "empty option name is rejected");
 
     uint8_t bytes[48];
     QwordMemoryResource parsed = {};
