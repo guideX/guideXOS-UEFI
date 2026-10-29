@@ -13,6 +13,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '..\ManagedArtifacts\Get-ManagedSha256.ps1')
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if ([string]::IsNullOrWhiteSpace($Phase23Pack)) { $Phase23Pack = Join-Path $root 'out\dotnet\phase23-runtime-pack' }
@@ -611,7 +612,7 @@ $phase26Manifest | Add-Member -NotePropertyName phase26CoreLibAdaptation -NotePr
     target = 'TARGET_GUIDEXOS'
     behavior = 'ResolvePInvokeSlow saves/restores Marshal P/Invoke error state without Kernel32.GetLastError recursion.'
     assembly = $coreLibArtifact
-    sha256 = (Get-FileHash -LiteralPath $coreLibArtifact -Algorithm SHA256).Hash.ToUpperInvariant()
+    sha256 = (Get-ManagedSha256 -LiteralPath $coreLibArtifact).Hash
 }) -Force
 $phase26Manifest.note = 'Phase 26 adds a source-built NativeAOT CoreLib resolver adaptation and target-native PAL closure; no host fallback or Windows import is authorized.'
 $phase26Manifest | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $phase26ManifestPath -Encoding UTF8
@@ -748,19 +749,19 @@ for ($j = 0; $j -lt $tlsVectorAdapter.Length; $j++) {
 [IO.File]::WriteAllBytes($artifact.FullName, $artifactBytes)
 $artifact = Get-Item -LiteralPath $artifact.FullName
 Write-Output ('PHASE26_TLS_VECTOR_ADAPTER_OFFSET=0x{0:X}' -f $tlsFallbackOffset)
-Write-Output ('PHASE26_TLS_VECTOR_ADAPTER_SHA256=' + (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash.ToUpperInvariant())
+Write-Output ('PHASE26_TLS_VECTOR_ADAPTER_SHA256=' + (Get-ManagedSha256 -LiteralPath $artifact.FullName).Hash)
 $record = [ordered]@{
     schema = 1
     generatedBy = 'Tools/Phase26/build_phase26_managed_proof.ps1'
     target = 'guidexos-x64'
     targetOs = 'guidexos'
     inheritedPhase23Artifact = 'C8D60ABE6D91917F4E236F435A8C2D4272386CEC830C07AFA691897A23DA195A'
-    artifact = [ordered]@{ path = $artifact.FullName; length = $artifact.Length; sha256 = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash.ToUpperInvariant() }
-    palObject = [ordered]@{ path = $palObject; sha256 = (Get-FileHash -LiteralPath $palObject -Algorithm SHA256).Hash.ToUpperInvariant() }
-    shimObject = [ordered]@{ path = $shimObject; sha256 = (Get-FileHash -LiteralPath $shimObject -Algorithm SHA256).Hash.ToUpperInvariant() }
-    syscallObject = [ordered]@{ path = $syscallObject; sha256 = (Get-FileHash -LiteralPath $syscallObject -Algorithm SHA256).Hash.ToUpperInvariant() }
-    gcEnvironmentOverlay = [ordered]@{ path = $gcEnvironmentSource; object = $gcEnvironmentObject; virtualMemoryLimit = '0x100000000'; sha256 = (Get-FileHash -LiteralPath $gcEnvironmentObject -Algorithm SHA256).Hash.ToUpperInvariant() }
-    coreLibAdaptation = [ordered]@{ source = $coreLibSource; assembly = $coreLibArtifact; sha256 = (Get-FileHash -LiteralPath $coreLibArtifact -Algorithm SHA256).Hash.ToUpperInvariant(); target = 'TARGET_GUIDEXOS' }
+    artifact = [ordered]@{ path = $artifact.FullName; length = $artifact.Length; sha256 = (Get-ManagedSha256 -LiteralPath $artifact.FullName).Hash }
+    palObject = [ordered]@{ path = $palObject; sha256 = (Get-ManagedSha256 -LiteralPath $palObject).Hash }
+    shimObject = [ordered]@{ path = $shimObject; sha256 = (Get-ManagedSha256 -LiteralPath $shimObject).Hash }
+    syscallObject = [ordered]@{ path = $syscallObject; sha256 = (Get-ManagedSha256 -LiteralPath $syscallObject).Hash }
+    gcEnvironmentOverlay = [ordered]@{ path = $gcEnvironmentSource; object = $gcEnvironmentObject; virtualMemoryLimit = '0x100000000'; sha256 = (Get-ManagedSha256 -LiteralPath $gcEnvironmentObject).Hash }
+    coreLibAdaptation = [ordered]@{ source = $coreLibSource; assembly = $coreLibArtifact; sha256 = (Get-ManagedSha256 -LiteralPath $coreLibArtifact).Hash; target = 'TARGET_GUIDEXOS' }
     managedExecution = $false
 }
 $record | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $OutputRoot 'phase26-managed-proof-build.json') -Encoding UTF8

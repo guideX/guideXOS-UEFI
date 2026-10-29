@@ -2,6 +2,7 @@
 param([string]$BuildRoot = '', [string]$RamdiskSource = '')
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '..\ManagedArtifacts\Get-ManagedSha256.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if ([string]::IsNullOrWhiteSpace($BuildRoot)) {
     $BuildRoot = Join-Path $root 'out\dotnet\phase29-managed-notification'
@@ -38,6 +39,6 @@ foreach ($payload in $record.payloads) {
     Copy-Item -LiteralPath $artifact -Destination $exeTarget -Force
     & $pythonCommand @($descriptorBuilder, $artifact, $map, $descriptorTarget, $mode)
     if ($LASTEXITCODE -ne 0) { throw "Phase 29 $mode descriptor failed: $LASTEXITCODE" }
-    Get-FileHash -Algorithm SHA256 -LiteralPath $exeTarget
+    Get-ManagedSha256 -LiteralPath $exeTarget
     Get-Item -LiteralPath $descriptorTarget | Select-Object FullName, Length
 }

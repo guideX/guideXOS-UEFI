@@ -8,6 +8,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '..\ManagedArtifacts\Get-ManagedSha256.ps1')
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if ([string]::IsNullOrWhiteSpace($Phase23Pack)) {
@@ -164,8 +165,7 @@ foreach ($mode in $modes) {
         result = $mode.Result
         path = $archiveArtifact
         length = $artifact.Length
-        sha256 = (Get-FileHash -LiteralPath $artifact.FullName `
-            -Algorithm SHA256).Hash.ToUpperInvariant()
+        sha256 = (Get-ManagedSha256 -LiteralPath $artifact.FullName).Hash
         map = $archiveMap
         linkResponse = $archiveLinkResponse
         project = $project

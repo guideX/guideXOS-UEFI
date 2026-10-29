@@ -2,6 +2,7 @@
 param([string]$BuildRoot = '', [string]$RamdiskSource = '')
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '..\ManagedArtifacts\Get-ManagedSha256.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if ([string]::IsNullOrWhiteSpace($BuildRoot)) {
     $BuildRoot = Join-Path $root 'out\dotnet\phase34-managed-resource-read'
@@ -51,6 +52,6 @@ foreach ($payload in $record.payloads) {
         $linkResponse, '--mode', $mode, '--output', $verification)
     if ($LASTEXITCODE -ne 0) { throw "Phase 34 $mode artifact validation failed: $LASTEXITCODE" }
     Write-Host "PHASE34_ARTIFACT_VALIDATION_$mode=PASS"
-    Get-FileHash -Algorithm SHA256 -LiteralPath $exeTarget
+    Get-ManagedSha256 -LiteralPath $exeTarget
     Get-Item -LiteralPath $descriptorTarget | Select-Object FullName, Length
 }

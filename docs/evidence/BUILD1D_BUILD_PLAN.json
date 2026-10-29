@@ -1,0 +1,848 @@
+{
+  "branch": "BUILD_INFRA",
+  "build": "BUILD1D",
+  "expectedStartingHead": "ac92e787c9d30861869f7841340d2a790cf1eb69",
+  "nativeIdentityGenerator": "Tools/ManagedArtifacts/managed_artifacts.py",
+  "notes": [
+    "Sequential phase batches.",
+    "Phases 32-35 enforce checkout-local out/dotnet roots.",
+    "Explicit E: stage destinations preserve historical ramdisk_src/Native payloads.",
+    "Phase 34 reclaims managed intermediates under out/dotnet but retains proof outputs and records.",
+    "No identity or release-manifest semantics are changed."
+  ],
+  "phaseOrder": [
+    "Phase29",
+    "Phase30",
+    "Phase31",
+    "Phase32",
+    "Phase33",
+    "Phase34",
+    "Phase35"
+  ],
+  "phases": [
+    {
+      "buildOutputRoot": "<E: isolated run>/runs/Phase29/build",
+      "buildRecord": "phase29-managed-notification-build.json",
+      "buildRecordLocation": "<buildOutputRoot>/phase29-managed-notification-build.json",
+      "builder": "Tools/Phase29/build_phase29_managed_notification.ps1",
+      "dependencies": [
+        "Phase 23 locked runtime source/patches/pack/private ILC",
+        "Phase 26 NativeAOT managed-proof builder"
+      ],
+      "payloads": [
+        {
+          "basename": "guideXOS.Phase29ManagedNotificationProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/success/publish/guideXOS.Phase29ManagedNotificationProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase29ManagedNotificationProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase29ManagedNotificationProof.exe",
+          "phase": "Phase29",
+          "phaseDependencies": [],
+          "proofFlags": "0x00000800",
+          "variant": "success"
+        },
+        {
+          "basename": "guideXOS.Phase29NotificationTitleFailureProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/title-failure/publish/guideXOS.Phase29NotificationTitleFailureProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase29NotificationTitleFailureProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase29NotificationTitleFailureProof.exe",
+          "phase": "Phase29",
+          "phaseDependencies": [],
+          "proofFlags": "0x00001000",
+          "variant": "title-failure"
+        },
+        {
+          "basename": "guideXOS.Phase29NotificationBodyFailureProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/body-failure/publish/guideXOS.Phase29NotificationBodyFailureProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase29NotificationBodyFailureProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase29NotificationBodyFailureProof.exe",
+          "phase": "Phase29",
+          "phaseDependencies": [],
+          "proofFlags": "0x00002000",
+          "variant": "body-failure"
+        },
+        {
+          "basename": "guideXOS.Phase29NotificationInvalidTypeProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/invalid-type/publish/guideXOS.Phase29NotificationInvalidTypeProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase29NotificationInvalidTypeProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase29NotificationInvalidTypeProof.exe",
+          "phase": "Phase29",
+          "phaseDependencies": [],
+          "proofFlags": "0x00008000",
+          "variant": "invalid-type"
+        },
+        {
+          "basename": "guideXOS.Phase29NotificationFailFastProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/failfast/publish/guideXOS.Phase29NotificationFailFastProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase29NotificationFailFastProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase29NotificationFailFastProof.exe",
+          "phase": "Phase29",
+          "phaseDependencies": [],
+          "proofFlags": "0x00004000",
+          "variant": "failfast"
+        }
+      ],
+      "phase": "Phase29",
+      "project": "UserManagedNotificationProof",
+      "sourceInputs": [
+        "Tools/Phase29",
+        "Tools/Phase26",
+        "Tools/Phase19",
+        "Tools/Phase23",
+        "GuideXos.User",
+        "UserManagedNotificationProof"
+      ],
+      "stageRoot": "<E: isolated run>/runs/Phase29/stage",
+      "stager": "Tools/Phase29/stage_phase29_image.ps1",
+      "toolchain": [
+        "Windows PowerShell 5.1",
+        "x64 MSVC and Windows SDK 10.0.26100.0",
+        "global .NET SDK plus pinned runtime dotnet host",
+        "Python 3.12 and repository NASM"
+      ],
+      "variantCount": 5,
+      "variants": [
+        "success",
+        "title-failure",
+        "body-failure",
+        "invalid-type",
+        "failfast"
+      ],
+      "verification": [
+        "supported stager and phase-specific wire/static verifier",
+        "record variant set, output SHA/length, normalized PE timestamps",
+        "GXMI header, flags, embedded executable digest, build/stage byte equality",
+        "unmodified native 41-row identity generator"
+      ]
+    },
+    {
+      "buildOutputRoot": "<E: isolated run>/runs/Phase30/build",
+      "buildRecord": "phase30-managed-clipboard-build.json",
+      "buildRecordLocation": "<buildOutputRoot>/phase30-managed-clipboard-build.json",
+      "builder": "Tools/Phase30/build_phase30_managed_clipboard.ps1",
+      "dependencies": [
+        "Phase 23 locked runtime source/patches/pack/private ILC",
+        "Phase 26 NativeAOT managed-proof builder"
+      ],
+      "payloads": [
+        {
+          "basename": "guideXOS.Phase30ManagedClipboardProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/success/publish/guideXOS.Phase30ManagedClipboardProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase30ManagedClipboardProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase30ManagedClipboardProof.exe",
+          "phase": "Phase30",
+          "phaseDependencies": [],
+          "proofFlags": "0x00010000",
+          "variant": "success"
+        },
+        {
+          "basename": "guideXOS.Phase30ClipboardReaderProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/reader/publish/guideXOS.Phase30ClipboardReaderProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase30ClipboardReaderProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase30ClipboardReaderProof.exe",
+          "phase": "Phase30",
+          "phaseDependencies": [],
+          "proofFlags": "0x00020000",
+          "variant": "reader"
+        },
+        {
+          "basename": "guideXOS.Phase30ClipboardCrossWriterProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/cross-writer/publish/guideXOS.Phase30ClipboardCrossWriterProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase30ClipboardCrossWriterProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase30ClipboardCrossWriterProof.exe",
+          "phase": "Phase30",
+          "phaseDependencies": [],
+          "proofFlags": "0x00040000",
+          "variant": "cross-writer"
+        },
+        {
+          "basename": "guideXOS.Phase30ClipboardOverwriteProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/overwrite/publish/guideXOS.Phase30ClipboardOverwriteProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase30ClipboardOverwriteProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase30ClipboardOverwriteProof.exe",
+          "phase": "Phase30",
+          "phaseDependencies": [],
+          "proofFlags": "0x00080000",
+          "variant": "overwrite"
+        },
+        {
+          "basename": "guideXOS.Phase30ClipboardEmptyProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/empty/publish/guideXOS.Phase30ClipboardEmptyProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase30ClipboardEmptyProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase30ClipboardEmptyProof.exe",
+          "phase": "Phase30",
+          "phaseDependencies": [],
+          "proofFlags": "0x00100000",
+          "variant": "empty"
+        },
+        {
+          "basename": "guideXOS.Phase30ClipboardClearProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/clear/publish/guideXOS.Phase30ClipboardClearProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase30ClipboardClearProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase30ClipboardClearProof.exe",
+          "phase": "Phase30",
+          "phaseDependencies": [],
+          "proofFlags": "0x00200000",
+          "variant": "clear"
+        },
+        {
+          "basename": "guideXOS.Phase30ClipboardOversizeProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/oversize/publish/guideXOS.Phase30ClipboardOversizeProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase30ClipboardOversizeProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase30ClipboardOversizeProof.exe",
+          "phase": "Phase30",
+          "phaseDependencies": [],
+          "proofFlags": "0x00400000",
+          "variant": "oversize"
+        },
+        {
+          "basename": "guideXOS.Phase30ClipboardMalformedLengthProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/malformed-length/publish/guideXOS.Phase30ClipboardMalformedLengthProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase30ClipboardMalformedLengthProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase30ClipboardMalformedLengthProof.exe",
+          "phase": "Phase30",
+          "phaseDependencies": [],
+          "proofFlags": "0x00800000",
+          "variant": "malformed-length"
+        },
+        {
+          "basename": "guideXOS.Phase30ClipboardFailFastProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/failfast/publish/guideXOS.Phase30ClipboardFailFastProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase30ClipboardFailFastProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase30ClipboardFailFastProof.exe",
+          "phase": "Phase30",
+          "phaseDependencies": [],
+          "proofFlags": "0x01000000",
+          "variant": "failfast"
+        }
+      ],
+      "phase": "Phase30",
+      "project": "UserManagedClipboardProof",
+      "sourceInputs": [
+        "Tools/Phase30",
+        "Tools/Phase26",
+        "Tools/Phase19",
+        "Tools/Phase23",
+        "GuideXos.User",
+        "UserManagedClipboardProof"
+      ],
+      "stageRoot": "<E: isolated run>/runs/Phase30/stage",
+      "stager": "Tools/Phase30/stage_phase30_image.ps1",
+      "toolchain": [
+        "Windows PowerShell 5.1",
+        "x64 MSVC and Windows SDK 10.0.26100.0",
+        "global .NET SDK plus pinned runtime dotnet host",
+        "Python 3.12 and repository NASM"
+      ],
+      "variantCount": 9,
+      "variants": [
+        "success",
+        "reader",
+        "cross-writer",
+        "overwrite",
+        "empty",
+        "clear",
+        "oversize",
+        "malformed-length",
+        "failfast"
+      ],
+      "verification": [
+        "supported stager and phase-specific wire/static verifier",
+        "record variant set, output SHA/length, normalized PE timestamps",
+        "GXMI header, flags, embedded executable digest, build/stage byte equality",
+        "unmodified native 41-row identity generator"
+      ]
+    },
+    {
+      "buildOutputRoot": "<E: isolated run>/runs/Phase31/build",
+      "buildRecord": "phase31-managed-shell-build.json",
+      "buildRecordLocation": "<buildOutputRoot>/phase31-managed-shell-build.json",
+      "builder": "Tools/Phase31/build_phase31_managed_shell.ps1",
+      "dependencies": [
+        "Phase 23 locked runtime source/patches/pack/private ILC",
+        "Phase 26 NativeAOT managed-proof builder"
+      ],
+      "payloads": [
+        {
+          "basename": "guideXOS.Phase31ManagedShellLaunchProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/success/publish/guideXOS.Phase31ManagedShellLaunchProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase31ManagedShellLaunchProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase31ManagedShellLaunchProof.exe",
+          "phase": "Phase31",
+          "phaseDependencies": [],
+          "proofFlags": "0x02000000",
+          "variant": "success"
+        },
+        {
+          "basename": "guideXOS.Phase31InvalidTargetProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/invalid-target/publish/guideXOS.Phase31InvalidTargetProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase31InvalidTargetProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase31InvalidTargetProof.exe",
+          "phase": "Phase31",
+          "phaseDependencies": [],
+          "proofFlags": "0x04000000",
+          "variant": "invalid-target"
+        },
+        {
+          "basename": "guideXOS.Phase31OversizeTargetProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/oversize/publish/guideXOS.Phase31OversizeTargetProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase31OversizeTargetProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase31OversizeTargetProof.exe",
+          "phase": "Phase31",
+          "phaseDependencies": [],
+          "proofFlags": "0x08000000",
+          "variant": "oversize"
+        },
+        {
+          "basename": "guideXOS.Phase31FailFastProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/failfast/publish/guideXOS.Phase31FailFastProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase31FailFastProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase31FailFastProof.exe",
+          "phase": "Phase31",
+          "phaseDependencies": [],
+          "proofFlags": "0x10000000",
+          "variant": "failfast"
+        },
+        {
+          "basename": "guideXOS.Phase31StaleOwnerProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/stale-owner/publish/guideXOS.Phase31StaleOwnerProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase31StaleOwnerProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase31StaleOwnerProof.exe",
+          "phase": "Phase31",
+          "phaseDependencies": [],
+          "proofFlags": "0x20000000",
+          "variant": "stale-owner"
+        }
+      ],
+      "phase": "Phase31",
+      "project": "UserManagedShellProof",
+      "sourceInputs": [
+        "Tools/Phase31",
+        "Tools/Phase26",
+        "Tools/Phase19",
+        "Tools/Phase23",
+        "GuideXos.User",
+        "UserManagedShellProof"
+      ],
+      "stageRoot": "<E: isolated run>/runs/Phase31/stage",
+      "stager": "Tools/Phase31/stage_phase31_image.ps1",
+      "toolchain": [
+        "Windows PowerShell 5.1",
+        "x64 MSVC and Windows SDK 10.0.26100.0",
+        "global .NET SDK plus pinned runtime dotnet host",
+        "Python 3.12 and repository NASM"
+      ],
+      "variantCount": 5,
+      "variants": [
+        "success",
+        "invalid-target",
+        "oversize",
+        "failfast",
+        "stale-owner"
+      ],
+      "verification": [
+        "supported stager and phase-specific wire/static verifier",
+        "record variant set, output SHA/length, normalized PE timestamps",
+        "GXMI header, flags, embedded executable digest, build/stage byte equality",
+        "unmodified native 41-row identity generator"
+      ]
+    },
+    {
+      "buildOutputRoot": "out/dotnet/phase32-managed-open-document",
+      "buildRecord": "phase32-managed-open-document-build.json",
+      "buildRecordLocation": "<buildOutputRoot>/phase32-managed-open-document-build.json",
+      "builder": "Tools/Phase32/build_phase32_managed_open_document.ps1",
+      "dependencies": [
+        "Phase 23 locked runtime source/patches/pack/private ILC",
+        "Phase 26 NativeAOT managed-proof builder",
+        "Phase31 PAL contract and shim source"
+      ],
+      "payloads": [
+        {
+          "basename": "guideXOS.Phase32ManagedOpenDocumentProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/success/publish/guideXOS.Phase32ManagedOpenDocumentProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase32ManagedOpenDocumentProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase32ManagedOpenDocumentProof.exe",
+          "phase": "Phase32",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0x40000000",
+          "variant": "success"
+        },
+        {
+          "basename": "guideXOS.Phase32OpenDocumentFailFastProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/failfast/publish/guideXOS.Phase32OpenDocumentFailFastProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase32OpenDocumentFailFastProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase32OpenDocumentFailFastProof.exe",
+          "phase": "Phase32",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0x80000000",
+          "variant": "failfast"
+        },
+        {
+          "basename": "guideXOS.Phase32OpenDocumentStaleOwnerProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/stale-owner/publish/guideXOS.Phase32OpenDocumentStaleOwnerProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase32OpenDocumentStaleOwnerProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase32OpenDocumentStaleOwnerProof.exe",
+          "phase": "Phase32",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xC0000000",
+          "variant": "stale-owner"
+        }
+      ],
+      "phase": "Phase32",
+      "project": "UserManagedOpenDocumentProof",
+      "sourceInputs": [
+        "Tools/Phase32",
+        "Tools/Phase26",
+        "Tools/Phase19",
+        "Tools/Phase23",
+        "GuideXos.User",
+        "UserManagedOpenDocumentProof",
+        "Tools/Phase31"
+      ],
+      "stageRoot": "<E: isolated run>/runs/Phase32/stage",
+      "stager": "Tools/Phase32/stage_phase32_image.ps1",
+      "toolchain": [
+        "Windows PowerShell 5.1",
+        "x64 MSVC and Windows SDK 10.0.26100.0",
+        "global .NET SDK plus pinned runtime dotnet host",
+        "Python 3.12 and repository NASM"
+      ],
+      "variantCount": 3,
+      "variants": [
+        "success",
+        "failfast",
+        "stale-owner"
+      ],
+      "verification": [
+        "supported stager and phase-specific wire/static verifier",
+        "record variant set, output SHA/length, normalized PE timestamps",
+        "GXMI header, flags, embedded executable digest, build/stage byte equality",
+        "unmodified native 41-row identity generator"
+      ]
+    },
+    {
+      "buildOutputRoot": "out/dotnet/phase33-managed-shell-action",
+      "buildRecord": "phase33-managed-shell-action-build.json",
+      "buildRecordLocation": "<buildOutputRoot>/phase33-managed-shell-action-build.json",
+      "builder": "Tools/Phase33/build_phase33_managed_shell_action.ps1",
+      "dependencies": [
+        "Phase 23 locked runtime source/patches/pack/private ILC",
+        "Phase 26 NativeAOT managed-proof builder",
+        "Phase31 PAL contract and shim source"
+      ],
+      "payloads": [
+        {
+          "basename": "guideXOS.Phase33ManagedShellActionProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/success/publish/guideXOS.Phase33ManagedShellActionProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase33ManagedShellActionProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase33ManagedShellActionProof.exe",
+          "phase": "Phase33",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xC2000000",
+          "variant": "success"
+        },
+        {
+          "basename": "guideXOS.Phase33ShellActionFailFastProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/failfast/publish/guideXOS.Phase33ShellActionFailFastProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase33ShellActionFailFastProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase33ShellActionFailFastProof.exe",
+          "phase": "Phase33",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xC4000000",
+          "variant": "failfast"
+        },
+        {
+          "basename": "guideXOS.Phase33ShellActionStaleOwnerProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/stale-owner/publish/guideXOS.Phase33ShellActionStaleOwnerProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase33ShellActionStaleOwnerProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase33ShellActionStaleOwnerProof.exe",
+          "phase": "Phase33",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xC8000000",
+          "variant": "stale-owner"
+        },
+        {
+          "basename": "guideXOS.Phase33ShellActionInvalidActionProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/invalid-action/publish/guideXOS.Phase33ShellActionInvalidActionProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase33ShellActionInvalidActionProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase33ShellActionInvalidActionProof.exe",
+          "phase": "Phase33",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xD0000000",
+          "variant": "invalid-action"
+        },
+        {
+          "basename": "guideXOS.Phase33ShellActionMalformedProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/malformed/publish/guideXOS.Phase33ShellActionMalformedProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase33ShellActionMalformedProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase33ShellActionMalformedProof.exe",
+          "phase": "Phase33",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xE0000000",
+          "variant": "malformed"
+        }
+      ],
+      "phase": "Phase33",
+      "project": "UserManagedShellActionProof",
+      "sourceInputs": [
+        "Tools/Phase33",
+        "Tools/Phase26",
+        "Tools/Phase19",
+        "Tools/Phase23",
+        "GuideXos.User",
+        "UserManagedShellActionProof",
+        "Tools/Phase31"
+      ],
+      "stageRoot": "<E: isolated run>/runs/Phase33/stage",
+      "stager": "Tools/Phase33/stage_phase33_image.ps1",
+      "toolchain": [
+        "Windows PowerShell 5.1",
+        "x64 MSVC and Windows SDK 10.0.26100.0",
+        "global .NET SDK plus pinned runtime dotnet host",
+        "Python 3.12 and repository NASM"
+      ],
+      "variantCount": 5,
+      "variants": [
+        "success",
+        "failfast",
+        "stale-owner",
+        "invalid-action",
+        "malformed"
+      ],
+      "verification": [
+        "supported stager and phase-specific wire/static verifier",
+        "record variant set, output SHA/length, normalized PE timestamps",
+        "GXMI header, flags, embedded executable digest, build/stage byte equality",
+        "unmodified native 41-row identity generator"
+      ]
+    },
+    {
+      "buildOutputRoot": "out/dotnet/phase34-managed-resource-read",
+      "buildRecord": "phase34-managed-resource-read-build.json",
+      "buildRecordLocation": "<buildOutputRoot>/phase34-managed-resource-read-build.json",
+      "builder": "Tools/Phase34/build_phase34_managed_resource_read.ps1",
+      "dependencies": [
+        "Phase 23 locked runtime source/patches/pack/private ILC",
+        "Phase 26 NativeAOT managed-proof builder",
+        "Phase31 PAL contract and shim source"
+      ],
+      "payloads": [
+        {
+          "basename": "guideXOS.Phase34ManagedResourceReadProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/success/publish/guideXOS.Phase34ManagedResourceReadProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase34ManagedResourceReadProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase34ManagedResourceReadProof.exe",
+          "phase": "Phase34",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xC6000000",
+          "variant": "success"
+        },
+        {
+          "basename": "guideXOS.Phase34ResourceFailFastProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/failfast/publish/guideXOS.Phase34ResourceFailFastProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase34ResourceFailFastProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase34ResourceFailFastProof.exe",
+          "phase": "Phase34",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xCA000000",
+          "variant": "failfast"
+        },
+        {
+          "basename": "guideXOS.Phase34ResourceStaleOwnerProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/stale-owner/publish/guideXOS.Phase34ResourceStaleOwnerProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase34ResourceStaleOwnerProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase34ResourceStaleOwnerProof.exe",
+          "phase": "Phase34",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xD2000000",
+          "variant": "stale-owner"
+        },
+        {
+          "basename": "guideXOS.Phase34ResourceCrossScopeProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/cross-scope/publish/guideXOS.Phase34ResourceCrossScopeProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase34ResourceCrossScopeProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase34ResourceCrossScopeProof.exe",
+          "phase": "Phase34",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xE2000000",
+          "variant": "cross-scope"
+        },
+        {
+          "basename": "guideXOS.Phase34ResourceMalformedProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/malformed/publish/guideXOS.Phase34ResourceMalformedProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase34ResourceMalformedProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase34ResourceMalformedProof.exe",
+          "phase": "Phase34",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xCC000000",
+          "variant": "malformed"
+        }
+      ],
+      "phase": "Phase34",
+      "project": "UserManagedResourceReadProof",
+      "sourceInputs": [
+        "Tools/Phase34",
+        "Tools/Phase26",
+        "Tools/Phase19",
+        "Tools/Phase23",
+        "GuideXos.User",
+        "UserManagedResourceReadProof",
+        "Tools/Phase31"
+      ],
+      "stageRoot": "<E: isolated run>/runs/Phase34/stage",
+      "stager": "Tools/Phase34/stage_phase34_image.ps1",
+      "toolchain": [
+        "Windows PowerShell 5.1",
+        "x64 MSVC and Windows SDK 10.0.26100.0",
+        "global .NET SDK plus pinned runtime dotnet host",
+        "Python 3.12 and repository NASM"
+      ],
+      "variantCount": 5,
+      "variants": [
+        "success",
+        "failfast",
+        "stale-owner",
+        "cross-scope",
+        "malformed"
+      ],
+      "verification": [
+        "supported stager and phase-specific wire/static verifier",
+        "record variant set, output SHA/length, normalized PE timestamps",
+        "GXMI header, flags, embedded executable digest, build/stage byte equality",
+        "unmodified native 41-row identity generator"
+      ]
+    },
+    {
+      "buildOutputRoot": "out/dotnet/phase35-managed-persistent-read",
+      "buildRecord": "phase35-managed-persistent-read-build.json",
+      "buildRecordLocation": "<buildOutputRoot>/phase35-managed-persistent-read-build.json",
+      "builder": "Tools/Phase35/build_phase35_managed_persistent_read.ps1",
+      "dependencies": [
+        "Phase 23 locked runtime source/patches/pack/private ILC",
+        "Phase 26 NativeAOT managed-proof builder",
+        "Phase31 PAL contract and shim source"
+      ],
+      "payloads": [
+        {
+          "basename": "guideXOS.Phase35ManagedPersistentReadProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/success/publish/guideXOS.Phase35ManagedPersistentReadProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase35ManagedPersistentReadProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase35ManagedPersistentReadProof.exe",
+          "phase": "Phase35",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xFE000000",
+          "variant": "success"
+        },
+        {
+          "basename": "guideXOS.Phase35PersistentReadFailFastProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/failfast/publish/guideXOS.Phase35PersistentReadFailFastProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase35PersistentReadFailFastProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase35PersistentReadFailFastProof.exe",
+          "phase": "Phase35",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xDE000000",
+          "variant": "failfast"
+        },
+        {
+          "basename": "guideXOS.Phase35PersistentReadStaleOwnerProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/stale-owner/publish/guideXOS.Phase35PersistentReadStaleOwnerProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase35PersistentReadStaleOwnerProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase35PersistentReadStaleOwnerProof.exe",
+          "phase": "Phase35",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xEE000000",
+          "variant": "stale-owner"
+        },
+        {
+          "basename": "guideXOS.Phase35PersistentReadCrossScopeProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/cross-scope/publish/guideXOS.Phase35PersistentReadCrossScopeProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase35PersistentReadCrossScopeProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase35PersistentReadCrossScopeProof.exe",
+          "phase": "Phase35",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xF6000000",
+          "variant": "cross-scope"
+        },
+        {
+          "basename": "guideXOS.Phase35PersistentReadMalformedProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/malformed/publish/guideXOS.Phase35PersistentReadMalformedProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase35PersistentReadMalformedProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase35PersistentReadMalformedProof.exe",
+          "phase": "Phase35",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xFA000000",
+          "variant": "malformed"
+        },
+        {
+          "basename": "guideXOS.Phase35NoReadProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/no-read/publish/guideXOS.Phase35NoReadProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase35NoReadProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase35NoReadProof.exe",
+          "phase": "Phase35",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xFC000000",
+          "variant": "no-read"
+        },
+        {
+          "basename": "guideXOS.Phase35OneReadProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/one-read/publish/guideXOS.Phase35OneReadProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase35OneReadProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase35OneReadProof.exe",
+          "phase": "Phase35",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xF4000000",
+          "variant": "one-read"
+        },
+        {
+          "basename": "guideXOS.Phase35TwoReadProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/two-read/publish/guideXOS.Phase35TwoReadProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase35TwoReadProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase35TwoReadProof.exe",
+          "phase": "Phase35",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xEC000000",
+          "variant": "two-read"
+        },
+        {
+          "basename": "guideXOS.Phase35NotFoundProof",
+          "buildExecutablePathSource": "payloads[].path in the supported build record",
+          "expectedBuildExecutable": "<buildOutputRoot>/payloads/not-found/publish/guideXOS.Phase35NotFoundProof.exe",
+          "expectedGxmiDescriptor": "<stageRoot>/guideXOS.Phase35NotFoundProof.gxmi",
+          "expectedStagedExecutable": "<stageRoot>/guideXOS.Phase35NotFoundProof.exe",
+          "phase": "Phase35",
+          "phaseDependencies": [
+            "Phase31 PAL contract and shim source"
+          ],
+          "proofFlags": "0xE4000000",
+          "variant": "not-found"
+        }
+      ],
+      "phase": "Phase35",
+      "project": "UserManagedPersistentStorageProof",
+      "sourceInputs": [
+        "Tools/Phase35",
+        "Tools/Phase26",
+        "Tools/Phase19",
+        "Tools/Phase23",
+        "GuideXos.User",
+        "UserManagedPersistentStorageProof",
+        "Tools/Phase31"
+      ],
+      "stageRoot": "<E: isolated run>/runs/Phase35/stage",
+      "stager": "Tools/Phase35/stage_phase35_image.ps1",
+      "toolchain": [
+        "Windows PowerShell 5.1",
+        "x64 MSVC and Windows SDK 10.0.26100.0",
+        "global .NET SDK plus pinned runtime dotnet host",
+        "Python 3.12 and repository NASM"
+      ],
+      "variantCount": 9,
+      "variants": [
+        "success",
+        "failfast",
+        "stale-owner",
+        "cross-scope",
+        "malformed",
+        "no-read",
+        "one-read",
+        "two-read",
+        "not-found"
+      ],
+      "verification": [
+        "supported stager and phase-specific wire/static verifier",
+        "record variant set, output SHA/length, normalized PE timestamps",
+        "GXMI header, flags, embedded executable digest, build/stage byte equality",
+        "unmodified native 41-row identity generator"
+      ]
+    }
+  ],
+  "protectedCheckouts": [
+    "D:\\dev\\guideXOSUEFI",
+    "D:\\dev\\guideXOSUEFI_APP_MODEL",
+    "D:\\dev\\guideXOSUEFI_MODERN_INPUT"
+  ],
+  "schema": 1,
+  "variantCount": 41
+}

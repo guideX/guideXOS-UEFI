@@ -8,6 +8,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '..\ManagedArtifacts\Get-ManagedSha256.ps1')
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if ([string]::IsNullOrWhiteSpace($PackRoot)) { $PackRoot = Join-Path $root 'out\dotnet\phase23-runtime-pack' }
@@ -92,7 +93,7 @@ $record = [ordered]@{
     artifact = [ordered]@{
         path = $artifact.FullName
         length = $artifact.Length
-        sha256 = (Get-FileHash -LiteralPath $artifact.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+        sha256 = (Get-ManagedSha256 -LiteralPath $artifact.FullName).Hash
     }
     nativeIntermediateOutput = (Resolve-Path $baseIntermediate -ErrorAction SilentlyContinue).Path
     restoreSources = @($feed)

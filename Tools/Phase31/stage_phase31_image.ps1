@@ -2,6 +2,7 @@
 param([string]$BuildRoot = '', [string]$RamdiskSource = '')
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '..\ManagedArtifacts\Get-ManagedSha256.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if ([string]::IsNullOrWhiteSpace($BuildRoot)) {
     $BuildRoot = Join-Path $root 'out\dotnet\phase31-managed-shell'
@@ -53,6 +54,6 @@ foreach ($payload in $record.payloads) {
         throw "Phase 31 $mode static artifact validation failed: $LASTEXITCODE"
     }
     Write-Host "PHASE31_ARTIFACT_VALIDATION_$mode=PASS"
-    Get-FileHash -Algorithm SHA256 -LiteralPath $exeTarget
+    Get-ManagedSha256 -LiteralPath $exeTarget
     Get-Item -LiteralPath $descriptorTarget | Select-Object FullName, Length
 }
