@@ -35,7 +35,7 @@ foreach ($payload in $record.payloads) {
     $payloadRoot = Split-Path -Parent (Split-Path -Parent $artifact)
     $map = Join-Path $payloadRoot 'guidexos.map'
     $linkResponse = Join-Path $payloadRoot `
-        'obj\Release\net9.0\guidexos-x64\native\link.rsp'
+        'obj\x64\Release\net9.0\guidexos-x64\native\link.rsp'
     if (-not (Test-Path -LiteralPath $map)) { throw "Phase 31 map is absent: $map" }
     if (-not (Test-Path -LiteralPath $linkResponse)) {
         throw "Phase 31 link response is absent: $linkResponse"
