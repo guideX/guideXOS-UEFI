@@ -166,8 +166,11 @@ wrote three CSV reports under
 `managed-artifacts-amconv2b-preflight.csv`,
 `managed-artifacts-amconv2b-after.csv`, and
 `managed-artifacts-amconv2b-after-compile.csv`. The retained BUILD1E records
-were left untouched. The protected mainline, Server, BUILD_INFRA, and
-MODERN_INPUT checkouts remained on their observed branches and HEADs with no
-tracked-file changes; existing untracked reference artifacts were left in
-place. No branch switch, merge, rebase, cherry-pick, push, QEMU, or QAC
-operation occurred.
+were left untouched. The two summarized full-build logs were also saved under
+`C:\Users\guideX\AppData\Local\Temp` as
+`guidexos-amconv2b-release-build.log` and
+`guidexos-amconv2b-release-build-final.log`. The protected mainline, Server,
+BUILD_INFRA, and MODERN_INPUT checkouts remained on their observed branches and
+HEADs with no tracked-file changes; existing untracked reference artifacts
+were left in place. No branch switch, merge, rebase, cherry-pick, push, QEMU,
+or QAC operation occurred.
