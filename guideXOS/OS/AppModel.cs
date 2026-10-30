@@ -462,7 +462,9 @@ namespace guideXOS.OS {
         FileSystemLocation,
         DeviceVolume,
         SystemAction,
-        Unknown
+        Unknown,
+        SystemPanel,
+        VirtualObject
     }
 
     public class ShellObjectDescriptor {
@@ -474,6 +476,7 @@ namespace guideXOS.OS {
         public string Path { get; set; }
         public string DeviceName { get; set; }
         public string ActionName { get; set; }
+        public string TargetValue { get; set; }
         public string[] LegacyAliases { get; set; }
     }
 
@@ -488,6 +491,7 @@ namespace guideXOS.OS {
         public string Path { get; set; }
         public string DeviceName { get; set; }
         public string ActionName { get; set; }
+        public string TargetValue { get; set; }
         public string MatchedAlias { get; set; }
         public string FailureReason { get; set; }
     }
@@ -570,6 +574,7 @@ namespace guideXOS.OS {
                 result.DeviceName = descriptor.Kind == ShellObjectKind.DeviceVolume
                     ? input : descriptor.DeviceName;
                 result.ActionName = descriptor.ActionName;
+                result.TargetValue = descriptor.TargetValue;
                 result.MatchedAlias = alias;
                 return result;
             }

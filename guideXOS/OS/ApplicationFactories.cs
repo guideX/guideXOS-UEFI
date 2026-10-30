@@ -1119,6 +1119,135 @@ namespace guideXOS.OS {
             get { return ApplicationClass.BuiltIn; }
         }
 
+        internal static bool TryResolveFolderRequest(LaunchRequest request,
+                out FileSystem fileSystem, out string fileSystemPath,
+                out LaunchResult failure) {
+            fileSystem = null;
+            fileSystemPath = null;
+            failure = null;
+            if (request == null ||
+                    request.TargetKind != LaunchRequestTargetKind.ShellObject ||
+                    request.ShellTargetKind != ApplicationShellTargetKind.FileSystem) {
+                failure = LaunchResult.Failed(
+                    LaunchErrorCode.MalformedRequest,
+                    "Folder activation requires a typed shell filesystem target",
+                    "gxos.builtin.files");
+                return false;
+            }
+            if (request.SourceShellObjectId != "gxos.shell.root" ||
+                    request.TargetAppId != "gxos.builtin.files") {
+                failure = LaunchResult.Failed(
+                    LaunchErrorCode.UnsupportedTarget,
+                    "No verified C# filesystem binding exists for this shell target",
+                    request.TargetAppId);
+                return false;
+            }
+
+            fileSystem = File.Instance;
+            if (fileSystem == null) {
+                failure = LaunchResult.Failed(
+                    LaunchErrorCode.ResourceUnavailable,
+                    "The C# default filesystem is not mounted",
+                    request.TargetAppId);
+                return false;
+            }
+
+            ShellFolderTargetFailure pathFailure;
+            IShellFolderDirectoryProbe probe =
+                new CSharpFileSystemFolderProbe(fileSystem);
+            if (!ShellFolderTargetPath.TryResolveExistingDirectory(
+                    request.ShellTargetValue, probe, out fileSystemPath,
+                    out pathFailure)) {
+                fileSystem = null;
+                LaunchErrorCode errorCode = pathFailure ==
+                    ShellFolderTargetFailure.MalformedRequest
+                    ? LaunchErrorCode.MalformedRequest
+                    : pathFailure == ShellFolderTargetFailure.PermissionDenied
+                        ? LaunchErrorCode.PermissionDenied
+                        : LaunchErrorCode.ResourceUnavailable;
+                failure = LaunchResult.Failed(errorCode,
+                    "C# folder target is malformed or unavailable",
+                    request.TargetAppId);
+                return false;
+            }
+            return true;
+        }
+
+        private sealed class CSharpFileSystemFolderProbe :
+                IShellFolderDirectoryProbe {
+            private readonly FileSystem _fileSystem;
+
+            internal CSharpFileSystemFolderProbe(FileSystem fileSystem) {
+                _fileSystem = fileSystem;
+            }
+
+            public ShellFolderDirectoryProbeResult Inspect(string path) {
+                if (_fileSystem == null || path == null)
+                    return ShellFolderDirectoryProbeResult.Unavailable;
+                if (path.Length == 0) return InspectRoot();
+
+                int slash = path.LastIndexOf('/');
+                string parent = slash < 0 ? string.Empty :
+                    path.Substring(0, slash);
+                string leaf = path.Substring(slash + 1);
+                try {
+                    return InspectChild(parent, leaf);
+                } finally {
+                    if (parent.Length > 0) parent.Dispose();
+                    leaf.Dispose();
+                }
+            }
+
+            private ShellFolderDirectoryProbeResult InspectRoot() {
+                try {
+                    System.Collections.Generic.List<FileInfo> entries =
+                        _fileSystem.GetFiles(string.Empty);
+                    if (entries == null)
+                        return ShellFolderDirectoryProbeResult.Unavailable;
+                    DisposeEntries(entries);
+                    return ShellFolderDirectoryProbeResult.Directory;
+                } catch {
+                    return ShellFolderDirectoryProbeResult.Unavailable;
+                }
+            }
+
+            private ShellFolderDirectoryProbeResult InspectChild(string parent,
+                                                                  string leaf) {
+                System.Collections.Generic.List<FileInfo> entries = null;
+                try {
+                    entries = _fileSystem.GetFiles(parent);
+                    if (entries == null)
+                        return ShellFolderDirectoryProbeResult.Unavailable;
+                    bool found = false;
+                    bool directory = false;
+                    for (int i = 0; i < entries.Count; i++) {
+                        FileInfo entry = entries[i];
+                        if (entry != null && entry.Name == leaf) {
+                            found = true;
+                            directory = entry.Attribute == FileAttribute.Directory;
+                            break;
+                        }
+                    }
+                    if (!found) return ShellFolderDirectoryProbeResult.Missing;
+                    return directory
+                        ? ShellFolderDirectoryProbeResult.Directory
+                        : ShellFolderDirectoryProbeResult.NotDirectory;
+                } catch {
+                    return ShellFolderDirectoryProbeResult.Unavailable;
+                } finally {
+                    if (entries != null) DisposeEntries(entries);
+                }
+            }
+
+            private static void DisposeEntries(
+                    System.Collections.Generic.List<FileInfo> entries) {
+                for (int i = 0; i < entries.Count; i++) {
+                    if (entries[i] != null) entries[i].Dispose();
+                }
+                entries.Dispose();
+            }
+        }
+
         public override bool TryCreateOrActivate(
                 ApplicationDescriptor descriptor,
                 ApplicationInstance instance,
@@ -1135,11 +1264,42 @@ namespace guideXOS.OS {
             }
             result = ApplicationFactoryResult.Succeeded(instance);
             try {
+                bool csharpFolderRequest = request != null &&
+                    request.TargetKind == LaunchRequestTargetKind.ShellObject &&
+                    request.SourceShellObjectId == "gxos.shell.root";
                 bool driveRequest = request != null &&
                     request.TargetKind == LaunchRequestTargetKind.ShellObject &&
                     request.ShellTargetKind == ApplicationShellTargetKind.FileSystem &&
                     !string.IsNullOrEmpty(request.ShellTargetValue);
-                if (driveRequest) {
+                if (csharpFolderRequest) {
+                    FileSystem folderFileSystem;
+                    string folderPath;
+                    LaunchResult folderFailure;
+                    if (!TryResolveFolderRequest(request,
+                            out folderFileSystem, out folderPath,
+                            out folderFailure)) {
+                        result = ApplicationFactoryResult.Failed(
+                            folderFailure == null
+                                ? LaunchErrorCode.ResourceUnavailable
+                                : folderFailure.ErrorCode,
+                            folderFailure == null
+                                ? "C# folder activation failed"
+                                : folderFailure.BoundedDiagnostic,
+                            descriptor.AppId);
+                        return false;
+                    }
+                    try {
+                        files = new ComputerFiles(
+                            FactoryRequestOptions.IntArgument(request, "--x=", 320),
+                            FactoryRequestOptions.IntArgument(request, "--y=", 220),
+                            540, 400, folderFileSystem,
+                            request.ShellTargetValue, folderPath, false,
+                            serviceContext, services);
+                    } finally {
+                        if (folderPath != null && folderPath.Length > 0)
+                            folderPath.Dispose();
+                    }
+                } else if (driveRequest) {
                     string failure;
                     if (!TryCreateDriveFileSystem(request.ShellTargetValue,
                             out ownedFileSystem, out failure)) {

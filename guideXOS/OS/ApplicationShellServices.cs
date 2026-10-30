@@ -174,6 +174,9 @@ namespace guideXOS.OS {
                     return OpenDocument(request.Target);
                 case ApplicationShellOpenTargetKind.ShellObject:
                     return OpenShellObject(request.Target);
+                case ApplicationShellOpenTargetKind.ShellFolder:
+                    return OpenShellFolder(request.Target,
+                        request.ShellTargetValue);
                 case ApplicationShellOpenTargetKind.TypedShellAction:
                     return OpenTypedShellAction(request.Target);
                 default:
@@ -361,8 +364,29 @@ namespace guideXOS.OS {
                 ";app=" + (resolution.AppId ?? "") + ";alias=" +
                 (resolution.MatchedAlias ?? ""));
 #endif
-            if (target.TargetKind == ApplicationShellTargetKind.Action) {
+            if (target.Operation == ApplicationShellOperation.InvokeSystemAction) {
                 return OpenTypedShellAction(target.ShellObjectId);
+            }
+            if (target.Operation == ApplicationShellOperation.ActivateSystemPanel ||
+                    target.Operation == ApplicationShellOperation.OpenVirtualObject ||
+                    target.Operation == ApplicationShellOperation.OpenDeviceVolume) {
+                return LaunchResult.Failed(LaunchErrorCode.UnsupportedTarget,
+                    "Shell target operation has no verified launch backend",
+                    request.TargetAppId);
+            }
+            if (target.Operation == ApplicationShellOperation.OpenFolder) {
+                FileSystem folderFileSystem;
+                string folderPath;
+                LaunchResult folderFailure;
+                if (!ComputerFilesApplicationFactory.TryResolveFolderRequest(
+                        request, out folderFileSystem, out folderPath,
+                        out folderFailure)) return folderFailure;
+                if (folderFileSystem == null) return folderFailure ??
+                    LaunchResult.Failed(LaunchErrorCode.ResourceUnavailable,
+                        "C# filesystem binding is unavailable",
+                        request.TargetAppId);
+                if (folderPath != null && folderPath.Length > 0)
+                    folderPath.Dispose();
             }
             if (string.IsNullOrEmpty(request.TargetAppId)) {
                 return LaunchResult.Failed(
@@ -370,6 +394,43 @@ namespace guideXOS.OS {
                     "Shell object has no modern application handler",
                     null);
             }
+            return LaunchModern(request);
+        }
+
+        private static LaunchResult OpenShellFolder(string shellObjectId,
+                                                    string canonicalFolderPath) {
+            ShellObjectTarget target;
+            LaunchRequest request;
+            ShellObjectResolution resolution;
+            LaunchResult failure;
+            if (!ModernShellAdapter.TryCreateFolderLaunchRequest(
+                    shellObjectId, canonicalFolderPath, out target,
+                    out request, out resolution, out failure)) {
+                return failure ?? LaunchResult.Failed(
+                    LaunchErrorCode.UnsupportedTarget,
+                    "Typed folder target has no C# backend", null);
+            }
+            if (target == null || target.Operation !=
+                    ApplicationShellOperation.OpenFolder || resolution == null ||
+                    resolution.ShellId != target.ShellObjectId) {
+                return LaunchResult.Failed(LaunchErrorCode.UnsupportedTarget,
+                    "Resolved shell target is not a verified folder",
+                    "gxos.builtin.files");
+            }
+
+            FileSystem folderFileSystem;
+            string fileSystemPath;
+            if (!ComputerFilesApplicationFactory.TryResolveFolderRequest(
+                    request, out folderFileSystem, out fileSystemPath,
+                    out failure)) return failure ?? LaunchResult.Failed(
+                        LaunchErrorCode.ResourceUnavailable,
+                        "C# folder target is unavailable",
+                        request.TargetAppId);
+            if (folderFileSystem == null) return LaunchResult.Failed(
+                LaunchErrorCode.ResourceUnavailable,
+                "C# filesystem binding is unavailable", request.TargetAppId);
+            if (fileSystemPath != null && fileSystemPath.Length > 0)
+                fileSystemPath.Dispose();
             return LaunchModern(request);
         }
 

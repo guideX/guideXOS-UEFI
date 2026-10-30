@@ -307,23 +307,36 @@ namespace guideXOS.OS {
         Alias,
         Document,
         ShellObject,
-        TypedShellAction
+        TypedShellAction,
+        ShellFolder
     }
 
     public sealed class ApplicationShellOpenRequest {
         public const int MaxTargetLength = 1024;
 
         private ApplicationShellOpenRequest(
-                ApplicationShellOpenTargetKind kind, string target) {
+                ApplicationShellOpenTargetKind kind, string target)
+            : this(kind, target, null) {
+        }
+
+        private ApplicationShellOpenRequest(
+                ApplicationShellOpenTargetKind kind, string target,
+                string shellTargetValue) {
             TargetKind = kind;
             Target = target ?? string.Empty;
+            ShellTargetValue = shellTargetValue;
             IsValid = IsValidKind(kind) &&
                 ApplicationServiceContext.IsBoundedText(
-                    Target, MaxTargetLength, false);
+                    Target, MaxTargetLength, false) &&
+                (kind != ApplicationShellOpenTargetKind.ShellFolder ||
+                    (ShellFolderTargetPath.IsValidShellText(Target) &&
+                     ShellFolderTargetPath.IsCanonicalPath(
+                         ShellTargetValue)));
         }
 
         public ApplicationShellOpenTargetKind TargetKind { get; private set; }
         public string Target { get; private set; }
+        public string ShellTargetValue { get; private set; }
         public bool IsValid { get; private set; }
 
         public static ApplicationShellOpenRequest ForApplicationId(
@@ -348,6 +361,13 @@ namespace guideXOS.OS {
                 ApplicationShellOpenTargetKind.ShellObject, shellObjectId);
         }
 
+        public static ApplicationShellOpenRequest ForShellFolder(
+                string shellObjectId, string canonicalFolderPath) {
+            return new ApplicationShellOpenRequest(
+                ApplicationShellOpenTargetKind.ShellFolder, shellObjectId,
+                canonicalFolderPath);
+        }
+
         public static ApplicationShellOpenRequest ForTypedShellAction(
                 string actionId) {
             return new ApplicationShellOpenRequest(
@@ -359,7 +379,8 @@ namespace guideXOS.OS {
                    kind == ApplicationShellOpenTargetKind.Alias ||
                    kind == ApplicationShellOpenTargetKind.Document ||
                    kind == ApplicationShellOpenTargetKind.ShellObject ||
-                   kind == ApplicationShellOpenTargetKind.TypedShellAction;
+                   kind == ApplicationShellOpenTargetKind.TypedShellAction ||
+                   kind == ApplicationShellOpenTargetKind.ShellFolder;
         }
     }
 

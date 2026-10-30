@@ -7,6 +7,10 @@
 /guideXOS.Web/.vs
 /guideXOS/bin
 /guideXOS/obj
+/Tests/AMCONV2BFolderTargetTests/bin
+/Tests/AMCONV2BFolderTargetTests/obj
+/Tests/UefiDesktopInteractionTests/bin
+/Tests/UefiDesktopInteractionTests/obj
 /UserManagedProof/bin
 /UserManagedProof/obj
 /UserManagedSdkProof/bin

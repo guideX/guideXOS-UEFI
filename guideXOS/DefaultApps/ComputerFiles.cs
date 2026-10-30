@@ -111,6 +111,40 @@ namespace guideXOS.DefaultApps {
 #endif
         }
 
+        internal ComputerFiles(int x, int y, int w, int h, FileSystem fs,
+                               string folderTitle, string initialFolderPath,
+                               bool ownsFileSystem,
+                               ApplicationServiceContext serviceContext,
+                               ApplicationServiceAccess services) : base(x, y, w, h)
+        {
+            _serviceContext = serviceContext;
+            _services = services;
+            _fs = fs;
+            _ownsFileSystem = ownsFileSystem;
+            _showDrives = false;
+            _entriesCacheFor = null;
+            _entriesCache = null;
+            _currentPath = string.IsNullOrEmpty(initialFolderPath)
+                ? string.Empty : initialFolderPath + "/";
+            Title = "Computer Files - " + (folderTitle ?? "/");
+            LoadIcons();
+            _entriesDirty = true;
+            IsResizable = true;
+            ShowInTaskbar = true;
+            ShowMaximize = true;
+            ShowMinimize = true;
+            ShowTombstone = true;
+            Keyboard.OnKeyChanged += Keyboard_OnKeyChanged;
+            PushHistory(_currentPath);
+            _suppressMouseUntilRelease = true;
+            _leftDownPrev = true;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("FILES_WINDOW_BOUNDS=x=" + X.ToString() +
+                ";y=" + Y.ToString() + ";w=" + Width.ToString() +
+                ";h=" + Height.ToString());
+#endif
+        }
+
         public ComputerFiles(int X, int Y, int W = 640, int H = 480)
             : this(X, Y, W, H, (ApplicationServiceContext)null,
                   (ApplicationServiceAccess)null) {

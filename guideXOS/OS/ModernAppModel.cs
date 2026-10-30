@@ -65,6 +65,15 @@ namespace guideXOS.OS {
         Action
     }
 
+    public enum ApplicationShellOperation {
+        LaunchApplication,
+        OpenFolder,
+        OpenDeviceVolume,
+        ActivateSystemPanel,
+        OpenVirtualObject,
+        InvokeSystemAction
+    }
+
     /// <summary>
     /// Start/taskbar/recent/document policy attached to a descriptor.  These
     /// values describe current C# behavior; they do not create a new lifecycle.
@@ -568,6 +577,7 @@ namespace guideXOS.OS {
         public string ShellObjectId { get; private set; }
         public string DisplayName { get; private set; }
         public ApplicationShellTargetKind TargetKind { get; private set; }
+        public ApplicationShellOperation Operation { get; private set; }
         public string CanonicalTarget { get; private set; }
         public string DefaultHandlerAppId { get; private set; }
         public bool SystemOnly { get; private set; }
@@ -576,6 +586,7 @@ namespace guideXOS.OS {
 
         internal ShellObjectTarget(string shellObjectId, string displayName,
                                    ApplicationShellTargetKind targetKind,
+                                   ApplicationShellOperation operation,
                                    string canonicalTarget,
                                    string defaultHandlerAppId,
                                    bool systemOnly, bool riskyDestructive,
@@ -583,6 +594,7 @@ namespace guideXOS.OS {
             ShellObjectId = shellObjectId;
             DisplayName = displayName;
             TargetKind = targetKind;
+            Operation = operation;
             CanonicalTarget = canonicalTarget;
             DefaultHandlerAppId = defaultHandlerAppId;
             SystemOnly = systemOnly;
@@ -852,6 +864,8 @@ namespace guideXOS.OS {
                 "File Explorer", out shellTarget, out shellRequest,
                 out shellResolution, out shellFailure) &&
                 shellTarget.ShellObjectId == "gxos.shell.computerfiles" &&
+                shellTarget.Operation ==
+                    ApplicationShellOperation.LaunchApplication &&
                 shellRequest.SourceShellObjectId == "gxos.shell.computerfiles" &&
                 shellRequest.TargetAppId == "gxos.builtin.files";
             Check(shellOk, "shell typed request", ref passed, ref failed,
@@ -862,6 +876,8 @@ namespace guideXOS.OS {
                 out shellResolution, out shellFailure) &&
                 shellTarget.ShellObjectId == "gxos.shell.computerfiles" &&
                 shellTarget.TargetKind == ApplicationShellTargetKind.Virtual &&
+                shellTarget.Operation ==
+                    ApplicationShellOperation.LaunchApplication &&
                 shellRequest.SourceShellObjectId ==
                     "gxos.shell.computerfiles" &&
                 shellRequest.TargetAppId == "gxos.builtin.files" &&
@@ -887,6 +903,18 @@ namespace guideXOS.OS {
                 }
             }
             Check(serverFilesAliasesOk, "Server shell alias bridge",
+                ref passed, ref failed, ref failure);
+
+            bool serverFileExplorerAliasOk =
+                ModernShellAdapter.TryCreateLaunchRequest("File Explorer",
+                    out shellTarget, out shellRequest, out shellResolution,
+                    out shellFailure) &&
+                shellTarget.ShellObjectId == "gxos.shell.computerfiles" &&
+                shellTarget.Operation ==
+                    ApplicationShellOperation.LaunchApplication &&
+                shellRequest.TargetAppId == "gxos.builtin.files";
+            Check(serverFileExplorerAliasOk,
+                "Server File Explorer alias preserves app launch",
                 ref passed, ref failed, ref failure);
 
             bool csharpShellIdPreserved =
@@ -922,9 +950,68 @@ namespace guideXOS.OS {
                     out shellFailure) &&
                 shellResolution.Kind == ShellObjectKind.FileSystemLocation &&
                 shellTarget.TargetKind == ApplicationShellTargetKind.FileSystem &&
+                shellTarget.Operation == ApplicationShellOperation.OpenFolder &&
+                shellTarget.CanonicalTarget == "/" &&
+                shellTarget.DefaultHandlerAppId == "gxos.builtin.files" &&
+                shellRequest.SourceShellObjectId == "gxos.shell.root" &&
+                shellRequest.TargetAppId == "gxos.builtin.files" &&
+                shellRequest.ShellTargetValue == "/" &&
                 shellRequest.ShellTargetKind ==
                     ApplicationShellTargetKind.FileSystem;
-            Check(rootTargetKindPreserved, "filesystem shell target preserved",
+            Check(rootTargetKindPreserved, "C# root projects to typed folder activation",
+                ref passed, ref failed, ref failure);
+
+            ApplicationShellOpenRequest typedFolderServiceRequest =
+                ApplicationShellOpenRequest.ForShellFolder(
+                    "gxos.shell.root", "/Documents");
+            bool csharpFolderValuePreserved =
+                ModernShellAdapter.TryCreateFolderLaunchRequest(
+                    "gxos.shell.root", "/Documents", out shellTarget,
+                    out shellRequest, out shellResolution, out shellFailure) &&
+                typedFolderServiceRequest.IsValid &&
+                typedFolderServiceRequest.TargetKind ==
+                    ApplicationShellOpenTargetKind.ShellFolder &&
+                typedFolderServiceRequest.Target == "gxos.shell.root" &&
+                typedFolderServiceRequest.ShellTargetValue == "/Documents" &&
+                shellTarget.Operation == ApplicationShellOperation.OpenFolder &&
+                shellTarget.CanonicalTarget == "/Documents" &&
+                shellRequest.TargetKind == LaunchRequestTargetKind.ShellObject &&
+                shellRequest.ShellTargetKind ==
+                    ApplicationShellTargetKind.FileSystem &&
+                shellRequest.ShellTargetValue == "/Documents" &&
+                shellRequest.TargetAppId == "gxos.builtin.files" &&
+                shellRequest.ActivationIntent == LaunchActivationIntent.Launch;
+            Check(csharpFolderValuePreserved,
+                "typed C# folder target preserves canonical path",
+                ref passed, ref failed, ref failure);
+
+            ApplicationShellOpenRequest malformedFolderServiceRequest =
+                ApplicationShellOpenRequest.ForShellFolder(
+                    "gxos.shell.root", "/Documents/../Pictures");
+            bool malformedFolderValueRejected =
+                !malformedFolderServiceRequest.IsValid &&
+                !ModernShellAdapter.TryCreateFolderLaunchRequest(
+                    "gxos.shell.root", "/Documents/../Pictures",
+                    out shellTarget, out shellRequest, out shellResolution,
+                    out shellFailure) && shellFailure != null &&
+                shellFailure.ErrorCode == LaunchErrorCode.MalformedRequest;
+            Check(malformedFolderValueRejected,
+                "noncanonical folder value is rejected before launch",
+                ref passed, ref failed, ref failure);
+
+            bool serverFolderBindingUnsupported =
+                !ModernShellAdapter.TryCreateFolderLaunchRequest(
+                    "gxos.shell.this-system", "/", out shellTarget,
+                    out shellRequest, out shellResolution, out shellFailure) &&
+                shellFailure != null && shellFailure.ErrorCode ==
+                    LaunchErrorCode.UnsupportedTarget &&
+                !ModernShellAdapter.TryCreateFolderLaunchRequest(
+                    "gxos.shell.documents", "/Documents", out shellTarget,
+                    out shellRequest, out shellResolution, out shellFailure) &&
+                shellFailure != null && shellFailure.ErrorCode ==
+                    LaunchErrorCode.UnsupportedTarget;
+            Check(serverFolderBindingUnsupported,
+                "Server filesystem folders remain unsupported",
                 ref passed, ref failed, ref failure);
 
             bool deviceTargetKindPreserved =
@@ -933,6 +1020,8 @@ namespace guideXOS.OS {
                     out shellFailure) &&
                 shellResolution.Kind == ShellObjectKind.DeviceVolume &&
                 shellTarget.TargetKind == ApplicationShellTargetKind.FileSystem &&
+                shellTarget.Operation ==
+                    ApplicationShellOperation.OpenDeviceVolume &&
                 shellTarget.CanonicalTarget == "USB Drive 0" &&
                 shellRequest.ShellTargetKind ==
                     ApplicationShellTargetKind.FileSystem;
@@ -944,6 +1033,8 @@ namespace guideXOS.OS {
                     "Install to Hard Drive", out shellTarget, out shellRequest,
                     out shellResolution, out shellFailure) &&
                 shellTarget.TargetKind == ApplicationShellTargetKind.Action &&
+                shellTarget.Operation ==
+                    ApplicationShellOperation.InvokeSystemAction &&
                 shellRequest.ShellTargetKind ==
                     ApplicationShellTargetKind.Action &&
                 shellRequest.ShellTargetValue == "HDInstaller";
@@ -999,6 +1090,47 @@ namespace guideXOS.OS {
             Check(unsupportedServerAliasRejected,
                 "unsupported Server shell alias is explicit", ref passed,
                 ref failed, ref failure);
+
+            string[] unsupportedServerTargets = new string[] {
+                "gxos.shell.this-system", "This System", "Computer",
+                "gxos.shell.documents", "Documents",
+                "gxos.shell.pictures", "Pictures",
+                "gxos.shell.music", "Music",
+                "gxos.shell.network", "Network",
+                "gxos.shell.settings", "Settings", "System Settings",
+                "Display Options", "Display Settings", "Desktop Background",
+                "Wallpaper", "gxos.shell.control-panel", "Control Panel",
+                "gxos.shell.desktop", "Desktop", "Desktop Home",
+                "Go to Desktop", "gxos.shell.trash-open", "Trash"
+            };
+            bool allKnownServerTargetsUnsupported = true;
+            for (int i = 0; i < unsupportedServerTargets.Length; i++) {
+                if (ModernShellAdapter.TryCreateLaunchRequest(
+                        unsupportedServerTargets[i], out shellTarget,
+                        out shellRequest, out shellResolution,
+                        out shellFailure) || shellFailure == null ||
+                        shellFailure.ErrorCode !=
+                            LaunchErrorCode.UnsupportedTarget) {
+                    allKnownServerTargetsUnsupported = false;
+                    break;
+                }
+            }
+            Check(allKnownServerTargetsUnsupported,
+                "all unverified Server targets remain unsupported",
+                ref passed, ref failed, ref failure);
+
+            bool exactCaseShellNamesRetained =
+                !ModernShellAdapter.TryCreateLaunchRequest("gxos.shell.Files",
+                    out shellTarget, out shellRequest, out shellResolution,
+                    out shellFailure) && shellFailure != null &&
+                shellFailure.ErrorCode == LaunchErrorCode.NotFound &&
+                !ModernShellAdapter.TryCreateLaunchRequest("file explorer",
+                    out shellTarget, out shellRequest, out shellResolution,
+                    out shellFailure) && shellFailure != null &&
+                shellFailure.ErrorCode == LaunchErrorCode.NotFound;
+            Check(exactCaseShellNamesRetained,
+                "shell identity and alias matching remains exact case",
+                ref passed, ref failed, ref failure);
 
             bool unknownShellRejected = !ModernShellAdapter.TryCreateLaunchRequest(
                 "Unknown shell object", out shellTarget, out shellRequest,
@@ -1325,10 +1457,10 @@ namespace guideXOS.OS {
             request = null;
             resolution = null;
             failure = null;
-            if (string.IsNullOrEmpty(input) ||
-                    input.Length > LaunchRequest.MaxTextLength) {
+            if (!ShellFolderTargetPath.IsValidShellText(input)) {
                 failure = LaunchResult.Failed(LaunchErrorCode.MalformedRequest,
-                    "Shell object input is empty or exceeds its bound", null);
+                    "Shell object input is empty, invalid, or exceeds its bound",
+                    null);
                 return false;
             }
 
@@ -1356,36 +1488,137 @@ namespace guideXOS.OS {
             }
 
             ApplicationShellTargetKind targetKind;
+            ApplicationShellOperation operation;
             string canonicalTarget;
+            string handlerAppId = resolution.AppId;
+            string targetNameOrAlias = resolution.ActionName ??
+                resolution.DispatchName;
             switch (resolution.Kind) {
+                case ShellObjectKind.BuiltInApp:
+                    targetKind = ApplicationShellTargetKind.Virtual;
+                    canonicalTarget = resolution.DispatchName;
+                    operation = ApplicationShellOperation.LaunchApplication;
+                    break;
                 case ShellObjectKind.FileSystemLocation:
                     targetKind = ApplicationShellTargetKind.FileSystem;
-                    canonicalTarget = resolution.Path;
+                    canonicalTarget = string.IsNullOrEmpty(resolution.Path)
+                        ? "/" : resolution.Path;
+                    if (resolution.ShellId == "gxos.shell.root" &&
+                            string.IsNullOrEmpty(handlerAppId)) {
+                        handlerAppId = "gxos.builtin.files";
+                        targetNameOrAlias = "Computer Files";
+                    }
+                    operation = ApplicationShellOperation.OpenFolder;
                     break;
                 case ShellObjectKind.SystemAction:
                     targetKind = ApplicationShellTargetKind.Action;
                     canonicalTarget = resolution.ActionName;
+                    operation = ApplicationShellOperation.InvokeSystemAction;
                     break;
                 case ShellObjectKind.DeviceVolume:
                     targetKind = ApplicationShellTargetKind.FileSystem;
                     canonicalTarget = resolution.DeviceName;
+                    operation = ApplicationShellOperation.OpenDeviceVolume;
+                    break;
+                case ShellObjectKind.SystemPanel:
+                    targetKind = ApplicationShellTargetKind.SystemPanel;
+                    canonicalTarget = resolution.TargetValue ?? string.Empty;
+                    operation = ApplicationShellOperation.ActivateSystemPanel;
+                    break;
+                case ShellObjectKind.VirtualObject:
+                    targetKind = ApplicationShellTargetKind.Virtual;
+                    canonicalTarget = resolution.TargetValue ?? string.Empty;
+                    operation = ApplicationShellOperation.OpenVirtualObject;
                     break;
                 default:
-                    targetKind = ApplicationShellTargetKind.Virtual;
-                    canonicalTarget = resolution.DispatchName;
-                    break;
+                    failure = LaunchResult.Failed(
+                        LaunchErrorCode.UnsupportedTarget,
+                        "Shell object kind has no typed operation",
+                        resolution.AppId);
+                    return false;
             }
             target = new ShellObjectTarget(resolution.ShellId,
-                resolution.DisplayName, targetKind, canonicalTarget,
-                resolution.AppId, true, false, true);
+                resolution.DisplayName, targetKind, operation, canonicalTarget,
+                handlerAppId, true, false, true);
+            if (operation == ApplicationShellOperation.ActivateSystemPanel ||
+                    operation == ApplicationShellOperation.OpenVirtualObject) {
+                failure = LaunchResult.Failed(
+                    LaunchErrorCode.UnsupportedTarget,
+                    "Shell target has no verified C# backend",
+                    handlerAppId);
+                return false;
+            }
             request = LaunchRequest.ForShellObject(
-                resolution.ShellId, resolution.AppId,
-                resolution.ActionName ?? resolution.DispatchName,
+                resolution.ShellId, handlerAppId,
+                targetNameOrAlias,
                 targetKind, canonicalTarget,
                 LaunchActivationIntent.Launch);
             if (!request.IsValid) {
                 failure = LaunchResult.Failed(LaunchErrorCode.MalformedRequest,
                     request.ValidationError, resolution.AppId);
+                request = null;
+                return false;
+            }
+            return true;
+        }
+
+        public static bool TryCreateFolderLaunchRequest(
+                string shellObjectId, string canonicalFolderPath,
+                out ShellObjectTarget target, out LaunchRequest request,
+                out ShellObjectResolution resolution, out LaunchResult failure) {
+            target = null;
+            request = null;
+            resolution = null;
+            failure = null;
+            if (!ShellFolderTargetPath.IsValidShellText(shellObjectId)) {
+                failure = LaunchResult.Failed(LaunchErrorCode.MalformedRequest,
+                    "Folder shell object ID is empty, invalid, or exceeds its bound",
+                    null);
+                return false;
+            }
+
+            if (!ShellFolderTargetPath.IsCanonicalPath(canonicalFolderPath)) {
+                failure = LaunchResult.Failed(LaunchErrorCode.MalformedRequest,
+                    "Folder target path is not canonical or exceeds its bound",
+                    "gxos.builtin.files");
+                return false;
+            }
+
+            resolution = ShellObjectRegistry.Resolve(shellObjectId);
+            if (!resolution.Success) {
+                if (ServerShellObjectCompatibilityAdapter
+                        .IsKnownUnsupportedServerObject(shellObjectId)) {
+                    failure = LaunchResult.Failed(
+                        LaunchErrorCode.UnsupportedTarget,
+                        "Server shell folder has no verified C# filesystem binding",
+                        null);
+                    return false;
+                }
+                failure = LaunchResult.Failed(LaunchErrorCode.NotFound,
+                    resolution.FailureReason, null);
+                return false;
+            }
+            if (resolution.ShellId != "gxos.shell.root" ||
+                    resolution.Kind != ShellObjectKind.FileSystemLocation) {
+                failure = LaunchResult.Failed(
+                    LaunchErrorCode.UnsupportedTarget,
+                    "Folder binding is available only for C# Root",
+                    resolution.AppId);
+                return false;
+            }
+
+            resolution.Input = shellObjectId;
+            target = new ShellObjectTarget(resolution.ShellId,
+                resolution.DisplayName, ApplicationShellTargetKind.FileSystem,
+                ApplicationShellOperation.OpenFolder, canonicalFolderPath,
+                "gxos.builtin.files", true, false, true);
+            request = LaunchRequest.ForShellObject(resolution.ShellId,
+                "gxos.builtin.files", "Computer Files",
+                ApplicationShellTargetKind.FileSystem, canonicalFolderPath,
+                LaunchActivationIntent.Launch);
+            if (!request.IsValid) {
+                failure = LaunchResult.Failed(LaunchErrorCode.MalformedRequest,
+                    request.ValidationError, "gxos.builtin.files");
                 request = null;
                 return false;
             }
