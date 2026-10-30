@@ -1,9 +1,9 @@
 # UEFI BUILD1E APP_MODEL Hosted Qualification
 
-**Date:** 2026-10-29  
-**Outcome:** `BUILD1E_APP_MODEL_HOSTED_ACCEPTED`  
-**Branch:** `APP_MODEL`  
-**Starting HEAD:** `9c773d55d2b8ce9203b4b8e1b08018014b8f88c7`  
+**Date:** 2026-10-29
+**Outcome:** `BUILD1E_APP_MODEL_HOSTED_ACCEPTED`
+**Branch:** `APP_MODEL`
+**Starting HEAD:** `9c773d55d2b8ce9203b4b8e1b08018014b8f88c7`
 **Qualified source HEAD:** `9109f7a967a70369bb030dc49033af20ff50065b` (source/tooling commit; the report-only commit follows it).
 
 BUILD1E reconstructed the APP_MODEL branch's own Phase 29–35 managed proof
