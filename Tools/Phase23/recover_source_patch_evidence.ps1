@@ -31,6 +31,22 @@ function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToUpperInvariant()
 }
 
+function Get-NormalizedTemplateSha256([string]$Path) {
+    # Git checks these repository-owned text templates out with CRLF on
+    # Windows, while their lock entries identify the canonical LF bytes.
+    # Normalize only the checkout copy; runtime source files remain byte-
+    # for-byte checked against their locked hashes below.
+    $text = [IO.File]::ReadAllText($Path).Replace("`r`n", "`n")
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+        return [BitConverter]::ToString($sha256.ComputeHash($bytes)).Replace('-', '')
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
 function Resolve-OutputDirectory([string]$Path) {
     $fullPath = [IO.Path]::GetFullPath($Path)
     $linkTarget = $null
@@ -43,7 +59,11 @@ function Resolve-OutputDirectory([string]$Path) {
     if ([string]::IsNullOrWhiteSpace([string]$linkTarget)) {
         $item = Get-Item -LiteralPath $fullPath -Force -ErrorAction SilentlyContinue
         if ($null -ne $item -and $item.PSObject.Properties['Target']) {
-            $linkTarget = [string](@($item.Target)[0])
+            $targetValues = @($item.Target)
+            if ($targetValues.Count -gt 0 -and
+                -not [string]::IsNullOrWhiteSpace([string]$targetValues[0])) {
+                $linkTarget = [string]$targetValues[0]
+            }
         }
     }
 
@@ -161,7 +181,8 @@ foreach ($entry in $cacheLock.requiredTemplates) {
         throw "Required repository template is missing: $relativePath. No evidence records were written."
     }
     $expectedHash = ([string]$entry.sha256).ToUpperInvariant()
-    if ((Get-Sha256 $templatePath) -ne $expectedHash -or (Get-Sha256 $runtimePath) -ne $expectedHash) {
+    if ((Get-NormalizedTemplateSha256 $templatePath) -ne $expectedHash -or
+        (Get-Sha256 $runtimePath) -ne $expectedHash) {
         throw "Required repository template hash mismatch: $relativePath. No evidence records were written."
     }
 }

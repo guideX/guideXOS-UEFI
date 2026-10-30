@@ -980,8 +980,8 @@ namespace guideXOS.OS {
                 "empty shell request is malformed", ref passed, ref failed,
                 ref failure);
 
-            string overlongShellInput = new string('x',
-                LaunchRequest.MaxTextLength + 1);
+            string overlongShellInput = new string(
+                new char[LaunchRequest.MaxTextLength + 1]);
             bool overlongShellRequestMalformed =
                 !ModernShellAdapter.TryCreateLaunchRequest(overlongShellInput,
                     out shellTarget, out shellRequest, out shellResolution,
