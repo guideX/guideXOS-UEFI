@@ -255,6 +255,23 @@ namespace guideXOS.FS {
         /// <param name="Directory"></param>
         /// <returns></returns>
         public abstract List<FileInfo> GetFiles(string Directory);
+
+        /// <summary>
+        /// Inspects whether a relative path names a directory. The default is
+        /// deliberately indeterminate because legacy GetFiles implementations
+        /// commonly collapse missing paths and backend failures into an empty
+        /// list. Backends may override when they can report truthful status.
+        /// </summary>
+        internal virtual FileSystemDirectoryInspection InspectDirectory(
+                string path) {
+            if (!FileSystemDirectoryInspection.IsValidRelativePath(path)) {
+                return FileSystemDirectoryInspection.Create(
+                    FileSystemDirectoryInspectionStatus.InvalidPath);
+            }
+            return FileSystemDirectoryInspection.Create(
+                FileSystemDirectoryInspectionStatus.Indeterminate);
+        }
+
         /// <summary>
         /// Delete
         /// </summary>

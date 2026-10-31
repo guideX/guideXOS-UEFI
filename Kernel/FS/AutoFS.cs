@@ -108,6 +108,14 @@ namespace guideXOS.FS {
         /// <param name="Directory"></param>
         /// <returns></returns>
         public override System.Collections.Generic.List<FileInfo> GetFiles(string Directory) => _impl.GetFiles(Directory);
+        internal override FileSystemDirectoryInspection InspectDirectory(
+                string path) {
+            if (_impl == null) {
+                return FileSystemDirectoryInspection.Create(
+                    FileSystemDirectoryInspectionStatus.Indeterminate);
+            }
+            return _impl.InspectDirectory(path);
+        }
         /// <summary>
         /// Delete File
         /// </summary>

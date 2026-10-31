@@ -88,6 +88,10 @@ def main() -> int:
     )
     mount_lifetime = read("Kernel/FS/FileSystemMountLifetime.cs")
     filesystem = read("Kernel/FS/FileSystem.cs")
+    filesystem_inspection = read("Kernel/FS/FileSystemDirectoryInspection.cs")
+    fat_filesystem = read("Kernel/FS/FAT.cs")
+    auto_filesystem = read("Kernel/FS/AutoFS.cs")
+    fat_runtime_tests = read("Tests/AMCONV2DFatInspectionTests/Program.cs")
     mount_tests = read("Tests/AMCONV2BFolderTargetTests/Program.cs")
     files_factory = method_body(
         files_factory_class,
@@ -233,11 +237,10 @@ def main() -> int:
     )
     checks.append(
         (
-            "directory probe verifies directory attributes and releases listings",
-            "FileAttribute.Directory" in folder_binding
-            and "_fileSystem.GetFiles(parent)" in folder_binding
-            and "entries[i].Dispose()" in folder_binding
-            and "entries.Dispose()" in folder_binding,
+            "folder validation uses the retained filesystem's typed inspection API",
+            "_fileSystem.InspectDirectory(path)" in folder_binding
+            and "FileSystemDirectoryInspectionStatus.Directory" in folder_binding
+            and "_fileSystem.GetFiles(" not in folder_binding,
         )
     )
     checks.append(
@@ -321,7 +324,8 @@ def main() -> int:
             and "ShellFolderTargetFailure.PermissionDenied" in folder_binding
             and "ShellFolderTargetFailure.MountInvalidated" in folder_binding
             and "ShellFolderTargetFailure.IoFailure" in folder_binding
-            and "ShellFolderTargetFailure.BackendUnavailable" in folder_binding,
+            and "ShellFolderTargetFailure.BackendUnavailable" in folder_binding
+            and "ShellFolderTargetFailure.IndeterminateBackendFailure" in folder_binding,
         )
     )
     checks.append(
@@ -369,6 +373,57 @@ def main() -> int:
             and "_entriesCache = _fs.GetFiles(query)" in folder_ensure_entries
             and "must never fall back to a newly" in folder_ensure_entries
             and "if (operationLease != null) operationLease.Dispose()" in folder_ensure_entries,
+        )
+    )
+    checks.append(
+        (
+            "filesystem inspection contract distinguishes all required typed outcomes",
+            all(
+                token in filesystem_inspection
+                for token in (
+                    "Directory",
+                    "NotFound",
+                    "NotDirectory",
+                    "AccessDenied",
+                    "FilesystemUnavailable",
+                    "MountUnavailable",
+                    "MountInvalidated",
+                    "IoFailure",
+                    "InvalidPath",
+                    "Indeterminate",
+                )
+            )
+            and "Status" in filesystem_inspection
+            and "BackendCode" in filesystem_inspection
+            and "FileSystemDirectoryInspectionStatus.Indeterminate" in filesystem,
+        )
+    )
+    checks.append(
+        (
+            "FAT inspection uses typed path and disk outcomes without changing GetFiles",
+            "DirResult result = FindPath(path)" in fat_filesystem
+            and "_stickyIoResult" in fat_filesystem
+            and "FileSystemDirectoryInspectionStatus.NotFound" in fat_filesystem
+            and "FileSystemDirectoryInspectionStatus.NotDirectory" in fat_filesystem
+            and "public override List<FileInfo> GetFiles(string Directory)" in fat_filesystem,
+        )
+    )
+    checks.append(
+        (
+            "AutoFS delegates inspection to its selected implementation",
+            "return _impl.InspectDirectory(path)" in auto_filesystem
+            and "_impl.GetFiles(Directory)" in auto_filesystem,
+        )
+    )
+    checks.append(
+        (
+            "hosted FAT inspection suite exercises production FAT and Disk code",
+            "new FAT(disk, false)" in fat_runtime_tests
+            and "CreateFat12Image()" in fat_runtime_tests
+            and "DiskIoResult.TransportFailure" in fat_runtime_tests
+            and "DiskIoResult.MediaUnavailable" in fat_runtime_tests
+            and "FileSystemDirectoryInspectionStatus.NotFound" in fat_runtime_tests
+            and "FileSystemDirectoryInspectionStatus.NotDirectory" in fat_runtime_tests,
         )
     )
 

@@ -66,6 +66,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)FS\EXT2.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FS\FAT.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FS\FileSystem.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FS\FileSystemDirectoryInspection.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FS\FileSystemMountLifetime.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FS\MiniRamFs.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FS\NTFS.cs" />

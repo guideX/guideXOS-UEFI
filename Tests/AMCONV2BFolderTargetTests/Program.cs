@@ -105,6 +105,15 @@ internal static class Program {
         Check(FailureFor(ShellFolderDirectoryProbeResult.BackendUnavailable) ==
                   ShellFolderTargetFailure.BackendUnavailable,
               "unavailable filesystem backend retains typed result");
+        Check(FailureFor(ShellFolderDirectoryProbeResult.FilesystemUnavailable) ==
+                  ShellFolderTargetFailure.FilesystemUnavailable,
+              "unavailable filesystem retains its distinct typed result");
+        Check(FailureFor(ShellFolderDirectoryProbeResult.InvalidPath) ==
+                  ShellFolderTargetFailure.InvalidPath,
+              "backend-reported invalid path retains its typed result");
+        Check(FailureFor(ShellFolderDirectoryProbeResult.Indeterminate) ==
+                  ShellFolderTargetFailure.IndeterminateBackendFailure,
+              "indeterminate backend status is not converted to missing");
 
         TestMountLifetime();
 
@@ -151,14 +160,35 @@ internal static class Program {
         var selected = new FileSystem();
         selected.AddEntry(string.Empty, "Folder", FileAttribute.Directory);
         selected.AddEntry(string.Empty, "plain.txt", FileAttribute.None);
+        selected.SetInspectionResult("locked",
+            FileSystemDirectoryInspectionStatus.AccessDenied, 403);
+        selected.SetInspectionResult("media",
+            FileSystemDirectoryInspectionStatus.FilesystemUnavailable, 5);
+        selected.SetInspectionResult("transport",
+            FileSystemDirectoryInspectionStatus.IoFailure, 6);
+        selected.SetInspectionResult("unknown",
+            FileSystemDirectoryInspectionStatus.Indeterminate, 99);
+        selected.SetInspectionResult("invalid",
+            FileSystemDirectoryInspectionStatus.InvalidPath, 2);
         FileSystemMountLifetime.SetActiveFileSystem(selected);
 
         LaunchRequest malformed = NewFolderRequest("/A/../B");
         LaunchResult failure;
+        LaunchRequest root = NewFolderRequest("/");
+        bool rootBound = ShellFolderMountBinding.TryBindFolderRequest(root,
+            out failure);
+        Check(rootBound && failure == null && root.FileSystemMountLease != null &&
+                  selected.LastInspectedPath == string.Empty &&
+                  root.FileSystemMountLease.FileSystem == selected,
+              "root folder activation inspects and retains the active C# mount");
+        root.Dispose();
+
+        int inspectionsBeforeMalformed = selected.InspectDirectoryCount;
         Check(!ShellFolderMountBinding.TryBindFolderRequest(malformed,
                   out failure) && failure != null &&
                   failure.ErrorCode == LaunchErrorCode.MalformedRequest &&
-                  selected.GetFilesCount == 0 && selected.LeaseCount == 0,
+                  selected.InspectDirectoryCount == inspectionsBeforeMalformed &&
+                  selected.LeaseCount == 0,
               "production folder binding rejects traversal without filesystem I/O");
         malformed.Dispose();
 
@@ -169,6 +199,8 @@ internal static class Program {
         Check(bound && failure == null && requestLease != null &&
                   requestLease.FileSystem == selected && selected.LeaseCount == 1,
               "production folder binding retains the inspected filesystem");
+        Check(selected.LastInspectedPath == "Folder",
+              "typed inspection receives the canonical path on the selected mount");
 
         var replacement = new FileSystem();
         replacement.AddEntry(string.Empty, "Folder", FileAttribute.Directory);
@@ -184,14 +216,14 @@ internal static class Program {
         request.Dispose();
         Check(selected.LeaseCount == 0,
               "disposing the folder request releases its mount");
-        int inspectionsBeforeInvalidatedRequest = selected.GetFilesCount;
+        int inspectionsBeforeInvalidatedRequest = selected.InspectDirectoryCount;
         Check(!ShellFolderMountBinding.TryResolveFolderRequest(request,
                   out resolvedFileSystem, out resolvedPath, out failure) &&
                   resolvedFileSystem == null && resolvedPath == null &&
                   failure != null &&
                   failure.ErrorCode == LaunchErrorCode.ResourceUnavailable &&
-                  selected.GetFilesCount == inspectionsBeforeInvalidatedRequest &&
-                  replacement.GetFilesCount == 0,
+                  selected.InspectDirectoryCount == inspectionsBeforeInvalidatedRequest &&
+                  replacement.InspectDirectoryCount == 0,
               "invalidated folder request fails without falling back to the active mount");
 
         FileSystemMountLifetime.SetActiveFileSystem(selected);
@@ -211,7 +243,7 @@ internal static class Program {
               "production folder binding rejects file entries as directories");
         notDirectory.Dispose();
 
-        selected.ThrowOnGetFiles = true;
+        selected.ThrowOnInspection = true;
         LaunchRequest ioFailure = NewFolderRequest("/Folder");
         Check(!ShellFolderMountBinding.TryBindFolderRequest(ioFailure,
                   out failure) && failure != null &&
@@ -219,17 +251,47 @@ internal static class Program {
                   selected.LeaseCount == 0,
               "production folder binding reports backend I/O failure and releases acquisition");
         ioFailure.Dispose();
-        selected.ThrowOnGetFiles = false;
+        selected.ThrowOnInspection = false;
 
-        selected.ReturnNullFromGetFiles = true;
-        LaunchRequest backendFailure = NewFolderRequest("/Folder");
+        LaunchRequest accessDenied = NewFolderRequest("/locked");
+        Check(!ShellFolderMountBinding.TryBindFolderRequest(accessDenied,
+                  out failure) && failure != null &&
+                  failure.ErrorCode == LaunchErrorCode.PermissionDenied &&
+                  selected.LeaseCount == 0,
+              "production folder binding preserves access denial");
+        accessDenied.Dispose();
+
+        LaunchRequest mediaUnavailable = NewFolderRequest("/media");
+        Check(!ShellFolderMountBinding.TryBindFolderRequest(mediaUnavailable,
+                  out failure) && failure != null &&
+                  failure.ErrorCode == LaunchErrorCode.ResourceUnavailable &&
+                  selected.LeaseCount == 0,
+              "production folder binding distinguishes unavailable backend media");
+        mediaUnavailable.Dispose();
+
+        LaunchRequest backendFailure = NewFolderRequest("/unknown");
         Check(!ShellFolderMountBinding.TryBindFolderRequest(backendFailure,
                   out failure) && failure != null &&
                   failure.ErrorCode == LaunchErrorCode.BackendUnavailable &&
                   selected.LeaseCount == 0,
-              "production folder binding reports unavailable enumeration backend");
+              "production folder binding preserves an indeterminate backend result");
         backendFailure.Dispose();
-        selected.ReturnNullFromGetFiles = false;
+
+        LaunchRequest invalidBackendPath = NewFolderRequest("/invalid");
+        Check(!ShellFolderMountBinding.TryBindFolderRequest(invalidBackendPath,
+                  out failure) && failure != null &&
+                  failure.ErrorCode == LaunchErrorCode.MalformedRequest &&
+                  selected.LeaseCount == 0,
+              "backend invalid-path status maps to malformed request");
+        invalidBackendPath.Dispose();
+
+        LaunchRequest transportFailure = NewFolderRequest("/transport");
+        Check(!ShellFolderMountBinding.TryBindFolderRequest(transportFailure,
+                  out failure) && failure != null &&
+                  failure.ErrorCode == LaunchErrorCode.BackendUnavailable &&
+                  selected.LeaseCount == 0,
+              "production folder binding preserves backend I/O failure");
+        transportFailure.Dispose();
 
         FileSystemMountLifetime.SetActiveFileSystem(null);
         LaunchRequest unavailableMount = NewFolderRequest("/Folder");

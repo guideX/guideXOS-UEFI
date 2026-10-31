@@ -10,13 +10,19 @@ namespace guideXOS.FS {
         private bool _disposed;
         private readonly Dictionary<string, List<FileEntry>> _entries =
             new Dictionary<string, List<FileEntry>>(StringComparer.Ordinal);
+        private readonly Dictionary<string, FileSystemDirectoryInspection>
+            _inspectionResults = new Dictionary<string,
+                FileSystemDirectoryInspection>(StringComparer.Ordinal);
 
         internal int LeaseCount { get { return _leaseCount; } }
         internal int DisposalCount { get; private set; }
         internal int GetFilesCount { get; private set; }
+        internal int InspectDirectoryCount { get; private set; }
+        internal string LastInspectedPath { get; private set; }
         internal bool IsDisposed { get { return _disposed; } }
         internal bool ThrowOnGetFiles { get; set; }
         internal bool ReturnNullFromGetFiles { get; set; }
+        internal bool ThrowOnInspection { get; set; }
         internal bool CanAcquireMountLease {
             get { return !_disposeRequested && !_disposed; }
         }
@@ -83,6 +89,49 @@ namespace guideXOS.FS {
                 result.Add(new FileInfo(stored[i].Name, stored[i].Attribute));
             }
             return result;
+        }
+
+        internal FileSystemDirectoryInspection InspectDirectory(string path) {
+            InspectDirectoryCount++;
+            LastInspectedPath = path;
+            if (ThrowOnInspection)
+                throw new Exception("controlled inspection failure");
+
+            FileSystemDirectoryInspection configured;
+            if (_inspectionResults.TryGetValue(path, out configured))
+                return configured;
+            if (!FileSystemDirectoryInspection.IsValidRelativePath(path)) {
+                return FileSystemDirectoryInspection.Create(
+                    FileSystemDirectoryInspectionStatus.InvalidPath);
+            }
+            if (path.Length == 0) {
+                return FileSystemDirectoryInspection.Create(
+                    FileSystemDirectoryInspectionStatus.Directory);
+            }
+
+            int slash = path.LastIndexOf('/');
+            string parent = slash < 0 ? string.Empty : path.Substring(0, slash);
+            string leaf = path.Substring(slash + 1);
+            List<FileEntry> entries;
+            if (!_entries.TryGetValue(parent, out entries)) {
+                return FileSystemDirectoryInspection.Create(
+                    FileSystemDirectoryInspectionStatus.NotFound);
+            }
+            for (int i = 0; i < entries.Count; i++) {
+                if (entries[i].Name != leaf) continue;
+                return FileSystemDirectoryInspection.Create(
+                    entries[i].Attribute == FileAttribute.Directory
+                        ? FileSystemDirectoryInspectionStatus.Directory
+                        : FileSystemDirectoryInspectionStatus.NotDirectory);
+            }
+            return FileSystemDirectoryInspection.Create(
+                FileSystemDirectoryInspectionStatus.NotFound);
+        }
+
+        internal void SetInspectionResult(string path,
+                FileSystemDirectoryInspectionStatus status, int backendCode = 0) {
+            _inspectionResults[path] =
+                FileSystemDirectoryInspection.Create(status, backendCode);
         }
 
         private sealed class FileEntry {

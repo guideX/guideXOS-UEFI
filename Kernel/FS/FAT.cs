@@ -1070,6 +1070,73 @@ namespace guideXOS.FS {
             return list;
         }
 
+        /// <summary>
+        /// FAT can resolve one bounded path using its typed disk result state.
+        /// This does not enumerate directory contents or mutate the volume.
+        /// </summary>
+        internal override FileSystemDirectoryInspection InspectDirectory(
+                string path) {
+            if (!IsValidInspectionPath(path)) {
+                return FileSystemDirectoryInspection.Create(
+                    FileSystemDirectoryInspectionStatus.InvalidPath);
+            }
+            if (!_mounted) {
+                if (MountResult == DiskIoResult.MediaUnavailable) {
+                    return FileSystemDirectoryInspection.Create(
+                        FileSystemDirectoryInspectionStatus.FilesystemUnavailable,
+                        (int)MountResult);
+                }
+                if (MountResult == DiskIoResult.TransportFailure) {
+                    return FileSystemDirectoryInspection.Create(
+                        FileSystemDirectoryInspectionStatus.IoFailure,
+                        (int)MountResult);
+                }
+                return FileSystemDirectoryInspection.Create(
+                    FileSystemDirectoryInspectionStatus.Indeterminate,
+                    (int)MountResult);
+            }
+
+            BeginOperation();
+            DirResult result = FindPath(path);
+            if (_stickyIoResult != DiskIoResult.Success) {
+                if (_stickyIoResult == DiskIoResult.MediaUnavailable) {
+                    return FileSystemDirectoryInspection.Create(
+                        FileSystemDirectoryInspectionStatus.FilesystemUnavailable,
+                        (int)_stickyIoResult);
+                }
+                if (_stickyIoResult == DiskIoResult.Unsupported) {
+                    return FileSystemDirectoryInspection.Create(
+                        FileSystemDirectoryInspectionStatus.Indeterminate,
+                        (int)_stickyIoResult);
+                }
+                return FileSystemDirectoryInspection.Create(
+                    FileSystemDirectoryInspectionStatus.IoFailure,
+                    (int)_stickyIoResult);
+            }
+            if (!result.Found) {
+                return FileSystemDirectoryInspection.Create(
+                    FileSystemDirectoryInspectionStatus.NotFound,
+                    (int)FatOperationResult.NotFound);
+            }
+            return FileSystemDirectoryInspection.Create(
+                result.IsDirectory
+                    ? FileSystemDirectoryInspectionStatus.Directory
+                    : FileSystemDirectoryInspectionStatus.NotDirectory,
+                (int)FatOperationResult.Success);
+        }
+
+        private static bool IsValidInspectionPath(string path) {
+            if (!FileSystemDirectoryInspection.IsValidRelativePath(path))
+                return false;
+            if (path == null) return false;
+            for (int i = 0; i < path.Length; i++) {
+                char c = path[i];
+                if (c == '<' || c == '>' || c == ':' || c == '"' ||
+                        c == '|' || c == '?' || c == '*') return false;
+            }
+            return true;
+        }
+
         public override void Delete(string Name) {
             TryDelete(Name);
         }

@@ -132,15 +132,18 @@ namespace guideXOS.OS {
                 ShellFolderTargetFailure failure) {
             switch (failure) {
                 case ShellFolderTargetFailure.MalformedRequest:
+                case ShellFolderTargetFailure.InvalidPath:
                     return LaunchErrorCode.MalformedRequest;
                 case ShellFolderTargetFailure.PermissionDenied:
                     return LaunchErrorCode.PermissionDenied;
                 case ShellFolderTargetFailure.ResourceUnavailable:
+                case ShellFolderTargetFailure.FilesystemUnavailable:
                 case ShellFolderTargetFailure.MountUnavailable:
                     return LaunchErrorCode.ResourceUnavailable;
                 case ShellFolderTargetFailure.MountInvalidated:
                 case ShellFolderTargetFailure.IoFailure:
                 case ShellFolderTargetFailure.BackendUnavailable:
+                case ShellFolderTargetFailure.IndeterminateBackendFailure:
                 default:
                     return LaunchErrorCode.BackendUnavailable;
             }
@@ -156,68 +159,36 @@ namespace guideXOS.OS {
 
             public ShellFolderDirectoryProbeResult Inspect(string path) {
                 if (_fileSystem == null || path == null)
-                    return ShellFolderDirectoryProbeResult.BackendUnavailable;
-                if (path.Length == 0) return InspectRoot();
-
-                int slash = path.LastIndexOf('/');
-                string parent = slash < 0 ? string.Empty :
-                    path.Substring(0, slash);
-                string leaf = path.Substring(slash + 1);
+                    return ShellFolderDirectoryProbeResult.FilesystemUnavailable;
                 try {
-                    return InspectChild(parent, leaf);
-                } finally {
-                    if (parent.Length > 0) parent.Dispose();
-                    leaf.Dispose();
-                }
-            }
-
-            private ShellFolderDirectoryProbeResult InspectRoot() {
-                try {
-                    System.Collections.Generic.List<FileInfo> entries =
-                        _fileSystem.GetFiles(string.Empty);
-                    if (entries == null)
-                        return ShellFolderDirectoryProbeResult.BackendUnavailable;
-                    DisposeEntries(entries);
-                    return ShellFolderDirectoryProbeResult.Directory;
-                } catch {
-                    return ShellFolderDirectoryProbeResult.IoFailure;
-                }
-            }
-
-            private ShellFolderDirectoryProbeResult InspectChild(string parent,
-                                                                  string leaf) {
-                System.Collections.Generic.List<FileInfo> entries = null;
-                try {
-                    entries = _fileSystem.GetFiles(parent);
-                    if (entries == null)
-                        return ShellFolderDirectoryProbeResult.BackendUnavailable;
-                    bool found = false;
-                    bool directory = false;
-                    for (int i = 0; i < entries.Count; i++) {
-                        FileInfo entry = entries[i];
-                        if (entry != null && entry.Name == leaf) {
-                            found = true;
-                            directory = entry.Attribute == FileAttribute.Directory;
-                            break;
-                        }
+                    FileSystemDirectoryInspection inspection =
+                        _fileSystem.InspectDirectory(path);
+                    switch (inspection.Status) {
+                        case FileSystemDirectoryInspectionStatus.Directory:
+                            return ShellFolderDirectoryProbeResult.Directory;
+                        case FileSystemDirectoryInspectionStatus.NotFound:
+                            return ShellFolderDirectoryProbeResult.Missing;
+                        case FileSystemDirectoryInspectionStatus.NotDirectory:
+                            return ShellFolderDirectoryProbeResult.NotDirectory;
+                        case FileSystemDirectoryInspectionStatus.AccessDenied:
+                            return ShellFolderDirectoryProbeResult.PermissionDenied;
+                        case FileSystemDirectoryInspectionStatus.FilesystemUnavailable:
+                            return ShellFolderDirectoryProbeResult.FilesystemUnavailable;
+                        case FileSystemDirectoryInspectionStatus.MountUnavailable:
+                            return ShellFolderDirectoryProbeResult.MountUnavailable;
+                        case FileSystemDirectoryInspectionStatus.MountInvalidated:
+                            return ShellFolderDirectoryProbeResult.MountInvalidated;
+                        case FileSystemDirectoryInspectionStatus.IoFailure:
+                            return ShellFolderDirectoryProbeResult.IoFailure;
+                        case FileSystemDirectoryInspectionStatus.InvalidPath:
+                            return ShellFolderDirectoryProbeResult.InvalidPath;
+                        default:
+                            return ShellFolderDirectoryProbeResult.Indeterminate;
                     }
-                    if (!found) return ShellFolderDirectoryProbeResult.Missing;
-                    return directory
-                        ? ShellFolderDirectoryProbeResult.Directory
-                        : ShellFolderDirectoryProbeResult.NotDirectory;
                 } catch {
-                    return ShellFolderDirectoryProbeResult.IoFailure;
-                } finally {
-                    if (entries != null) DisposeEntries(entries);
+                    // Do not expose backend exception text to applications.
+                    return ShellFolderDirectoryProbeResult.Indeterminate;
                 }
-            }
-
-            private static void DisposeEntries(
-                    System.Collections.Generic.List<FileInfo> entries) {
-                for (int i = 0; i < entries.Count; i++) {
-                    if (entries[i] != null) entries[i].Dispose();
-                }
-                entries.Dispose();
             }
         }
     }
