@@ -10,6 +10,10 @@ namespace guideXOS.Kernel.Drivers {
         // CRITICAL: Store the raw pointer in a static field to avoid GC/object relocation issues
         public static byte* RawBasePointer;
 
+        // Exact byte length supplied by the bootloader when it loaded the
+        // image. Consumers that remount this same image pass it explicitly.
+        internal static ulong RawImageSizeBytes;
+
         // Size of ramdisk in bytes (for bounds checking)
         private readonly ulong _sizeBytes;
 
@@ -19,11 +23,12 @@ namespace guideXOS.Kernel.Drivers {
 
         public Ramdisk(IntPtr _ptr, ulong sizeBytes = 0) {
             BootConsole.WriteLine("[Ramdisk] Constructor called");
-            
+
             ptr = (byte*)_ptr;
             
             // CRITICAL: Store in static field for reliable access
             RawBasePointer = ptr;
+            RawImageSizeBytes = sizeBytes;
             
             BootConsole.WriteLine("[Ramdisk] ptr field set");
 

@@ -849,7 +849,8 @@ unsafe class Program {
             if (Ramdisk.RawBasePointer != null) {
                 try {
                     if (Disk.Instance == null) {
-                        new Ramdisk((System.IntPtr)Ramdisk.RawBasePointer);
+                        new Ramdisk((System.IntPtr)Ramdisk.RawBasePointer,
+                            Ramdisk.RawImageSizeBytes);
                     }
                     File.Instance = new RdskFS();
                     BootConsole.WriteLine("[FS] mounted");
@@ -1332,7 +1333,8 @@ unsafe class Program {
             BootConsole.WriteLine("[SMAIN] Re-mounting filesystem from RawBasePointer");
             try {
                 if (Disk.Instance == null) {
-                    new Ramdisk((System.IntPtr)Ramdisk.RawBasePointer);
+                    new Ramdisk((System.IntPtr)Ramdisk.RawBasePointer,
+                        Ramdisk.RawImageSizeBytes);
                 }
                 File.Instance = new RdskFS();
                 BootConsole.WriteLine("[SMAIN] Filesystem re-mounted OK");

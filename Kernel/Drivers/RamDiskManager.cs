@@ -31,7 +31,8 @@ namespace guideXOS.Kernel.Drivers {
             }
 
             // Expose UEFI-provided ramdisk as the active disk.
-            BootDisk = new Ramdisk((IntPtr)bootInfo->RamdiskBase);
+            BootDisk = new Ramdisk((IntPtr)bootInfo->RamdiskBase,
+                bootInfo->RamdiskSize);
 
             // Prefer existing behavior: auto-detect TAR/FAT/EXT2 in initrd.
             // EntryPoint currently skips AutoFS due to a noted hang; keep this behind a try/catch.

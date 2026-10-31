@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <DefineConstants>GUIDEXOS_HOSTED_TESTS;GUIDEXOS_RDSK_HOSTED_TESTS</DefineConstants>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="RdskFSHostedStubs.cs" />
+    <Compile Include="../AMCONV2BFolderTargetTests/MountLifetimeTestStubs.cs" Link="MountLifetimeTestStubs.cs" />
+    <Compile Include="../../guideXOS/OS/ShellFolderTargetPath.cs" Link="ShellFolderTargetPath.cs" />
+    <Compile Include="../../guideXOS/OS/ShellFolderMountBinding.cs" Link="ShellFolderMountBinding.cs" />
+    <Compile Include="../../Kernel/FS/FileSystemDirectoryInspection.cs" Link="FileSystemDirectoryInspection.cs" />
+    <Compile Include="../../Kernel/FS/RdskFSDirectoryInspector.cs" Link="RdskFSDirectoryInspector.cs" />
+    <Compile Include="../../Kernel/FS/RdskFS.cs" Link="RdskFS.cs" />
+    <Compile Include="../../Kernel/FS/FileSystemMountLifetime.cs" Link="FileSystemMountLifetime.cs" />
+  </ItemGroup>
+</Project>

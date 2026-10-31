@@ -17,14 +17,18 @@ namespace guideXOS.FS {
     ///     Data: raw bytes
     /// </summary>
     internal unsafe class RdskFS : FileSystem {
+        private readonly byte* _imageBase;
+        private readonly ulong _imageSizeBytes;
 
         public RdskFS()
         {
             BootConsole.WriteLine("[RdskFS] Constructor called");
             FileSystemType = FS_TYPE_RDSK;
             
-            // Use the raw static pointer directly - it survives UEFI managed reference corruption
+            // Capture the raw pointer and trusted length from this mount.
             byte* ptr = Ramdisk.RawBasePointer;
+            _imageBase = ptr;
+            _imageSizeBytes = Ramdisk.RawImageSizeBytes;
             if (ptr == null) {
                 BootConsole.WriteLine("[RdskFS] ERROR: RawBasePointer is null!");
                 return;
@@ -42,6 +46,12 @@ namespace guideXOS.FS {
             BootConsole.WriteLine("[RdskFS] Constructor completed");
         }
 
+        internal override FileSystemDirectoryInspection InspectDirectory(
+                string path) {
+            return RdskFSDirectoryInspector.Inspect(_imageBase,
+                _imageSizeBytes, path);
+        }
+
         public override List<FileInfo> GetFiles(string Directory) {
             List<FileInfo> result = new List<FileInfo>();
             if (Directory == null) return result;
@@ -57,7 +67,7 @@ namespace guideXOS.FS {
                 directory = withSlash;
             }
 
-            byte* ptr = Ramdisk.RawBasePointer;
+            byte* ptr = _imageBase;
             if (ptr == null || ptr[0] != (byte)'R' || ptr[1] != (byte)'D' ||
                 ptr[2] != (byte)'S' || ptr[3] != (byte)'K') {
                 return result;
@@ -89,7 +99,11 @@ namespace guideXOS.FS {
 
                 string path = null;
                 try {
+#if GUIDEXOS_RDSK_HOSTED_TESTS
+                    path = RdskFSHostedAscii.Decode(ptr + offset, pathLen);
+#else
                     path = string.FromASCII((nint)(ptr + offset), pathLen);
+#endif
                 } catch {
                     break;
                 }
@@ -178,8 +192,9 @@ namespace guideXOS.FS {
                 searchPath = Name.Substring(1);
             }
             
-            // Use static raw pointer directly - survives UEFI managed reference corruption
-            byte* ptr = Ramdisk.RawBasePointer;
+            // Use the image retained by this filesystem instance. A later
+            // Ramdisk or File.Instance replacement must not redirect old users.
+            byte* ptr = _imageBase;
             if (ptr == null) {
                 return null;
             }
@@ -238,7 +253,11 @@ namespace guideXOS.FS {
                 // Read path
                 string path = null;
                 try {
+#if GUIDEXOS_RDSK_HOSTED_TESTS
+                    path = RdskFSHostedAscii.Decode(ptr + offset, pathLen);
+#else
                     path = string.FromASCII((nint)(ptr + offset), pathLen);
+#endif
                 } catch {
                     break;
                 }

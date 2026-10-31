@@ -4,7 +4,11 @@ using System.Collections.Generic;
 namespace guideXOS.FS {
     // Controlled filesystem resource for the production mount-lifetime
     // registry. The registry and lease implementation are linked from Kernel.
-    internal sealed class FileSystem {
+    internal class FileSystem {
+#if GUIDEXOS_RDSK_HOSTED_TESTS
+        internal const int FS_TYPE_RDSK = 1;
+        public int FileSystemType;
+#endif
         private int _leaseCount;
         private bool _disposeRequested;
         private bool _disposed;
@@ -78,7 +82,11 @@ namespace guideXOS.FS {
             entries.Add(new FileEntry(name, attribute));
         }
 
+#if GUIDEXOS_RDSK_HOSTED_TESTS
+        public virtual List<FileInfo> GetFiles(string path) {
+#else
         internal List<FileInfo> GetFiles(string path) {
+#endif
             GetFilesCount++;
             if (ThrowOnGetFiles) throw new Exception("controlled I/O failure");
             if (ReturnNullFromGetFiles) return null;
@@ -91,7 +99,7 @@ namespace guideXOS.FS {
             return result;
         }
 
-        internal FileSystemDirectoryInspection InspectDirectory(string path) {
+        internal virtual FileSystemDirectoryInspection InspectDirectory(string path) {
             InspectDirectoryCount++;
             LastInspectedPath = path;
             if (ThrowOnInspection)
@@ -134,6 +142,13 @@ namespace guideXOS.FS {
                 FileSystemDirectoryInspection.Create(status, backendCode);
         }
 
+#if GUIDEXOS_RDSK_HOSTED_TESTS
+        public virtual void Delete(string name) { }
+        public virtual byte[] ReadAllBytes(string name) { return null; }
+        public virtual void WriteAllBytes(string name, byte[] content) { }
+        public virtual void Format() { }
+#endif
+
         private sealed class FileEntry {
             internal readonly string Name;
             internal readonly FileAttribute Attribute;
@@ -144,18 +159,29 @@ namespace guideXOS.FS {
         }
     }
 
-    internal enum FileAttribute { None, Directory }
+    internal enum FileAttribute { None, Directory, Archive }
 
     internal sealed class FileInfo {
+#if GUIDEXOS_RDSK_HOSTED_TESTS
+        internal string Name;
+        internal FileAttribute Attribute;
+        internal ulong Param0;
+        internal ulong Param1;
+#else
         internal readonly string Name;
         internal readonly FileAttribute Attribute;
+#endif
         internal bool IsDisposed { get; private set; }
+#if GUIDEXOS_RDSK_HOSTED_TESTS
+        internal FileInfo() { }
+#endif
         internal FileInfo(string name, FileAttribute attribute) {
             Name = name;
             Attribute = attribute;
         }
         public void Dispose() { IsDisposed = true; }
     }
+
 }
 
 namespace guideXOS.OS {
