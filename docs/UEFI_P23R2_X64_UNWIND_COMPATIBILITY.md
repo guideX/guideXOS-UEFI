@@ -38,7 +38,19 @@ No Windows OS service is used by `x64_unwind_bounded.h`. The hosted test-only co
 
 ## Existing veneer audit
 
-The removed implementation was in `Tools/Phase23/guidexos_link_shim.cpp`. It contained useful fragments for register numbering, leaf returns, common stack allocations, pushes, frame-register setup, and integer saves, but it was unsafe as a code-manager ABI implementation:
+The same legacy implementation existed in the Phase 23 shim and in copied Phase 27–31 shims. Its functions classify as follows:
+
+| Function / symbol | Classification | Finding |
+|---|---|---|
+| `guidexos_unwind_register` | Partially correct | Maps the x64 register numbers to GPR context fields, but callers do not validate that each opcode permits the selected register. |
+| `guidexos_unwind_register_pointer` | Partially implemented | Provides integer context pointers only; no floating-point pointer path. |
+| `guidexos_unwind_one` | Partially implemented / unsafe | Handles some pushes, allocations, frame setup, and integer saves; skips XMM saves, ignores unknown operations, and reads unbounded metadata and stack addresses. |
+| `guidexos_rtl_virtual_unwind` | Incorrectly stubbed | Uses the wrong return type, cannot report validation failure, does not supply handler data, and returns an incorrect establisher-frame value. |
+| `__imp_RtlVirtualUnwind` | Incorrect ABI declaration | Function-pointer return type is `u32` rather than `PEXCEPTION_ROUTINE`. |
+
+The Phase 23 copy was removed from `Tools/Phase23/guidexos_link_shim.cpp`. The Phase 26 shim is an include wrapper over that Phase 23 file, so future Phase 26 rebuilds inherit the removal. The Phase 27, 28, 29, 30, and 31 shim files still contain copied legacy implementations. The Phase 27–31 builder scripts derive their generated shims from the Phase 23 source; Phase 32–35 builders also reuse the Phase 31 shim. Those copied sources and all generated artifacts were left untouched, and no Phase 26–35 cohort or identity was rebuilt. They must be reconciled against the bounded interface before those phases are rebuilt or used as evidence for runtime registration.
+
+The Phase 23 implementation contained useful fragments for register numbering, leaf returns, common stack allocations, pushes, frame-register setup, and integer saves, but it was unsafe as a code-manager ABI implementation:
 
 - Its `RtlVirtualUnwind` function pointer returned `u32`; the x64 ABI returns a pointer. Handler addresses could be truncated.
 - Its context stopped at RIP. It did not model the full x64 context or restore saved XMM registers. It skipped `UWOP_SAVE_XMM128` and did not populate floating-point context pointers.
@@ -48,7 +60,7 @@ The removed implementation was in `Tools/Phase23/guidexos_link_shim.cpp`. It con
 - It did not establish a safe failure channel. It could not tell the code manager that an unwind had failed.
 - It returned the stack pointer after consuming the return address as `EstablisherFrame`, rather than the fixed-frame base expected by the Windows x64 contract.
 
-The old veneer is removed instead of being adapted to the same ABI without the required bounds and failure behavior. If the COFF manager is selected for the target before a reviewed adapter exists, its `__imp_RtlVirtualUnwind` dependency will remain unresolved and the link will fail.
+The Phase 23 old veneer is removed instead of being adapted to the same ABI without the required bounds and failure behavior. If the COFF manager is selected for the target before a reviewed adapter exists, its `__imp_RtlVirtualUnwind` dependency will remain unresolved and the link will fail.
 
 ## Implemented bounded functionality
 
