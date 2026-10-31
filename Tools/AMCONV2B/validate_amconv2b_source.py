@@ -44,6 +44,7 @@ def main() -> int:
     factories = read("guideXOS/OS/ApplicationFactories.cs")
     computer_files = read("guideXOS/DefaultApps/ComputerFiles.cs")
     folder_contract = read("guideXOS/OS/ShellFolderTargetPath.cs")
+    folder_binding = read("guideXOS/OS/ShellFolderMountBinding.cs")
 
     compatibility = method_body(
         modern, r"internal static bool TryMapToCSharpShellId\s*\("
@@ -62,9 +63,32 @@ def main() -> int:
         r"private static LaunchResult OpenShellFolder\s*\(",
     )
     folder_resolver = method_body(
-        factories,
+        folder_binding,
         r"internal static bool TryResolveFolderRequest\s*\(",
     )
+    folder_binder = method_body(
+        folder_binding,
+        r"internal static bool TryBindFolderRequest\s*\(",
+    )
+    folder_request_validator = method_body(
+        folder_binding,
+        r"private static bool ValidateFolderRequest\s*\(",
+    )
+    prepared_folder_launch = method_body(
+        services,
+        r"private static LaunchResult LaunchPreparedFolderRequest\s*\(",
+    )
+    open_document = method_body(
+        services,
+        r"private static LaunchResult OpenDocument\s*\(",
+    )
+    document_reader = method_body(
+        factories,
+        r"internal static byte\[\] ReadDocumentBytes\s*\(",
+    )
+    mount_lifetime = read("Kernel/FS/FileSystemMountLifetime.cs")
+    filesystem = read("Kernel/FS/FileSystem.cs")
+    mount_tests = read("Tests/AMCONV2BFolderTargetTests/Program.cs")
     files_factory = method_body(
         files_factory_class,
         r"public override bool TryCreateOrActivate\s*\(\s*ApplicationDescriptor descriptor,\s*ApplicationInstance instance,\s*LaunchRequest request,",
@@ -72,6 +96,9 @@ def main() -> int:
     folder_window = method_body(
         computer_files,
         r"internal ComputerFiles\s*\(int x, int y, int w, int h, FileSystem fs,\s*string folderTitle, string initialFolderPath,",
+    )
+    folder_ensure_entries = method_body(
+        computer_files, r"private void EnsureEntries\s*\(\s*\)"
     )
     folder_validator = method_body(
         folder_contract,
@@ -147,8 +174,10 @@ def main() -> int:
             and '? "/" : resolution.Path' in adapter
             and "ApplicationShellOperation.OpenFolder" in adapter
             and folder_resolver is not None
-            and 'request.SourceShellObjectId != "gxos.shell.root"' in folder_resolver
-            and 'File.Instance' in folder_resolver,
+            and folder_request_validator is not None
+            and 'request.SourceShellObjectId != "gxos.shell.root"' in folder_request_validator
+            and 'request.FileSystemMountLease' in folder_resolver
+            and 'lease.IsValid' in folder_resolver,
         )
     )
     checks.append(
@@ -156,11 +185,10 @@ def main() -> int:
             "folder activation is preflighted and remains separate from other operations",
             service is not None
             and "ApplicationShellOperation.OpenFolder" in service
-            and "TryResolveFolderRequest" in service
+            and "LaunchPreparedFolderRequest" in service
             and "ActivateSystemPanel" in service
             and "OpenVirtualObject" in service
-            and "OpenDeviceVolume" in service
-            and "LaunchModern(request)" in service,
+            and "OpenDeviceVolume" in service,
         )
     )
     checks.append(
@@ -172,18 +200,26 @@ def main() -> int:
             and "ApplicationShellOpenTargetKind.ShellFolder" in services
             and shell_folder_service is not None
             and "TryCreateFolderLaunchRequest" in shell_folder_service
-            and "TryResolveFolderRequest" in shell_folder_service
-            and "LaunchModern(request)" in shell_folder_service,
+            and "LaunchPreparedFolderRequest" in shell_folder_service
+            and prepared_folder_launch is not None
+            and "TryBindFolderRequest" in prepared_folder_launch
+            and "LaunchModern(request)" in prepared_folder_launch
+            and "request.Dispose()" in prepared_folder_launch,
         )
     )
     checks.append(
         (
             "folder backend validates the typed request and selected mount",
             folder_resolver is not None
-            and "LaunchRequestTargetKind.ShellObject" in folder_resolver
-            and "ApplicationShellTargetKind.FileSystem" in folder_resolver
-            and 'request.TargetAppId != "gxos.builtin.files"' in folder_resolver
-            and "TryResolveExistingDirectory" in folder_resolver,
+            and "LaunchRequestTargetKind.ShellObject" in folder_request_validator
+            and "ApplicationShellTargetKind.FileSystem" in folder_request_validator
+            and 'request.TargetAppId != "gxos.builtin.files"' in folder_request_validator
+            and "TryInspectFolderPath" in folder_resolver
+            and "lease.TryClone(out operationLease)" in folder_resolver
+            and "operationLease.Dispose()" in folder_resolver
+            and folder_binder is not None
+            and "TryAcquireActive" in folder_binder
+            and "AttachFileSystemMountLease" in folder_binder,
         )
     )
     checks.append(
@@ -198,10 +234,10 @@ def main() -> int:
     checks.append(
         (
             "directory probe verifies directory attributes and releases listings",
-            "FileAttribute.Directory" in factories
-            and "_fileSystem.GetFiles(parent)" in factories
-            and "entries[i].Dispose()" in factories
-            and "entries.Dispose()" in factories,
+            "FileAttribute.Directory" in folder_binding
+            and "_fileSystem.GetFiles(parent)" in folder_binding
+            and "entries[i].Dispose()" in folder_binding
+            and "entries.Dispose()" in folder_binding,
         )
     )
     checks.append(
@@ -210,7 +246,8 @@ def main() -> int:
             files_factory is not None
             and "csharpFolderRequest" in files_factory
             and "folderFileSystem" in files_factory
-            and "folderPath, false" in files_factory
+            and "folderWindowLease" in files_factory
+            and "instanceLease.TryClone" in files_factory
             and "File.Instance =" not in files_factory
             and "new AutoFS" not in files_factory[files_factory.find("if (csharpFolderRequest)"):files_factory.find("} else if (driveRequest)")],
         )
@@ -220,6 +257,7 @@ def main() -> int:
             "Computer Files starts at the supplied path without building a drive chooser",
             folder_window is not None
             and "_fs = fs" in folder_window
+            and "_mountLease = mountLease" in folder_window
             and "_ownsFileSystem = ownsFileSystem" in folder_window
             and "_showDrives = false" in folder_window
             and "_currentPath =" in folder_window
@@ -253,6 +291,84 @@ def main() -> int:
             "TryCreateDriveFileSystem" in factories
             and 'TextEquals(driveName, "Hard Disk")' in factories
             and 'const string usbPrefix = "USB Drive "' in factories,
+        )
+    )
+    checks.append(
+        (
+            "active mount replacement and disposal are intercepted by the lifetime boundary",
+            "public static FileSystem Instance {" in filesystem
+            and "FileSystemMountLifetime.SetActiveFileSystem(value)" in filesystem
+            and "public override void Dispose()" in filesystem
+            and "FileSystemMountLifetime.RequestDisposal(this)" in filesystem
+            and "resource.DisposeMountResource()" in mount_lifetime,
+        )
+    )
+    checks.append(
+        (
+            "mount lease generations remain unique across replacement and final release",
+            "_generation++" in mount_lifetime
+            and "_generationExhausted" in mount_lifetime
+            and "TryAddRetainedMountLease" in mount_lifetime
+            and "lease.ReleaseMountLease()" not in mount_lifetime
+            and "resource.ReleaseMountLease()" in mount_lifetime,
+        )
+    )
+    checks.append(
+        (
+            "folder inspection maps malformed, missing, permission, and backend failures distinctly",
+            "FolderFailureToLaunchError" in folder_binding
+            and "ShellFolderTargetFailure.MalformedRequest" in folder_binding
+            and "ShellFolderTargetFailure.PermissionDenied" in folder_binding
+            and "ShellFolderTargetFailure.MountInvalidated" in folder_binding
+            and "ShellFolderTargetFailure.IoFailure" in folder_binding
+            and "ShellFolderTargetFailure.BackendUnavailable" in folder_binding,
+        )
+    )
+    checks.append(
+        (
+            "folder-associated document reads preserve the source mount",
+            "TryClone(out documentLease)" in computer_files
+            and "ForDocumentFromMount" in computer_files
+            and open_document is not None
+            and "TakeFileSystemMountLease" in open_document
+            and document_reader is not None
+            and "lease.TryClone(out operationLease)" in document_reader
+            and "operationLease.FileSystem.ReadAllBytes" in document_reader
+            and "_sourceMountLease.TryClone(out operationLease)" in read("guideXOS/DefaultApps/Notepad.cs")
+            and "operationLease.FileSystem.TryWriteAllBytes" in read("guideXOS/DefaultApps/Notepad.cs"),
+        )
+    )
+    checks.append(
+        (
+            "launch request and shell-service request release mount ownership idempotently",
+            "internal bool AttachFileSystemMountLease" in modern
+            and "internal FileSystemMountLease TakeFileSystemMountLease" in modern
+            and "if (_disposed) return" in modern
+            and "if (_disposed) return" in app_services
+            and "finally {\n                request.Dispose();" in services,
+        )
+    )
+    checks.append(
+        (
+            "hosted lifetime regressions exercise replacement, shared owners, and cleanup",
+            "replacement retires the old generation" in mount_tests
+            and "two folder owners acquire independent leases" in mount_tests
+            and "final release completes deferred disposal" in mount_tests
+            and "repeated acquire/replace/release cycles" in mount_tests
+            and "ShellFolderMountBinding.TryBindFolderRequest" in mount_tests
+            and "production folder binding retains the inspected filesystem" in mount_tests
+            and "invalidated folder request fails without falling back" in mount_tests
+            and "reinspection stays on the request's mount after replacement" in mount_tests,
+        )
+    )
+    checks.append(
+        (
+            "folder and document I/O retain operation leases through synchronous calls",
+            folder_ensure_entries is not None
+            and "ownerLease.TryClone(out operationLease)" in folder_ensure_entries
+            and "_entriesCache = _fs.GetFiles(query)" in folder_ensure_entries
+            and "must never fall back to a newly" in folder_ensure_entries
+            and "if (operationLease != null) operationLease.Dispose()" in folder_ensure_entries,
         )
     )
 

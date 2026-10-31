@@ -113,6 +113,7 @@ namespace guideXOS.OS {
                 Begin(ApplicationServiceContext context,
                       ApplicationShellOpenRequest request) {
             if (request == null || !request.IsValid) {
+                if (request != null) request.Dispose();
                 return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
                     ApplicationServiceResultCode.InvalidRequest,
                     "Shell request is invalid or exceeds its bound");
@@ -123,6 +124,7 @@ namespace guideXOS.OS {
                 ApplicationServiceRegistry.BeginShellRequest(context,
                     request, out handle);
             if (!begun.Succeeded) {
+                request.Dispose();
                 return ApplicationServiceResult<ApplicationServiceRequestHandle>.Failure(
                     begun.Code, begun.BoundedDiagnostic);
             }
@@ -134,6 +136,8 @@ namespace guideXOS.OS {
                 launch = LaunchResult.Failed(
                     LaunchErrorCode.BackendUnavailable,
                     "Shell backend rejected the request", null);
+            } finally {
+                request.Dispose();
             }
             ApplicationShellResult result =
                 ApplicationShellResult.FromLaunchResult(launch);
@@ -171,7 +175,7 @@ namespace guideXOS.OS {
                 case ApplicationShellOpenTargetKind.Alias:
                     return LaunchModern(LaunchRequest.ForName(request.Target));
                 case ApplicationShellOpenTargetKind.Document:
-                    return OpenDocument(request.Target);
+                    return OpenDocument(request);
                 case ApplicationShellOpenTargetKind.ShellObject:
                     return OpenShellObject(request.Target);
                 case ApplicationShellOpenTargetKind.ShellFolder:
@@ -220,7 +224,9 @@ namespace guideXOS.OS {
                 "Application factory returned no result", descriptor.AppId);
         }
 
-        private static LaunchResult OpenDocument(string document) {
+        private static LaunchResult OpenDocument(
+                ApplicationShellOpenRequest shellRequest) {
+            string document = shellRequest == null ? null : shellRequest.Target;
             ApplicationAssociation association;
             LaunchRequest request;
             LaunchResult failure;
@@ -237,6 +243,17 @@ namespace guideXOS.OS {
                 return failure ?? LaunchResult.Failed(
                     LaunchErrorCode.UnsupportedTarget,
                     "No file association was found", null);
+            }
+            FileSystemMountLease sourceMountLease =
+                shellRequest.TakeFileSystemMountLease();
+            if (sourceMountLease != null &&
+                    !request.AttachFileSystemMountLease(sourceMountLease)) {
+                sourceMountLease.Dispose();
+                request.Dispose();
+                return LaunchResult.Failed(
+                    LaunchErrorCode.BackendUnavailable,
+                    "The source filesystem mount is no longer available",
+                    request.TargetAppId);
             }
             string documentName = LeafName(document);
             FileAssociationResolution resolution =
@@ -270,6 +287,7 @@ namespace guideXOS.OS {
             } else {
                 opened = LaunchModern(request);
             }
+            if (opened == null || !opened.Success) request.Dispose();
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
             if (request.TargetKind == LaunchRequestTargetKind.GxmDocument) {
                 Program.MarkUefiAppRuntime("FILE_RESULT=path=" + document +
@@ -375,18 +393,7 @@ namespace guideXOS.OS {
                     request.TargetAppId);
             }
             if (target.Operation == ApplicationShellOperation.OpenFolder) {
-                FileSystem folderFileSystem;
-                string folderPath;
-                LaunchResult folderFailure;
-                if (!ComputerFilesApplicationFactory.TryResolveFolderRequest(
-                        request, out folderFileSystem, out folderPath,
-                        out folderFailure)) return folderFailure;
-                if (folderFileSystem == null) return folderFailure ??
-                    LaunchResult.Failed(LaunchErrorCode.ResourceUnavailable,
-                        "C# filesystem binding is unavailable",
-                        request.TargetAppId);
-                if (folderPath != null && folderPath.Length > 0)
-                    folderPath.Dispose();
+                return LaunchPreparedFolderRequest(request);
             }
             if (string.IsNullOrEmpty(request.TargetAppId)) {
                 return LaunchResult.Failed(
@@ -413,25 +420,30 @@ namespace guideXOS.OS {
             if (target == null || target.Operation !=
                     ApplicationShellOperation.OpenFolder || resolution == null ||
                     resolution.ShellId != target.ShellObjectId) {
+                if (request != null) request.Dispose();
                 return LaunchResult.Failed(LaunchErrorCode.UnsupportedTarget,
                     "Resolved shell target is not a verified folder",
                     "gxos.builtin.files");
             }
+            return LaunchPreparedFolderRequest(request);
+        }
 
-            FileSystem folderFileSystem;
-            string fileSystemPath;
-            if (!ComputerFilesApplicationFactory.TryResolveFolderRequest(
-                    request, out folderFileSystem, out fileSystemPath,
-                    out failure)) return failure ?? LaunchResult.Failed(
-                        LaunchErrorCode.ResourceUnavailable,
-                        "C# folder target is unavailable",
-                        request.TargetAppId);
-            if (folderFileSystem == null) return LaunchResult.Failed(
-                LaunchErrorCode.ResourceUnavailable,
-                "C# filesystem binding is unavailable", request.TargetAppId);
-            if (fileSystemPath != null && fileSystemPath.Length > 0)
-                fileSystemPath.Dispose();
-            return LaunchModern(request);
+        private static LaunchResult LaunchPreparedFolderRequest(
+                LaunchRequest request) {
+            LaunchResult failure = null;
+            if (request == null ||
+                    !ComputerFilesApplicationFactory.TryBindFolderRequest(
+                        request, out failure)) {
+                if (request != null) request.Dispose();
+                return failure ?? LaunchResult.Failed(
+                    LaunchErrorCode.ResourceUnavailable,
+                    "C# folder target is unavailable",
+                    request == null ? null : request.TargetAppId);
+            }
+
+            LaunchResult result = LaunchModern(request);
+            if (result == null || !result.Success) request.Dispose();
+            return result;
         }
 
         private static LaunchResult OpenTypedShellAction(string actionId) {
@@ -465,7 +477,7 @@ namespace guideXOS.OS {
 
         private static LaunchResult LaunchGxm(string document,
                                               LaunchRequest request) {
-            byte[] buffer = File.ReadAllBytes(document);
+            byte[] buffer = FactoryRequestOptions.ReadDocumentBytes(request);
             if (buffer == null) {
                 return LaunchResult.Failed(
                     LaunchErrorCode.ResourceUnavailable,

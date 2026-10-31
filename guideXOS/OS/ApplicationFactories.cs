@@ -1006,7 +1006,9 @@ namespace guideXOS.OS {
                 return false;
             }
             if (!string.IsNullOrEmpty(request.Document) &&
-                    !notepad.OpenFile(request.Document)) {
+                    !notepad.OpenFile(request.Document,
+                        request.FileSystemMountLease == null ? null :
+                            request.FileSystemMountLease)) {
                 result = ApplicationFactoryResult.Failed(
                     LaunchErrorCode.ResourceUnavailable,
                     "Notepad document could not be opened", descriptor.AppId);
@@ -1077,7 +1079,7 @@ namespace guideXOS.OS {
             if (!string.IsNullOrEmpty(request.Document)) {
                 FileAssociationResolution association =
                     FileAssociationRegistry.ResolvePath(request.Document);
-                byte[] buffer = File.ReadAllBytes(request.Document);
+                byte[] buffer = FactoryRequestOptions.ReadDocumentBytes(request);
                 if (buffer == null) {
                     result = ApplicationFactoryResult.Failed(
                         LaunchErrorCode.ResourceUnavailable,
@@ -1119,133 +1121,17 @@ namespace guideXOS.OS {
             get { return ApplicationClass.BuiltIn; }
         }
 
+        internal static bool TryBindFolderRequest(LaunchRequest request,
+                out LaunchResult failure) {
+            return ShellFolderMountBinding.TryBindFolderRequest(request,
+                out failure);
+        }
+
         internal static bool TryResolveFolderRequest(LaunchRequest request,
                 out FileSystem fileSystem, out string fileSystemPath,
                 out LaunchResult failure) {
-            fileSystem = null;
-            fileSystemPath = null;
-            failure = null;
-            if (request == null ||
-                    request.TargetKind != LaunchRequestTargetKind.ShellObject ||
-                    request.ShellTargetKind != ApplicationShellTargetKind.FileSystem) {
-                failure = LaunchResult.Failed(
-                    LaunchErrorCode.MalformedRequest,
-                    "Folder activation requires a typed shell filesystem target",
-                    "gxos.builtin.files");
-                return false;
-            }
-            if (request.SourceShellObjectId != "gxos.shell.root" ||
-                    request.TargetAppId != "gxos.builtin.files") {
-                failure = LaunchResult.Failed(
-                    LaunchErrorCode.UnsupportedTarget,
-                    "No verified C# filesystem binding exists for this shell target",
-                    request.TargetAppId);
-                return false;
-            }
-
-            fileSystem = File.Instance;
-            if (fileSystem == null) {
-                failure = LaunchResult.Failed(
-                    LaunchErrorCode.ResourceUnavailable,
-                    "The C# default filesystem is not mounted",
-                    request.TargetAppId);
-                return false;
-            }
-
-            ShellFolderTargetFailure pathFailure;
-            IShellFolderDirectoryProbe probe =
-                new CSharpFileSystemFolderProbe(fileSystem);
-            if (!ShellFolderTargetPath.TryResolveExistingDirectory(
-                    request.ShellTargetValue, probe, out fileSystemPath,
-                    out pathFailure)) {
-                fileSystem = null;
-                LaunchErrorCode errorCode = pathFailure ==
-                    ShellFolderTargetFailure.MalformedRequest
-                    ? LaunchErrorCode.MalformedRequest
-                    : pathFailure == ShellFolderTargetFailure.PermissionDenied
-                        ? LaunchErrorCode.PermissionDenied
-                        : LaunchErrorCode.ResourceUnavailable;
-                failure = LaunchResult.Failed(errorCode,
-                    "C# folder target is malformed or unavailable",
-                    request.TargetAppId);
-                return false;
-            }
-            return true;
-        }
-
-        private sealed class CSharpFileSystemFolderProbe :
-                IShellFolderDirectoryProbe {
-            private readonly FileSystem _fileSystem;
-
-            internal CSharpFileSystemFolderProbe(FileSystem fileSystem) {
-                _fileSystem = fileSystem;
-            }
-
-            public ShellFolderDirectoryProbeResult Inspect(string path) {
-                if (_fileSystem == null || path == null)
-                    return ShellFolderDirectoryProbeResult.Unavailable;
-                if (path.Length == 0) return InspectRoot();
-
-                int slash = path.LastIndexOf('/');
-                string parent = slash < 0 ? string.Empty :
-                    path.Substring(0, slash);
-                string leaf = path.Substring(slash + 1);
-                try {
-                    return InspectChild(parent, leaf);
-                } finally {
-                    if (parent.Length > 0) parent.Dispose();
-                    leaf.Dispose();
-                }
-            }
-
-            private ShellFolderDirectoryProbeResult InspectRoot() {
-                try {
-                    System.Collections.Generic.List<FileInfo> entries =
-                        _fileSystem.GetFiles(string.Empty);
-                    if (entries == null)
-                        return ShellFolderDirectoryProbeResult.Unavailable;
-                    DisposeEntries(entries);
-                    return ShellFolderDirectoryProbeResult.Directory;
-                } catch {
-                    return ShellFolderDirectoryProbeResult.Unavailable;
-                }
-            }
-
-            private ShellFolderDirectoryProbeResult InspectChild(string parent,
-                                                                  string leaf) {
-                System.Collections.Generic.List<FileInfo> entries = null;
-                try {
-                    entries = _fileSystem.GetFiles(parent);
-                    if (entries == null)
-                        return ShellFolderDirectoryProbeResult.Unavailable;
-                    bool found = false;
-                    bool directory = false;
-                    for (int i = 0; i < entries.Count; i++) {
-                        FileInfo entry = entries[i];
-                        if (entry != null && entry.Name == leaf) {
-                            found = true;
-                            directory = entry.Attribute == FileAttribute.Directory;
-                            break;
-                        }
-                    }
-                    if (!found) return ShellFolderDirectoryProbeResult.Missing;
-                    return directory
-                        ? ShellFolderDirectoryProbeResult.Directory
-                        : ShellFolderDirectoryProbeResult.NotDirectory;
-                } catch {
-                    return ShellFolderDirectoryProbeResult.Unavailable;
-                } finally {
-                    if (entries != null) DisposeEntries(entries);
-                }
-            }
-
-            private static void DisposeEntries(
-                    System.Collections.Generic.List<FileInfo> entries) {
-                for (int i = 0; i < entries.Count; i++) {
-                    if (entries[i] != null) entries[i].Dispose();
-                }
-                entries.Dispose();
-            }
+            return ShellFolderMountBinding.TryResolveFolderRequest(request,
+                out fileSystem, out fileSystemPath, out failure);
         }
 
         public override bool TryCreateOrActivate(
@@ -1256,6 +1142,7 @@ namespace guideXOS.OS {
             result = ApplicationFactoryResult.Succeeded(instance);
             ComputerFiles files = null;
             FileSystem ownedFileSystem = null;
+            FileSystemMountLease folderWindowLease = null;
             ApplicationServiceContext serviceContext;
             ApplicationServiceAccess services;
             if (!TryCreateApplicationServices(descriptor, instance,
@@ -1289,12 +1176,25 @@ namespace guideXOS.OS {
                         return false;
                     }
                     try {
+                        FileSystemMountLease instanceLease =
+                            request.FileSystemMountLease;
+                        if (instanceLease == null ||
+                                !instanceLease.TryClone(
+                                    out folderWindowLease)) {
+                            result = ApplicationFactoryResult.Failed(
+                                LaunchErrorCode.BackendUnavailable,
+                                "The selected C# mount could not be retained by the window",
+                                descriptor.AppId);
+                            return false;
+                        }
                         files = new ComputerFiles(
                             FactoryRequestOptions.IntArgument(request, "--x=", 320),
                             FactoryRequestOptions.IntArgument(request, "--y=", 220),
                             540, 400, folderFileSystem,
                             request.ShellTargetValue, folderPath, false,
+                            folderWindowLease,
                             serviceContext, services);
+                        folderWindowLease = null;
                     } finally {
                         if (folderPath != null && folderPath.Length > 0)
                             folderPath.Dispose();
@@ -1332,6 +1232,7 @@ namespace guideXOS.OS {
                 return true;
             } catch {
                 if (files != null) files.Dispose();
+                if (folderWindowLease != null) folderWindowLease.Dispose();
                 if (ownedFileSystem != null) ownedFileSystem.Dispose();
                 result = ApplicationFactoryResult.Failed(
                     LaunchErrorCode.InitializationFailed,
@@ -1659,7 +1560,7 @@ namespace guideXOS.OS {
             }
 
             if (request != null && !string.IsNullOrEmpty(request.Document)) {
-                byte[] buffer = File.ReadAllBytes(request.Document);
+                byte[] buffer = FactoryRequestOptions.ReadDocumentBytes(request);
                 if (buffer == null) {
                     result = ApplicationFactoryResult.Failed(
                         LaunchErrorCode.ResourceUnavailable,
@@ -1680,6 +1581,25 @@ namespace guideXOS.OS {
     }
 
     internal static class FactoryRequestOptions {
+        internal static byte[] ReadDocumentBytes(LaunchRequest request) {
+            if (request == null || string.IsNullOrEmpty(request.Document))
+                return null;
+            FileSystemMountLease lease = request.FileSystemMountLease;
+            if (lease == null) return File.ReadAllBytes(request.Document);
+            FileSystemMountLease operationLease;
+            if (!lease.TryClone(out operationLease) || operationLease == null)
+                return null;
+            try {
+                if (!operationLease.IsValid || operationLease.FileSystem == null)
+                    return null;
+                return operationLease.FileSystem.ReadAllBytes(request.Document);
+            } catch {
+                return null;
+            } finally {
+                operationLease.Dispose();
+            }
+        }
+
         internal static int IntArgument(LaunchRequest request, string prefix,
                                         int fallback) {
             if (request == null || prefix == null) return fallback;

@@ -1,4 +1,5 @@
 using System;
+using guideXOS.FS;
 
 namespace guideXOS.OS {
     /// <summary>
@@ -313,10 +314,12 @@ namespace guideXOS.OS {
 
     public sealed class ApplicationShellOpenRequest {
         public const int MaxTargetLength = 1024;
+        private FileSystemMountLease _fileSystemMountLease;
+        private bool _disposed;
 
         private ApplicationShellOpenRequest(
                 ApplicationShellOpenTargetKind kind, string target)
-            : this(kind, target, null) {
+            : this(kind, target, null, null) {
         }
 
         private ApplicationShellOpenRequest(
@@ -332,6 +335,23 @@ namespace guideXOS.OS {
                     (ShellFolderTargetPath.IsValidShellText(Target) &&
                      ShellFolderTargetPath.IsCanonicalPath(
                          ShellTargetValue)));
+        }
+
+        private ApplicationShellOpenRequest(
+                ApplicationShellOpenTargetKind kind, string target,
+                string shellTargetValue, FileSystemMountLease mountLease) {
+            TargetKind = kind;
+            Target = target ?? string.Empty;
+            ShellTargetValue = shellTargetValue;
+            _fileSystemMountLease = mountLease;
+            IsValid = IsValidKind(kind) &&
+                ApplicationServiceContext.IsBoundedText(
+                    Target, MaxTargetLength, false) &&
+                (kind != ApplicationShellOpenTargetKind.ShellFolder ||
+                    (ShellFolderTargetPath.IsValidShellText(Target) &&
+                     ShellFolderTargetPath.IsCanonicalPath(
+                         ShellTargetValue))) &&
+                (mountLease == null || mountLease.IsValid);
         }
 
         public ApplicationShellOpenTargetKind TargetKind { get; private set; }
@@ -353,6 +373,29 @@ namespace guideXOS.OS {
         public static ApplicationShellOpenRequest ForDocument(string path) {
             return new ApplicationShellOpenRequest(
                 ApplicationShellOpenTargetKind.Document, path);
+        }
+
+        internal static ApplicationShellOpenRequest ForDocumentFromMount(
+                string path, FileSystemMountLease mountLease) {
+            return new ApplicationShellOpenRequest(
+                ApplicationShellOpenTargetKind.Document, path, null,
+                mountLease);
+        }
+
+        internal FileSystemMountLease TakeFileSystemMountLease() {
+            if (_disposed) return null;
+            FileSystemMountLease lease = _fileSystemMountLease;
+            _fileSystemMountLease = null;
+            return lease;
+        }
+
+        public override void Dispose() {
+            if (_disposed) return;
+            _disposed = true;
+            FileSystemMountLease lease = _fileSystemMountLease;
+            _fileSystemMountLease = null;
+            if (lease != null) lease.Dispose();
+            base.Dispose();
         }
 
         public static ApplicationShellOpenRequest ForShellObject(

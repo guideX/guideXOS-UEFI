@@ -12,6 +12,7 @@ namespace guideXOS.DefaultApps {
     internal class Notepad : Window {
         private ApplicationServiceContext _serviceContext;
         private ApplicationServiceAccess _services;
+        private FileSystemMountLease _sourceMountLease;
         private bool _settingsLoaded;
         private string _text;
         private bool _clickLock;
@@ -311,7 +312,27 @@ namespace guideXOS.DefaultApps {
         private void SaveTo(string path) {
             // Save to Desktop.Dir + notes.txt
             byte[] data = new byte[_text.Length]; for (int i = 0; i < _text.Length; i++) data[i] = (byte)_text[i];
-            File.WriteAllBytes(path, data); data.Dispose();
+            FatOperationResult writeResult;
+            FileSystemMountLease operationLease = null;
+            if (_sourceMountLease != null) {
+                if (!_sourceMountLease.TryClone(out operationLease) ||
+                        operationLease == null) {
+                    data.Dispose();
+                    return;
+                }
+                try {
+                    writeResult = operationLease.FileSystem.TryWriteAllBytes(
+                        path, data);
+                } catch {
+                    writeResult = FatOperationResult.WriteFailure;
+                } finally {
+                    operationLease.Dispose();
+                }
+            } else {
+                writeResult = File.TryWriteAllBytes(path, data);
+            }
+            data.Dispose();
+            if (writeResult != FatOperationResult.Success) return;
             _savedPath = path; _fileName = path.Substring(path.LastIndexOf('/') + 1); _dirty = false;
             Title = "Notepad - " + _fileName;
             Desktop.InvalidateDirCache();
@@ -368,6 +389,11 @@ namespace guideXOS.DefaultApps {
 
         private static bool StartsWithFast(string s, string pref) { int l = pref.Length; if (s == null || s.Length < l) return false; for (int i = 0; i < l; i++) if (s[i] != pref[i]) return false; return true; }
         public bool OpenFile(string path) {
+            return OpenFile(path, (FileSystemMountLease)null);
+        }
+
+        internal bool OpenFile(string path,
+                               FileSystemMountLease sourceMountLease) {
             if (string.IsNullOrEmpty(path)) return false;
             string p = path;
             // Desktop.OnClick supplies the current directory in the path,
@@ -376,8 +402,24 @@ namespace guideXOS.DefaultApps {
             // "Scripts/Scripts/...".
             if (!StartsWithFast(p, "/") && !string.IsNullOrEmpty(Desktop.Dir) &&
                 !StartsWithFast(p, Desktop.Dir)) p = Desktop.Dir + p;
-            byte[] data = File.ReadAllBytes(p);
+            FileSystemMountLease operationLease = null;
+            byte[] data;
+            try {
+                if (sourceMountLease == null) {
+                    data = File.ReadAllBytes(p);
+                } else if (!sourceMountLease.TryClone(out operationLease) ||
+                        operationLease == null) {
+                    data = null;
+                } else {
+                    data = operationLease.FileSystem.ReadAllBytes(p);
+                }
+            } catch {
+                data = null;
+            } finally {
+                if (operationLease != null) operationLease.Dispose();
+            }
             if (data == null) return false;
+            _sourceMountLease = sourceMountLease;
             char[] chars = new char[data.Length]; for (int i = 0; i < data.Length; i++) { byte b = data[i]; chars[i] = b >= 32 && b < 127 ? (char)b : (b == 10 ? '\n' : '.'); } _text = new string(chars); data.Dispose(); _savedPath = p; _fileName = p.Substring(p.LastIndexOf('/') + 1); _dirty = false; Title = "Notepad - " + _fileName; RecentManager.AddDocument(p, Icons.DocumentIcon(32));
             _undoStack.Clear(); _redoStack.Clear();
             return true;

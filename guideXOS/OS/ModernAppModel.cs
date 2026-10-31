@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using guideXOS.FS;
 
 namespace guideXOS.OS {
     /// <summary>
@@ -269,6 +270,8 @@ namespace guideXOS.OS {
         public const int MaxTextLength = 1024;
 
         private readonly string[] _arguments;
+        private FileSystemMountLease _fileSystemMountLease;
+        private bool _disposed;
 
         public string TargetAppId { get; private set; }
         public string TargetNameOrAlias { get; private set; }
@@ -311,6 +314,25 @@ namespace guideXOS.OS {
             _arguments = CloneStrings(arguments);
             IsValid = Validate(out string error);
             ValidationError = error;
+        }
+
+        internal FileSystemMountLease FileSystemMountLease {
+            get { return _fileSystemMountLease; }
+        }
+
+        internal bool AttachFileSystemMountLease(
+                FileSystemMountLease lease) {
+            if (_disposed || lease == null || !lease.IsValid ||
+                    _fileSystemMountLease != null) return false;
+            _fileSystemMountLease = lease;
+            return true;
+        }
+
+        internal FileSystemMountLease TakeFileSystemMountLease() {
+            if (_disposed) return null;
+            FileSystemMountLease lease = _fileSystemMountLease;
+            _fileSystemMountLease = null;
+            return lease;
         }
 
         public static LaunchRequest ForName(string name) {
@@ -443,7 +465,12 @@ namespace guideXOS.OS {
         }
 
         public override void Dispose() {
+            if (_disposed) return;
+            _disposed = true;
             _arguments.Dispose();
+            FileSystemMountLease lease = _fileSystemMountLease;
+            _fileSystemMountLease = null;
+            if (lease != null) lease.Dispose();
             base.Dispose();
         }
 
@@ -456,9 +483,11 @@ namespace guideXOS.OS {
         internal LaunchRequest WithTargetAppId(string appId) {
             if (string.IsNullOrEmpty(appId) ||
                 (TargetAppId != null && TargetAppId == appId)) return this;
-            return new LaunchRequest(appId, null, _arguments, Document, Verb,
+            LaunchRequest clone = new LaunchRequest(appId, null, _arguments, Document, Verb,
                 SourceShellObjectId, TargetKind, ShellTargetKind,
                 ShellTargetValue, ActivationIntent);
+            clone._fileSystemMountLease = TakeFileSystemMountLease();
+            return clone;
         }
 
         public static string TargetKindNameOf(LaunchRequestTargetKind kind) {

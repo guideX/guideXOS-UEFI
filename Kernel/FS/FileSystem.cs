@@ -45,7 +45,10 @@ namespace guideXOS.FS {
         /// <summary>
         /// Instance
         /// </summary>
-        public static FileSystem Instance;
+        public static FileSystem Instance {
+            get { return FileSystemMountLifetime.ActiveFileSystem; }
+            set { FileSystemMountLifetime.SetActiveFileSystem(value); }
+        }
         /// <summary>
         /// Get Files
         /// </summary>
@@ -136,6 +139,10 @@ namespace guideXOS.FS {
     /// File System
     /// </summary>
     public abstract class FileSystem {
+        private int _mountLeaseCount;
+        private bool _mountDisposalRequested;
+        private bool _mountDisposed;
+
         /// <summary>
         /// File system type identifier (workaround for type checking)
         /// </summary>
@@ -159,6 +166,60 @@ namespace guideXOS.FS {
             FileSystemType = FS_TYPE_UNKNOWN;
             if (registerAsDefault) File.Instance = this;
         }
+
+        internal bool CanAcquireMountLease {
+            get { return !_mountDisposalRequested && !_mountDisposed; }
+        }
+
+        internal bool IsMountResourceAlive {
+            get { return !_mountDisposed; }
+        }
+
+        internal bool TryAddMountLease() {
+            if (_mountDisposalRequested || _mountDisposed ||
+                    _mountLeaseCount == int.MaxValue) return false;
+            _mountLeaseCount++;
+            return true;
+        }
+
+        internal bool TryAddRetainedMountLease() {
+            if (_mountDisposed || _mountLeaseCount <= 0 ||
+                    _mountLeaseCount == int.MaxValue) return false;
+            _mountLeaseCount++;
+            return true;
+        }
+
+        internal bool ReleaseMountLease() {
+            if (_mountLeaseCount <= 0) return false;
+            _mountLeaseCount--;
+            if (_mountLeaseCount == 0 && _mountDisposalRequested &&
+                    !_mountDisposed) {
+                _mountDisposed = true;
+                return true;
+            }
+            return false;
+        }
+
+        internal bool RequestMountDisposal() {
+            if (_mountDisposed || _mountDisposalRequested) return false;
+            _mountDisposalRequested = true;
+            if (_mountLeaseCount != 0) return false;
+            _mountDisposed = true;
+            return true;
+        }
+
+        internal void DisposeMountResource() {
+            base.Dispose();
+        }
+
+        /// <summary>
+        /// Defers the runtime's object disposal while mount leases are active.
+        /// The final lease release completes a previously requested disposal.
+        /// </summary>
+        public override void Dispose() {
+            FileSystemMountLifetime.RequestDisposal(this);
+        }
+
         /// <summary>
         /// Sector Size
         /// </summary>

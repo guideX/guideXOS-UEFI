@@ -67,6 +67,8 @@ namespace guideXOS.DefaultApps {
 
         private FileSystem _fs;
         private bool _ownsFileSystem;
+        private FileSystemMountLease _mountLease;
+        private bool _requiresMountLease;
         private List<DriveInfo> _drives;
         private readonly ApplicationServiceContext _serviceContext;
         private readonly ApplicationServiceAccess _services;
@@ -114,6 +116,7 @@ namespace guideXOS.DefaultApps {
         internal ComputerFiles(int x, int y, int w, int h, FileSystem fs,
                                string folderTitle, string initialFolderPath,
                                bool ownsFileSystem,
+                               FileSystemMountLease mountLease,
                                ApplicationServiceContext serviceContext,
                                ApplicationServiceAccess services) : base(x, y, w, h)
         {
@@ -121,6 +124,8 @@ namespace guideXOS.DefaultApps {
             _services = services;
             _fs = fs;
             _ownsFileSystem = ownsFileSystem;
+            _mountLease = mountLease;
+            _requiresMountLease = mountLease != null;
             _showDrives = false;
             _entriesCacheFor = null;
             _entriesCache = null;
@@ -258,17 +263,29 @@ namespace guideXOS.DefaultApps {
             string query = _currentPath;
             if (query == null) query = ""; // drives/root
             Busy.Push();
-            if (_fs != null)
-            {
-                _entriesCache = _fs.GetFiles(query);
+            FileSystemMountLease operationLease = null;
+            try {
+                if (_requiresMountLease) {
+                    FileSystemMountLease ownerLease = _mountLease;
+                    if (_fs != null && ownerLease != null &&
+                            ownerLease.TryClone(out operationLease)) {
+                        _entriesCache = _fs.GetFiles(query);
+                    } else {
+                        // A folder window must never fall back to a newly
+                        // selected global mount if its retained mount closed.
+                        _entriesCache = null;
+                    }
+                } else if (_fs != null) {
+                    _entriesCache = _fs.GetFiles(query);
+                } else {
+                    _entriesCache = File.GetFiles(query);
+                }
+            } finally {
+                if (operationLease != null) operationLease.Dispose();
+                Busy.Pop();
             }
-            else
-            {
-                _entriesCache = File.GetFiles(query);
-            }
-            Busy.Pop();
             _entriesCacheFor = _currentPath;
-            _entriesDirty = false;
+            _entriesDirty = _requiresMountLease && _entriesCache == null;
         }
 
         private void MarkEntriesDirty() { _entriesDirty = true; }
@@ -354,17 +371,27 @@ namespace guideXOS.DefaultApps {
                     _services.Shell == null || string.IsNullOrEmpty(path)) {
                 return false;
             }
-            ApplicationShellOpenRequest request =
-                ApplicationShellOpenRequest.ForDocument(path);
-            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
-                _services.Shell.Begin(_serviceContext, request);
-            if (!begun.Succeeded) return false;
-            ApplicationServiceResult<
-                    ApplicationServiceRequestStatus<ApplicationShellResult>> observed =
-                _services.Shell.Observe(_serviceContext, begun.Value);
-            bool success = observed.Succeeded && observed.Value != null &&
-                observed.Value.IsTerminal && observed.Value.Value != null &&
-                observed.Value.Value.Succeeded;
+            FileSystemMountLease documentLease = null;
+            if (_mountLease != null &&
+                    !_mountLease.TryClone(out documentLease)) return false;
+            ApplicationShellOpenRequest request = documentLease == null
+                ? ApplicationShellOpenRequest.ForDocument(path)
+                : ApplicationShellOpenRequest.ForDocumentFromMount(path,
+                    documentLease);
+            bool success = false;
+            try {
+                ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                    _services.Shell.Begin(_serviceContext, request);
+                if (!begun.Succeeded) return false;
+                ApplicationServiceResult<
+                        ApplicationServiceRequestStatus<ApplicationShellResult>> observed =
+                    _services.Shell.Observe(_serviceContext, begun.Value);
+                success = observed.Succeeded && observed.Value != null &&
+                    observed.Value.IsTerminal && observed.Value.Value != null &&
+                    observed.Value.Value.Succeeded;
+            } finally {
+                request.Dispose();
+            }
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
             Program.MarkUefiAppRuntime("FILES_SHELL_DOCUMENT=" +
                 (success ? "PASS" : "FAIL"));
@@ -888,6 +915,10 @@ namespace guideXOS.DefaultApps {
                 _fs.Dispose();
                 _fs = null;
             }
+            FileSystemMountLease mountLease = _mountLease;
+            _mountLease = null;
+            if (mountLease != null) mountLease.Dispose();
+            _fs = null;
             
             base.Dispose();
         }

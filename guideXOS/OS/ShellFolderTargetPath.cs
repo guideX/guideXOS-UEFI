@@ -4,14 +4,21 @@ namespace guideXOS.OS {
         Missing,
         NotDirectory,
         PermissionDenied,
-        Unavailable
+        MountUnavailable,
+        MountInvalidated,
+        IoFailure,
+        BackendUnavailable
     }
 
     internal enum ShellFolderTargetFailure {
         None,
         MalformedRequest,
         ResourceUnavailable,
-        PermissionDenied
+        PermissionDenied,
+        MountUnavailable,
+        MountInvalidated,
+        IoFailure,
+        BackendUnavailable
     }
 
     internal interface IShellFolderDirectoryProbe {
@@ -81,7 +88,7 @@ namespace guideXOS.OS {
                 return false;
             }
             if (probe == null) {
-                failure = ShellFolderTargetFailure.ResourceUnavailable;
+                failure = ShellFolderTargetFailure.MountUnavailable;
                 fileSystemPath = null;
                 return false;
             }
@@ -90,18 +97,25 @@ namespace guideXOS.OS {
             try {
                 result = probe.Inspect(fileSystemPath);
             } catch {
-                result = ShellFolderDirectoryProbeResult.Unavailable;
+                result = ShellFolderDirectoryProbeResult.BackendUnavailable;
             }
 
             if (result == ShellFolderDirectoryProbeResult.Directory) return true;
             if (result == ShellFolderDirectoryProbeResult.PermissionDenied) {
                 failure = ShellFolderTargetFailure.PermissionDenied;
             } else if (result == ShellFolderDirectoryProbeResult.Missing ||
-                    result == ShellFolderDirectoryProbeResult.NotDirectory ||
-                    result == ShellFolderDirectoryProbeResult.Unavailable) {
+                    result == ShellFolderDirectoryProbeResult.NotDirectory) {
                 failure = ShellFolderTargetFailure.ResourceUnavailable;
+            } else if (result == ShellFolderDirectoryProbeResult.MountUnavailable) {
+                failure = ShellFolderTargetFailure.MountUnavailable;
+            } else if (result == ShellFolderDirectoryProbeResult.MountInvalidated) {
+                failure = ShellFolderTargetFailure.MountInvalidated;
+            } else if (result == ShellFolderDirectoryProbeResult.IoFailure) {
+                failure = ShellFolderTargetFailure.IoFailure;
+            } else if (result == ShellFolderDirectoryProbeResult.BackendUnavailable) {
+                failure = ShellFolderTargetFailure.BackendUnavailable;
             } else {
-                failure = ShellFolderTargetFailure.ResourceUnavailable;
+                failure = ShellFolderTargetFailure.BackendUnavailable;
             }
             fileSystemPath = null;
             return false;

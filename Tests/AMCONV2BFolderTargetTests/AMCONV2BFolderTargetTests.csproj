@@ -4,10 +4,14 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
+    <DefineConstants>GUIDEXOS_HOSTED_TESTS</DefineConstants>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="MountLifetimeTestStubs.cs" />
     <Compile Include="../../guideXOS/OS/ShellFolderTargetPath.cs" Link="ShellFolderTargetPath.cs" />
+    <Compile Include="../../guideXOS/OS/ShellFolderMountBinding.cs" Link="ShellFolderMountBinding.cs" />
+    <Compile Include="../../Kernel/FS/FileSystemMountLifetime.cs" Link="FileSystemMountLifetime.cs" />
   </ItemGroup>
 </Project>
