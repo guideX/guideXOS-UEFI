@@ -10,8 +10,8 @@ namespace guideXOS.DefaultApps {
     /// </summary>
     internal class TTFFontDemo : Window {
         private TrueTypeFont _ttfFont12;
-        private TrueTypeFont _ttfFont16;
-        private TrueTypeFont _ttfFont24;
+        private TrueTypeFont _ttfFont20;
+        private TrueTypeFont _ttfFont32;
         private bool _fontsLoaded = false;
         private string _errorMessage = "";
         
@@ -27,14 +27,22 @@ namespace guideXOS.DefaultApps {
             try {
                 //Console.WriteLine("[TTF Demo] Loading Roboto fonts...");
                 
-                // Try to load Roboto-Regular.ttf at different sizes
+                // Every size is rerasterized from the same packaged outline
+                // source. No pre-generated PNG atlas is used for these samples.
                 byte[] robotoData = File.ReadAllBytes("Fonts/roboto/Roboto-Regular.ttf");
                 
                 if (robotoData != null && robotoData.Length > 0) {
                     _ttfFont12 = new TrueTypeFont(robotoData, 12);
-                    _ttfFont16 = new TrueTypeFont(robotoData, 16);
-                    _ttfFont24 = new TrueTypeFont(robotoData, 24);
-                    _fontsLoaded = true;
+                    _ttfFont20 = new TrueTypeFont(robotoData, 20);
+                    _ttfFont32 = new TrueTypeFont(robotoData, 32);
+                    _fontsLoaded = _ttfFont12.IsValid &&
+                                   _ttfFont20.IsValid &&
+                                   _ttfFont32.IsValid;
+                    if (!_fontsLoaded) {
+                        TrueTypeFont failedFont = !_ttfFont12.IsValid ? _ttfFont12 :
+                            !_ttfFont20.IsValid ? _ttfFont20 : _ttfFont32;
+                        _errorMessage = "Roboto TTF rejected: " + failedFont.LoadFailure;
+                    }
                     //Console.WriteLine("[TTF Demo] Successfully loaded Roboto fonts!");
                 } else {
                     _errorMessage = "Could not read Roboto-Regular.ttf";
@@ -70,35 +78,35 @@ namespace guideXOS.DefaultApps {
             
             // Title using bitmap font
             WindowManager.font.DrawString(cx + 20, yOffset, "TrueType Font Rendering Test");
-            yOffset += 40;
+            yOffset += 28;
             
             try {
-                // Draw samples at different sizes
-                WindowManager.font.DrawString(cx + 20, yOffset, "12pt Roboto:");
-                yOffset += 25;
-                _ttfFont12.DrawString(Framebuffer.Graphics, cx + 40, yOffset, "The quick brown fox jumps over the lazy dog", 0xFFFFFFFF);
-                yOffset += 35;
-                
-                WindowManager.font.DrawString(cx + 20, yOffset, "16pt Roboto:");
-                yOffset += 25;
-                _ttfFont16.DrawString(Framebuffer.Graphics, cx + 40, yOffset, "The quick brown fox jumps over the lazy dog", 0xFFFFFFFF);
-                yOffset += 45;
-                
-                WindowManager.font.DrawString(cx + 20, yOffset, "24pt Roboto:");
-                yOffset += 30;
-                _ttfFont24.DrawString(Framebuffer.Graphics, cx + 40, yOffset, "The quick brown fox", 0xFFFFFFFF);
-                yOffset += 60;
-                
-                // Show character samples
-                WindowManager.font.DrawString(cx + 20, yOffset, "Character samples:");
-                yOffset += 25;
-                
-                string samples = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-                _ttfFont16.DrawString(Framebuffer.Graphics, cx + 40, yOffset, samples, 0xFFFFFFFF);
-                yOffset += 35;
-                
-                string numbers = "0123456789 !@#$%^&*()_+-=[]{}|;:',.<>?/";
-                _ttfFont16.DrawString(Framebuffer.Graphics, cx + 40, yOffset, numbers, 0xFFFFFFFF);
+                WindowManager.font.DrawString(cx + 20, yOffset, "12 px Roboto Regular");
+                yOffset += 19;
+                _ttfFont12.DrawString(Framebuffer.Graphics, cx + 32, yOffset,
+                    "AaZz 0123456789 !@#$%&*()?,.", 0xFFF5F5F5);
+                yOffset += 28;
+
+                WindowManager.font.DrawString(cx + 20, yOffset, "20 px Roboto Regular");
+                yOffset += 19;
+                _ttfFont20.DrawString(Framebuffer.Graphics, cx + 32, yOffset,
+                    "The quick brown fox jumps over the lazy dog.", 0xFFFFFFFF);
+                yOffset += 32;
+
+                WindowManager.font.DrawString(cx + 20, yOffset, "32 px Roboto Regular");
+                yOffset += 19;
+                _ttfFont32.DrawString(Framebuffer.Graphics, cx + 32, yOffset,
+                    "TrueType outlines", 0xFFFFFFFF);
+                yOffset += 43;
+
+                WindowManager.font.DrawString(cx + 20, yOffset, "Unicode: café, Ω, £");
+                _ttfFont20.DrawString(Framebuffer.Graphics, cx + 32, yOffset + 18,
+                    "café Ω £", 0xFFFFFFFF);
+                yOffset += 54;
+
+                WindowManager.font.DrawString(cx + 20, yOffset, "Repeated redraws use the glyph cache");
+                _ttfFont12.DrawString(Framebuffer.Graphics, cx + cw - 170, yOffset + 18,
+                    "right-edge clipping sample", 0xFFFFFFFF);
                 
             } catch {
                 WindowManager.font.DrawString(cx + 20, yOffset, "Rendering error occurred");
