@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <AssemblyName>guideXOS.NativeAotGcEhFixture</AssemblyName>
+    <RootNamespace>GuideXos.NativeAotGcEhFixture</RootNamespace>
+    <TargetFramework>net9.0</TargetFramework>
+    <RuntimeIdentifier>guidexos-x64</RuntimeIdentifier>
+    <RuntimeFrameworkVersion>9.0.0</RuntimeFrameworkVersion>
+    <TargetLatestRuntimePatch>false</TargetLatestRuntimePatch>
+    <UseAppHost>false</UseAppHost>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PublishAot>true</PublishAot>
+    <SelfContained>true</SelfContained>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TrimMode>link</TrimMode>
+    <IlcOptimizationPreference>Speed</IlcOptimizationPreference>
+    <IlcGenerateMapFile>true</IlcGenerateMapFile>
+    <IlcDisableReflection>true</IlcDisableReflection>
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <StripSymbols>true</StripSymbols>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <IlcUseEnvironmentalTools>true</IlcUseEnvironmentalTools>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
+    <RuntimeIdentifierGraphPath>$(MSBuildProjectDirectory)\..\..\..\Tools\Phase22\runtime-identifier.graph.json</RuntimeIdentifierGraphPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <LinkerArg Include="/base:0x0000401000000000" />
+    <LinkerArg Include="/fixed" />
+    <PackageReference Include="Microsoft.DotNet.ILCompiler" Version="9.0.0" />
+<NativeLibrary Include="$(Phase23R4SyscallObject)" Condition="'$(Phase23R4SyscallObject)' != ''" />
+  </ItemGroup>
+  <ItemGroup>
+    <KnownILCompilerPack Update="Microsoft.DotNet.ILCompiler">
+      <ILCompilerRuntimeIdentifiers>%(ILCompilerRuntimeIdentifiers);guidexos-x64</ILCompilerRuntimeIdentifiers>
+    </KnownILCompilerPack>
+    <KnownRuntimePack Update="Microsoft.NETCore.App">
+      <RuntimePackRuntimeIdentifiers>%(RuntimePackRuntimeIdentifiers);guidexos-x64</RuntimePackRuntimeIdentifiers>
+    </KnownRuntimePack>
+  </ItemGroup>
+</Project>
