@@ -4,7 +4,7 @@ $testRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $source = Join-Path $testRoot 'x64_unwind_tests.cpp'
 $compiler = (Get-Command 'g++.exe' -ErrorAction Stop).Source
 $buildRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
-    'guideXOS_P23R2_unwind_' + [guid]::NewGuid().ToString('N'))
+    'guideXOS_P23R3_unwind_' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $buildRoot | Out-Null
 
 $target = & $compiler -dumpmachine

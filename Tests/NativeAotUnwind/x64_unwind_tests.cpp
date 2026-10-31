@@ -5,7 +5,9 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <initializer_list>
 #include <iostream>
+#include <limits>
 #include <string>
 
 #if defined(_WIN32) && defined(GUIDEXOS_UNWIND_WINDOWS_REFERENCE)
@@ -40,7 +42,7 @@ constexpr std::uint32_t kUnwindInfoRva = 0x300;
 
 struct Fixture {
     alignas(16) std::array<std::uint8_t, 0x1000> Image{};
-    alignas(16) std::array<std::uint8_t, 0x400> Stack{};
+    alignas(16) std::array<std::uint8_t, 0x100000> Stack{};
 
     std::uint64_t ImageBase() const {
         return reinterpret_cast<std::uintptr_t>(Image.data());
@@ -60,6 +62,12 @@ struct Fixture {
 
     void Put8(std::size_t offset, std::uint8_t value) {
         Image[offset] = value;
+    }
+
+    void PutCodeBytes(std::size_t offset,
+                      std::initializer_list<std::uint8_t> bytes) {
+        for (std::uint8_t byte : bytes)
+            Put8(offset++, byte);
     }
 
     void Put16(std::size_t offset, std::uint16_t value) {
@@ -149,6 +157,13 @@ Status Unwind(Fixture& fixture, std::uint32_t entryRva,
 }
 
 #if GUIDEXOS_HAS_WINDOWS_UNWIND_REFERENCE
+void SeedCodeManagerContextPointers(Context& context,
+                                    ContextPointers& pointers) {
+    constexpr std::uint8_t nonvolatileRegisters[] = {3, 5, 6, 7, 12, 13, 14, 15};
+    for (std::uint8_t reg : nonvolatileRegisters)
+        pointers.IntegerContext[reg] = detail::IntegerRegister(&context, reg);
+}
+
 bool CompareWindowsReference(Fixture& fixture, std::uint32_t beginRva,
                              std::uint32_t endRva, std::uint32_t unwindRva,
                              std::uint64_t controlPc,
@@ -156,10 +171,12 @@ bool CompareWindowsReference(Fixture& fixture, std::uint32_t beginRva,
                              bool compareContextPointers = true) {
     Context actual = original;
     ContextPointers actualPointers{};
+    SeedCodeManagerContextPointers(actual, actualPointers);
     UnwindResult actualResult{};
-    const Status status = Unwind(
-        fixture, kFunctionEntryRva, controlPc, &actual,
-        &actualPointers, &actualResult);
+    const ExecutableCodeRange codeRange{beginRva, endRva};
+    const Status status = UnwindFrame(
+        fixture.ImageSpan(), codeRange, fixture.StackSpan(),
+        kFunctionEntryRva, controlPc, &actual, &actualPointers, &actualResult);
     if (status != Status::Success) {
         std::cerr << "    bounded evaluator returned " << static_cast<int>(status)
                   << " during Windows comparison\n";
@@ -196,6 +213,12 @@ bool CompareWindowsReference(Fixture& fixture, std::uint32_t beginRva,
     PVOID handlerData = nullptr;
     DWORD64 establisher = 0;
     KNONVOLATILE_CONTEXT_POINTERS referencePointers{};
+    constexpr std::uint8_t nonvolatileRegisters[] = {3, 5, 6, 7, 12, 13, 14, 15};
+    Context* referenceContext = reinterpret_cast<Context*>(&reference);
+    for (std::uint8_t reg : nonvolatileRegisters) {
+        referencePointers.IntegerContext[reg] = reinterpret_cast<PDWORD64>(
+            detail::IntegerRegister(referenceContext, reg));
+    }
     RtlVirtualUnwind(UNW_FLAG_NHANDLER, fixture.ImageBase(), controlPc,
                      &function, &reference, &handlerData, &establisher,
                      &referencePointers);
@@ -215,9 +238,17 @@ bool CompareWindowsReference(Fixture& fixture, std::uint32_t beginRva,
     }
     bool pointersMatch = true;
     for (std::size_t index = 0; index < 16; ++index) {
-        const bool integerMatches =
-            reinterpret_cast<void*>(actualPointers.IntegerContext[index]) ==
-            reinterpret_cast<void*>(referencePointers.IntegerContext[index]);
+        const std::uint64_t* actualRegister = detail::IntegerRegister(
+            &actual, static_cast<std::uint8_t>(index));
+        const std::uint64_t* referenceRegister = detail::IntegerRegister(
+            referenceContext, static_cast<std::uint8_t>(index));
+        const bool actualIsContext = actualPointers.IntegerContext[index] == actualRegister;
+        const bool referenceIsContext = reinterpret_cast<std::uint64_t*>(
+            referencePointers.IntegerContext[index]) == referenceRegister;
+        const bool integerMatches = actualIsContext || referenceIsContext
+            ? actualIsContext && referenceIsContext
+            : reinterpret_cast<void*>(actualPointers.IntegerContext[index]) ==
+              reinterpret_cast<void*>(referencePointers.IntegerContext[index]);
         const bool floatingMatches = actualPointers.FloatingContext[index] ==
             reinterpret_cast<void*>(referencePointers.FloatingContext[index]);
         if (compareContextPointers && (!integerMatches || !floatingMatches)) {
@@ -242,6 +273,67 @@ bool CompareWindowsReference(Fixture& fixture, std::uint32_t beginRva,
            actual.Xmm[15].Low == reference.FltSave.XmmRegisters[15].Low &&
            actual.Xmm[15].High == static_cast<std::uint64_t>(
                reference.FltSave.XmmRegisters[15].High);
+}
+
+bool WindowsFarSavePointerSetupBehavior(Fixture& fixture,
+                                        std::uint32_t beginRva,
+                                        std::uint32_t endRva,
+                                        std::uint32_t unwindRva,
+                                        const Context& original,
+                                        std::size_t savedSlotOffset,
+                                        std::uint64_t expectedR13) {
+    RUNTIME_FUNCTION function{};
+    function.BeginAddress = beginRva;
+    function.EndAddress = endRva;
+    function.UnwindData = unwindRva;
+    CONTEXT emptyReference{};
+    emptyReference.Rax = original.Rax;
+    emptyReference.Rbx = original.Rbx;
+    emptyReference.Rbp = original.Rbp;
+    emptyReference.Rsi = original.Rsi;
+    emptyReference.Rdi = original.Rdi;
+    emptyReference.R12 = original.R12;
+    emptyReference.R13 = original.R13;
+    emptyReference.R14 = original.R14;
+    emptyReference.R15 = original.R15;
+    emptyReference.Rsp = original.Rsp;
+    emptyReference.Rip = original.Rip;
+    emptyReference.ContextFlags = CONTEXT_FULL;
+    KNONVOLATILE_CONTEXT_POINTERS emptyPointers{};
+    PVOID emptyHandlerData = nullptr;
+    DWORD64 emptyEstablisher = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, fixture.ImageBase(), original.Rip,
+                     &function, &emptyReference, &emptyHandlerData,
+                     &emptyEstablisher, &emptyPointers);
+    ++g_windowsReferenceCount;
+
+    CONTEXT reference{};
+    reference.Rax = original.Rax;
+    reference.Rbx = original.Rbx;
+    reference.Rbp = original.Rbp;
+    reference.Rsi = original.Rsi;
+    reference.Rdi = original.Rdi;
+    reference.R12 = original.R12;
+    reference.R13 = original.R13;
+    reference.R14 = original.R14;
+    reference.R15 = original.R15;
+    reference.Rsp = original.Rsp;
+    reference.Rip = original.Rip;
+    reference.ContextFlags = CONTEXT_FULL;
+    KNONVOLATILE_CONTEXT_POINTERS pointers{};
+    pointers.IntegerContext[13] = &reference.R13;
+    PVOID handlerData = nullptr;
+    DWORD64 establisher = 0;
+    RtlVirtualUnwind(UNW_FLAG_NHANDLER, fixture.ImageBase(), original.Rip,
+                     &function, &reference, &handlerData, &establisher,
+                     &pointers);
+    ++g_windowsReferenceCount;
+    return emptyReference.R13 == expectedR13 &&
+           emptyPointers.IntegerContext[13] == nullptr &&
+           reference.R13 == expectedR13 &&
+           pointers.IntegerContext[13] == &reference.R13 &&
+           pointers.IntegerContext[13] != reinterpret_cast<PDWORD64>(
+               fixture.Stack.data() + savedSlotOffset);
 }
 #endif
 
@@ -321,6 +413,39 @@ int main() {
         original.Rip = fixture.ImageBase() + kFunctionBeginRva + 0x10;
         CHECK(CompareWindowsReference(fixture, kFunctionBeginRva,
               kFunctionEndRva, kUnwindInfoRva, original.Rip, original));
+#endif
+        return true;
+    });
+
+    Run("canonical far save beyond scaled unwind offset", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(6, 8);
+        fixture.PutCode(kUnwindInfoRva, 0, 5, 5, 13); // R13 at RSP + 0x80000
+        fixture.Put32(kUnwindInfoRva + 6, 0x80000);
+        fixture.PutCode(kUnwindInfoRva, 3, 1, 1, 1); // allocation 0x80020
+        fixture.Put32(kUnwindInfoRva + 12, 0x80020);
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp + 0x80000, 0x9988776655443322ull);
+        fixture.PutStack64(sp + 0x80020, 0x14000ABD1ull);
+        Context context = fixture.MakeContext(sp);
+        ContextPointers pointers{};
+        UnwindResult result{};
+        CHECK(Unwind(fixture, kFunctionEntryRva, context.Rip, &context,
+                     &pointers, &result) == Status::Success);
+        CHECK(context.R13 == 0x9988776655443322ull);
+        CHECK(pointers.IntegerContext[13] == reinterpret_cast<std::uint64_t*>(
+              fixture.Stack.data() + sp + 0x80000));
+        CHECK(*pointers.IntegerContext[13] == context.R13);
+        CHECK(context.Rsp == fixture.StackBase() + sp + 0x80028);
+        CHECK(context.Rip == 0x14000ABD1ull);
+#if GUIDEXOS_HAS_WINDOWS_UNWIND_REFERENCE
+        Context original = fixture.MakeContext(sp);
+        original.Rip = fixture.ImageBase() + kFunctionBeginRva + 0x10;
+        CHECK(CompareWindowsReference(fixture, kFunctionBeginRva,
+              kFunctionEndRva, kUnwindInfoRva, original.Rip, original, false));
+        CHECK(WindowsFarSavePointerSetupBehavior(
+              fixture, kFunctionBeginRva, kFunctionEndRva, kUnwindInfoRva,
+              original, sp + 0x80000, 0x9988776655443322ull));
 #endif
         return true;
     });
@@ -470,11 +595,15 @@ int main() {
         CHECK(context.Rip == 0x14000ABCFull);
         CHECK(pointers.IntegerContext[13] ==
               reinterpret_cast<std::uint64_t*>(fixture.Stack.data() + sp + 0x120));
+        CHECK(*pointers.IntegerContext[13] == context.R13);
 #if GUIDEXOS_HAS_WINDOWS_UNWIND_REFERENCE
         Context original = fixture.MakeContext(sp);
         original.Rip = fixture.ImageBase() + kFunctionBeginRva + 0x10;
         CHECK(CompareWindowsReference(fixture, kFunctionBeginRva,
               kFunctionEndRva, kUnwindInfoRva, original.Rip, original, false));
+        CHECK(WindowsFarSavePointerSetupBehavior(
+              fixture, kFunctionBeginRva, kFunctionEndRva, kUnwindInfoRva,
+              original, sp + 0x120, 0x8877665544332211ull));
 #endif
         return true;
     });
@@ -656,6 +785,536 @@ int main() {
         CHECK(std::memcmp(&context, &before, sizeof(context)) == 0);
         CHECK(std::memcmp(&pointers, &pointersBefore, sizeof(pointers)) == 0);
         CHECK(result.EstablisherFrame == 0x1111);
+        return true;
+    });
+
+    Run("compiler-shaped epilogue restores allocation and nonvolatile pops", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(8, 16);
+        fixture.PutCode(kUnwindInfoRva, 0, 16, 2, 3); // allocate 32
+        fixture.PutCode(kUnwindInfoRva, 1, 14, 0, 15);
+        fixture.PutCode(kUnwindInfoRva, 2, 12, 0, 14);
+        fixture.PutCode(kUnwindInfoRva, 3, 10, 0, 13);
+        fixture.PutCode(kUnwindInfoRva, 4, 8, 0, 12);
+        fixture.PutCode(kUnwindInfoRva, 5, 6, 0, 7);  // RDI
+        fixture.PutCode(kUnwindInfoRva, 6, 4, 0, 6);  // RSI
+        fixture.PutCode(kUnwindInfoRva, 7, 2, 0, 5);  // RBP
+        fixture.PutCodeBytes(0x220, {
+            0x48, 0x83, 0xC4, 0x20, // add rsp, 32
+            0x41, 0x5F,             // pop r15
+            0x41, 0x5E,             // pop r14
+            0x41, 0x5D,             // pop r13
+            0x41, 0x5C,             // pop r12
+            0x5F,                   // pop rdi
+            0x5E,                   // pop rsi
+            0x5D,                   // pop rbp
+            0xC3                    // ret
+        });
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp + 0x20, 0xF150000000000015ull);
+        fixture.PutStack64(sp + 0x28, 0xF140000000000014ull);
+        fixture.PutStack64(sp + 0x30, 0xF130000000000013ull);
+        fixture.PutStack64(sp + 0x38, 0xF120000000000012ull);
+        fixture.PutStack64(sp + 0x40, 0xF070000000000007ull);
+        fixture.PutStack64(sp + 0x48, 0xF060000000000006ull);
+        fixture.PutStack64(sp + 0x50, 0xF050000000000005ull);
+        fixture.PutStack64(sp + 0x58, 0x140012345ull);
+        Context context = fixture.MakeContext(sp);
+        context.Rip = fixture.ImageBase() + 0x220;
+        ContextPointers pointers{};
+        UnwindResult result{};
+        const ExecutableCodeRange codeRange{0x200, 0x240};
+        CHECK(UnwindFrame(fixture.ImageSpan(), codeRange, fixture.StackSpan(),
+              kFunctionEntryRva, context.Rip, &context, &pointers, &result) ==
+              Status::Success);
+        CHECK(context.R15 == 0xF150000000000015ull);
+        CHECK(context.R14 == 0xF140000000000014ull);
+        CHECK(context.R13 == 0xF130000000000013ull);
+        CHECK(context.R12 == 0xF120000000000012ull);
+        CHECK(context.Rdi == 0xF070000000000007ull);
+        CHECK(context.Rsi == 0xF060000000000006ull);
+        CHECK(context.Rbp == 0xF050000000000005ull);
+        CHECK(context.Rip == 0x140012345ull);
+        CHECK(context.Rsp == fixture.StackBase() + sp + 0x60);
+        CHECK(pointers.IntegerContext[15] == reinterpret_cast<std::uint64_t*>(
+              fixture.Stack.data() + sp + 0x20));
+        CHECK(pointers.IntegerContext[14] == reinterpret_cast<std::uint64_t*>(
+              fixture.Stack.data() + sp + 0x28));
+        CHECK(pointers.IntegerContext[13] == reinterpret_cast<std::uint64_t*>(
+              fixture.Stack.data() + sp + 0x30));
+        CHECK(pointers.IntegerContext[12] == reinterpret_cast<std::uint64_t*>(
+              fixture.Stack.data() + sp + 0x38));
+        CHECK(pointers.IntegerContext[7] == reinterpret_cast<std::uint64_t*>(
+              fixture.Stack.data() + sp + 0x40));
+        CHECK(pointers.IntegerContext[6] == reinterpret_cast<std::uint64_t*>(
+              fixture.Stack.data() + sp + 0x48));
+        CHECK(pointers.IntegerContext[5] == reinterpret_cast<std::uint64_t*>(
+              fixture.Stack.data() + sp + 0x50));
+        CHECK(result.EstablisherFrame == fixture.StackBase() + sp);
+#if GUIDEXOS_HAS_WINDOWS_UNWIND_REFERENCE
+        Context original = fixture.MakeContext(sp);
+        original.Rip = fixture.ImageBase() + 0x220;
+        CHECK(CompareWindowsReference(fixture, kFunctionBeginRva,
+              kFunctionEndRva, kUnwindInfoRva, original.Rip, original));
+#endif
+        return true;
+    });
+
+    Run("epilogue beginning at an intermediate pop", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(5, 8);
+        fixture.PutCode(kUnwindInfoRva, 0, 8, 2, 3);
+        fixture.PutCode(kUnwindInfoRva, 1, 6, 0, 15);
+        fixture.PutCode(kUnwindInfoRva, 2, 4, 0, 14);
+        fixture.PutCode(kUnwindInfoRva, 3, 2, 0, 13);
+        fixture.PutCode(kUnwindInfoRva, 4, 1, 0, 12);
+        fixture.PutCodeBytes(0x220, {
+            0x48, 0x83, 0xC4, 0x20, 0x41, 0x5F, 0x41, 0x5E,
+            0x41, 0x5D, 0x41, 0x5C, 0xC3
+        });
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp + 0x20, 0xF150000000000015ull);
+        fixture.PutStack64(sp + 0x28, 0xF140000000000014ull);
+        fixture.PutStack64(sp + 0x30, 0xF130000000000013ull);
+        fixture.PutStack64(sp + 0x38, 0xF120000000000012ull);
+        fixture.PutStack64(sp + 0x40, 0x140012346ull);
+        Context context = fixture.MakeContext(sp + 0x30);
+        context.Rip = fixture.ImageBase() + 0x228; // pop r13; R15 and R14 ran
+        context.R15 = 0xF150000000000015ull;
+        context.R14 = 0xF140000000000014ull;
+        ContextPointers pointers{};
+        pointers.IntegerContext[15] = &context.R15;
+        pointers.IntegerContext[14] = &context.R14;
+        UnwindResult result{};
+        const ExecutableCodeRange codeRange{0x200, 0x240};
+        CHECK(UnwindFrame(fixture.ImageSpan(), codeRange, fixture.StackSpan(),
+              kFunctionEntryRva, context.Rip, &context, &pointers, &result) ==
+              Status::Success);
+        CHECK(context.R15 == 0xF150000000000015ull);
+        CHECK(context.R14 == 0xF140000000000014ull);
+        CHECK(context.R13 == 0xF130000000000013ull);
+        CHECK(context.R12 == 0xF120000000000012ull);
+        CHECK(context.Rsp == fixture.StackBase() + sp + 0x48);
+        CHECK(context.Rip == 0x140012346ull);
+        CHECK(pointers.IntegerContext[15] == &context.R15);
+        CHECK(pointers.IntegerContext[14] == &context.R14);
+#if GUIDEXOS_HAS_WINDOWS_UNWIND_REFERENCE
+        Context original = fixture.MakeContext(sp + 0x30);
+        original.Rip = fixture.ImageBase() + 0x228;
+        original.R15 = 0xF150000000000015ull;
+        original.R14 = 0xF140000000000014ull;
+        CHECK(CompareWindowsReference(fixture, kFunctionBeginRva,
+              kFunctionEndRva, kUnwindInfoRva, original.Rip, original));
+#endif
+        return true;
+    });
+
+    Run("frame-pointer epilogue restores stack with LEA", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(3, 5, 0x25);
+        fixture.PutCode(kUnwindInfoRva, 0, 5, 3, 0); // set RBP
+        fixture.PutCode(kUnwindInfoRva, 1, 3, 2, 3); // allocate 32
+        fixture.PutCode(kUnwindInfoRva, 2, 1, 0, 5); // push RBP
+        fixture.PutCodeBytes(0x220, {
+            0x48, 0x8D, 0x65, 0x00, // lea rsp, [rbp]
+            0x5D,                   // pop rbp
+            0xC3                    // ret
+        });
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp + 0x20, 0xBEEFBEEFBEEFBEEFll);
+        fixture.PutStack64(sp + 0x28, 0x140012347ull);
+        Context context = fixture.MakeContext(sp - 0x80);
+        context.Rbp = fixture.StackBase() + sp + 0x20;
+        context.Rip = fixture.ImageBase() + 0x220;
+        ContextPointers pointers{};
+        UnwindResult result{};
+        const ExecutableCodeRange codeRange{0x200, 0x240};
+        CHECK(UnwindFrame(fixture.ImageSpan(), codeRange, fixture.StackSpan(),
+              kFunctionEntryRva, context.Rip, &context, &pointers, &result) ==
+              Status::Success);
+        CHECK(context.Rbp == 0xBEEFBEEFBEEFBEEFll);
+        CHECK(pointers.IntegerContext[5] == reinterpret_cast<std::uint64_t*>(
+              fixture.Stack.data() + sp + 0x20));
+        CHECK(context.Rip == 0x140012347ull);
+        CHECK(context.Rsp == fixture.StackBase() + sp + 0x30);
+#if GUIDEXOS_HAS_WINDOWS_UNWIND_REFERENCE
+        Context original = fixture.MakeContext(sp - 0x80);
+        original.Rbp = fixture.StackBase() + sp + 0x20;
+        original.Rip = fixture.ImageBase() + 0x220;
+        CHECK(CompareWindowsReference(fixture, kFunctionBeginRva,
+              kFunctionEndRva, kUnwindInfoRva, original.Rip, original));
+#endif
+        return true;
+    });
+
+    Run("extended R13 frame register uses REX.B in LEA epilogue", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(3, 5, 0x2D); // R13, frame offset 2
+        fixture.PutCode(kUnwindInfoRva, 0, 5, 3, 0);  // set frame register
+        fixture.PutCode(kUnwindInfoRva, 1, 3, 2, 3);  // allocate 32
+        fixture.PutCode(kUnwindInfoRva, 2, 1, 0, 13); // push R13
+        fixture.PutCodeBytes(0x220, {
+            0x49, 0x8D, 0x65, 0x00, // lea rsp, [r13]
+            0x41, 0x5D,             // pop r13
+            0xC3                    // ret
+        });
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp - 8, 0xD130000000000013ull);
+        fixture.PutStack64(sp, 0x14001234Aull);
+        Context context = fixture.MakeContext(sp - 0x80);
+        context.R13 = fixture.StackBase() + sp - 8;
+        context.Rip = fixture.ImageBase() + 0x220;
+        ContextPointers pointers{};
+        UnwindResult result{};
+        CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, 0x240},
+              fixture.StackSpan(), kFunctionEntryRva, context.Rip,
+              &context, &pointers, &result) == Status::Success);
+        CHECK(context.R13 == 0xD130000000000013ull);
+        CHECK(pointers.IntegerContext[13] == reinterpret_cast<std::uint64_t*>(
+              fixture.Stack.data() + sp - 8));
+        CHECK(context.Rip == 0x14001234Aull);
+        CHECK(context.Rsp == fixture.StackBase() + sp + 8);
+#if GUIDEXOS_HAS_WINDOWS_UNWIND_REFERENCE
+        Context original = fixture.MakeContext(sp - 0x80);
+        original.R13 = fixture.StackBase() + sp - 8;
+        original.Rip = fixture.ImageBase() + 0x220;
+        CHECK(CompareWindowsReference(fixture, kFunctionBeginRva,
+              kFunctionEndRva, kUnwindInfoRva, original.Rip, original));
+#endif
+        return true;
+    });
+
+    Run("REX.R LEA body instruction is not mistaken for stack restoration", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(3, 5, 0x25); // RBP, frame offset 2
+        fixture.PutCode(kUnwindInfoRva, 0, 5, 3, 0); // set frame register
+        fixture.PutCode(kUnwindInfoRva, 1, 3, 2, 3); // allocate 32
+        fixture.PutCode(kUnwindInfoRva, 2, 1, 0, 5); // push RBP
+        fixture.PutCodeBytes(0x220, {
+            0x4C, 0x8D, 0x65, 0x00 // lea r12, [rbp], not lea rsp, [rbp]
+        });
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp - 8, 0xBEEFBEEFBEEFBEEFll);
+        fixture.PutStack64(sp, 0x14001234Bull);
+        Context context = fixture.MakeContext(sp - 40);
+        context.Rbp = fixture.StackBase() + sp - 8;
+        context.Rip = fixture.ImageBase() + 0x220;
+        ContextPointers pointers{};
+        UnwindResult result{};
+        CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, 0x240},
+              fixture.StackSpan(), kFunctionEntryRva, context.Rip,
+              &context, &pointers, &result) == Status::Success);
+        CHECK(context.Rbp == 0xBEEFBEEFBEEFBEEFll);
+        CHECK(context.R12 == 0);
+        CHECK(context.Rip == 0x14001234Bull);
+        CHECK(context.Rsp == fixture.StackBase() + sp + 8);
+        return true;
+    });
+
+    Run("valid REP RET prefix and RET immediate", [] {
+        {
+            Fixture fixture;
+            fixture.PutDefaultFunction();
+            fixture.PutCodeBytes(0x220, {0xF3, 0xC3}); // rep ret
+            const std::size_t sp = 0x100;
+            fixture.PutStack64(sp, 0x140012348ull);
+            Context context = fixture.MakeContext(sp);
+            context.Rip = fixture.ImageBase() + 0x220;
+            ContextPointers pointers{};
+            UnwindResult result{};
+            CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, 0x240},
+                  fixture.StackSpan(), kFunctionEntryRva, context.Rip,
+                  &context, &pointers, &result) == Status::Success);
+            CHECK(context.Rip == 0x140012348ull);
+            CHECK(context.Rsp == fixture.StackBase() + sp + 8);
+#if GUIDEXOS_HAS_WINDOWS_UNWIND_REFERENCE
+            Context original = fixture.MakeContext(sp);
+            original.Rip = fixture.ImageBase() + 0x220;
+            CHECK(CompareWindowsReference(fixture, kFunctionBeginRva,
+                  kFunctionEndRva, kUnwindInfoRva, original.Rip, original));
+#endif
+        }
+        {
+            Fixture fixture;
+            fixture.PutDefaultFunction();
+            fixture.PutCodeBytes(0x220, {0xC2, 0x10, 0x00}); // ret 16
+            const std::size_t sp = 0x100;
+            fixture.PutStack64(sp, 0x140012349ull);
+            Context context = fixture.MakeContext(sp);
+            context.Rip = fixture.ImageBase() + 0x220;
+            ContextPointers pointers{};
+            UnwindResult result{};
+            CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, 0x240},
+                  fixture.StackSpan(), kFunctionEntryRva, context.Rip,
+                  &context, &pointers, &result) == Status::Success);
+            CHECK(context.Rip == 0x140012349ull);
+            CHECK(context.Rsp == fixture.StackBase() + sp + 24);
+        }
+        return true;
+    });
+
+    Run("add RSP imm32 epilogue encoding", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(2, 7);
+        fixture.PutCode(kUnwindInfoRva, 0, 7, 1, 0); // scaled allocation
+        fixture.Put16(kUnwindInfoRva + 6, 19);       // 152 bytes
+        fixture.PutCodeBytes(0x220, {
+            0x48, 0x81, 0xC4, 0x98, 0x00, 0x00, 0x00, // add rsp, 0x98
+            0xC3
+        });
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp + 0x98, 0x14001234Eull);
+        Context context = fixture.MakeContext(sp);
+        context.Rip = fixture.ImageBase() + 0x220;
+        ContextPointers pointers{};
+        UnwindResult result{};
+        CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, 0x240},
+              fixture.StackSpan(), kFunctionEntryRva, context.Rip,
+              &context, &pointers, &result) == Status::Success);
+        CHECK(context.Rip == 0x14001234Eull);
+        CHECK(context.Rsp == fixture.StackBase() + sp + 0xA0);
+#if GUIDEXOS_HAS_WINDOWS_UNWIND_REFERENCE
+        Context original = fixture.MakeContext(sp);
+        original.Rip = fixture.ImageBase() + 0x220;
+        CHECK(CompareWindowsReference(fixture, kFunctionBeginRva,
+              kFunctionEndRva, kUnwindInfoRva, original.Rip, original));
+#endif
+        return true;
+    });
+
+    Run("epilogue uses the supported indirect tail-jump form", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(1, 4);
+        fixture.PutCode(kUnwindInfoRva, 0, 4, 2, 3); // allocate 32
+        fixture.PutCodeBytes(0x220, {
+            0x48, 0x83, 0xC4, 0x20, // add rsp, 32
+            0xFF, 0x25, 0x00, 0x00, 0x00, 0x00 // jmp qword ptr [rip]
+        });
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp + 32, 0x14001234Aull);
+        Context context = fixture.MakeContext(sp);
+        context.Rip = fixture.ImageBase() + 0x220;
+        ContextPointers pointers{};
+        UnwindResult result{};
+        CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, 0x240},
+              fixture.StackSpan(), kFunctionEntryRva, context.Rip,
+              &context, &pointers, &result) == Status::Success);
+        CHECK(context.Rip == 0x14001234Aull);
+        CHECK(context.Rsp == fixture.StackBase() + sp + 40);
+#if GUIDEXOS_HAS_WINDOWS_UNWIND_REFERENCE
+        Context original = fixture.MakeContext(sp);
+        original.Rip = fixture.ImageBase() + 0x220;
+        CHECK(CompareWindowsReference(fixture, kFunctionBeginRva,
+              kFunctionEndRva, kUnwindInfoRva, original.Rip, original));
+#endif
+        return true;
+    });
+
+    Run("body instruction lookalike is not treated as an epilogue", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(1, 4);
+        fixture.PutCode(kUnwindInfoRva, 0, 4, 2, 3); // allocate 32
+        fixture.PutCodeBytes(0x220, {
+            0x48, 0x83, 0xC0, 0x01, // add rax, 1
+            0xC3
+        });
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp + 32, 0x14001234Bull);
+        Context context = fixture.MakeContext(sp);
+        context.Rip = fixture.ImageBase() + 0x220;
+        ContextPointers pointers{};
+        UnwindResult result{};
+        CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, 0x240},
+              fixture.StackSpan(), kFunctionEntryRva, context.Rip,
+              &context, &pointers, &result) == Status::Success);
+        CHECK(context.Rip == 0x14001234Bull);
+        CHECK(context.Rsp == fixture.StackBase() + sp + 40);
+        return true;
+    });
+
+    Run("code-manager adapter commits successful register locations", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(1, 1);
+        fixture.PutCode(kUnwindInfoRva, 0, 1, 0, 12); // push R12
+        fixture.PutCodeBytes(0x220, {0x41, 0x5C, 0xC3});
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp, 0x1212121212121212ull);
+        fixture.PutStack64(sp + 8, 0x14001234BULL);
+        CodeManagerFrameContext frame{};
+        frame.Registers = fixture.MakeContext(sp);
+        frame.Registers.Rip = fixture.ImageBase() + 0x220;
+        frame.RegisterLocations.IntegerContext[12] = &frame.Registers.R12;
+        UnwindResult result{};
+        CHECK(UnwindCodeManagerFrame(fixture.ImageSpan(), {0x200, 0x240},
+              fixture.StackSpan(), kFunctionEntryRva, &frame, &result) ==
+              Status::Success);
+        CHECK(frame.Registers.R12 == 0x1212121212121212ull);
+        CHECK(frame.RegisterLocations.IntegerContext[12] ==
+              reinterpret_cast<std::uint64_t*>(fixture.Stack.data() + sp));
+        CHECK(frame.Registers.Rsp == fixture.StackBase() + sp + 16);
+        CHECK(frame.Registers.Rip == 0x14001234BULL);
+        return true;
+    });
+
+    Run("unsupported epilogue and adapter failure propagate atomically", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(2, 5);
+        fixture.PutCode(kUnwindInfoRva, 0, 5, 2, 3); // allocate 32
+        fixture.PutCode(kUnwindInfoRva, 1, 2, 0, 12); // push R12
+        fixture.PutCodeBytes(0x220, {
+            0x48, 0x83, 0xC4, 0x20,
+            0x41, 0x5C,
+            0x90,                   // illegal instruction in epilogue suffix
+            0xC3
+        });
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp + 32, 0x1212121212121212ull);
+        fixture.PutStack64(sp + 40, 0x14001234Cull);
+        CodeManagerFrameContext frame{};
+        frame.Registers = fixture.MakeContext(sp);
+        frame.Registers.Rip = fixture.ImageBase() + 0x220;
+        frame.RegisterLocations.IntegerContext[12] = &frame.Registers.R12;
+        CodeManagerFrameContext before = frame;
+        UnwindResult result{0x5555};
+        CHECK(UnwindCodeManagerFrame(fixture.ImageSpan(), {0x200, 0x240},
+              fixture.StackSpan(), kFunctionEntryRva, &frame, &result) ==
+              Status::UnsupportedEpilogueForm);
+        CHECK(std::memcmp(&frame, &before, sizeof(frame)) == 0);
+        CHECK(result.EstablisherFrame == 0x5555);
+
+        fixture.PutCodeBytes(0x220, {0xFF, 0x60, 0x08}); // jmp [rax+8], ModRM mod=01
+        Context context = fixture.MakeContext(sp);
+        context.Rip = fixture.ImageBase() + 0x220;
+        Context beforeContext = context;
+        ContextPointers pointers{};
+        ContextPointers beforePointers = pointers;
+        result.EstablisherFrame = 0x6666;
+        CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, 0x240},
+              fixture.StackSpan(), kFunctionEntryRva, context.Rip,
+              &context, &pointers, &result) == Status::UnsupportedEpilogueForm);
+        CHECK(std::memcmp(&context, &beforeContext, sizeof(context)) == 0);
+        CHECK(std::memcmp(&pointers, &beforePointers, sizeof(pointers)) == 0);
+        CHECK(result.EstablisherFrame == 0x6666);
+        return true;
+    });
+
+    Run("truncated epilogue code and function-boundary reads fail closed", [] {
+        const auto checkBoundary = [](std::uint32_t functionEnd,
+                                      std::uint32_t codeEnd,
+                                      std::initializer_list<std::uint8_t> bytes) {
+            Fixture fixture;
+            fixture.PutDefaultFunction(1, 4);
+            fixture.PutCode(kUnwindInfoRva, 0, 4, 2, 3);
+            fixture.PutFunction(kFunctionEntryRva, kFunctionBeginRva,
+                                functionEnd, kUnwindInfoRva);
+            fixture.PutCodeBytes(0x220, bytes);
+            Context context = fixture.MakeContext(0x100);
+            context.Rip = fixture.ImageBase() + 0x220;
+            Context before = context;
+            ContextPointers pointers{};
+            UnwindResult result{0x7777};
+            CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, codeEnd},
+                  fixture.StackSpan(), kFunctionEntryRva, context.Rip,
+                  &context, &pointers, &result) == Status::OutOfRangeCodeAccess);
+            CHECK(std::memcmp(&context, &before, sizeof(context)) == 0);
+            CHECK(result.EstablisherFrame == 0x7777);
+            return true;
+        };
+        CHECK(checkBoundary(0x223, 0x223, {0x48, 0x83, 0xC4}));
+        CHECK(checkBoundary(0x224, 0x240, {0x48, 0x83, 0xC4, 0x20}));
+        return true;
+    });
+
+    Run("epilogue stack bounds, arithmetic, and context failures stay explicit", [] {
+        {
+            Fixture fixture;
+            fixture.PutDefaultFunction(1, 4);
+            fixture.PutCode(kUnwindInfoRva, 0, 4, 2, 3);
+            fixture.PutCodeBytes(0x220, {0x48, 0x83, 0xC4, 0x20, 0xC3});
+            const std::size_t sp = 0x100;
+            fixture.PutStack64(sp + 32, 0x14001234Full);
+            Context context = fixture.MakeContext(sp);
+            context.Rip = fixture.ImageBase() + 0x220;
+            Context before = context;
+            ContextPointers pointers{};
+            UnwindResult result{0x8888};
+            StackView shortStack = fixture.StackSpan();
+            shortStack.Size = sp + 39;
+            CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, 0x240}, shortStack,
+                  kFunctionEntryRva, context.Rip, &context, &pointers, &result) ==
+                  Status::InvalidStackAccess);
+            CHECK(std::memcmp(&context, &before, sizeof(context)) == 0);
+            CHECK(result.EstablisherFrame == 0x8888);
+        }
+        {
+            Fixture fixture;
+            fixture.PutDefaultFunction(1, 4, 0x05); // RBP frame register
+            fixture.PutCode(kUnwindInfoRva, 0, 4, 3, 0); // set frame register
+            fixture.PutCodeBytes(0x220, {0x48, 0x8D, 0x65, 0x08, 0xC3});
+            Context context = fixture.MakeContext(0x100);
+            context.Rbp = (std::numeric_limits<std::uint64_t>::max)() - 7;
+            context.Rip = fixture.ImageBase() + 0x220;
+            Context before = context;
+            ContextPointers pointers{};
+            UnwindResult result{0x9999};
+            CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, 0x240},
+                  fixture.StackSpan(), kFunctionEntryRva, context.Rip,
+                  &context, &pointers, &result) == Status::ArithmeticOverflow);
+            CHECK(std::memcmp(&context, &before, sizeof(context)) == 0);
+            CHECK(result.EstablisherFrame == 0x9999);
+        }
+        {
+            Fixture fixture;
+            fixture.PutDefaultFunction();
+            Context context = fixture.MakeContext(0x100);
+            context.Rip += 1;
+            ContextPointers pointers{};
+            UnwindResult result{};
+            CHECK(UnwindFrame(fixture.ImageSpan(), {0x200, 0x240},
+                  fixture.StackSpan(), kFunctionEntryRva,
+                  fixture.ImageBase() + 0x220, &context, &pointers, &result) ==
+                  Status::InvalidContext);
+        }
+        return true;
+    });
+
+    Run("successive epilogue frames preserve caller RIP and RSP", [] {
+        Fixture fixture;
+        fixture.PutFunction(0x100, 0x200, 0x240, 0x300);
+        fixture.Put8(0x300, 1);
+        fixture.Put8(0x301, 5);
+        fixture.Put8(0x302, 2);
+        fixture.Put8(0x303, 0);
+        fixture.PutCode(0x300, 0, 5, 2, 3); // inner alloc 32
+        fixture.PutCode(0x300, 1, 2, 0, 12); // inner push R12
+        fixture.PutFunction(0x10C, 0x250, 0x280, 0x340);
+        fixture.Put8(0x340, 1);
+        fixture.Put8(0x341, 4);
+        fixture.Put8(0x342, 1);
+        fixture.Put8(0x343, 0);
+        fixture.PutCode(0x340, 0, 4, 2, 1); // outer alloc 16
+        fixture.PutCodeBytes(0x220, {
+            0x48, 0x83, 0xC4, 0x20, 0x41, 0x5C, 0xC3
+        });
+        fixture.PutCodeBytes(0x270, {0x48, 0x83, 0xC4, 0x10, 0xC3});
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp + 32, 0x1212121212121212ull);
+        fixture.PutStack64(sp + 40, fixture.ImageBase() + 0x270);
+        fixture.PutStack64(sp + 64, 0x14001234Dull);
+        Context context = fixture.MakeContext(sp);
+        context.Rip = fixture.ImageBase() + 0x220;
+        ContextPointers pointers{};
+        UnwindResult result{};
+        const ExecutableCodeRange codeRange{0x200, 0x280};
+        CHECK(UnwindFrame(fixture.ImageSpan(), codeRange, fixture.StackSpan(),
+              0x100, context.Rip, &context, &pointers, &result) == Status::Success);
+        CHECK(context.Rip == fixture.ImageBase() + 0x270);
+        CHECK(context.Rsp == fixture.StackBase() + sp + 48);
+        CHECK(context.R12 == 0x1212121212121212ull);
+        CHECK(UnwindFrame(fixture.ImageSpan(), codeRange, fixture.StackSpan(),
+              0x10C, context.Rip, &context, &pointers, &result) == Status::Success);
+        CHECK(context.Rip == 0x14001234Dull);
+        CHECK(context.Rsp == fixture.StackBase() + sp + 72);
         return true;
     });
 

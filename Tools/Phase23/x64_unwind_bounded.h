@@ -17,16 +17,23 @@ constexpr std::uint32_t NoRuntimeFunction = 0xFFFFFFFFu;
 enum class Status : std::uint8_t {
     Success,
     InvalidArgument,
+    InvalidContext,
     InvalidMetadata,
     MetadataOutOfBounds,
-    StackOutOfBounds,
-    AddressOverflow,
+    OutOfRangeCodeAccess,
+    InvalidStackAccess,
+    StackOutOfBounds = InvalidStackAccess,
+    ArithmeticOverflow,
+    AddressOverflow = ArithmeticOverflow,
     NoFunction,
+    NoEpilogue,
     UnsupportedVersion,
     UnsupportedHandler,
     UnsupportedChain,
-    UnsupportedOpcode,
-    UnsupportedEpilogue,
+    UnsupportedUnwindEncoding,
+    UnsupportedOpcode = UnsupportedUnwindEncoding,
+    UnsupportedEpilogueForm,
+    UnsupportedEpilogue = UnsupportedEpilogueForm,
     MisalignedStack,
 };
 
@@ -83,6 +90,14 @@ struct StackView {
     std::uint64_t BaseAddress;
     std::uint8_t* Data;
     std::size_t Size;
+};
+
+// A validated executable image span, expressed as a half-open RVA range.
+// Every function and instruction byte used by epilogue decoding must remain
+// inside both this range and its RUNTIME_FUNCTION interval.
+struct ExecutableCodeRange {
+    std::uint32_t BeginRva;
+    std::uint32_t EndRva;
 };
 
 struct UnwindResult {
@@ -384,7 +399,7 @@ inline Status ParseInfo(const ImageView& image, std::uint32_t unwindRva,
                 break;
             case 6: // UWOP_EPILOG (version 2)
             case 7: // UWOP_SPARE_CODE
-                return Status::UnsupportedOpcode;
+                return Status::UnsupportedUnwindEncoding;
             case 8: // UWOP_SAVE_XMM128
                 if (info < 6 || info > 15)
                     return Status::InvalidMetadata;
@@ -410,9 +425,9 @@ inline Status ParseInfo(const ImageView& image, std::uint32_t unwindRva,
                     return Status::InvalidMetadata;
                 break;
             case 10: // UWOP_PUSH_MACHFRAME is outside ordinary managed frames
-                return Status::UnsupportedOpcode;
+                return Status::UnsupportedUnwindEncoding;
             default:
-                return Status::UnsupportedOpcode;
+                return Status::UnsupportedUnwindEncoding;
         }
 
         Operation& operation = parsed->Operations[parsed->OperationCount++];
@@ -452,7 +467,7 @@ inline Status RestoreInteger(Context* context, ContextPointers* pointers,
                              std::uint64_t address) {
     std::uint64_t value = 0;
     if (!ReadStack64(stack, address, &value))
-        return StackRange(stack, address, 8) ? Status::MisalignedStack : Status::StackOutOfBounds;
+        return StackRange(stack, address, 8) ? Status::MisalignedStack : Status::InvalidStackAccess;
     std::uint64_t* target = IntegerRegister(context, reg);
     if (target == nullptr)
         return Status::InvalidMetadata;
@@ -466,9 +481,9 @@ inline Status AdvanceRsp(Context* context, const StackView& stack,
                          std::uint64_t amount) {
     std::uint64_t next = 0;
     if (!Add(context->Rsp, amount, &next))
-        return Status::AddressOverflow;
+        return Status::ArithmeticOverflow;
     if (!StackRange(stack, next, 0))
-        return Status::StackOutOfBounds;
+        return Status::InvalidStackAccess;
     context->Rsp = next;
     return Status::Success;
 }
@@ -500,10 +515,10 @@ inline Status ApplyInfo(const ImageView& image, const StackView& stack,
         const std::uint64_t* frame = IntegerRegister(context, parsed.FrameRegister);
         const std::uint64_t displacement = static_cast<std::uint64_t>(parsed.FrameOffset) * 16;
         if (frame == nullptr || *frame < displacement)
-            return Status::AddressOverflow;
+            return Status::ArithmeticOverflow;
         frameBase = *frame - displacement;
         if (!StackRange(stack, frameBase, 0))
-            return Status::StackOutOfBounds;
+            return Status::InvalidStackAccess;
     }
     *establisherFrame = frameBase;
 
@@ -541,22 +556,22 @@ inline Status ApplyInfo(const ImageView& image, const StackView& stack,
                 const std::uint64_t* frame = IntegerRegister(context, parsed.FrameRegister);
                 const std::uint64_t displacement = static_cast<std::uint64_t>(parsed.FrameOffset) * 16;
                 if (frame == nullptr || *frame < displacement)
-                    return Status::AddressOverflow;
+                    return Status::ArithmeticOverflow;
                 context->Rsp = *frame - displacement;
                 if (!StackRange(stack, context->Rsp, 0))
-                    return Status::StackOutOfBounds;
+                    return Status::InvalidStackAccess;
                 break;
             }
             case 4: // UWOP_SAVE_NONVOL
                 if (!Add(frameBase, static_cast<std::uint64_t>(operation.Operand) * 8, &address))
-                    return Status::AddressOverflow;
+                    return Status::ArithmeticOverflow;
                 status = RestoreInteger(context, pointers, stack, operation.Info, address);
                 if (status != Status::Success)
                     return status;
                 break;
             case 5: // UWOP_SAVE_NONVOL_FAR
                 if (!Add(frameBase, operation.Operand, &address))
-                    return Status::AddressOverflow;
+                    return Status::ArithmeticOverflow;
                 status = RestoreInteger(context, pointers, stack, operation.Info, address);
                 if (status != Status::Success)
                     return status;
@@ -567,19 +582,522 @@ inline Status ApplyInfo(const ImageView& image, const StackView& stack,
                     ? static_cast<std::uint64_t>(operation.Operand) * 16
                     : operation.Operand;
                 if (!Add(frameBase, displacement, &address))
-                    return Status::AddressOverflow;
+                    return Status::ArithmeticOverflow;
                 Context::XmmValue value{};
                 if (!ReadStackXmm(stack, address, &value))
-                    return StackRange(stack, address, 16) ? Status::MisalignedStack : Status::StackOutOfBounds;
+                    return StackRange(stack, address, 16) ? Status::MisalignedStack : Status::InvalidStackAccess;
                 context->Xmm[operation.Info] = value;
                 pointers->FloatingContext[operation.Info] =
                     stack.Data + static_cast<std::size_t>(address - stack.BaseAddress);
                 break;
             }
             default:
-                return Status::UnsupportedOpcode;
+                return Status::UnsupportedUnwindEncoding;
         }
     }
+    return Status::Success;
+}
+
+struct CodeCursor {
+    std::uint32_t Rva;
+    std::uint8_t BytesRead;
+};
+
+inline Status ReadCode8(const ImageView& image,
+                        const ExecutableCodeRange& codeRange,
+                        const RuntimeFunction& function,
+                        CodeCursor* cursor, std::uint8_t* value) {
+    if (cursor->Rva < codeRange.BeginRva || cursor->Rva >= codeRange.EndRva ||
+        cursor->Rva < function.BeginAddress || cursor->Rva >= function.EndAddress ||
+        !ImageRange(image, cursor->Rva, 1))
+        return Status::OutOfRangeCodeAccess;
+    if (cursor->BytesRead >= 32)
+        return Status::UnsupportedEpilogueForm;
+    *value = image.Data[cursor->Rva];
+    ++cursor->Rva;
+    ++cursor->BytesRead;
+    return Status::Success;
+}
+
+inline Status ReadCode16(const ImageView& image,
+                         const ExecutableCodeRange& codeRange,
+                         const RuntimeFunction& function,
+                         CodeCursor* cursor, std::uint16_t* value) {
+    std::uint8_t low = 0;
+    std::uint8_t high = 0;
+    Status status = ReadCode8(image, codeRange, function, cursor, &low);
+    if (status != Status::Success)
+        return status;
+    status = ReadCode8(image, codeRange, function, cursor, &high);
+    if (status != Status::Success)
+        return status;
+    *value = static_cast<std::uint16_t>(low) |
+             (static_cast<std::uint16_t>(high) << 8);
+    return Status::Success;
+}
+
+inline Status ReadCode32(const ImageView& image,
+                         const ExecutableCodeRange& codeRange,
+                         const RuntimeFunction& function,
+                         CodeCursor* cursor, std::uint32_t* value) {
+    std::uint32_t result = 0;
+    for (std::uint32_t index = 0; index < 4; ++index) {
+        std::uint8_t byte = 0;
+        const Status status = ReadCode8(image, codeRange, function, cursor, &byte);
+        if (status != Status::Success)
+            return status;
+        result |= static_cast<std::uint32_t>(byte) << (index * 8);
+    }
+    *value = result;
+    return Status::Success;
+}
+
+inline bool ValidCodeRange(const ImageView& image,
+                           const ExecutableCodeRange& codeRange,
+                           const RuntimeFunction& function) {
+    return codeRange.BeginRva < codeRange.EndRva &&
+           codeRange.EndRva <= image.Size &&
+           function.BeginAddress >= codeRange.BeginRva &&
+           function.EndAddress <= codeRange.EndRva &&
+           function.BeginAddress < function.EndAddress;
+}
+
+inline Status AddSigned(std::uint64_t base, std::int64_t displacement,
+                        std::uint64_t* result) {
+    if (displacement >= 0)
+        return Add(base, static_cast<std::uint64_t>(displacement), result)
+            ? Status::Success : Status::ArithmeticOverflow;
+    const std::uint64_t magnitude =
+        static_cast<std::uint64_t>(-(displacement + 1)) + 1;
+    if (base < magnitude)
+        return Status::ArithmeticOverflow;
+    *result = base - magnitude;
+    return Status::Success;
+}
+
+struct EpilogueSequence {
+    bool HasStackRestore;
+    bool UsesFrameRegister;
+    std::uint64_t StackRestore;
+    std::int64_t FrameDisplacement;
+    std::uint8_t FrameRegister;
+    std::uint8_t PopCount;
+    std::uint8_t Pops[8];
+    bool HasReturnAdjustment;
+    std::uint16_t ReturnAdjustment;
+};
+
+inline bool IsRex(std::uint8_t byte) {
+    return byte >= 0x40 && byte <= 0x4F;
+}
+
+inline Status ParseReturn(const ImageView& image,
+                          const ExecutableCodeRange& codeRange,
+                          const RuntimeFunction& function,
+                          CodeCursor* cursor,
+                          std::uint8_t firstByte,
+                          std::uint8_t rex,
+                          bool priorInstruction,
+                          bool* isTailJump,
+                          std::uint16_t* returnAdjustment) {
+    std::uint8_t opcode = firstByte;
+    if (opcode == 0xF3) {
+        if (rex != 0)
+            return Status::UnsupportedEpilogueForm;
+        Status status = ReadCode8(image, codeRange, function, cursor, &opcode);
+        if (status != Status::Success)
+            return status;
+        if (IsRex(opcode)) {
+            rex = opcode;
+            status = ReadCode8(image, codeRange, function, cursor, &opcode);
+            if (status != Status::Success)
+                return status;
+        }
+        if (opcode != 0xC2 && opcode != 0xC3)
+            return priorInstruction ? Status::UnsupportedEpilogueForm
+                                     : Status::NoEpilogue;
+    }
+
+    if (opcode == 0xC3 || opcode == 0xC2) {
+        *isTailJump = false;
+        *returnAdjustment = 0;
+        if (opcode == 0xC2) {
+            const Status status = ReadCode16(image, codeRange, function,
+                                             cursor, returnAdjustment);
+            if (status != Status::Success)
+                return status;
+            if ((*returnAdjustment & 7u) != 0)
+                return Status::UnsupportedEpilogueForm;
+        }
+        return Status::Success;
+    }
+
+    if (opcode != 0xFF)
+        return Status::UnsupportedEpilogueForm;
+    if (rex != 0 && (rex & 0x04u) != 0)
+        return Status::UnsupportedEpilogueForm;
+
+    std::uint8_t modrm = 0;
+    Status status = ReadCode8(image, codeRange, function, cursor, &modrm);
+    if (status != Status::Success)
+        return status;
+    const std::uint8_t mod = modrm >> 6;
+    const std::uint8_t group = (modrm >> 3) & 7u;
+    const std::uint8_t rm = modrm & 7u;
+    if (group != 4)
+        return priorInstruction ? Status::UnsupportedEpilogueForm
+                                : Status::NoEpilogue;
+    if (mod != 0)
+        return Status::UnsupportedEpilogueForm;
+
+    if (rm == 4) {
+        std::uint8_t sib = 0;
+        status = ReadCode8(image, codeRange, function, cursor, &sib);
+        if (status != Status::Success)
+            return status;
+        if ((sib & 7u) == 5u) {
+            std::uint32_t ignoredDisplacement = 0;
+            status = ReadCode32(image, codeRange, function, cursor,
+                                &ignoredDisplacement);
+            if (status != Status::Success)
+                return status;
+        }
+    } else if (rm == 5) {
+        std::uint32_t ignoredDisplacement = 0;
+        status = ReadCode32(image, codeRange, function, cursor,
+                            &ignoredDisplacement);
+        if (status != Status::Success)
+            return status;
+    }
+    *isTailJump = true;
+    *returnAdjustment = 0;
+    return Status::Success;
+}
+
+inline Status ParseEpilogue(const ImageView& image,
+                            const ExecutableCodeRange& codeRange,
+                            const RuntimeFunction& function,
+                            std::uint64_t controlPc,
+                            const ParsedInfo& parsed,
+                            EpilogueSequence* sequence,
+                            bool* isTailJump) {
+    if (!ValidCodeRange(image, codeRange, function))
+        return Status::InvalidMetadata;
+    if (controlPc < image.BaseAddress ||
+        controlPc - image.BaseAddress < function.BeginAddress ||
+        controlPc - image.BaseAddress >= function.EndAddress)
+        return Status::InvalidContext;
+    const std::uint64_t codeOffset = controlPc - image.BaseAddress - function.BeginAddress;
+    if (codeOffset <= parsed.PrologSize)
+        return Status::NoEpilogue;
+
+    *sequence = {};
+    CodeCursor cursor{static_cast<std::uint32_t>(controlPc - image.BaseAddress), 0};
+    bool sawInstruction = false;
+    for (std::uint8_t instruction = 0; instruction < 10; ++instruction) {
+        std::uint8_t first = 0;
+        Status status = ReadCode8(image, codeRange, function, &cursor, &first);
+        if (status != Status::Success)
+            return status;
+
+        if (first == 0xF3 || first == 0xC2 || first == 0xC3) {
+            std::uint16_t retAdjust = 0;
+            status = ParseReturn(image, codeRange, function, &cursor, first, 0,
+                                 sawInstruction, isTailJump, &retAdjust);
+            if (status != Status::Success)
+                return status;
+            sequence->HasReturnAdjustment = retAdjust != 0;
+            sequence->ReturnAdjustment = retAdjust;
+            return Status::Success;
+        }
+
+        std::uint8_t rex = 0;
+        std::uint8_t opcode = first;
+        if (IsRex(first)) {
+            rex = first;
+            status = ReadCode8(image, codeRange, function, &cursor, &opcode);
+            if (status != Status::Success)
+                return status;
+        }
+
+        if (opcode == 0xC2 || opcode == 0xC3) {
+            std::uint16_t retAdjust = 0;
+            status = ParseReturn(image, codeRange, function, &cursor, opcode,
+                                 rex, sawInstruction, isTailJump, &retAdjust);
+            if (status != Status::Success)
+                return sawInstruction ? status : Status::NoEpilogue;
+            sequence->HasReturnAdjustment = retAdjust != 0;
+            sequence->ReturnAdjustment = retAdjust;
+            return Status::Success;
+        }
+
+        if (opcode == 0x83 || opcode == 0x81) {
+            if (sequence->HasStackRestore || sequence->PopCount != 0)
+                return Status::UnsupportedEpilogueForm;
+            if (rex != 0x48)
+                return Status::UnsupportedEpilogueForm;
+            std::uint8_t modrm = 0;
+            status = ReadCode8(image, codeRange, function, &cursor, &modrm);
+            if (status != Status::Success)
+                return status;
+            if (modrm != 0xC4)
+                return sawInstruction ? Status::UnsupportedEpilogueForm
+                                      : Status::NoEpilogue;
+            std::uint64_t amount = 0;
+            if (opcode == 0x83) {
+                std::uint8_t immediate = 0;
+                status = ReadCode8(image, codeRange, function, &cursor, &immediate);
+                if (status != Status::Success)
+                    return status;
+                if (immediate == 0 || immediate >= 0x80)
+                    return Status::UnsupportedEpilogueForm;
+                amount = immediate;
+            } else {
+                std::uint32_t immediate = 0;
+                status = ReadCode32(image, codeRange, function, &cursor, &immediate);
+                if (status != Status::Success)
+                    return status;
+                if (immediate == 0 || immediate > 0x7FFFFFFFu)
+                    return Status::UnsupportedEpilogueForm;
+                amount = immediate;
+            }
+            if ((amount & 7u) != 0)
+                return Status::UnsupportedEpilogueForm;
+            sequence->HasStackRestore = true;
+            sequence->StackRestore = amount;
+            sawInstruction = true;
+            continue;
+        }
+
+        if (opcode == 0x8D) {
+            if (sequence->HasStackRestore || sequence->PopCount != 0)
+                return Status::UnsupportedEpilogueForm;
+            if ((rex & 0x08u) == 0 || (rex & 0x06u) != 0)
+                return sawInstruction ? Status::UnsupportedEpilogueForm
+                                      : Status::NoEpilogue;
+            std::uint8_t modrm = 0;
+            status = ReadCode8(image, codeRange, function, &cursor, &modrm);
+            if (status != Status::Success)
+                return status;
+            const std::uint8_t mod = modrm >> 6;
+            const std::uint8_t destination = (modrm >> 3) & 7u;
+            const std::uint8_t rm = modrm & 7u;
+            const std::uint8_t base = static_cast<std::uint8_t>(
+                rm | ((rex & 0x01u) ? 8u : 0u));
+            if (destination != 4 || (mod != 1 && mod != 2) || rm == 4 ||
+                base != parsed.FrameRegister || parsed.FrameRegister == 0)
+                return sawInstruction ? Status::UnsupportedEpilogueForm
+                                      : Status::NoEpilogue;
+            std::int64_t displacement = 0;
+            if (mod == 1) {
+                std::uint8_t immediate = 0;
+                status = ReadCode8(image, codeRange, function, &cursor, &immediate);
+                if (status != Status::Success)
+                    return status;
+                displacement = (immediate & 0x80u) != 0
+                    ? static_cast<std::int64_t>(immediate) - 0x100
+                    : static_cast<std::int64_t>(immediate);
+            } else {
+                std::uint32_t immediate = 0;
+                status = ReadCode32(image, codeRange, function, &cursor, &immediate);
+                if (status != Status::Success)
+                    return status;
+                displacement = (immediate & 0x80000000u) != 0
+                    ? static_cast<std::int64_t>(immediate) - 0x100000000ll
+                    : static_cast<std::int64_t>(immediate);
+            }
+            sequence->HasStackRestore = true;
+            sequence->UsesFrameRegister = true;
+            sequence->FrameRegister = base;
+            sequence->FrameDisplacement = displacement;
+            sawInstruction = true;
+            continue;
+        }
+
+        if (opcode >= 0x58 && opcode <= 0x5F) {
+            if (rex != 0 && (rex & 0x06u) != 0)
+                return Status::UnsupportedEpilogueForm;
+            const std::uint8_t reg = static_cast<std::uint8_t>(
+                opcode - 0x58u + ((rex & 0x01u) ? 8u : 0u));
+            if (!IsNonvolatileIntegerRegister(reg) || sequence->PopCount >= 8)
+                return Status::UnsupportedEpilogueForm;
+            for (std::uint8_t index = 0; index < sequence->PopCount; ++index) {
+                if (sequence->Pops[index] == reg)
+                    return Status::UnsupportedEpilogueForm;
+            }
+            sequence->Pops[sequence->PopCount++] = reg;
+            sawInstruction = true;
+            continue;
+        }
+
+        if (opcode == 0xFF) {
+            if (sequence->HasStackRestore && sequence->PopCount == 0 &&
+                !sawInstruction)
+                return Status::UnsupportedEpilogueForm;
+            std::uint16_t ignoredAdjustment = 0;
+            status = ParseReturn(image, codeRange, function, &cursor, opcode,
+                                 rex, sawInstruction, isTailJump,
+                                 &ignoredAdjustment);
+            return status;
+        }
+
+        return sawInstruction ? Status::UnsupportedEpilogueForm
+                              : Status::NoEpilogue;
+    }
+    return Status::UnsupportedEpilogueForm;
+}
+
+inline Status ValidateEpilogueMetadata(const ParsedInfo& parsed,
+                                       const EpilogueSequence& sequence,
+                                       const Context& context) {
+    std::uint8_t expectedPops[8]{};
+    std::uint8_t expectedPopCount = 0;
+    std::uint64_t allocationSize = 0;
+    for (std::uint16_t index = 0; index < parsed.OperationCount; ++index) {
+        const Operation& operation = parsed.Operations[index];
+        if (operation.Opcode == 0) {
+            if (expectedPopCount >= 8)
+                return Status::InvalidMetadata;
+            expectedPops[expectedPopCount++] = operation.Info;
+        } else if (operation.Opcode == 1) {
+            const std::uint64_t amount = operation.Info == 0
+                ? static_cast<std::uint64_t>(operation.Operand) * 8
+                : operation.Operand;
+            if (!Add(allocationSize, amount, &allocationSize))
+                return Status::ArithmeticOverflow;
+        } else if (operation.Opcode == 2) {
+            if (!Add(allocationSize,
+                     static_cast<std::uint64_t>(operation.Info + 1) * 8,
+                     &allocationSize))
+                return Status::ArithmeticOverflow;
+        }
+    }
+
+    if (sequence.HasStackRestore) {
+        if (sequence.UsesFrameRegister) {
+            if (sequence.FrameRegister != parsed.FrameRegister)
+                return Status::UnsupportedEpilogueForm;
+            Context registerContext = context;
+            const std::uint64_t* frame = IntegerRegister(
+                &registerContext, parsed.FrameRegister);
+            const std::uint64_t frameDisplacement =
+                static_cast<std::uint64_t>(parsed.FrameOffset) * 16;
+            if (frame == nullptr || *frame < frameDisplacement)
+                return Status::ArithmeticOverflow;
+            std::uint64_t expectedTarget = *frame - frameDisplacement;
+            std::uint64_t allocationBeforeFrame = 0;
+            for (std::uint16_t index = 0; index < parsed.OperationCount; ++index) {
+                const Operation& operation = parsed.Operations[index];
+                if (operation.CodeOffset >= parsed.FrameSetupOffset)
+                    continue;
+                std::uint64_t amount = 0;
+                if (operation.Opcode == 1) {
+                    amount = operation.Info == 0
+                        ? static_cast<std::uint64_t>(operation.Operand) * 8
+                        : operation.Operand;
+                } else if (operation.Opcode == 2) {
+                    amount = static_cast<std::uint64_t>(operation.Info + 1) * 8;
+                }
+                if (!Add(allocationBeforeFrame, amount, &allocationBeforeFrame))
+                    return Status::ArithmeticOverflow;
+            }
+            if (!Add(expectedTarget, allocationBeforeFrame, &expectedTarget))
+                return Status::ArithmeticOverflow;
+            std::uint64_t actualTarget = 0;
+            const Status displacementStatus = AddSigned(
+                *frame, sequence.FrameDisplacement, &actualTarget);
+            if (displacementStatus != Status::Success)
+                return displacementStatus;
+            if (actualTarget != expectedTarget)
+                return Status::UnsupportedEpilogueForm;
+        } else if (allocationSize == 0 || sequence.StackRestore != allocationSize) {
+            return Status::UnsupportedEpilogueForm;
+        }
+    }
+    if (sequence.PopCount > expectedPopCount)
+        return Status::UnsupportedEpilogueForm;
+    const std::uint8_t firstExpected = expectedPopCount - sequence.PopCount;
+    for (std::uint8_t index = 0; index < sequence.PopCount; ++index) {
+        if (sequence.Pops[index] != expectedPops[firstExpected + index])
+            return Status::UnsupportedEpilogueForm;
+    }
+    return Status::Success;
+}
+
+inline Status UnwindEpilogue(const ImageView& image,
+                             const ExecutableCodeRange& codeRange,
+                             const StackView& stack,
+                             const RuntimeFunction& function,
+                             std::uint64_t controlPc,
+                             const ParsedInfo& parsed,
+                             Context* context,
+                             ContextPointers* contextPointers,
+                             UnwindResult* result) {
+    EpilogueSequence sequence{};
+    bool isTailJump = false;
+    Status status = ParseEpilogue(image, codeRange, function, controlPc,
+                                  parsed, &sequence, &isTailJump);
+    if (status != Status::Success)
+        return status;
+    status = ValidateEpilogueMetadata(parsed, sequence, *context);
+    if (status != Status::Success)
+        return status;
+
+    Context working = *context;
+    ContextPointers workingPointers{};
+    if (contextPointers != nullptr)
+        workingPointers = *contextPointers;
+    const std::uint64_t entryRsp = working.Rsp;
+
+    if (sequence.HasStackRestore) {
+        if (sequence.UsesFrameRegister) {
+            const std::uint64_t* frame = IntegerRegister(
+                &working, sequence.FrameRegister);
+            if (frame == nullptr)
+                return Status::InvalidContext;
+            status = AddSigned(*frame, sequence.FrameDisplacement,
+                               &working.Rsp);
+            if (status != Status::Success)
+                return status;
+            if (!StackRange(stack, working.Rsp, 0))
+                return Status::InvalidStackAccess;
+        } else {
+            status = AdvanceRsp(&working, stack, sequence.StackRestore);
+            if (status != Status::Success)
+                return status;
+        }
+    }
+
+    for (std::uint8_t index = 0; index < sequence.PopCount; ++index) {
+        status = RestoreInteger(&working, &workingPointers, stack,
+                                sequence.Pops[index], working.Rsp);
+        if (status != Status::Success)
+            return status;
+        status = AdvanceRsp(&working, stack, 8);
+        if (status != Status::Success)
+            return status;
+    }
+
+    const std::uint64_t establisherFrame = parsed.FrameRegister != 0
+        ? working.Rsp : entryRsp;
+    std::uint64_t returnAddress = 0;
+    if (!ReadStack64(stack, working.Rsp, &returnAddress))
+        return StackRange(stack, working.Rsp, 8)
+            ? Status::MisalignedStack : Status::InvalidStackAccess;
+    std::uint64_t returnStackAdjustment = 8;
+    if (!isTailJump &&
+        !Add(returnStackAdjustment, sequence.ReturnAdjustment,
+             &returnStackAdjustment))
+        return Status::ArithmeticOverflow;
+    status = AdvanceRsp(&working, stack, returnStackAdjustment);
+    if (status != Status::Success)
+        return status;
+    working.Rip = returnAddress;
+
+    *context = working;
+    if (contextPointers != nullptr)
+        *contextPointers = workingPointers;
+    result->EstablisherFrame = establisherFrame;
     return Status::Success;
 }
 
@@ -643,12 +1161,9 @@ inline Status FindRuntimeFunction(const ImageView& image,
 }
 
 // Unwind one frame into a temporary context, committing only on success.
-// ContextPointers identifies each supported save slot used by this evaluator;
-// its far-save pointer behavior has not been proven equivalent to Windows.
-// Set functionEntryRva to NoRuntimeFunction for a leaf frame. For a managed
-// non-leaf frame, callers must have already bounded the PE image and stack,
-// resolved the function entry, and established that controlPc is not in an
-// epilogue. Handler data and chained records are rejected.
+// This overload has no code bytes and therefore fails closed when its caller
+// identifies an epilogue. Use the ExecutableCodeRange overload below when
+// epilogue recognition and simulation are required.
 inline Status UnwindFrame(const ImageView& image, const StackView& stack,
                           std::uint32_t functionEntryRva,
                           std::uint64_t controlPc,
@@ -660,9 +1175,9 @@ inline Status UnwindFrame(const ImageView& image, const StackView& stack,
         !detail::ValidStack(stack))
         return Status::InvalidArgument;
     if (controlPcIsEpilogue)
-        return Status::UnsupportedEpilogue;
+        return Status::UnsupportedEpilogueForm;
     if (!detail::StackRange(stack, context->Rsp, 0))
-        return Status::StackOutOfBounds;
+        return Status::InvalidStackAccess;
     if ((context->Rsp & 7u) != 0)
         return Status::MisalignedStack;
 
@@ -686,7 +1201,7 @@ inline Status UnwindFrame(const ImageView& image, const StackView& stack,
     std::uint64_t returnAddress = 0;
     if (!detail::ReadStack64(stack, working.Rsp, &returnAddress))
         return detail::StackRange(stack, working.Rsp, 8)
-            ? Status::MisalignedStack : Status::StackOutOfBounds;
+            ? Status::MisalignedStack : Status::InvalidStackAccess;
     Status status = detail::AdvanceRsp(&working, stack, 8);
     if (status != Status::Success)
         return status;
@@ -698,6 +1213,88 @@ inline Status UnwindFrame(const ImageView& image, const StackView& stack,
     if (contextPointers != nullptr)
         *contextPointers = workingPointers;
     result->EstablisherFrame = establisher;
+    return Status::Success;
+}
+
+// Bounded view of the NativeAOT manager's register state. The Context and
+// ContextPointers members deliberately match the x64 CONTEXT and
+// KNONVOLATILE_CONTEXT_POINTERS layouts consumed by CoffNativeCodeManager.
+struct CodeManagerFrameContext {
+    Context Registers;
+    ContextPointers RegisterLocations;
+};
+
+// This overload validates and inspects code only inside the caller-supplied
+// executable range and the resolved RUNTIME_FUNCTION interval. A complete
+// supported epilogue is simulated; ordinary body instructions fall back to
+// unwind metadata. Unsupported epilogue candidates and bounded-read failures
+// retain their explicit failure status.
+inline Status UnwindFrame(const ImageView& image,
+                          const ExecutableCodeRange& codeRange,
+                          const StackView& stack,
+                          std::uint32_t functionEntryRva,
+                          std::uint64_t controlPc,
+                          Context* context,
+                          ContextPointers* contextPointers,
+                          UnwindResult* result) {
+    if (context == nullptr)
+        return Status::InvalidContext;
+    if (result == nullptr || !detail::ValidImage(image) ||
+        !detail::ValidStack(stack))
+        return Status::InvalidArgument;
+    if (context->Rip != controlPc)
+        return Status::InvalidContext;
+    if (functionEntryRva == NoRuntimeFunction) {
+        return UnwindFrame(image, stack, functionEntryRva, controlPc, false,
+                           context, contextPointers, result);
+    }
+
+    RuntimeFunction function{};
+    Status status = detail::ReadRuntimeFunction(
+        image, functionEntryRva, &function);
+    if (status != Status::Success)
+        return status;
+    if (controlPc < image.BaseAddress ||
+        controlPc - image.BaseAddress < function.BeginAddress ||
+        controlPc - image.BaseAddress >= function.EndAddress)
+        return Status::InvalidContext;
+    if (codeRange.BeginRva >= codeRange.EndRva ||
+        codeRange.EndRva > image.Size)
+        return Status::OutOfRangeCodeAccess;
+    if (!detail::ValidCodeRange(image, codeRange, function))
+        return Status::InvalidMetadata;
+
+    detail::ParsedInfo parsed{};
+    status = detail::ParseInfo(image, function.UnwindData, &parsed);
+    if (status != Status::Success)
+        return status;
+    status = detail::UnwindEpilogue(image, codeRange, stack, function,
+                                    controlPc, parsed, context,
+                                    contextPointers, result);
+    if (status != Status::NoEpilogue)
+        return status;
+    return UnwindFrame(image, stack, functionEntryRva, controlPc, false,
+                       context, contextPointers, result);
+}
+
+// Explicit-result adapter for code-manager-shaped state. It never changes the
+// caller's register snapshot or source pointers when validation/unwinding
+// fails; it does not alter the legacy RtlVirtualUnwind ABI.
+inline Status UnwindCodeManagerFrame(const ImageView& image,
+                                     const ExecutableCodeRange& codeRange,
+                                     const StackView& stack,
+                                     std::uint32_t functionEntryRva,
+                                     CodeManagerFrameContext* frame,
+                                     UnwindResult* result) {
+    if (frame == nullptr)
+        return Status::InvalidContext;
+    CodeManagerFrameContext working = *frame;
+    const Status status = UnwindFrame(
+        image, codeRange, stack, functionEntryRva, working.Registers.Rip,
+        &working.Registers, &working.RegisterLocations, result);
+    if (status != Status::Success)
+        return status;
+    *frame = working;
     return Status::Success;
 }
 
