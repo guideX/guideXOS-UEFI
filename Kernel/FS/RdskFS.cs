@@ -2,47 +2,28 @@ using guideXOS.Kernel.Drivers;
 using guideXOS.Kernel.Helpers;
 using guideXOS.Misc;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
+
 namespace guideXOS.FS {
     /// <summary>
-    /// RDSK filesystem - custom ramdisk format used by guideXOS
-    /// Format:
-    ///   Magic: "RDSK" (4 bytes)
-    ///   Version: 1 (4 bytes, little-endian)
-    ///   FileCount: N (4 bytes, little-endian)
-    ///   For each file:
-    ///     PathLength: 2 bytes (little-endian)
-    ///     Path: UTF-8 string
-    ///     DataLength: 4 bytes (little-endian)
-    ///     Data: raw bytes
+    /// Read-only RDSK filesystem. Each mount retains the exact image pointer
+    /// and captured length supplied when the Ramdisk was created.
     /// </summary>
     internal unsafe class RdskFS : FileSystem {
         private readonly byte* _imageBase;
         private readonly ulong _imageSizeBytes;
 
-        public RdskFS()
-        {
+        public RdskFS() {
             BootConsole.WriteLine("[RdskFS] Constructor called");
             FileSystemType = FS_TYPE_RDSK;
-            
-            // Capture the raw pointer and trusted length from this mount.
-            byte* ptr = Ramdisk.RawBasePointer;
-            _imageBase = ptr;
+
+            _imageBase = Ramdisk.RawBasePointer;
             _imageSizeBytes = Ramdisk.RawImageSizeBytes;
-            if (ptr == null) {
+            if (_imageBase == null) {
                 BootConsole.WriteLine("[RdskFS] ERROR: RawBasePointer is null!");
                 return;
             }
-            
-            BootConsole.WriteLine("[RdskFS] Got raw pointer");
-            
-            // Validate RDSK header
-            if (ptr[0] == (byte)'R' && ptr[1] == (byte)'D' && ptr[2] == (byte)'S' && ptr[3] == (byte)'K') {
-                BootConsole.WriteLine("[RdskFS] Magic OK");
-            } else {
-                BootConsole.WriteLine("[RdskFS] WARNING: Invalid magic, may not work");
-            }
-            
+
+            BootConsole.WriteLine("[RdskFS] Captured ramdisk pointer and size");
             BootConsole.WriteLine("[RdskFS] Constructor completed");
         }
 
@@ -54,79 +35,115 @@ namespace guideXOS.FS {
 
         public override List<FileInfo> GetFiles(string Directory) {
             List<FileInfo> result = new List<FileInfo>();
-            if (Directory == null) return result;
+            if (Directory == null || _imageBase == null) return result;
 
-            // The ramdisk has no directory records.  Reconstruct the direct
-            // children of the requested directory from the packed paths.
-            string directory = Directory;
-            if (directory.Length > 0 && directory[0] == '/') {
-                directory = directory.Substring(1);
-            }
-            if (directory.Length > 0 && directory[directory.Length - 1] != '/') {
-                string withSlash = directory + "/";
-                directory = withSlash;
-            }
+            uint version;
+            if (!RdskFSDirectoryInspector.ValidateImage(_imageBase,
+                    _imageSizeBytes, out version)) return result;
 
-            byte* ptr = _imageBase;
-            if (ptr == null || ptr[0] != (byte)'R' || ptr[1] != (byte)'D' ||
-                ptr[2] != (byte)'S' || ptr[3] != (byte)'K') {
-                return result;
+            string directory;
+            bool ownsDirectory;
+            if (!TryNormalizeDirectory(Directory, out directory,
+                    out ownsDirectory)) return result;
+
+            if (version == RdskFSDirectoryInspector.Version2) {
+                GetV2Files(directory, result);
+            } else {
+                GetV1Files(directory, result);
             }
 
-            uint fileCount = *(uint*)(ptr + 8);
-            if (fileCount == 0 || fileCount > 10000) {
-                return result;
-            }
+            if (ownsDirectory) directory.Dispose();
+            return result;
+        }
 
-            ulong offset = 12;
-            const ulong MAX_RDSK_SIZE = 512 * 1024 * 1024;
-            for (uint i = 0; i < fileCount; i++) {
-                if (offset > MAX_RDSK_SIZE || offset + 2 > MAX_RDSK_SIZE) break;
+        private void GetV2Files(string directory, List<FileInfo> result) {
+            uint directoryIndex;
+            if (!TryResolveV2Directory(directory, out directoryIndex)) return;
 
-                ushort pathLen = *(ushort*)(ptr + offset);
-                offset += 2;
-                if (pathLen == 0 || pathLen > 512 || offset + pathLen > MAX_RDSK_SIZE) break;
+            uint recordCount = RdskFSDirectoryInspector.ReadUInt32(
+                _imageBase, 24);
+            ulong cursor = RdskFSDirectoryInspector.ReadUInt64(_imageBase, 36);
+            for (uint i = 0; i < recordCount; i++) {
+                byte kind = _imageBase[(int)cursor];
+                ushort nameLength = RdskFSDirectoryInspector.ReadUInt16(
+                    _imageBase, cursor + 2);
+                uint parentIndex = RdskFSDirectoryInspector.ReadUInt32(
+                    _imageBase, cursor + 4);
+                ulong nameOffset = cursor + 28;
 
-                bool pathValid = true;
-                for (ushort j = 0; j < pathLen; j++) {
-                    byte b = ptr[offset + j];
-                    if (b == 0 || b > 127) {
-                        pathValid = false;
-                        break;
+                if (i != 0 && parentIndex == directoryIndex) {
+                    string name = DecodeAscii(nameOffset, nameLength);
+                    if (name != null) {
+                        FileInfo info = new FileInfo();
+                        info.Name = name;
+                        if (kind == 1) {
+                            info.Attribute = FileAttribute.Directory;
+                        } else {
+                            info.Attribute = FileAttribute.Archive;
+                            info.Param0 = RdskFSDirectoryInspector.ReadUInt64(
+                                _imageBase, cursor + 8);
+                            info.Param1 = RdskFSDirectoryInspector.ReadUInt64(
+                                _imageBase, cursor + 16);
+                        }
+                        result.Add(info);
                     }
                 }
-                if (!pathValid) break;
+                cursor = nameOffset + nameLength;
+            }
+        }
 
-                string path = null;
-                try {
-#if GUIDEXOS_RDSK_HOSTED_TESTS
-                    path = RdskFSHostedAscii.Decode(ptr + offset, pathLen);
-#else
-                    path = string.FromASCII((nint)(ptr + offset), pathLen);
-#endif
-                } catch {
-                    break;
-                }
-                offset += pathLen;
+        private bool TryResolveV2Directory(string path,
+                                           out uint directoryIndex) {
+            directoryIndex = 0;
+            if (path.Length == 0) return true;
 
-                if (offset + 4 > MAX_RDSK_SIZE) {
-                    if (path != null) path.Dispose();
-                    break;
-                }
-                uint dataLen = *(uint*)(ptr + offset);
+            uint recordCount = RdskFSDirectoryInspector.ReadUInt32(
+                _imageBase, 24);
+            ulong recordsOffset = RdskFSDirectoryInspector.ReadUInt64(
+                _imageBase, 36);
+            uint parentIndex = 0;
+            int segmentStart = 0;
+            for (int i = 0; i <= path.Length; i++) {
+                if (i < path.Length && path[i] != '/') continue;
+                uint childIndex;
+                byte childKind;
+                if (!RdskFSDirectoryInspector.TryFindChild(_imageBase,
+                        recordsOffset, recordCount, parentIndex, path,
+                        segmentStart, i - segmentStart, out childIndex,
+                        out childKind) || childKind != 1) return false;
+                parentIndex = childIndex;
+                segmentStart = i + 1;
+            }
+            directoryIndex = parentIndex;
+            return true;
+        }
+
+        private void GetV1Files(string directory, List<FileInfo> result) {
+            // RDSK v1 contains only file paths. Preserve its historical
+            // synthesized direct-child directories for existing boot images.
+            string prefix = directory;
+            bool ownsPrefix = false;
+            if (prefix.Length > 0 && prefix[prefix.Length - 1] != '/') {
+                prefix = prefix + "/";
+                ownsPrefix = true;
+            }
+
+            uint fileCount = RdskFSDirectoryInspector.ReadUInt32(_imageBase, 8);
+            ulong offset = 12;
+            for (uint i = 0; i < fileCount; i++) {
+                ushort pathLength = RdskFSDirectoryInspector.ReadUInt16(
+                    _imageBase, offset);
+                offset += 2;
+                string path = DecodeAscii(offset, pathLength);
+                offset += pathLength;
+                uint dataLength = RdskFSDirectoryInspector.ReadUInt32(
+                    _imageBase, offset);
                 offset += 4;
-                if (dataLen > 100 * 1024 * 1024 || offset + dataLen > MAX_RDSK_SIZE) {
-                    if (path != null) path.Dispose();
-                    break;
-                }
+                ulong dataOffset = offset;
 
-                if (path != null && IsUnderDirectory(path, directory)) {
-                    // RDSK stores file paths only, so synthesize one entry for
-                    // each direct child directory and retain normal file
-                    // entries.  Without this, the real desktop can display a
-                    // root file but can never navigate to nested fixtures.
+                if (path != null && IsUnderDirectory(path, prefix)) {
                     string child = directory.Length == 0 ? path :
-                        path.Substring(directory.Length);
+                        path.Substring(prefix.Length);
                     int slash = child.IndexOf('/');
                     string name = slash >= 0 ? child.Substring(0, slash) :
                         path.Substring(path.LastIndexOf('/') + 1);
@@ -138,180 +155,208 @@ namespace guideXOS.FS {
                             info.Attribute = FileAttribute.Directory;
                         } else {
                             info.Attribute = FileAttribute.Archive;
-                            info.Param0 = offset;
-                            info.Param1 = dataLen;
+                            info.Param0 = dataOffset;
+                            info.Param1 = dataLength;
                         }
                         result.Add(info);
                     } else if (name != null) {
                         name.Dispose();
                     }
 
-                    if (directory.Length != 0 && child != null) {
-                        child.Dispose();
-                    }
+                    if (directory.Length != 0 && child != null) child.Dispose();
                 }
 
                 if (path != null) path.Dispose();
-                offset += dataLen;
+                offset += dataLength;
+            }
+            if (ownsPrefix) prefix.Dispose();
+        }
+
+        private static bool TryNormalizeDirectory(string input,
+                out string path, out bool ownsPath) {
+            path = input;
+            ownsPath = false;
+            if (input == "/") {
+                path = string.Empty;
+                return true;
+            }
+            if (input.Length > 1 && input[0] == '/' && input[1] == '/') {
+                path = string.Empty;
+                return false;
             }
 
-            return result;
+            if (path.Length > 0 && path[0] == '/') {
+                path = path.Substring(1);
+                ownsPath = true;
+            }
+            if (path.Length > 0 && path[path.Length - 1] == '/') {
+                string trimmed = path.Substring(0, path.Length - 1);
+                if (ownsPath) path.Dispose();
+                path = trimmed;
+                ownsPath = true;
+            }
+            if (path.Length == 0) return true;
+            if (!FileSystemDirectoryInspection.IsValidRelativePath(path) ||
+                    !RdskFSDirectoryInspector.IsAsciiPath(path)) {
+                if (ownsPath) path.Dispose();
+                path = string.Empty;
+                ownsPath = false;
+                return false;
+            }
+            return true;
+        }
+
+        private string DecodeAscii(ulong offset, ushort length) {
+            try {
+#if GUIDEXOS_RDSK_HOSTED_TESTS
+                return RdskFSHostedAscii.Decode(_imageBase + (int)offset,
+                    length);
+#else
+                return string.FromASCII((nint)(_imageBase + (int)offset),
+                    length);
+#endif
+            } catch {
+                return null;
+            }
         }
 
         private static bool IsUnderDirectory(string path, string directory) {
-            if (directory == null || path == null || path.Length < directory.Length) {
-                return false;
-            }
+            if (directory == null || path == null ||
+                    path.Length < directory.Length) return false;
             for (int i = 0; i < directory.Length; i++) {
                 if (path[i] != directory[i]) return false;
             }
             return true;
         }
 
-        private static bool ContainsResultName(List<FileInfo> result, string name) {
+        private static bool ContainsResultName(List<FileInfo> result,
+                                               string name) {
             for (int i = 0; i < result.Count; i++) {
                 if (result[i] != null && result[i].Name != null &&
-                    result[i].Name.Equals(name)) return true;
+                        result[i].Name.Equals(name)) return true;
             }
             return false;
         }
-        
+
         public override void Delete(string Name) { }
-        
-        /// <summary>
-        /// Read file by scanning RDSK on-demand (no pre-caching)
-        /// </summary>
+
         public override byte[] ReadAllBytes(string Name) {
-            if (Name == null) {
+            if (Name == null || _imageBase == null) return null;
+            uint version;
+            if (!RdskFSDirectoryInspector.ValidateImage(_imageBase,
+                    _imageSizeBytes, out version)) return null;
+            return version == RdskFSDirectoryInspector.Version2
+                ? ReadV2File(Name)
+                : ReadV1File(Name);
+        }
+
+        private byte[] ReadV2File(string name) {
+            string path = name;
+            bool ownsPath = false;
+            if (path.Length > 0 && path[0] == '/') {
+                path = path.Substring(1);
+                ownsPath = true;
+            }
+            if (!FileSystemDirectoryInspection.IsValidRelativePath(path) ||
+                    !RdskFSDirectoryInspector.IsAsciiPath(path)) {
+                if (ownsPath) path.Dispose();
                 return null;
             }
-            
-            // Normalize path (remove leading slash if present)
-            string searchPath = Name;
-            if (Name.Length > 0 && Name[0] == '/') {
-                searchPath = Name.Substring(1);
-            }
-            
-            // Use the image retained by this filesystem instance. A later
-            // Ramdisk or File.Instance replacement must not redirect old users.
-            byte* ptr = _imageBase;
-            if (ptr == null) {
-                return null;
-            }
-            
-            // Check magic
-            if (ptr[0] != (byte)'R' || ptr[1] != (byte)'D' || ptr[2] != (byte)'S' || ptr[3] != (byte)'K') {
-                return null;
-            }
-            
-            // Read file count carefully
-            uint fileCount = *(uint*)(ptr + 8);
-            
-            // Safety: limit file count to prevent DoS
-            if (fileCount == 0 || fileCount > 10000) {
-                return null;
-            }
-            
-            // Scan through files
-            ulong offset = 12; // Start after header
-            const ulong MAX_RDSK_SIZE = 512 * 1024 * 1024; // 512MB max size safety limit
-            
-            for (uint i = 0; i < fileCount; i++) {
-                // Safety check: don't read past reasonable bounds
-                if (offset > MAX_RDSK_SIZE || offset + 2 > MAX_RDSK_SIZE) {
-                    break;
-                }
-                
-                // Read path length (2 bytes)
-                ushort pathLen = *(ushort*)(ptr + offset);
-                offset += 2;
-                
-                // Validate path length
-                if (pathLen == 0 || pathLen > 512) {
-                    break;
-                }
-                
-                // Safety: ensure we can read the path
-                if (offset + pathLen > MAX_RDSK_SIZE) {
-                    break;
-                }
-                
-                // Validate path data before trying to create string
-                bool pathValid = true;
-                for (ushort j = 0; j < pathLen; j++) {
-                    byte b = ptr[offset + j];
-                    if (b == 0 || b > 127) {
-                        pathValid = false;
-                        break;
-                    }
-                }
-                
-                if (!pathValid) {
-                    break;
-                }
-                
-                // Read path
-                string path = null;
-                try {
-#if GUIDEXOS_RDSK_HOSTED_TESTS
-                    path = RdskFSHostedAscii.Decode(ptr + offset, pathLen);
-#else
-                    path = string.FromASCII((nint)(ptr + offset), pathLen);
-#endif
-                } catch {
-                    break;
-                }
-                offset += pathLen;
-                
-                // Safety: ensure we can read dataLen
-                if (offset + 4 > MAX_RDSK_SIZE) {
-                    if (path != null) path.Dispose();
-                    break;
-                }
-                
-                // Read data length (4 bytes)
-                uint dataLen = *(uint*)(ptr + offset);
-                offset += 4;
-                
-                // Validate data length
-                if (dataLen > 100 * 1024 * 1024) {
-                    if (path != null) path.Dispose();
-                    break;
-                }
-                
-                // Safety: ensure data exists within bounds
-                if (offset + dataLen > MAX_RDSK_SIZE) {
-                    if (path != null) path.Dispose();
-                    break;
-                }
-                
-                // Check if this is the file we want
-                if (path != null && (path.Equals(searchPath) || path.Equals(Name))) {
-                    // Copy file data
-                    byte[] buffer = new byte[dataLen];
-                    byte* src = ptr + offset;
-                    
-                    fixed (byte* dst = buffer) {
-                        for (uint j = 0; j < dataLen; j++) {
-                            dst[j] = src[j];
+
+            uint recordCount = RdskFSDirectoryInspector.ReadUInt32(
+                _imageBase, 24);
+            ulong recordsOffset = RdskFSDirectoryInspector.ReadUInt64(
+                _imageBase, 36);
+            uint parentIndex = 0;
+            int segmentStart = 0;
+            ulong foundDataOffset = 0;
+            ulong foundDataLength = 0;
+            bool foundFile = false;
+            for (int i = 0; i <= path.Length; i++) {
+                if (i < path.Length && path[i] != '/') continue;
+                uint childIndex;
+                byte childKind;
+                if (!RdskFSDirectoryInspector.TryFindChild(_imageBase,
+                        recordsOffset, recordCount, parentIndex, path,
+                        segmentStart, i - segmentStart, out childIndex,
+                        out childKind)) break;
+
+                bool isLast = i == path.Length;
+                if (!isLast && childKind != 1) break;
+                if (isLast && childKind == 2) {
+                    ulong cursor = recordsOffset;
+                    for (uint record = 0; record <= childIndex; record++) {
+                        ushort nameLength =
+                            RdskFSDirectoryInspector.ReadUInt16(_imageBase,
+                                cursor + 2);
+                        if (record == childIndex) {
+                            foundDataOffset =
+                                RdskFSDirectoryInspector.ReadUInt64(_imageBase,
+                                    cursor + 8);
+                            foundDataLength =
+                                RdskFSDirectoryInspector.ReadUInt64(_imageBase,
+                                    cursor + 16);
+                            foundFile = true;
+                            break;
                         }
+                        cursor += 28UL + nameLength;
                     }
-                    
-                    path.Dispose();
-                    return buffer;
+                    break;
                 }
-                
-                if (path != null) path.Dispose();
-                
-                // Skip past data
-                offset += dataLen;
+                if (isLast) break;
+                parentIndex = childIndex;
+                segmentStart = i + 1;
             }
-            
+            if (ownsPath) path.Dispose();
+            if (!foundFile || foundDataLength > int.MaxValue) return null;
+            return CopyFileBytes(foundDataOffset, foundDataLength);
+        }
+
+        private byte[] ReadV1File(string name) {
+            string searchPath = name;
+            bool ownsPath = false;
+            if (name.Length > 0 && name[0] == '/') {
+                searchPath = name.Substring(1);
+                ownsPath = true;
+            }
+
+            uint fileCount = RdskFSDirectoryInspector.ReadUInt32(_imageBase, 8);
+            ulong offset = 12;
+            for (uint i = 0; i < fileCount; i++) {
+                ushort pathLength = RdskFSDirectoryInspector.ReadUInt16(
+                    _imageBase, offset);
+                offset += 2;
+                string path = DecodeAscii(offset, pathLength);
+                offset += pathLength;
+                uint dataLength = RdskFSDirectoryInspector.ReadUInt32(
+                    _imageBase, offset);
+                offset += 4;
+                ulong dataOffset = offset;
+                bool matches = path != null &&
+                    (path.Equals(searchPath) || path.Equals(name));
+                if (path != null) path.Dispose();
+                if (matches) {
+                    if (ownsPath) searchPath.Dispose();
+                    return CopyFileBytes(dataOffset, dataLength);
+                }
+                offset += dataLength;
+            }
+            if (ownsPath) searchPath.Dispose();
             return null;
         }
-        
+
+        private byte[] CopyFileBytes(ulong dataOffset, ulong dataLength) {
+            byte[] buffer = new byte[(int)dataLength];
+            byte* source = _imageBase + (int)dataOffset;
+            fixed (byte* destination = buffer) {
+                for (ulong i = 0; i < dataLength; i++) {
+                    destination[(int)i] = source[(int)i];
+                }
+            }
+            return buffer;
+        }
+
         public override void WriteAllBytes(string Name, byte[] Content) { }
-        
         public override void Format() { }
     }
 }
