@@ -20,8 +20,9 @@ support was not added to the custom UEFI CoreLib.
 - **Starting remote relationship:** `HEAD...origin/APP_MODEL` was `0 ahead, 0
   behind`; the older note that this checkout was ahead did not apply here.
 - **Ending branch:** `APP_MODEL`; no branch switch occurred.
-- **Ending HEAD:** the local AMCONV2F closeout commit containing this report.
-  Its exact SHA is included in the final task summary.
+- **Ending implementation HEAD:** `23fc86c6df1f7d26391db56d1675866c2a8f8ea1`
+  (`feat: add bounded RDSK v2 images`), containing the reader, generator,
+  hosted tests, and the initial version of this report.
 
 No reset, rebase, merge, cherry-pick, remote update, or push was performed.
 
@@ -332,3 +333,49 @@ and AMCONV2E hosted build outputs were left in place; the AMCONV2F hosted
 project's generated build outputs were also left as local evidence and were
 not staged. No branch switch, merge, rebase, cherry-pick, push, global SDK
 change, QEMU, or QAC operation occurred.
+
+## 14. Fresh verification rerun (2026-11-01)
+
+The AMCONV2F implementation was already present when this verification pass
+started. The actual checkout was branch `APP_MODEL`, HEAD
+`23fc86c6df1f7d26391db56d1675866c2a8f8ea1`, equal to `origin/APP_MODEL`
+(zero ahead, zero behind). This differs from the expected task starting HEAD
+of `597507e7bf48a16f5fec20ff3259ff149e598634`; that commit is the parent of
+the existing implementation commit. No reset or synchronization was used.
+
+The only pre-existing untracked paths reported by Git status were build outputs
+under `Tests/AMCONV2DFatInspectionTests/bin` and `obj`,
+`Tests/AMCONV2ERdskInspectionTests/bin` and `obj`, and
+`Tests/AMCONV2FRdskV2Tests/bin` and `obj`. They were preserved and not staged.
+
+The following checks were rerun from the existing implementation commit:
+
+| Check | Fresh result |
+| --- | --- |
+| AMCONV2F production reader, typed binding, and generated-image suite | 58/58 assertions passed; 0 failures |
+| AMCONV2F generator determinism and rejection checks | 12 assertions passed |
+| AMCONV2F source-contract checks | 9/9 passed |
+| AMCONV2B/C folder binding and mount lifetime | 68/68 assertions passed |
+| AMCONV2B/C/D source-contract checks | 25/25 passed |
+| AMCONV2D production FAT inspection | 11/11 assertions passed |
+| AMCONV2E production v1 inspection and Root binding | 32/32 assertions passed |
+| AMCONV1 source regressions | 9/9 passed |
+| Phase 33 managed wire validator | Passed; request 2,084 bytes and response 16 bytes |
+| UEFI desktop interaction hosted suite | 42/42 assertions passed |
+| Task Manager Memory Details regression | Passed |
+
+The supported Release/AppModel compile completed with **0 errors and 135
+warnings**, matching the recorded baseline. The two existing FAT `CA2014`
+warnings remained at `Kernel/FS/FAT.cs` lines 888 and 902. Audit-only managed
+artifact verification passed both before and after compilation: 41 artifacts,
+41/41 descriptor agreements, 41/41 build/staging agreements, 41/41 ramdisk
+staging agreements, and 41/41 compiled allowlist agreements. Fresh reports
+were written to `out/managed-artifacts-amconv2f-rerun-prebuild.csv` and
+`out/managed-artifacts-amconv2f-rerun-postbuild.csv`.
+
+The fresh run used .NET SDK `10.0.403`. It used no QEMU or QAC. The branch,
+tracked source, existing managed proof inputs, and pre-existing untracked build
+outputs were preserved. No push was performed. At the end of validation, the
+source and test implementation remained at
+`23fc86c6df1f7d26391db56d1675866c2a8f8ea1`; this report-only verification
+addendum is being committed separately.
