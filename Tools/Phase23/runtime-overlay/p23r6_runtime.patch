@@ -1,0 +1,107 @@
+--- a/eng/Subsets.props
++++ b/eng/Subsets.props
+@@ -122 +122 @@
+-    <_NativeAotSupportedOS Condition="'$(TargetOS)' == 'windows' or '$(TargetOS)' == 'linux' or '$(TargetOS)' == 'osx' or '$(TargetOS)' == 'maccatalyst' or '$(TargetOS)' == 'iossimulator' or '$(TargetOS)' == 'ios' or '$(TargetOS)' == 'tvossimulator' or '$(TargetOS)' == 'tvos' or '$(TargetOS)' == 'freebsd'">true</_NativeAotSupportedOS>
++    <_NativeAotSupportedOS Condition="'$(TargetOS)' == 'windows' or '$(TargetOS)' == 'linux' or '$(TargetOS)' == 'osx' or '$(TargetOS)' == 'maccatalyst' or '$(TargetOS)' == 'iossimulator' or '$(TargetOS)' == 'ios' or '$(TargetOS)' == 'tvossimulator' or '$(TargetOS)' == 'tvos' or '$(TargetOS)' == 'freebsd' or '$(TargetOS)' == 'guidexos'">true</_NativeAotSupportedOS>
+--- a/src/coreclr/CMakeLists.txt
++++ b/src/coreclr/CMakeLists.txt
+@@ -117 +117 @@
+-if(NOT CLR_CMAKE_HOST_MACCATALYST AND NOT CLR_CMAKE_HOST_IOS AND NOT CLR_CMAKE_HOST_TVOS)
++if(NOT CLR_CMAKE_TARGET_GUIDEXOS AND NOT CLR_CMAKE_HOST_MACCATALYST AND NOT CLR_CMAKE_HOST_IOS AND NOT CLR_CMAKE_HOST_TVOS)
+--- a/src/coreclr/gc/vxsort/isa_detection.cpp
++++ b/src/coreclr/gc/vxsort/isa_detection.cpp
+@@ -101 +101,10 @@
+-#endif // defined(TARGET_UNIX)
++#elif defined(TARGET_GUIDEXOS)
++
++// The target PAL does not expose Windows XState feature state yet. Keep the
++// managed GC on its scalar path until the OS can prove AVX state is enabled.
++SupportedISA DetermineSupportedISA()
++{
++    return SupportedISA::None;
++}
++
++#endif // TARGET_WINDOWS, TARGET_UNIX, or TARGET_GUIDEXOS
+--- a/src/coreclr/nativeaot/Runtime/StackFrameIterator.cpp
++++ b/src/coreclr/nativeaot/Runtime/StackFrameIterator.cpp
+@@ -110,0 +111,5 @@
++#if defined(TARGET_GUIDEXOS) && defined(TARGET_AMD64)
++    m_RegDisplay.StackOwner = pThreadToWalk;
++    pThreadToWalk->GetStackBounds(&m_RegDisplay.StackLow,
++                                  &m_RegDisplay.StackHigh);
++#endif // TARGET_GUIDEXOS && TARGET_AMD64
+@@ -159,0 +165,5 @@
++#if defined(TARGET_GUIDEXOS) && defined(TARGET_AMD64)
++    m_RegDisplay.StackOwner = pThreadToWalk;
++    pThreadToWalk->GetStackBounds(&m_RegDisplay.StackLow,
++                                  &m_RegDisplay.StackHigh);
++#endif // TARGET_GUIDEXOS && TARGET_AMD64
+@@ -1565,2 +1575,36 @@
+-    FAILFAST_OR_DAC_FAIL(GetCodeManager()->UnwindStackFrame(&m_methodInfo, unwindFlags, &m_RegDisplay,
+-                                                            &m_pPreviousTransitionFrame));
++#if defined(TARGET_GUIDEXOS) && defined(TARGET_AMD64)
++    const uintptr_t walkedStackLow = dac_cast<TADDR>(m_RegDisplay.StackLow);
++    const uintptr_t walkedStackHigh = dac_cast<TADDR>(m_RegDisplay.StackHigh);
++    const uintptr_t walkedStackPointer = m_RegDisplay.GetSP();
++    if (dac_cast<TADDR>(m_RegDisplay.StackOwner) !=
++            dac_cast<TADDR>(m_pThread) ||
++        walkedStackLow == 0 || walkedStackHigh <= walkedStackLow ||
++        walkedStackPointer < walkedStackLow ||
++        walkedStackPointer >= walkedStackHigh ||
++        (walkedStackPointer & (sizeof(uintptr_t) - 1)) != 0)
++    {
++        FAILFAST_OR_DAC_FAIL_UNCONDITIONALLY(
++            "GUIDEXOS stack walk lost the walked thread's validated stack bounds.");
++    }
++#endif // TARGET_GUIDEXOS && TARGET_AMD64
++
++    const bool unwindSucceeded = GetCodeManager()->UnwindStackFrame(
++        &m_methodInfo, unwindFlags, &m_RegDisplay, &m_pPreviousTransitionFrame);
++    FAILFAST_OR_DAC_FAIL(unwindSucceeded);
++
++#if defined(TARGET_GUIDEXOS) && defined(TARGET_AMD64)
++    // The manager must carry the original walked-thread bounds through the
++    // frame update. Reject a changed owner/bounds pair or a recovered caller
++    // SP outside that thread's stack before the iterator can expose it.
++    const uintptr_t nextStackLow = dac_cast<TADDR>(m_RegDisplay.StackLow);
++    const uintptr_t nextStackHigh = dac_cast<TADDR>(m_RegDisplay.StackHigh);
++    const uintptr_t nextStackPointer = m_RegDisplay.GetSP();
++    if (dac_cast<TADDR>(m_RegDisplay.StackOwner) != dac_cast<TADDR>(m_pThread) ||
++        nextStackLow != walkedStackLow || nextStackHigh != walkedStackHigh ||
++        nextStackPointer < walkedStackLow || nextStackPointer >= walkedStackHigh ||
++        (nextStackPointer & (sizeof(uintptr_t) - 1)) != 0)
++    {
++        FAILFAST_OR_DAC_FAIL_UNCONDITIONALLY(
++            "GUIDEXOS frame unwind returned a caller outside the walked thread's stack bounds.");
++    }
++#endif // TARGET_GUIDEXOS && TARGET_AMD64
+--- a/src/coreclr/nativeaot/Runtime/regdisplay.h
++++ b/src/coreclr/nativeaot/Runtime/regdisplay.h
+@@ -45,0 +46,8 @@
++
++    // Bounds belong to the thread being walked, never the thread executing
++    // the unwinder.
++#if defined(TARGET_GUIDEXOS) && defined(TARGET_AMD64)
++    PTR_VOID    StackOwner;
++    PTR_VOID    StackLow;
++    PTR_VOID    StackHigh;
++#endif // TARGET_GUIDEXOS && TARGET_AMD64
+--- a/src/coreclr/nativeaot/Runtime/amd64/AsmOffsetsCpu.h
++++ b/src/coreclr/nativeaot/Runtime/amd64/AsmOffsetsCpu.h
+@@ -11 +11 @@
+-PLAT_ASM_SIZEOF(260, ExInfo)
++PLAT_ASM_SIZEOF(280, ExInfo)
+@@ -19 +19 @@
+-PLAT_ASM_OFFSET(250, ExInfo, m_notifyDebuggerSP)
++PLAT_ASM_OFFSET(270, ExInfo, m_notifyDebuggerSP)
+@@ -27 +27 @@
+-PLAT_ASM_SIZEOF(230, StackFrameIterator)
++PLAT_ASM_SIZEOF(250, StackFrameIterator)
+@@ -31,2 +31,2 @@
+-PLAT_ASM_OFFSET(220, StackFrameIterator, m_OriginalControlPC)
+-PLAT_ASM_OFFSET(228, StackFrameIterator, m_pPreviousTransitionFrame)
++PLAT_ASM_OFFSET(240, StackFrameIterator, m_OriginalControlPC)
++PLAT_ASM_OFFSET(248, StackFrameIterator, m_pPreviousTransitionFrame)
+@@ -59 +59 @@
+-PLAT_ASM_SIZEOF(130, REGDISPLAY)
++PLAT_ASM_SIZEOF(150, REGDISPLAY)

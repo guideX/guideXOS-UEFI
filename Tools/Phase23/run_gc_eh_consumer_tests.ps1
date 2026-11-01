@@ -109,6 +109,14 @@ $record = [ordered]@{
         callbackRootSlotUpdates = $true
         multiFrameEnumeration = $true
     }
+    guardedGcFailureInjection = [ordered]@{
+        outcome = 'PASS'
+        callbackFailureReported = $true
+        invalidRootLocationRejected = $true
+        failedUnwindBlocksNextFrame = $true
+        genuineManagerCalled = $true
+        targetRuntimeIntegration = $false
+    }
     r13Probe = [ordered]@{
         outcome = 'PASS'
         unwindInfo = 'test-only valid x64 overlay; compiler-generated GC info retained'

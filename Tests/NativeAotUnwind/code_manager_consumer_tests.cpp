@@ -1,7 +1,10 @@
 #include <windows.h>
 
+#include "../../Tools/Phase23/gc_enum_status_adapter.h"
+
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -287,14 +290,14 @@ struct RootSlot
 
 struct RootCapture
 {
-    GCEnumCallback pCallback = nullptr;
     std::vector<RootSlot> slots;
 };
 
-static void CaptureRoot(void* handle, void** slot, uint32_t flags)
+static bool CaptureRoot(void* handle, void** slot, uint32_t flags)
 {
     auto* capture = static_cast<RootCapture*>(handle);
     capture->slots.push_back({slot, flags});
+    return true;
 }
 
 struct WalkState
@@ -318,26 +321,53 @@ struct WalkState
     }
 };
 
-static bool CaptureAt(CoffNativeCodeManager& manager, MethodInfo& info, WalkState& walk,
-                      uintptr_t pc, bool active, RootCapture& capture)
+struct GuardedCaptureResult
 {
-    capture.pCallback = CaptureRoot;
+    guidexos::gc_contract::Status status;
+    size_t acceptedRoots;
+    size_t callbackCount;
+};
+
+static GuardedCaptureResult CaptureAtWithStatus(
+    CoffNativeCodeManager& manager, MethodInfo& info, WalkState& walk,
+    uintptr_t pc, bool active, RootCapture& capture,
+    size_t failAfterRootCount = guidexos::gc_contract::NoInjectedFailure,
+    bool allowStackRoots = true)
+{
     capture.slots.clear();
     walk.registers.IP = pc;
-    manager.CoffNativeCodeManager::EnumGcRefs(&info, reinterpret_cast<void*>(pc), &walk.registers,
-                                              reinterpret_cast<GCEnumContext*>(&capture), active);
     const uintptr_t registerStart = reinterpret_cast<uintptr_t>(walk.gprs.data());
     const uintptr_t registerEnd = registerStart + sizeof(walk.gprs);
     const uintptr_t stackStart = reinterpret_cast<uintptr_t>(walk.stack.data());
     const uintptr_t stackEnd = stackStart + sizeof(walk.stack);
-    for (const auto& root : capture.slots)
+    const guidexos::gc_contract::AddressRange ranges[] = {
+        {registerStart, registerEnd},
+        {stackStart, stackEnd},
+    };
+    auto guarded = guidexos::gc_contract::MakeCallbackContext(
+        CaptureRoot, &capture, ranges, allowStackRoots ? 2 : 1,
+        failAfterRootCount);
+    static_assert(offsetof(guidexos::gc_contract::CallbackContext, pCallback) == 0,
+                  "legacy GC callback must remain the first field");
+    if (guidexos::gc_contract::MayEnumerateFrame(guarded))
     {
-        const uintptr_t slot = reinterpret_cast<uintptr_t>(root.address);
-        if (!((slot >= registerStart && slot < registerEnd) || (slot >= stackStart && slot < stackEnd)))
-        {
-            std::cerr << "root slot outside REGDISPLAY or synthetic stack: " << std::hex << slot << "\n";
-            return false;
-        }
+        manager.CoffNativeCodeManager::EnumGcRefs(
+            &info, reinterpret_cast<void*>(pc), &walk.registers,
+            reinterpret_cast<GCEnumContext*>(&guarded), active);
+    }
+    return {guarded.CurrentStatus, guarded.RootCount, guarded.CallbackCount};
+}
+
+static bool CaptureAt(CoffNativeCodeManager& manager, MethodInfo& info, WalkState& walk,
+                      uintptr_t pc, bool active, RootCapture& capture)
+{
+    const GuardedCaptureResult result = CaptureAtWithStatus(
+        manager, info, walk, pc, active, capture);
+    if (result.status != guidexos::gc_contract::Status::Completed)
+    {
+        std::cerr << "guarded authentic GC enumeration failed with status "
+                  << static_cast<unsigned>(result.status) << "\n";
+        return false;
     }
     return true;
 }
@@ -437,6 +467,81 @@ int main(int argc, char** argv)
         Require(sawStackRoot, "authentic fixture did not report a live stack root");
         Require(outerCounts.size() == 2 && outerCounts[0].second == 7 && outerCounts[1].second == 6,
                 "authentic GC info did not drop dead references across successive safepoints");
+
+        MethodInfo guardedInnerInfo{};
+        MethodInfo guardedOuterInfo{};
+        Require(manager->CoffNativeCodeManager::FindMethodInfo(
+                    base + methods[2].rva, &guardedInnerInfo),
+                "Inner lookup failed before guarded GC failure probes");
+        Require(manager->CoffNativeCodeManager::FindMethodInfo(
+                    base + methods[1].rva, &guardedOuterInfo),
+                "Outer lookup failed before guarded GC failure probes");
+
+        {
+            WalkState walk;
+            RootCapture capture;
+            const GuardedCaptureResult failedCallback = CaptureAtWithStatus(
+                *manager, guardedInnerInfo, walk, innerSafePoints.front(), true,
+                capture, 0);
+            Require(failedCallback.status == guidexos::gc_contract::Status::CallbackFailure,
+                    "void GC consumer did not retain an injected callback failure");
+            Require(failedCallback.acceptedRoots == 0 && capture.slots.empty(),
+                    "GC callback failure forwarded a root after the injected failure");
+            Require(failedCallback.callbackCount > 0,
+                    "callback failure was not injected through the genuine manager");
+        }
+
+        {
+            auto rootSafepoint = std::find_if(
+                outerCounts.begin(), outerCounts.end(),
+                [](const auto& entry) { return entry.second > 3; });
+            Require(rootSafepoint != outerCounts.end(),
+                    "authentic mixed register/stack root safepoint was not found");
+            const size_t safepointIndex = static_cast<size_t>(
+                rootSafepoint - outerCounts.begin());
+            WalkState walk;
+            RootCapture capture;
+            const GuardedCaptureResult invalidLocation = CaptureAtWithStatus(
+                *manager, guardedOuterInfo, walk,
+                outerSafePoints[safepointIndex], true, capture,
+                guidexos::gc_contract::NoInjectedFailure, false);
+            Require(invalidLocation.status == guidexos::gc_contract::Status::InvalidRootLocation,
+                    "GC consumer did not reject a stack root outside supplied writable ranges");
+            Require(invalidLocation.acceptedRoots == capture.slots.size() &&
+                    invalidLocation.acceptedRoots < rootSafepoint->second,
+                    "invalid GC root location was forwarded to the consumer");
+        }
+
+        {
+            WalkState walk;
+            RootCapture capture;
+            const uintptr_t pc = innerSafePoints.front();
+            walk.registers.IP = pc;
+            const uintptr_t registerStart = reinterpret_cast<uintptr_t>(walk.gprs.data());
+            const uintptr_t registerEnd = registerStart + sizeof(walk.gprs);
+            const uintptr_t stackStart = reinterpret_cast<uintptr_t>(walk.stack.data());
+            const uintptr_t stackEnd = stackStart + sizeof(walk.stack);
+            const guidexos::gc_contract::AddressRange ranges[] = {
+                {registerStart, registerEnd}, {stackStart, stackEnd},
+            };
+            auto gate = guidexos::gc_contract::MakeCallbackContext(
+                CaptureRoot, &capture, ranges, 2);
+            guidexos::gc_contract::RecordUnwindFailure(&gate);
+            size_t managerCalls = 0;
+            if (guidexos::gc_contract::MayEnumerateFrame(gate))
+            {
+                ++managerCalls;
+                manager->CoffNativeCodeManager::EnumGcRefs(
+                    &guardedInnerInfo, reinterpret_cast<void*>(pc),
+                    &walk.registers,
+                    reinterpret_cast<GCEnumContext*>(&gate), true);
+            }
+            Require(gate.CurrentStatus == guidexos::gc_contract::Status::FailedFrameUnwind &&
+                    managerCalls == 0 && capture.slots.empty(),
+                    "GC enumeration continued after frame unwind status failed");
+        }
+        std::cout << "GCSAFETY genuine_manager=1 callback_failure=1 invalid_root=1 "
+                     "unwind_failure_blocks_next_frame=1\n";
 
         // Apply relocation-shaped writes through the real NativeAOT code-manager callback.
         MethodInfo outerInfo{};

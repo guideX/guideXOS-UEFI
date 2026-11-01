@@ -1,89 +1,89 @@
 # P23R6 — Bounded Runtime Walks and Publication
 
-**Outcome B — `P23R6_RUNTIME_SAFETY_PARTIAL`.** P23R6 adds a freestanding, status-bearing x64 frame-walk adapter that binds unwind reads to the identity and stack bounds of the thread being walked. It reuses the P23R3 bounded evaluator and passes new hosted fault cases. The adapter is not yet wired into NativeAOT's `ICodeManager` calls. GC/EH failure propagation, target COFF manager integration, and safe manager publication remain open, so production registration and Phase 23 remain disabled.
+**Outcome B — `P23R6_RUNTIME_SAFETY_PARTIAL`.** Hosted bounded-unwind behavior and authentic host COFF GC/EH consumer behavior pass, including injected GC callback and root-location failures. An isolated GUIDEXOS runtime build compiles the walked-thread bounds checks into `Runtime.WorkstationGC.lib`. The runtime still has no selected target COFF manager, no verified GUIDEXOS stack-bounds PAL provider, no integrated GC/EH error channel, and no transactional manager publication. Production registration and Phase 23 remain disabled.
 
 ## Repository and preservation
 
-- Checkout: `D:\dev\guideXOSUEFI_BUILD_INFRA`
-- Branch: `BUILD_INFRA`
-- Starting HEAD: `25076262e66ac9d612f36a774f58ab0fd0f80291`
-- Ending HEAD: the local commit containing this report; its exact SHA is in the final execution summary because a commit cannot contain its own ID.
-- The root worktree was clean at task start. The only intended changes are this report, `Tools/Phase23/bounded_runtime_walk.h`, and the bounded unwind test source.
-- Pinned runtime `out\rt` remained at `9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3`, detached, with its 65 pre-existing status entries (54 modified tracked files and 11 untracked entries). The SHA-256 of `git status --porcelain=v1 --untracked-files=all` joined with LF was `59610A7C32254E178B563A23AA2C4D5E0389FCF9873E1ED2CDBF21B76B724DF9` both before and after. No files in that checkout were changed, cleaned, reset, or overwritten.
-- No branch switch, merge, rebase, reset, cherry-pick, push, or change to MODERN_INPUT, APP_MODEL, or later-phase shim copies occurred.
+- Checkout: `D:\dev\guideXOSUEFI_BUILD_INFRA`, branch `BUILD_INFRA`.
+- Assignment starting HEAD: `25076262e66ac9d612f36a774f58ab0fd0f80291`.
+- An initial local P23R6 commit, `2753d9672cb3432a34bbfcd0e40cb7bca841c36c`, contains the bounded unwind adapter and its first 10 hosted cases. This report and the final changes are committed on top of it; the resulting HEAD is given in the final execution summary.
+- The root worktree was clean at assignment start. P23R6 changes are limited to this report, hosted adapter/tests/reporting, and the isolated runtime patch described below. No changes were made to `MODERN_INPUT`, `APP_MODEL`, or later-phase shim copies.
+- The original `out\rt` remains detached at `9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3`. Its original status remains 65 entries: 54 modified tracked files and 11 untracked files. SHA-256 of the sorted `git status --porcelain=v1 --untracked-files=all` lines joined by LF is `59610A7C32254E178B563A23AA2C4D5E0389FCF9873E1ED2CDBF21B76B724DF9`, unchanged at completion. No file in that checkout was cleaned, reset, or overwritten.
+- Runtime edits were built in a detached staging checkout at `D:\dev\guideXOSUEFI_P23R6_RUNTIME_STAGING_LONG`, based on a copy of the preserved P23R5 `out\rt` snapshot. The reproducible six-file source delta is [p23r6_runtime.patch](../Tools/Phase23/runtime-overlay/p23r6_runtime.patch). Forward application checks against `out\rt` and reverse checks against the staging checkout both passed with `git apply --check --unidiff-zero -p1`. The patch is intended for an isolated copy of that exact P23R5 source snapshot, not for the preserved `out\rt` itself.
+- No merge, reset, rebase, cherry-pick, branch switch, push, QEMU run, QAC admission, physical hardware test, Phase 29–35 generation, or production image build occurred.
 
-## Walked-thread stack provenance
+## Files changed
 
-The pinned NativeAOT `Runtime::Thread` stores per-thread `m_pStackLow` and `m_pStackHigh` in `RuntimeThreadLocals` (`out\rt\src\coreclr\nativeaot\Runtime\thread.h:109–110`). Its constructor calls `PalGetMaximumStackBounds` and fail-fasts if the PAL cannot provide bounds (`thread.cpp:287`); `Thread::GetStackBounds` returns those stored values (`thread.inl:31–35`). `StackFrameIterator` retains the `Thread*` passed for the walk (`StackFrameIterator.h`, `m_pThread`). This is the authoritative source for a foreign-thread walk; the current executor's bounds cannot be substituted.
+The first local P23R6 commit adds `Tools/Phase23/bounded_runtime_walk.h` and the first 10 cases in `Tests/NativeAotUnwind/x64_unwind_tests.cpp`. This final change set adds:
 
-The pinned PAL implementations obtain the range from the OS thread allocation: Windows uses the stack allocation base and TEB `StackBase` (`Runtime/windows/PalRedhawkCommon.cpp`); Unix uses pthread stack attributes (`Runtime/unix/PalRedhawkUnix.cpp`). The NativeAOT thread object is initialized for the attached OS thread, so the stored range follows that thread through worker-thread walks. Transition frames on the same native stack retain the same allocation bounds.
+- `Tools/Phase23/gc_enum_status_adapter.h` — hosted status/fail-stop boundary for the legacy `void` GC callback prefix.
+- `Tests/NativeAotUnwind/code_manager_consumer_tests.cpp` — authentic host-manager failure injection and guarded root-slot checks.
+- `Tools/Phase23/run_gc_eh_consumer_tests.ps1` — explicit JSON fields for the guarded GC failures and the unverified target integration.
+- `Tools/Phase23/runtime-overlay/p23r6_runtime.patch` — isolated target source changes across `eng/Subsets.props`, `src/coreclr/CMakeLists.txt`, `src/coreclr/gc/vxsort/isa_detection.cpp`, `src/coreclr/nativeaot/Runtime/regdisplay.h`, `src/coreclr/nativeaot/Runtime/StackFrameIterator.cpp`, and `src/coreclr/nativeaot/Runtime/amd64/AsmOffsetsCpu.h`.
 
-P23R6's adapter requires the caller to pass the walked thread identity, allocation bounds, and a separately verified accessible interval. It validates non-null, ordered, 8-byte-aligned bounds, mapping coverage, and that current `RSP` belongs to the accessible half-open interval. It creates a view starting at current `RSP` and ending at `AccessibleHigh`, so every evaluator stack read is checked against verified accessible memory. A foreign executor is allowed when the bounds owner matches the walked thread; bounds tagged for the executor are rejected. An alternate-stack context or transition to a separate stack falls outside this contract and is rejected by the range check.
+## Walked-thread stack provenance and runtime checks
 
-**Integration limit:** the pinned runtime currently stores maximum allocation bounds, not a separately verified committed-memory interval. `Thread::GetStackBounds` is not passed into `CoffNativeCodeManager`, and no current runtime API supplies the adapter's required `AccessibleLow`/`AccessibleHigh` pair for a foreign thread. The adapter's explicit identity contract is hosted and target-shareable code, not proof that the current runtime call graph supplies the correct `Thread*` or accessible interval. The hosted current/foreign tests use distinct thread identity tokens over byte-array stack views; they do not create or suspend real OS threads. The adapter therefore cannot yet be called safely by production code. The runtime source also lacks a verified alternate-stack bound path to the manager.
+In the pinned NativeAOT source, `Thread::Construct` calls `PalGetMaximumStackBounds` and fail-fasts if the call returns false (`src/coreclr/nativeaot/Runtime/thread.cpp`). The returned low/high values are stored on that `Thread`; `Thread::GetStackBounds` reads those stored fields (`thread.h`, `thread.inl`). The stack iterator is initialized with the `Thread*` being walked, and the isolated patch copies that thread identity and its low/high values into the target `REGDISPLAY`. This avoids substituting the executing thread's bounds when a foreign thread is walked.
 
-## Status-bearing unwind interface
+The patch validates owner identity, nonzero ordered bounds, and aligned `RSP` before the manager call. After a successful frame step, it verifies that the manager preserved the owner and bounds and returned an aligned `RSP` inside the same half-open interval. Any violation fail-fasts before the iterator exposes the caller frame. The P/Invoke initialization path restores these fields after clearing `REGDISPLAY`. The larger target `REGDISPLAY` also changes assembler-checked layouts: `REGDISPLAY` size `0x150`, `StackFrameIterator` size `0x250`, `m_OriginalControlPC` at `0x240`, `m_pPreviousTransitionFrame` at `0x248`, `ExInfo` size `0x280`, and `m_notifyDebuggerSP` at `0x270`. `AsmOffsetsVerify.cpp` compiled successfully in the target workstation library build.
 
-`Tools/Phase23/bounded_runtime_walk.h` introduces `guidexos::runtime_walk::UnwindFrame`. Its request includes the current register state and saved-register locations, image and executable-code views, runtime-function entry, walked-thread identity, stack bounds, output caller state, and establisher-frame result. It invokes the existing `guidexos::unwind::UnwindFrame` evaluator rather than rewriting it.
+**Target provenance limit:** the pinned source has Windows and Unix implementations of `PalGetMaximumStackBounds`, but no GUIDEXOS implementation. `dumpbin /symbols` on the target workstation archive still reports `PalGetMaximumStackBounds` as an undefined external. A platform implementation may be supplied by a separately linked PAL, but this task did not verify one. The added iterator checks therefore compile into the target archive but do not prove that a target thread receives valid bounds. The current values describe maximum allocation bounds; the iterator does not verify page commitment/accessibility, bound every code-manager stack read, validate saved-root slots, or support alternate stacks. Bootstrap, worker, suspended-thread, and transition-frame target behavior was not executed.
 
-The adapter returns distinct outcomes for invalid frame, unavailable or invalid bounds, wrong-thread bounds, stack access outside the permitted interval, malformed metadata, unsupported unwind encoding, unsupported epilogue, invalid executable address, arithmetic overflow, and invalid restored context. It stages registers and saved-register locations locally, validates the restored `RSP`/`RIP`, and only then writes the caller state and result. Failure leaves both outputs unchanged.
+## Status-bearing unwind behavior
 
-The caller must pass image/code bounds already validated for the mapped target image. The P23R5 PE preflight remains the initial PE validation helper, but neither it nor this adapter is wired into runtime registration or `CoffNativeCodeManager` in this phase. In particular, this work does not establish loader mapping extent or validate GC/EH metadata. Hosted tests use a byte array whose entire declared accessible interval is mapped; they do not establish a PAL source for committed bounds on target threads.
+`Tools/Phase23/bounded_runtime_walk.h` reuses the existing P23R3 x64 evaluator. Its request carries image/code ranges, a frame context, saved-register locations, walked-thread identity, stack bounds, and separate accessible-memory mapping bounds. It returns distinct failures for invalid frames, unavailable/invalid/wrong-thread bounds, out-of-range stack access, malformed metadata, unsupported encodings/epilogues, invalid code addresses, arithmetic overflow, and invalid restored context. It stages the caller context and register locations and commits them only after all checks pass.
+
+Hosted tests exercise current-thread and foreign-thread identities, nested frames, bad bounds, underflow/overflow, malformed metadata, unsupported forms, invalid save locations, and failure atomicity. **The evaluator is not wired into `StackFrameIterator` or a target code manager.** The runtime patch adds bounds checks around the existing `ICodeManager::UnwindStackFrame` call; it does not make that legacy manager unwind bounded or transactional.
 
 ## GC and EH failure handling
 
-No production GC or EH consumer interface was changed.
+The pinned `ICodeManager::EnumGcRefs` and `GCEnumContext` production path remains unchanged. The new `gc_enum_status_adapter.h` is a hosted adapter that preserves the legacy callback prefix, validates root-slot addresses against permitted ranges, latches invalid-root/callback/unwind status, and suppresses later callback forwarding after failure. The authentic host manager is called through this guard. Fault injection rejects a callback root and an invalid root location; a failed frame unwind blocks a later frame enumeration. This verifies the adapter boundary with authentic root production, but `targetRuntimeIntegration` is explicitly `false`: the adapter is not compiled into target `GcEnum.cpp` or the target COFF manager. A target collection still has no integrated status-bearing fail-stop policy for malformed GC metadata or lost roots.
 
-- `ICodeManager::EnumGcRefs` remains `void` (`Runtime/ICodeManager.h:258–263`). `GcEnum.cpp` forwards the consumer call without a status channel, and the pinned COFF manager's GC decoder cannot report an ordinary failure to the collector. No fail-stop adapter was added. The runtime still needs an explicit terminal policy before an unsafe collection can continue.
-- `EHEnumInit` and `EHEnumNext` remain `bool` (`ICodeManager.h:281–283`). In the pinned COFF manager, `false` still conflates no EH data/end-of-enumeration with malformed metadata; its EH varint and type-RVA reads remain unbounded. P23R6 did not add a bounded EH parser or claim error/exhaustion separation.
-- The authentic hosted consumer regression still verifies successful behavior, but deliberately malformed unwind/GC/EH failure was not injected through that genuine manager. The new negative unwind cases exercise the bounded adapter only.
+The pinned EH virtuals remain `bool`. The authentic host fixture successfully returns one typed clause and associates a catch funclet, but normal end-of-enumeration is still not distinguished from malformed handler data, invalid associations, or failed unwind. No EH failure injection or bounded EH parser was added.
 
 ## Manager preparation and publication
 
-P23R6 did not add a runtime publication API or rollback behavior. The P23R5 `PrepareRegistration` helper still performs bounded PE staging and deliberately leaves `ManagerConstructionAllowed` and `PublicationAllowed` false. It does not validate the full GC/EH metadata closure, prepare the genuine manager, or reserve all auxiliary allocations.
+P23R6 does not add manager preparation or publication code. P23R5's PE preflight still produces a staging description only; it leaves manager construction and publication disabled. Pinned `RuntimeInstance::RegisterCodeManager` still writes ordinary manager/range fields, followed by the fallible unboxing-stub allocation/publication. There is no rollback after the manager becomes visible and no established synchronization contract for readers. No allocation-stage, duplicate, overlap, or concurrent-reader failure matrix was run. No unsafe publication was added.
 
-Pinned `RuntimeInstance::RegisterCodeManager` still asserts and assigns ordinary fields, while `RegisterUnboxingStubs` allocates and publishes a list node afterward. There is no rollback if the second step fails and no reader synchronization contract. No registration fault matrix was run because the current API can leave a visible dangling manager. Production `RhRegisterOSModule` remains unresolved/disabled; no placeholder export or unsafe publication was added.
+## Target runtime build and COFF manager evidence
 
-## Target COFF manager evidence
+The isolated target build used the pinned runtime plus the preserved P23R5 source overlay, VS 18 Community's MSVC 19.51, and a `VisualStudioVersion=17.0` compatibility override because the pinned build scripts accept the VS 2022 toolset label. The full `eng/build.ps1 -subset Clr.NativeAotRuntime -os guidexos -arch x64` attempt compiled and linked `Runtime.WorkstationGC.lib`, then failed in the separate ServerGC target because `gcsvr.cpp` references unavailable `GCEventFireSizeAdaptationTuning_V1`, `GCEventFireSizeAdaptationFullGCTuning_V1`, and `GCEventFireSizeAdaptationSample_V1` functions. A focused `cmake --build ... --target Runtime.WorkstationGC --config Release` then completed successfully after the final iterator change.
 
-No source overlay was applied to `out\rt`, and no target-compatible runtime archive was rebuilt. The retained GUIDEXOS target archive is:
+The resulting target-compatible archive is `D:\dev\guideXOSUEFI_P23R6_RUNTIME_STAGING_LONG\artifacts\obj\coreclr\guidexos.x64.Release\nativeaot\Runtime\Full\Runtime.WorkstationGC.lib`, SHA-256 `5E2552B0ED3B69B26F2EED429CD2200A8265B1BF991CF350A7B5E1488E984FAA`. Its member list includes `GcEnum.cpp`, `RuntimeInstance.cpp`, and the changed `StackFrameIterator.cpp`. It has no `CoffNativeCodeManager` or `RhRegisterOSModule` symbol/member. The genuine COFF manager source remains excluded by the GUIDEXOS CMake branch. The archive is runtime-library evidence only; it is not a final target link or image.
 
-`out\dotnet\phase23r4-gc-eh-fixture-reproduction\nuget-cache\runtime.guidexos-x64.microsoft.dotnet.ilcompiler\9.0.0\sdk\Runtime.WorkstationGC.lib`
-
-Its SHA-256 remains `E486351F470C4562C217A24938BC070EBD8AE112CF6D7EF97770CA6A2056E50F`. `lib /list` and `dumpbin /linkermember:1` show `RhpRegisterOsModule`; they show neither `RhRegisterOSModule` nor `CoffNativeCodeManager`. The retained host archive is the genuine Windows manager used by the consumer regression, but it is not target-archive evidence.
-
-The new adapter header is target-shareable C++17 code, but it is not compiled into the target archive or called by the genuine manager. Target-compatible COFF integration therefore remains unproven.
+The preserved genuine host `Runtime.WorkstationGC.lib` used by the consumer tests is a separate Windows archive. Host archive evidence is not target archive evidence. `RhRegisterOSModule` remains absent from the GUIDEXOS archive; no placeholder export was added. `RhpRegisterOsModule` remains only the separate OS-module-list helper and does not register a code manager.
 
 ## Hosted behavioral results
 
 `Tests/NativeAotUnwind/run_x64_unwind_tests.ps1` passed both hosted executables:
 
-- **69/69 bounded-only tests passed.** This retains all 59 P23R5 cases and adds 10 status-bearing walk cases.
-- **69/69 Windows-reference tests passed**, including the retained 20 `RtlVirtualUnwind` comparisons.
-- New cases cover current and foreign walked-thread bounds, wrong-thread bound rejection, nested frames, unavailable/invalid bounds, stack underflow/overflow, malformed and unsupported metadata, unsupported epilogue, invalid save location, invalid executable address, arithmetic overflow, restored-context validation, and no partial output on failure.
-- Final hosted executables were written under `%TEMP%\guideXOS_P23R3_unwind_c6d6d1dcae6e40b88bed2c19ea700aba`.
+- **69/69 bounded-only cases passed.** This retains all 59 P23R5 cases plus 10 status-bearing walk cases.
+- **69/69 Windows-reference cases passed**, including 20 `RtlVirtualUnwind` comparisons.
+- The new cases cover foreign-thread bound ownership, nested frames, unavailable/invalid bounds, stack underflow/overflow, malformed/unsupported metadata, unsupported epilogues, invalid saved-register locations, invalid executable addresses, arithmetic overflow, restored-context validation, and no partial output on failure.
 
-`Tools/Phase23/run_gc_eh_consumer_tests.ps1` also passed against the preserved authentic fixture and genuine host `CoffNativeCodeManager` archive (archive SHA-256 `0E6A134AD4150CD604317A47860DAE82EB30AAE4D9CDB14144E06454E7BB1948`):
+`Tools/Phase23/run_gc_eh_consumer_tests.ps1` passed against the authentic pinned Windows `CoffNativeCodeManager` in the host `runtime.win-x64` NativeAOT archive (SHA-256 `0E6A134AD4150CD604317A47860DAE82EB30AAE4D9CDB14144E06454E7BB1948`) and preserved fixture (SHA-256 `D9EDE8AFC32D73504D718A9A752C921FE8E2294B0627B1CF276E846A64878DCD`):
 
-- Authentic GC info reported 7 roots at `Outer+0x19`, 6 at `Outer+0x23`, and 1 at `Inner+0x10`.
-- All six callback-provided writable root slots were updated and read back; the same register display unwound `Inner` to `Outer` and enumerated both frames.
-- One typed EH clause was decoded, and one of the manager's 470 funclets was associated with `CatchFixture`.
-- This is successful root-location and EH regression evidence. It is not a compacting GC, actual managed execution, status-bearing failure path, or target manager publication test.
-- Final hosted consumer output is under `%TEMP%\guideXOS_P23R6_gc_eh_final_6fa59381ada64dc6acb457b0e79d2920`; the executable SHA-256 is `F315E0AB24E16E91CAC3BB321E404CD47443A22CDFA162515F91862029A94791`.
+- Archive: `D:\dev\guideXOSUEFI_BUILD_INFRA\out\dotnet\phase23r4-gc-eh-fixture-reproduction\nuget-cache\runtime.win-x64.microsoft.dotnet.ilcompiler\9.0.0\sdk\Runtime.WorkstationGC.lib`.
+- Fixture: `D:\dev\guideXOSUEFI_BUILD_INFRA\out\dotnet\phase23r4-gc-eh-fixture-reproduction\publish\guideXOS.NativeAotGcEhFixture.exe`.
 
-## Remaining boundaries and proof status
+- Authentic GC info enumerated 7 roots at `Outer+0x19`, 6 at `Outer+0x23`, and 1 at `Inner+0x10`.
+- All six writable root slots were updated and read back. The multi-frame `Inner` to `Outer` walk succeeded.
+- Guard output reports `callback_failure=1`, `invalid_root=1`, and `unwind_failure_blocks_next_frame=1`; the authentic manager was called. The JSON truthfully reports `targetRuntimeIntegration=false`.
+- One typed EH clause and one association among 470 funclets were validated. Full exception propagation remains false.
+- The R13 probe is synthetic unwind-record overlay evidence: it recovers a value and selects a writable stack-save location while retaining authentic GC-info bytes. No compiler-generated live R13 root is present in the fixture.
+- The latest hosted executables and JSON/log evidence are under `%TEMP%\guideXOS_P23R3_unwind_e2895568cad949f0b946205290c9b872` and `%TEMP%\guideXOS_P23R6_gc_eh_final_aa58b48363fe462a961630e504788a3c`.
 
-- **R13:** the authentic fixture still has no compiler-generated live R13 GC root. The retained R13 test is a diagnostic unwind-record overlay with authentic GC-info bytes; it is not authentic R13 root coverage.
-- **Transition frames:** ordinary same-stack nested frames are covered by the bounded adapter. Reverse-P/Invoke and separate-stack/alternate-stack transitions are not; callers must reject those until per-transition bounds and status propagation are designed.
-- **GC/EH failure injection:** not passed through the genuine consumer; no safe runtime failure channel has been integrated.
-- **Manager preparation/publication:** no target manager was prepared or published; no allocation-stage, duplicate, overlap, or concurrent-reader fault injection was run.
-- **`RhRegisterOSModule`:** absent from the genuine GUIDEXOS target archive. The production registration gate remains failing.
-- **Phase 23 proof:** not passed.
-- **Phase 29–35 generation:** not run or modified.
-- **Production kernel/image:** not built.
-- **QEMU, QAC admission, and physical hardware:** not run.
-- **Push:** none.
+These are hosted adapter and host-manager consumer results. They do not establish target manager execution, managed execution, compacting collection, target EH failure behavior, or manager publication.
+
+## Remaining boundaries and Phase 23 proof
+
+- **R13:** still a diagnostic synthetic unwind-record overlay, not an authentic compiler-generated R13 GC root.
+- **Transition frames:** only the iterator's per-thread bounds propagation is staged; no reverse-P/Invoke or alternate-stack behavior was executed. The bounded hosted adapter rejects contexts outside its supplied accessible interval.
+- **GC/EH:** hosted GC guard failures are verified, but target GC status handling and EH error/exhaustion distinction remain unimplemented.
+- **Publication:** manager construction, atomic publication, rollback, and publication fault injection remain unimplemented.
+- **Registration:** the genuine target COFF manager and `RhRegisterOSModule` remain absent. Production registration is disabled.
+- **Phase 23 proof:** not passed. Phase 29–35 generation, production kernel/image build, QEMU, QAC admission, physical hardware testing, and push were not performed.
 
 ## Exact next development frontier — P23R7
 
-Integrate a per-walk context in the pinned runtime so `StackFrameIterator` supplies its actual `Thread*` and `GetStackBounds` to the target COFF manager without changing the external `ICodeManager` ABI. Build the genuine manager in an isolated GUIDEXOS runtime overlay with the bounded evaluator on the unwind path. Then give GC a status-bearing internal boundary with a deterministic fail-stop on unsafe enumeration, give EH distinct clause/exhaustion/error results, and stage manager plus unboxing/auxiliary allocations before any reader-visible publication. Prove each path and each pre-publication failure through the actual target-compatible implementation before enabling `RhRegisterOSModule` or attempting the Phase 23 proof.
+First provide and verify a GUIDEXOS PAL stack-bounds implementation backed by the target thread/stack allocator, including an accessible-memory limit for foreign walks. Then compile the genuine COFF manager into the target only after its image and metadata extents can be validated, and route AMD64 unwinding through the bounded evaluator with transactional context updates. Add internal GC status reporting with fail-stop before unsafe collection can resume, distinguish EH clause/exhaustion/error outcomes, then prepare manager and unboxing/auxiliary data completely before a single reader-safe publication. Test each negative path through the target-compatible consumers before enabling `RhRegisterOSModule` or attempting Phase 23 proof.
