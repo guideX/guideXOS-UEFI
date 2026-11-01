@@ -285,11 +285,50 @@ abstract unsafe class Allocator {
     /// </summary>
     public static void Initialize(IntPtr start, ulong reservedPhysicalAddress,
                                   ulong reservedSize) {
+        InitializeCore(start, reservedPhysicalAddress, reservedSize,
+            0, 0, 0, 0, 0, 0, 0, 0, null, 0);
+    }
+
+    internal static void InitializeForUefi(IntPtr start,
+            ulong reservedPhysicalAddress, ulong reservedSize,
+            ulong bootstrapStackAddress, ulong bootstrapStackSize,
+            ulong bootHandoffAddress, ulong bootHandoffSize,
+            ulong bootInfoAddress, ulong bootInfoSize,
+            ulong memoryMapAddress, ulong memoryMapSize,
+            ulong* bootPageTablePages, int maxBootPageTablePages) {
+        InitializeCore(start, reservedPhysicalAddress, reservedSize,
+            bootstrapStackAddress, bootstrapStackSize,
+            bootHandoffAddress, bootHandoffSize,
+            bootInfoAddress, bootInfoSize,
+            memoryMapAddress, memoryMapSize,
+            bootPageTablePages, maxBootPageTablePages);
+    }
+
+    private static void InitializeCore(IntPtr start,
+            ulong reservedPhysicalAddress, ulong reservedSize,
+            ulong bootstrapStackAddress, ulong bootstrapStackSize,
+            ulong bootHandoffAddress, ulong bootHandoffSize,
+            ulong bootInfoAddress, ulong bootInfoSize,
+            ulong memoryMapAddress, ulong memoryMapSize,
+            ulong* bootPageTablePages, int maxBootPageTablePages) {
         fixed (Info* pInfo = &_Info) Native.Stosb(pInfo, 0, (ulong)sizeof(Info));
         _Info.Start = start; 
         _Info.PageInUse = 0;
 
         ReserveAddressRange(start, reservedPhysicalAddress, reservedSize);
+        // Reserve persistent loader-owned ranges before the owner arrays below
+        // make their first managed allocations from the allocator arena.
+        ReserveAddressRange(start, bootstrapStackAddress, bootstrapStackSize);
+        ReserveAddressRange(start, bootHandoffAddress, bootHandoffSize);
+        ReserveAddressRange(start, bootInfoAddress, bootInfoSize);
+        ReserveAddressRange(start, memoryMapAddress, memoryMapSize);
+        if (bootPageTablePages != null && maxBootPageTablePages >= 0) {
+            for (int i = 0; i <= maxBootPageTablePages; i++) {
+                ulong page = bootPageTablePages[i];
+                if (page == 0) break;
+                ReserveAddressRange(start, page, PageSize);
+            }
+        }
         
         // Initialize owner tracking with simple arrays
         _ownerIds = new int[MAX_OWNERS];

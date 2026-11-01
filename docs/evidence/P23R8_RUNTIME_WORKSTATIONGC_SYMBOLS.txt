@@ -1,0 +1,27 @@
+Archive: D:\dev\guideXOSUEFI_P23R8_RUNTIME_STAGING\artifacts\obj\coreclr\guidexos.x64.Release\nativeaot\Runtime\Full\Runtime.WorkstationGC.lib
+Archive SHA-256: 89D235302E382432DE7AD49DE90824DAF00159BFC49407CDFA94696254247F6A
+Archive size: 5595250 bytes
+Archive members: 62
+Runtime PAL object SHA-256: 5BA72E6230488F91F1851EE04A5FCD5B9DECF7A3E5F46FB4E4E31DAABA7A97FA
+Unique external definitions in archive: 2791
+Unique undefined references in archive: 642
+Unresolved external names after matching archive definitions: 98
+External names repeated across archive members: 30
+
+Provider symbol audit:
+  PalGetMaximumStackBounds: definitions=1, undefined-reference-present=True
+  guidexos_pal_register_bootstrap_stack: definitions=1, undefined-reference-present=False
+  RhRegisterOSModule: definitions=0, undefined-reference-present=False
+  RhpRegisterOsModule: definitions=1, undefined-reference-present=False
+  PalGetMaximumStackBounds undefined reference is resolved by its one archive definition.
+  guidexos_pal_register_bootstrap_stack is referenced once by native_stubs.obj and has one archive definition.
+  No exact final kernel link was run; archive-level symbol compatibility and the hosted object-link fixture are the evidence.
+
+Unresolved symbol names retained verbatim in Runtime.WorkstationGC.external-names.txt.
+Pinned runtime HEAD: 9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3
+PAL source SHA-256: F11972DEB83D3AA59589D33F862ED409E7123BAFD87D2DF96E22052F71DDAFF7
+Contract header SHA-256: 0B687F65AE87AC9C9723572728A119EDF66060DFDE5A14EBCDAECBAFAE246DE0
+native_stubs object SHA-256: 55D9D420F35AB7F3F2A9AD0B6E74AD814BC73284C14D86D8BD0F740CD3234A35
+P23R8 runtime overlay SHA-256: FB67C4BD2325C2CE33D15E7BB667F1BF9E3B10D6293F4B6FC9944B0F771071A6
+Build toolset: MSVC 19.51.36231; target: Runtime.WorkstationGC; isolated P23R8 staging.
+CoffNativeCodeManager.cpp.obj: absent. RhRegisterOSModule definition: absent.

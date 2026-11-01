@@ -147,9 +147,51 @@ namespace guideXOS.Misc {
     /// so the fixed-size v1 structure can retain its existing layout.
     /// </summary>
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal struct UefiBootstrapStackDescriptor {
+        public ulong Magic;
+        public ulong Version;
+        public ulong Kind;
+        public ulong AllocationLow;
+        public ulong AllocationHigh;
+        public ulong AccessibleLow;
+        public ulong AccessibleHigh;
+        public ulong MappingIdentity;
+        public ulong OwnerIdentity;
+        public ulong Generation;
+        public ulong Flags;
+
+        internal const ulong ExpectedMagic = 0x31534453584F4758UL;
+        internal const ulong ExpectedVersion = 1;
+        internal const ulong ExpectedKind = 1;
+        internal const ulong ExpectedOwner = 0x4253500000000001UL;
+        internal const ulong ExpectedGeneration = 1;
+        internal const ulong RequiredFlags = 0xFFUL;
+        internal const ulong PageSize = 0x1000UL;
+
+        internal bool IsValid(ulong activeRsp, ulong activeCr3) {
+            if (Magic != ExpectedMagic || Version != ExpectedVersion ||
+                Kind != ExpectedKind || AllocationLow == 0 ||
+                AllocationHigh <= AllocationLow ||
+                (AllocationLow & (PageSize - 1)) != 0 ||
+                (AllocationHigh & (PageSize - 1)) != 0 ||
+                AccessibleLow != AllocationLow ||
+                AccessibleHigh != AllocationHigh ||
+                MappingIdentity == 0 ||
+                (MappingIdentity & (PageSize - 1)) != 0 ||
+                (activeCr3 & ~(PageSize - 1)) != MappingIdentity ||
+                OwnerIdentity != ExpectedOwner ||
+                Generation != ExpectedGeneration ||
+                (Flags & RequiredFlags) != RequiredFlags)
+                return false;
+            return activeRsp >= AccessibleLow && activeRsp < AccessibleHigh;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     internal unsafe struct UefiBootMemoryHandoff {
         public ulong KernelSpanBytes;
         public fixed ulong PageTablePages[2049];
+        public UefiBootstrapStackDescriptor BootstrapStack;
 #if UEFI_DIAGNOSTIC_BM1
         public uint GopPixelFormat;
         public uint GopRedMask;

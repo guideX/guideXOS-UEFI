@@ -15,7 +15,7 @@ namespace paging
     // old 512-entry tracking limit could leave newly allocated tables
     // inaccessible after CR3 is switched.
     // Extra trailing entry remains zero and terminates the handoff list.
-    static BootMemoryHandoff g_bootMemoryHandoff;
+    static BootMemoryHandoff* g_bootMemoryHandoff = nullptr;
     static UINTN g_ptPageCount = 0;
 
     static EFI_STATUS AllocTable(EFI_SYSTEM_TABLE* SystemTable, EFI_PHYSICAL_ADDRESS* outPhys)
@@ -31,7 +31,8 @@ namespace paging
         
         // Track this page for later self-mapping
         if (g_ptPageCount < MAX_PT_PAGES) {
-            g_bootMemoryHandoff.PageTablePages[g_ptPageCount++] = *outPhys;
+            if (g_bootMemoryHandoff == nullptr) return EFI_INVALID_PARAMETER;
+            g_bootMemoryHandoff->PageTablePages[g_ptPageCount++] = *outPhys;
         }
         
         return EFI_SUCCESS;
@@ -172,10 +173,11 @@ namespace paging
         const UINTN* sizesBegin,
         PageTables* out)
     {
-        if (!SystemTable || !rangesBegin || !rangesEnd || !sizesBegin || !out) return EFI_INVALID_PARAMETER;
+        if (!SystemTable || !rangesBegin || !rangesEnd || !sizesBegin || !out ||
+            g_bootMemoryHandoff == nullptr) return EFI_INVALID_PARAMETER;
 
         // Reset page table tracking
-        SetMem(&g_bootMemoryHandoff, sizeof(g_bootMemoryHandoff), 0);
+        SetMem(g_bootMemoryHandoff, sizeof(*g_bootMemoryHandoff), 0);
         g_ptPageCount = 0;
 
         EFI_PHYSICAL_ADDRESS pml4Phys = 0;
@@ -195,7 +197,7 @@ namespace paging
             UINTN currentCount = g_ptPageCount;
             for (UINTN i = mappedCount; i < currentCount; ++i) {
                 st = MapIdentityRange(SystemTable, pml4Phys,
-                    g_bootMemoryHandoff.PageTablePages[i], EFI_PAGE_SIZE);
+                    g_bootMemoryHandoff->PageTablePages[i], EFI_PAGE_SIZE);
                 if (EFI_ERROR(st)) return st;
             }
             mappedCount = currentCount;
@@ -218,7 +220,7 @@ namespace paging
             UINTN currentCount = g_ptPageCount;
             for (UINTN i = mappedCount; i < currentCount; ++i) {
                 EFI_STATUS st = MapIdentityRange(SystemTable, pml4Phys,
-                    g_bootMemoryHandoff.PageTablePages[i], EFI_PAGE_SIZE);
+                    g_bootMemoryHandoff->PageTablePages[i], EFI_PAGE_SIZE);
                 if (EFI_ERROR(st)) return st;
             }
             mappedCount = currentCount;
@@ -228,7 +230,44 @@ namespace paging
 
     BootMemoryHandoff* GetBootMemoryHandoff()
     {
-        return &g_bootMemoryHandoff;
+        return g_bootMemoryHandoff;
+    }
+
+    EFI_STATUS InitializeBootMemoryHandoff(void* storage,
+                                           UINTN storageBytes)
+    {
+        if (storage == nullptr ||
+            storageBytes < sizeof(BootMemoryHandoff) ||
+            ((UINTN)storage & (EFI_PAGE_SIZE - 1)) != 0)
+            return EFI_INVALID_PARAMETER;
+
+        g_bootMemoryHandoff = (BootMemoryHandoff*)storage;
+        SetMem(g_bootMemoryHandoff, sizeof(*g_bootMemoryHandoff), 0);
+        g_ptPageCount = 0;
+        return EFI_SUCCESS;
+    }
+
+    static bool ReadPhysicalPageTableEntry(void*, UINT64 address,
+                                           UINT64* outValue)
+    {
+        if (outValue == nullptr || (address & (sizeof(UINT64) - 1)) != 0)
+            return false;
+        *outValue = *(volatile UINT64*)(UINTN)address;
+        return true;
+    }
+
+    bool ValidateIdentityWritableRange(EFI_PHYSICAL_ADDRESS pml4Phys,
+                                       EFI_PHYSICAL_ADDRESS low,
+                                       UINTN sizeBytes)
+    {
+        if (sizeBytes == 0 || (low & 0xFFFu) != 0 ||
+            (sizeBytes & 0xFFFu) != 0 ||
+            (EFI_PHYSICAL_ADDRESS)sizeBytes > UINT64_MAX - low)
+            return false;
+
+        const UINT64 high = low + (EFI_PHYSICAL_ADDRESS)sizeBytes;
+        return guidexos::stackbounds::IsIdentityWritableRange(
+            pml4Phys, low, high, ReadPhysicalPageTableEntry, nullptr);
     }
 }
 }

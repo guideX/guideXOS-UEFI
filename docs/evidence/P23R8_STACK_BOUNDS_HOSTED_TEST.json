@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "generatedBy": "Tools/Phase23/run_stack_bounds_descriptor_tests.ps1",
+  "sourceRoot": "D:\\dev\\guideXOSUEFI_P23R8_RUNTIME_STAGING",
+  "runtimeObject": "D:\\dev\\guideXOSUEFI_P23R8_RUNTIME_STAGING\\artifacts\\obj\\coreclr\\guidexos.x64.Release\\nativeaot\\Runtime\\Full\\CMakeFiles\\Runtime.WorkstationGC.dir\\__\\guidexos\\PalRedhawkStackBounds.cpp.obj",
+  "runtimeObjectSha256": "5BA72E6230488F91F1851EE04A5FCD5B9DECF7A3E5F46FB4E4E31DAABA7A97FA",
+  "testSource": "D:\\dev\\guideXOSUEFI_BUILD_INFRA\\Tests\\NativeAotUnwind\\stack_bounds_descriptor_tests.cpp",
+  "testSourceSha256": "BC5C939A6D832F22B4516E341D06F7EBFDAA2A4E602EB1426D3AB80BDD0B8AC6",
+  "contractHeader": "D:\\dev\\guideXOSUEFI_BUILD_INFRA\\Tools\\Phase23\\stack_bounds_contract.h",
+  "executable": "D:\\dev\\guideXOSUEFI_BUILD_INFRA\\out\\dotnet\\phase23r8-stack-bounds-hosted-test-final5\\stack_bounds_descriptor_tests.exe",
+  "executableSha256": "F5F6518051A7FBD153D13C1CE13FAE052829324AB99533A7588EADE8C4BC540C",
+  "passed": 30,
+  "failed": 0,
+  "productionPalObjectIncluded": true,
+  "pageAccessibility": "simulated by hosted fixtures; no physical page tables were exercised",
+  "threadConstructExecuted": false
+}

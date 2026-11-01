@@ -89,18 +89,48 @@ namespace guideXOS.Misc {
 #endif
                 for (;;) Native.Hlt();
             }
+            UefiBootstrapStackDescriptor* bootstrapStack =
+                &memoryHandoff->BootstrapStack;
+            if (!bootstrapStack->IsValid(Native.ReadRSP(), Native.ReadCR3())) {
 #if UEFI_DIAGNOSTIC_BM1
-            BareMetalMilestones.InstallEarlyExceptionTrap(memoryHandoff);
-            if (bootInfo->MemoryMapEntryCount == 0 ||
-                bootInfo->MemoryMapDescriptorSize < 40 ||
-                bootInfo->MemoryMapEntryCount > 0xFFFF_FFFF_FFFF_FFFFUL /
-                    bootInfo->MemoryMapDescriptorSize) {
-                BareMetalMilestones.RecordEarly(bootInfo, 3, 2, true);
+                BareMetalMilestones.RecordEarly(bootInfo, 3, 3, true);
+#endif
                 for (;;) Native.Hlt();
             }
+            if (bootInfo->MemoryMap == 0 ||
+                bootInfo->MemoryMapEntryCount == 0 ||
+                bootInfo->MemoryMapEntryCount > 65536 ||
+                bootInfo->MemoryMapDescriptorSize < 40 ||
+                bootInfo->MemoryMapDescriptorSize > 4096 ||
+                bootInfo->MemoryMapEntryCount >
+                    0xFFFF_FFFF_FFFF_FFFFUL /
+                        bootInfo->MemoryMapDescriptorSize) {
+#if UEFI_DIAGNOSTIC_BM1
+                BareMetalMilestones.RecordEarly(bootInfo, 3, 2, true);
 #endif
-            Allocator.Initialize((IntPtr)0x4000000,
-                bootInfo->Reserved[0], memoryHandoff->KernelSpanBytes);
+                for (;;) Native.Hlt();
+            }
+            ulong memoryMapBytes = bootInfo->MemoryMapEntryCount *
+                bootInfo->MemoryMapDescriptorSize;
+            if (memoryMapBytes > 256 * 1024) {
+#if UEFI_DIAGNOSTIC_BM1
+                BareMetalMilestones.RecordEarly(bootInfo, 3, 2, true);
+#endif
+                for (;;) Native.Hlt();
+            }
+#if UEFI_DIAGNOSTIC_BM1
+            BareMetalMilestones.InstallEarlyExceptionTrap(memoryHandoff);
+#endif
+            ulong* bootPageTablePages = memoryHandoff->PageTablePages;
+            Allocator.InitializeForUefi((IntPtr)0x4000000,
+                bootInfo->Reserved[0], memoryHandoff->KernelSpanBytes,
+                bootstrapStack->AllocationLow,
+                bootstrapStack->AllocationHigh - bootstrapStack->AllocationLow,
+                (ulong)memoryHandoff,
+                (ulong)sizeof(UefiBootMemoryHandoff),
+                (ulong)bootInfo, 0x1000,
+                bootInfo->MemoryMap, memoryMapBytes,
+                bootPageTablePages, 2048);
             Allocator.ReserveAddressRange((IntPtr)0x4000000,
                 bootInfo->Reserved[1], memoryHandoff->KernelSpanBytes);
             // The bootloader's EfiLoaderData pages remain live after
@@ -113,26 +143,15 @@ namespace guideXOS.Misc {
                     bootInfo->RamdiskBase, bootInfo->RamdiskSize);
             }
             const int maxBootPageTablePages = 2048;
-            ulong* bootPageTablePages = memoryHandoff->PageTablePages;
             int reservedPageTableCount = 0;
             if (bootPageTablePages != null) {
                 for (int i = 0; i <= maxBootPageTablePages; i++) {
                     ulong page = bootPageTablePages[i];
                     if (page == 0) break;
-                    Allocator.ReserveAddressRange((IntPtr)0x4000000, page, 4096);
                     reservedPageTableCount++;
                 }
-                Allocator.ReserveAddressRange((IntPtr)0x4000000,
-                    (ulong)memoryHandoff,
-                    (ulong)sizeof(UefiBootMemoryHandoff));
             }
 #if UEFI_DIAGNOSTIC_BM1
-            ulong memoryMapBytes = bootInfo->MemoryMapEntryCount *
-                bootInfo->MemoryMapDescriptorSize;
-            Allocator.ReserveAddressRange((IntPtr)0x4000000,
-                bootInfo->MemoryMap, memoryMapBytes);
-            Allocator.ReserveAddressRange((IntPtr)0x4000000,
-                (ulong)bootInfo, (ulong)sizeof(UefiBootInfo));
             if (bootInfo->FramebufferBase != 0 && bootInfo->FramebufferSize != 0)
                 Allocator.ReserveAddressRange((IntPtr)0x4000000,
                     bootInfo->FramebufferBase, bootInfo->FramebufferSize);
@@ -702,7 +721,8 @@ namespace guideXOS.Misc {
                 bootInfo->MemoryMapDescriptorSize > 4096 ||
                 bootInfo->MemoryMapEntryCount > 0xFFFF_FFFF_FFFF_FFFFUL /
                     bootInfo->MemoryMapDescriptorSize ||
-                sizeof(UefiBootMemoryHandoff) != 16600 ||
+                sizeof(UefiBootstrapStackDescriptor) != 88 ||
+                sizeof(UefiBootMemoryHandoff) != 16688 ||
                 sizeof(UefiBareMetalRecord) != 176) return false;
 
             ulong mapBytes = bootInfo->MemoryMapEntryCount *

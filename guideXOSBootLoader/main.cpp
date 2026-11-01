@@ -563,6 +563,27 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     SetMem((void*)(UINTN)bootInfoPhys, EFI_PAGE_SIZE, 0);
     guideXOS::BootInfo* v1BootInfo = (guideXOS::BootInfo*)(UINTN)bootInfoPhys;
 
+    // Keep the loader/kernel handoff in its own persistent EfiLoaderData
+    // allocation. A loader-image global is not guaranteed to be mapped after
+    // the trampoline installs the kernel page tables.
+    const UINTN handoffBytes = sizeof(guideXOS::paging::BootMemoryHandoff);
+    const UINTN handoffPages =
+        (handoffBytes + EFI_PAGE_SIZE - 1) / EFI_PAGE_SIZE;
+    EFI_PHYSICAL_ADDRESS handoffPhys = 0;
+    status = SystemTable->BootServices->AllocatePages(
+        AllocateAnyPages, EfiLoaderData, handoffPages, &handoffPhys);
+    if (EFI_ERROR(status)) {
+        Print(L"Failed to allocate boot memory handoff pages\n");
+        return status;
+    }
+    SetMem((void*)(UINTN)handoffPhys, handoffPages * EFI_PAGE_SIZE, 0);
+    status = guideXOS::paging::InitializeBootMemoryHandoff(
+        (void*)(UINTN)handoffPhys, handoffPages * EFI_PAGE_SIZE);
+    if (EFI_ERROR(status)) {
+        Print(L"Failed to initialize boot memory handoff pages\n");
+        return status;
+    }
+
     // --- ACPI RSDP (optional) ---
     RSDPDescriptor20* rsdp = FindRSDP(SystemTable);
     if (!rsdp) {
@@ -957,7 +978,13 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     sizes[rangeCount] = EFI_PAGE_SIZE;
     rangeCount++;
 
-    // 5. Memory map buffer
+    // 5. Loader/kernel handoff record; it must remain mapped after the CR3
+    // switch because both KMain and the pre-managed PAL read it.
+    ranges[rangeCount] = handoffPhys;
+    sizes[rangeCount] = handoffPages * EFI_PAGE_SIZE;
+    rangeCount++;
+
+    // 6. Memory map buffer
     ranges[rangeCount] = preMemMapPhys;
     sizes[rangeCount] = preMemMapBytes;
     rangeCount++;
@@ -1183,6 +1210,23 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
         if (EFI_ERROR(st)) {
             Print(L"Failed to identity-map new page table pages\n");
             return st;
+        }
+    }
+
+    // Record the stack only after the final identity maps are present. This
+    // exact interval came from AllocatePages above; the page-table walk checks
+    // every accessible page in the CR3 that the trampoline will install.
+    guideXOS::paging::BootMemoryHandoff* stackHandoff =
+        guideXOS::paging::GetBootMemoryHandoff();
+    if (stackHandoff != nullptr && stackPhys != 0 && stackTop != nullptr) {
+        const UINTN stackBytes = stackPages * EFI_PAGE_SIZE;
+        if ((EFI_PHYSICAL_ADDRESS)stackBytes <= UINT64_MAX - stackPhys) {
+            if (guideXOS::paging::ValidateIdentityWritableRange(
+                    pt.Pml4Phys, stackPhys, stackBytes)) {
+                guidexos::stackbounds::CreateBootstrapDescriptorAfterPageWalk(
+                    &stackHandoff->BootstrapStack, stackPhys, stackBytes,
+                    pt.Pml4Phys);
+            }
         }
     }
 

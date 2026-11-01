@@ -2,6 +2,7 @@
 
 #include <Uefi.h>
 #include <stdint.h>
+#include "../Tools/Phase23/stack_bounds_contract.h"
 
 // Minimal x86_64 paging builder for UEFI->kernel handoff.
 // Builds identity-mapped 4KiB pages for a small set of physical ranges.
@@ -71,6 +72,7 @@ namespace paging
     {
         UINT64 KernelSpanBytes;
         UINT64 PageTablePages[MAX_PT_PAGES + 1];
+        guidexos::stackbounds::Descriptor BootstrapStack;
 #if defined(UEFI_DIAGNOSTIC_BM1)
         UINT32 GopPixelFormat;
         UINT32 GopRedMask;
@@ -85,8 +87,15 @@ namespace paging
 #if defined(UEFI_DIAGNOSTIC_BM1)
     static_assert(sizeof(BareMetalDiagnosticRecord) == 176,
         "C# and UEFI BM3B diagnostic record layouts must match");
-    static_assert(sizeof(BootMemoryHandoff) == 16600,
+    static_assert(offsetof(BootMemoryHandoff, BootstrapStack) == 16400,
+        "C# and UEFI bootstrap stack descriptor offsets must match");
+    static_assert(sizeof(BootMemoryHandoff) == 16688,
         "C# and UEFI BM3B handoff layouts must match");
+#else
+    static_assert(offsetof(BootMemoryHandoff, BootstrapStack) == 16400,
+        "C# and UEFI bootstrap stack descriptor offsets must match");
+    static_assert(sizeof(BootMemoryHandoff) == 16488,
+        "C# and UEFI handoff layouts must match");
 #endif
 
     // Build a minimal identity-mapped page table set for the ranges provided.
@@ -97,6 +106,17 @@ namespace paging
         const EFI_PHYSICAL_ADDRESS* rangesEnd,
         /*in*/ const UINTN* sizesBegin,
         PageTables* out);
+
+    // The handoff record is allocated in EfiLoaderData pages so it survives
+    // ExitBootServices and is explicitly mapped into the kernel address space.
+    EFI_STATUS InitializeBootMemoryHandoff(void* storage,
+                                           UINTN storageBytes);
+
+    // Verify every page in the accessible interval through the page tables
+    // that will be installed by the trampoline.
+    bool ValidateIdentityWritableRange(EFI_PHYSICAL_ADDRESS pml4Phys,
+                                       EFI_PHYSICAL_ADDRESS low,
+                                       UINTN sizeBytes);
 
     // Helper to add a mapping for [physBase, physBase+size) as identity map
     EFI_STATUS MapIdentityRange(

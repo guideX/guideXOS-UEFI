@@ -13,6 +13,7 @@ section .text
 ; Returns the address of the __Module symbol (module table)
 ; This is used by KMain to initialize the NativeAOT runtime
 extern __Module
+extern guidexos_pal_register_bootstrap_stack
 global __modules_a
 __modules_a:
     lea rax, [rel __Module]
@@ -38,8 +39,38 @@ KMainWrapper:
     mov rcx, r12
     pop r12
 %endif
+    ; Register the persistent UEFI bootstrap stack before any managed code can
+    ; attach a NativeAOT Thread. BootInfo.Reserved[2] points to the allocated
+    ; handoff pages; BootstrapStack follows the 2049-entry page-table list at
+    ; byte offset 16400. RSP has the standard x64 entry alignment here.
+    push r12
+    mov r12, rcx
+    sub rsp, 0x30
+    mov rax, [r12 + 0xA0]
+    test rax, rax
+    jz .stack_bounds_registration_failed
+    lea rcx, [rax + 0x4010]
+    mov rdx, [r12 + 0x1C]    ; BootInfo.MemoryMap
+    mov r8,  [r12 + 0x24]    ; BootInfo.MemoryMapEntryCount
+    mov r9,  [r12 + 0x2C]    ; BootInfo.MemoryMapDescriptorSize
+    mov r10, cr3
+    mov [rsp + 0x20], r10    ; fifth Microsoft x64 argument
+    call guidexos_pal_register_bootstrap_stack
+    add rsp, 0x30
+    pop r12
+    test al, al
+    jz .stack_bounds_halt
+
     ; The boot handoff already supplies the Microsoft x64 ABI frame.
     jmp KMain
+
+.stack_bounds_registration_failed:
+    add rsp, 0x30
+    pop r12
+.stack_bounds_halt:
+    cli
+    hlt
+    jmp .stack_bounds_halt
 
 ; Retained for generated/native startup linkage; diagnostics are intentionally
 ; emitted by BootConsole and the fault handler instead.

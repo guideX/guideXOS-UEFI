@@ -1,0 +1,310 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+namespace guidexos {
+namespace stackbounds {
+
+constexpr uint64_t kDescriptorMagic = 0x31534453584F4758ULL;
+constexpr uint64_t kDescriptorVersion = 1;
+constexpr uint64_t kKindBootstrap = 1;
+constexpr uint64_t kBootstrapOwnerIdentity = 0x4253500000000001ULL;
+constexpr uint64_t kBootstrapGeneration = 1;
+constexpr uint64_t kPageSize = 0x1000;
+
+enum DescriptorFlag : uint64_t {
+    kExactAllocation = 1ULL << 0,
+    kPinnedForKernelLifetime = 1ULL << 1,
+    kEfiLoaderData = 1ULL << 2,
+    kIdentityMapped = 1ULL << 3,
+    kMappingPresent = 1ULL << 4,
+    kMappingWritable = 1ULL << 5,
+    kMappingSupervisorOnly = 1ULL << 6,
+    kPageWalkVerified = 1ULL << 7,
+    kGuardPagesExcluded = 1ULL << 8,
+};
+
+constexpr uint64_t kRequiredBootstrapFlags =
+    kExactAllocation | kPinnedForKernelLifetime | kEfiLoaderData |
+    kIdentityMapped | kMappingPresent | kMappingWritable |
+    kMappingSupervisorOnly | kPageWalkVerified;
+
+// All intervals are half-open. AllocationLow/High identify the exact page
+// allocation; AccessibleLow/High exclude any guard or otherwise inaccessible
+// pages. MappingIdentity is the physical CR3 root used by the handoff.
+struct Descriptor {
+    uint64_t Magic;
+    uint64_t Version;
+    uint64_t Kind;
+    uint64_t AllocationLow;
+    uint64_t AllocationHigh;
+    uint64_t AccessibleLow;
+    uint64_t AccessibleHigh;
+    uint64_t MappingIdentity;
+    uint64_t OwnerIdentity;
+    uint64_t Generation;
+    uint64_t Flags;
+};
+
+// The loader calls this only after AllocatePages supplied this exact range
+// and IsIdentityWritableRange verified every page through the CR3 in the
+// descriptor. Hosted tests use simulated page tables for the same handoff.
+inline bool CreateBootstrapDescriptorAfterPageWalk(
+    Descriptor* output, uint64_t allocationLow, uint64_t allocationBytes,
+    uint64_t mappingIdentity) {
+    if (output == nullptr) return false;
+    *output = {};
+
+    if (allocationLow == 0 || allocationBytes == 0 || mappingIdentity == 0 ||
+        (allocationLow & (kPageSize - 1)) != 0 ||
+        (allocationBytes & (kPageSize - 1)) != 0 ||
+        (mappingIdentity & (kPageSize - 1)) != 0 ||
+        allocationBytes > UINT64_MAX - allocationLow) {
+        return false;
+    }
+
+    const uint64_t allocationHigh = allocationLow + allocationBytes;
+    *output = {
+        kDescriptorMagic,
+        kDescriptorVersion,
+        kKindBootstrap,
+        allocationLow,
+        allocationHigh,
+        allocationLow,
+        allocationHigh,
+        mappingIdentity,
+        kBootstrapOwnerIdentity,
+        kBootstrapGeneration,
+        kRequiredBootstrapFlags
+    };
+    return true;
+}
+
+static_assert(sizeof(Descriptor) == 88, "stack descriptor ABI changed");
+static_assert(offsetof(Descriptor, AllocationLow) == 24,
+              "stack descriptor allocation offset changed");
+static_assert(offsetof(Descriptor, MappingIdentity) == 56,
+              "stack descriptor mapping offset changed");
+
+struct MemoryMapView {
+    const uint8_t* Bytes;
+    uint64_t EntryCount;
+    uint64_t DescriptorSize;
+};
+
+enum class Failure : uint32_t {
+    None,
+    NullDescriptor,
+    InvalidHeader,
+    InvalidInterval,
+    MisalignedInterval,
+    InvalidAccessibleRange,
+    MissingGuardExclusion,
+    MissingOwnershipFlags,
+    InvalidMappingIdentity,
+    InvalidOwner,
+    InvalidGeneration,
+    InvalidMemoryMap,
+    AllocationNotLoaderData,
+    WrongPageTableRoot,
+    ActiveStackOutsideRange,
+};
+
+inline uint32_t ReadU32(const uint8_t* bytes) {
+    return static_cast<uint32_t>(bytes[0]) |
+           (static_cast<uint32_t>(bytes[1]) << 8) |
+           (static_cast<uint32_t>(bytes[2]) << 16) |
+           (static_cast<uint32_t>(bytes[3]) << 24);
+}
+
+inline uint64_t ReadU64(const uint8_t* bytes) {
+    return static_cast<uint64_t>(ReadU32(bytes)) |
+           (static_cast<uint64_t>(ReadU32(bytes + 4)) << 32);
+}
+
+inline bool CheckedAdd(uint64_t left, uint64_t right, uint64_t* result) {
+    if (result == nullptr || right > UINT64_MAX - left) return false;
+    *result = left + right;
+    return true;
+}
+
+// EFI_MEMORY_DESCRIPTOR fields used here have stable UEFI offsets: Type at 0,
+// PhysicalStart at 8, and NumberOfPages at 24. The map only corroborates the
+// loader's exact AllocatePages descriptor; it does not establish allocation
+// extent on its own.
+inline bool CoversEfiLoaderData(const MemoryMapView& map,
+                                uint64_t low, uint64_t high) {
+    constexpr uint32_t kEfiLoaderData = 2;
+    constexpr uint64_t kMinimumDescriptorSize = 40;
+    constexpr uint64_t kMaximumEntries = 65536;
+    constexpr uint64_t kMaximumMemoryMapBytes = 256ULL * 1024;
+
+    if (map.Bytes == nullptr || map.EntryCount == 0 ||
+        map.EntryCount > kMaximumEntries ||
+        map.DescriptorSize < kMinimumDescriptorSize ||
+        map.EntryCount > UINT64_MAX / map.DescriptorSize ||
+        map.EntryCount * map.DescriptorSize > kMaximumMemoryMapBytes) {
+        return false;
+    }
+
+    const uint8_t* cursorBytes = map.Bytes;
+    uint64_t cursor = low;
+    // A single AllocatePages range is normally one loader-data descriptor.
+    // Permit a small number of adjacent descriptors for firmware that splits
+    // a region on attribute boundaries; fail closed after 128 pieces.
+    for (uint32_t piece = 0; cursor < high && piece < 128; ++piece) {
+        uint64_t furthest = cursor;
+        for (uint64_t i = 0; i < map.EntryCount; ++i) {
+            const uint8_t* entry = cursorBytes + i * map.DescriptorSize;
+            if (ReadU32(entry) != kEfiLoaderData) continue;
+            const uint64_t base = ReadU64(entry + 8);
+            const uint64_t pages = ReadU64(entry + 24);
+            if (pages == 0 || pages > UINT64_MAX / kPageSize) continue;
+            uint64_t end = 0;
+            if (!CheckedAdd(base, pages * kPageSize, &end)) continue;
+            if (base <= cursor && end > furthest) furthest = end;
+        }
+        if (furthest == cursor) return false;
+        cursor = furthest < high ? furthest : high;
+    }
+    return cursor == high;
+}
+
+inline Failure Validate(const Descriptor* descriptor,
+                        const MemoryMapView& map,
+                        uint64_t currentPageTableRoot,
+                        uint64_t currentStackAddress,
+                        uint64_t expectedOwner = kBootstrapOwnerIdentity,
+                        uint64_t expectedGeneration = kBootstrapGeneration) {
+    if (descriptor == nullptr) return Failure::NullDescriptor;
+    const Descriptor& value = *descriptor;
+
+    if (value.Magic != kDescriptorMagic ||
+        value.Version != kDescriptorVersion ||
+        value.Kind != kKindBootstrap) {
+        return Failure::InvalidHeader;
+    }
+    if (value.AllocationLow == 0 ||
+        value.AllocationHigh <= value.AllocationLow) {
+        return Failure::InvalidInterval;
+    }
+    if ((value.AllocationLow & (kPageSize - 1)) != 0 ||
+        (value.AllocationHigh & (kPageSize - 1)) != 0) {
+        return Failure::MisalignedInterval;
+    }
+    if (value.AccessibleLow < value.AllocationLow ||
+        value.AccessibleHigh > value.AllocationHigh ||
+        value.AccessibleHigh <= value.AccessibleLow) {
+        return Failure::InvalidAccessibleRange;
+    }
+    if ((value.AccessibleLow & (kPageSize - 1)) != 0 ||
+        (value.AccessibleHigh & (kPageSize - 1)) != 0) {
+        return Failure::MisalignedInterval;
+    }
+    if ((value.AccessibleLow != value.AllocationLow ||
+         value.AccessibleHigh != value.AllocationHigh) &&
+        (value.Flags & kGuardPagesExcluded) == 0) {
+        return Failure::MissingGuardExclusion;
+    }
+    if ((value.Flags & kRequiredBootstrapFlags) !=
+        kRequiredBootstrapFlags) {
+        return Failure::MissingOwnershipFlags;
+    }
+    if (value.MappingIdentity == 0 ||
+        (value.MappingIdentity & (kPageSize - 1)) != 0) {
+        return Failure::InvalidMappingIdentity;
+    }
+    if (value.OwnerIdentity != expectedOwner) return Failure::InvalidOwner;
+    if (value.Generation == 0 || value.Generation != expectedGeneration)
+        return Failure::InvalidGeneration;
+    if (!CoversEfiLoaderData(map, value.AllocationLow,
+                             value.AllocationHigh)) {
+        return Failure::AllocationNotLoaderData;
+    }
+    if ((currentPageTableRoot & ~(kPageSize - 1)) != value.MappingIdentity)
+        return Failure::WrongPageTableRoot;
+    if (currentStackAddress < value.AccessibleLow ||
+        currentStackAddress >= value.AccessibleHigh) {
+        return Failure::ActiveStackOutsideRange;
+    }
+    return Failure::None;
+}
+
+using PageTableEntryReader = bool (*)(void* context, uint64_t entryAddress,
+                                      uint64_t* entryValue);
+
+inline bool ReadEntry(PageTableEntryReader reader, void* context,
+                      uint64_t table, uint64_t index, uint64_t* value) {
+    uint64_t offset = index * sizeof(uint64_t);
+    uint64_t address = 0;
+    return reader != nullptr && CheckedAdd(table, offset, &address) &&
+           reader(context, address, value);
+}
+
+inline bool EntryIsKernelWritable(uint64_t entry) {
+    constexpr uint64_t kPresent = 1ULL << 0;
+    constexpr uint64_t kWritable = 1ULL << 1;
+    constexpr uint64_t kUser = 1ULL << 2;
+    return (entry & (kPresent | kWritable)) == (kPresent | kWritable) &&
+           (entry & kUser) == 0;
+}
+
+inline bool IsIdentityWritablePage(uint64_t root, uint64_t address,
+                                   PageTableEntryReader reader,
+                                   void* context) {
+    constexpr uint64_t kPageSizeBit = 1ULL << 7;
+    constexpr uint64_t kPml4AddressMask = 0x000FFFFFFFFFF000ULL;
+    constexpr uint64_t k1GiBAddressMask = 0x000FFFFFC0000000ULL;
+    constexpr uint64_t k2MiBAddressMask = 0x000FFFFFFFE00000ULL;
+
+    if (root == 0 || (root & (kPageSize - 1)) != 0 || reader == nullptr)
+        return false;
+
+    const uint64_t pml4Index = (address >> 39) & 0x1FF;
+    const uint64_t pdptIndex = (address >> 30) & 0x1FF;
+    const uint64_t pdIndex = (address >> 21) & 0x1FF;
+    const uint64_t ptIndex = (address >> 12) & 0x1FF;
+    uint64_t entry = 0;
+
+    if (!ReadEntry(reader, context, root, pml4Index, &entry) ||
+        (entry & kPageSizeBit) != 0 || !EntryIsKernelWritable(entry))
+        return false;
+    uint64_t pdpt = entry & kPml4AddressMask;
+
+    if (!ReadEntry(reader, context, pdpt, pdptIndex, &entry) ||
+        !EntryIsKernelWritable(entry))
+        return false;
+    if ((entry & kPageSizeBit) != 0)
+        return (entry & k1GiBAddressMask) ==
+               (address & k1GiBAddressMask);
+    uint64_t pd = entry & kPml4AddressMask;
+
+    if (!ReadEntry(reader, context, pd, pdIndex, &entry) ||
+        !EntryIsKernelWritable(entry))
+        return false;
+    if ((entry & kPageSizeBit) != 0)
+        return (entry & k2MiBAddressMask) ==
+               (address & k2MiBAddressMask);
+    uint64_t pt = entry & kPml4AddressMask;
+
+    return ReadEntry(reader, context, pt, ptIndex, &entry) &&
+           EntryIsKernelWritable(entry) &&
+           (entry & kPml4AddressMask) == (address & kPml4AddressMask);
+}
+
+inline bool IsIdentityWritableRange(uint64_t root, uint64_t low,
+                                    uint64_t high,
+                                    PageTableEntryReader reader,
+                                    void* context) {
+    if (high <= low || (low & (kPageSize - 1)) != 0 ||
+        (high & (kPageSize - 1)) != 0 || reader == nullptr)
+        return false;
+    for (uint64_t page = low; page < high; page += kPageSize) {
+        if (!IsIdentityWritablePage(root, page, reader, context)) return false;
+    }
+    return true;
+}
+
+} // namespace stackbounds
+} // namespace guidexos
