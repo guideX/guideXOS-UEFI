@@ -1,4 +1,5 @@
 #include "../../Tools/Phase23/x64_unwind_bounded.h"
+#include "../../Tools/Phase23/bounded_runtime_walk.h"
 #include "../../Tools/Phase23/target_pe_preflight.h"
 
 #include <array>
@@ -235,6 +236,36 @@ Status Unwind(Fixture& fixture, std::uint32_t entryRva,
                        controlPc, inEpilogue, context, pointers, result);
 }
 
+guidexos::runtime_walk::ThreadStackBounds MakeRuntimeStackBounds(
+    Fixture& fixture, const void* ownerThread) {
+    return {ownerThread,
+            fixture.StackBase(),
+            fixture.StackBase() + fixture.Stack.size(),
+            fixture.StackBase(),
+            fixture.StackBase() + fixture.Stack.size(),
+            fixture.StackBase(),
+            fixture.Stack.data(),
+            fixture.Stack.size()};
+}
+
+guidexos::runtime_walk::Request MakeRuntimeWalkRequest(
+    Fixture& fixture, const void* walkedThread, const void* executingThread,
+    const guidexos::runtime_walk::ThreadStackBounds* stackBounds,
+    const guidexos::runtime_walk::FrameState* current,
+    guidexos::runtime_walk::FrameState* caller, UnwindResult* result,
+    std::uint32_t functionEntryRva = kFunctionEntryRva) {
+    return {walkedThread,
+            executingThread,
+            stackBounds,
+            fixture.ImageSpan(),
+            {kFunctionBeginRva, kFunctionEndRva},
+            functionEntryRva,
+            current->Registers.Rip,
+            current,
+            caller,
+            result};
+}
+
 #if GUIDEXOS_HAS_WINDOWS_UNWIND_REFERENCE
 void SeedCodeManagerContextPointers(Context& context,
                                     ContextPointers& pointers) {
@@ -426,6 +457,285 @@ int main() {
         CHECK(sizeof(Context) == 0x4D0);
         CHECK(sizeof(ContextPointers) == 0x100);
         CHECK(offsetof(ContextPointers, IntegerContext) == 0x80);
+        return true;
+    });
+
+    Run("status-bearing walk commits a bounded caller state", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction();
+        const std::size_t sp = 0x100;
+        const std::uint64_t returnPc = fixture.ImageBase() + kFunctionBeginRva + 0x20;
+        fixture.PutStack64(sp, returnPc);
+        int threadIdentity = 0;
+        auto bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        guidexos::runtime_walk::FrameState current{};
+        current.Registers = fixture.MakeContext(sp);
+        guidexos::runtime_walk::FrameState caller{};
+        UnwindResult result{};
+        auto request = MakeRuntimeWalkRequest(fixture, &threadIdentity,
+            &threadIdentity, &bounds, &current, &caller, &result,
+            NoRuntimeFunction);
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::Success);
+        CHECK(caller.Registers.Rsp == current.Registers.Rsp + 8);
+        CHECK(caller.Registers.Rip == returnPc);
+        CHECK(result.EstablisherFrame == current.Registers.Rsp);
+        return true;
+    });
+
+    Run("foreign-thread walk uses the walked thread bounds", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction();
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp, fixture.ImageBase() + kFunctionBeginRva + 0x20);
+        int walkedThread = 0;
+        int executingThread = 0;
+        auto bounds = MakeRuntimeStackBounds(fixture, &walkedThread);
+        guidexos::runtime_walk::FrameState current{};
+        current.Registers = fixture.MakeContext(sp);
+        guidexos::runtime_walk::FrameState caller{};
+        UnwindResult result{};
+        auto request = MakeRuntimeWalkRequest(fixture, &walkedThread,
+            &executingThread, &bounds, &current, &caller, &result,
+            NoRuntimeFunction);
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::Success);
+
+        bounds.OwnerThread = &executingThread;
+        caller.Registers.Rip = 0xCAFE;
+        const auto before = caller;
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::WrongThreadStackBounds);
+        CHECK(std::memcmp(&caller, &before, sizeof(caller)) == 0);
+        return true;
+    });
+
+    Run("status-bearing nested frames advance within one thread stack", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction();
+        const std::size_t sp = 0x100;
+        const std::uint64_t firstReturn = fixture.ImageBase() + kFunctionBeginRva + 0x20;
+        const std::uint64_t secondReturn = fixture.ImageBase() + kFunctionBeginRva + 0x30;
+        fixture.PutStack64(sp, firstReturn);
+        fixture.PutStack64(sp + 8, secondReturn);
+        int threadIdentity = 0;
+        auto bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        guidexos::runtime_walk::FrameState current{};
+        current.Registers = fixture.MakeContext(sp);
+        guidexos::runtime_walk::FrameState caller{};
+        UnwindResult result{};
+        auto request = MakeRuntimeWalkRequest(fixture, &threadIdentity,
+            &threadIdentity, &bounds, &current, &caller, &result,
+            NoRuntimeFunction);
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::Success);
+        current = caller;
+        request = MakeRuntimeWalkRequest(fixture, &threadIdentity,
+            &threadIdentity, &bounds, &current, &caller, &result,
+            NoRuntimeFunction);
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::Success);
+        CHECK(caller.Registers.Rip == secondReturn);
+        CHECK(caller.Registers.Rsp == fixture.StackBase() + sp + 16);
+        return true;
+    });
+
+    Run("unavailable, invalid, and foreign stack bounds reject atomically", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction();
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp, fixture.ImageBase() + kFunctionBeginRva + 0x20);
+        int threadIdentity = 0;
+        auto bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        guidexos::runtime_walk::FrameState current{};
+        current.Registers = fixture.MakeContext(sp);
+        guidexos::runtime_walk::FrameState caller{};
+        caller.Registers.Rip = 0xCAFE;
+        const auto before = caller;
+        UnwindResult result{0x7777};
+        auto request = MakeRuntimeWalkRequest(fixture, &threadIdentity,
+            &threadIdentity, &bounds, &current, &caller, &result,
+            NoRuntimeFunction);
+        bounds.Low = 0;
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::StackBoundsUnavailable);
+        bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        bounds.High = bounds.Low;
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::InvalidStackBounds);
+        bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        bounds.AccessibleLow = bounds.Low - 8;
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::InvalidStackBounds);
+        CHECK(std::memcmp(&caller, &before, sizeof(caller)) == 0);
+        CHECK(result.EstablisherFrame == 0x7777);
+        return true;
+    });
+
+    Run("stack underflow and overflow fail before caller publication", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction();
+        int threadIdentity = 0;
+        auto bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        guidexos::runtime_walk::FrameState current{};
+        current.Registers = fixture.MakeContext(0x100);
+        current.Registers.Rsp = bounds.Low - 8;
+        guidexos::runtime_walk::FrameState caller{};
+        caller.Registers.Rip = 0xCAFE;
+        const auto before = caller;
+        UnwindResult result{};
+        auto request = MakeRuntimeWalkRequest(fixture, &threadIdentity,
+            &threadIdentity, &bounds, &current, &caller, &result,
+            NoRuntimeFunction);
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::StackAccessOutsidePermittedInterval);
+        current.Registers.Rsp = bounds.High;
+        request.ControlPc = current.Registers.Rip;
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::StackAccessOutsidePermittedInterval);
+        current.Registers.Rsp = bounds.Low + 0x100;
+        bounds.AccessibleHigh = current.Registers.Rsp;
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::StackAccessOutsidePermittedInterval);
+        CHECK(std::memcmp(&caller, &before, sizeof(caller)) == 0);
+        return true;
+    });
+
+    Run("bounded walk maps malformed and unsupported metadata explicitly", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(1, 1, 0, 2);
+        fixture.PutCode(kUnwindInfoRva, 0, 1, 0, 3);
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp, 0xBADC0FFEE0DDF00Dull);
+        fixture.PutStack64(sp + 8, fixture.ImageBase() + kFunctionBeginRva + 0x20);
+        int threadIdentity = 0;
+        auto bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        guidexos::runtime_walk::FrameState current{};
+        current.Registers = fixture.MakeContext(sp);
+        guidexos::runtime_walk::FrameState caller{};
+        caller.Registers.Rip = 0xCAFE;
+        const auto before = caller;
+        UnwindResult result{};
+        auto request = MakeRuntimeWalkRequest(fixture, &threadIdentity,
+            &threadIdentity, &bounds, &current, &caller, &result);
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::UnsupportedUnwindEncoding);
+        fixture.Put8(kUnwindInfoRva, 1);
+        fixture.PutCode(kUnwindInfoRva, 0, 1, 10, 0);
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::UnsupportedUnwindEncoding);
+        fixture.PutCode(kUnwindInfoRva, 0, 1, 0, 1);
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::MalformedUnwindMetadata);
+        CHECK(std::memcmp(&caller, &before, sizeof(caller)) == 0);
+        return true;
+    });
+
+    Run("unsupported epilogue has a distinct status and no partial state", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(1, 4);
+        fixture.PutCode(kUnwindInfoRva, 0, 4, 2, 3); // 32-byte allocation
+        fixture.PutCodeBytes(kFunctionBeginRva + 0x10,
+            {0x48, 0x83, 0xC4, 0x20, 0x58, 0xC3}); // restore then pop volatile RAX
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp + 32,
+            fixture.ImageBase() + kFunctionBeginRva + 0x20);
+        int threadIdentity = 0;
+        auto bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        guidexos::runtime_walk::FrameState current{};
+        current.Registers = fixture.MakeContext(sp);
+        guidexos::runtime_walk::FrameState caller{};
+        caller.Registers.Rip = 0xCAFE;
+        const auto before = caller;
+        UnwindResult result{};
+        auto request = MakeRuntimeWalkRequest(fixture, &threadIdentity,
+            &threadIdentity, &bounds, &current, &caller, &result);
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::UnsupportedEpilogueForm);
+        CHECK(std::memcmp(&caller, &before, sizeof(caller)) == 0);
+        return true;
+    });
+
+    Run("invalid save location and invalid executable addresses reject", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction(2, 4);
+        fixture.PutCode(kUnwindInfoRva, 0, 4, 4, 3); // save RBX
+        fixture.Put16(kUnwindInfoRva + 6, 0x7FFF); // save beyond stack high
+        const std::size_t sp = fixture.Stack.size() - 0x20;
+        int threadIdentity = 0;
+        auto bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        guidexos::runtime_walk::FrameState current{};
+        current.Registers = fixture.MakeContext(sp);
+        guidexos::runtime_walk::FrameState caller{};
+        caller.Registers.Rip = 0xCAFE;
+        const auto before = caller;
+        UnwindResult result{};
+        auto request = MakeRuntimeWalkRequest(fixture, &threadIdentity,
+            &threadIdentity, &bounds, &current, &caller, &result);
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::StackAccessOutsidePermittedInterval);
+        current.Registers.Rip = fixture.ImageBase() + kFunctionEndRva;
+        request.ControlPc = current.Registers.Rip;
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::InvalidExecutableAddress);
+        CHECK(std::memcmp(&caller, &before, sizeof(caller)) == 0);
+        return true;
+    });
+
+    Run("invalid restored caller state is never published", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction();
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp, fixture.ImageBase() + 0x280);
+        int threadIdentity = 0;
+        auto bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        guidexos::runtime_walk::FrameState current{};
+        current.Registers = fixture.MakeContext(sp);
+        guidexos::runtime_walk::FrameState caller{};
+        caller.Registers.Rip = 0xCAFE;
+        const auto before = caller;
+        UnwindResult result{0x7777};
+        auto request = MakeRuntimeWalkRequest(fixture, &threadIdentity,
+            &threadIdentity, &bounds, &current, &caller, &result,
+            NoRuntimeFunction);
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::InvalidContextRestoration);
+        CHECK(std::memcmp(&caller, &before, sizeof(caller)) == 0);
+        CHECK(result.EstablisherFrame == 0x7777);
+        return true;
+    });
+
+    Run("frame mismatch and address arithmetic overflow are explicit", [] {
+        Fixture fixture;
+        fixture.PutDefaultFunction();
+        const std::size_t sp = 0x100;
+        fixture.PutStack64(sp, fixture.ImageBase() + kFunctionBeginRva + 0x20);
+        int threadIdentity = 0;
+        auto bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        guidexos::runtime_walk::FrameState current{};
+        current.Registers = fixture.MakeContext(sp);
+        guidexos::runtime_walk::FrameState caller{};
+        caller.Registers.Rip = 0xCAFE;
+        const auto before = caller;
+        UnwindResult result{};
+        auto request = MakeRuntimeWalkRequest(fixture, &threadIdentity,
+            &threadIdentity, &bounds, &current, &caller, &result,
+            NoRuntimeFunction);
+        ++current.Registers.Rip;
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::InvalidFrame);
+        --current.Registers.Rip;
+
+        bounds.MappingBase = (std::numeric_limits<std::uint64_t>::max)() - 7;
+        bounds.MappingSize = 16;
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::ArithmeticOverflow);
+        bounds = MakeRuntimeStackBounds(fixture, &threadIdentity);
+        request.Image.BaseAddress =
+            (std::numeric_limits<std::uint64_t>::max)() - 4;
+        CHECK(guidexos::runtime_walk::UnwindFrame(request) ==
+              guidexos::runtime_walk::Status::ArithmeticOverflow);
+        CHECK(std::memcmp(&caller, &before, sizeof(caller)) == 0);
         return true;
     });
 
