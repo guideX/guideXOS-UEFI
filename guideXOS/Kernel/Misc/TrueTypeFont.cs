@@ -1222,18 +1222,29 @@ namespace guideXOS.Misc {
 
         public int MeasureString(string text) {
             if (!IsValid || text == null) return 0;
+            return MeasureString(text, 0, text.Length);
+        }
+
+        /// <summary>
+        /// Measure a text range without allocating a substring. The returned
+        /// width is the maximum line advance in the range.
+        /// </summary>
+        public int MeasureString(string text, int start, int length) {
+            if (!IsValid || text == null || start < 0 || length < 0 ||
+                start > text.Length - length) return 0;
             long line = 0;
             long maximum = 0;
-            for (int i = 0; i < text.Length; i++) {
+            int end = start + length;
+            for (int i = start; i < end; i++) {
                 char character = text[i];
                 if (character == '\r' || character == '\n') {
                     if (line > maximum) maximum = line;
                     line = 0;
-                    if (character == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+                    if (character == '\r' && i + 1 < end && text[i + 1] == '\n') i++;
                     continue;
                 }
                 int codePoint = character;
-                if (IsHighSurrogate(character) && i + 1 < text.Length &&
+                if (IsHighSurrogate(character) && i + 1 < end &&
                     IsLowSurrogate(text[i + 1])) {
                     codePoint = ToUtf32(character, text[i + 1]);
                     i++;
@@ -1261,6 +1272,28 @@ namespace guideXOS.Misc {
         /// </summary>
         public int DrawStringMeasured(Graphics graphics, int x, int y, string text,
                                       uint color = 0xFFFFFFFFu) {
+            if (graphics == null) return 0;
+            return DrawStringCore(graphics, x, y, text, color, 0, 0,
+                                  graphics.Width, graphics.Height);
+        }
+
+        /// <summary>
+        /// Draw text at the top of the first line, clipped to a half-open
+        /// caller-owned rectangle. Measurement continues to use the same
+        /// advances as DrawStringMeasured.
+        /// </summary>
+        public int DrawStringClipped(Graphics graphics, int x, int y,
+                                     string text, uint color,
+                                     int clipX, int clipY,
+                                     int clipWidth, int clipHeight) {
+            if (clipWidth < 0 || clipHeight < 0) return 0;
+            return DrawStringCore(graphics, x, y, text, color, clipX, clipY,
+                (long)clipX + clipWidth, (long)clipY + clipHeight);
+        }
+
+        private int DrawStringCore(Graphics graphics, int x, int y, string text,
+                                   uint color, long clipLeft, long clipTop,
+                                   long clipRight, long clipBottom) {
             if (!IsValid || graphics == null || text == null ||
                 graphics.Width <= 0 || graphics.Height <= 0) return 0;
 
@@ -1293,12 +1326,14 @@ namespace guideXOS.Misc {
                 byte[] pixels = glyph.Coverage;
                 for (int gy = 0; gy < glyph.Height; gy++) {
                     long destinationY = drawY + gy;
-                    if (destinationY < 0 || destinationY >= graphics.Height) continue;
+                    if (destinationY < 0 || destinationY >= graphics.Height ||
+                        destinationY < clipTop || destinationY >= clipBottom) continue;
                     for (int gx = 0; gx < glyph.Width; gx++) {
                         byte coverage = pixels[gy * glyph.Width + gx];
                         if (coverage == 0 || foregroundAlpha == 0) continue;
                         long destinationX = drawX + gx;
-                        if (destinationX < 0 || destinationX >= graphics.Width) continue;
+                        if (destinationX < 0 || destinationX >= graphics.Width ||
+                            destinationX < clipLeft || destinationX >= clipRight) continue;
                         uint alpha = (uint)(foregroundAlpha * coverage / 255);
                         if (alpha == 0) continue;
                         graphics.DrawPoint((int)destinationX, (int)destinationY,

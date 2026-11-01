@@ -148,6 +148,19 @@ namespace guideXOS.GUI {
             new UefiDesktopIconGeometry[UefiDesktopIconCount];
         private static readonly UefiDesktopInteraction UefiDesktopInput =
             new UefiDesktopInteraction();
+        private static IFont _uefiTileBitmapFont;
+        private static SharedTextFont _uefiTileTextFont;
+
+        private static SharedTextFont GetUefiTileTextFont() {
+            IFont bitmap = WindowManager.font;
+            if (bitmap == null) return null;
+            if (_uefiTileTextFont == null || _uefiTileBitmapFont != bitmap) {
+                _uefiTileBitmapFont = bitmap;
+                _uefiTileTextFont = SharedTextFont.CreateDefaultBitmap(bitmap);
+            }
+            return _uefiTileTextFont != null && _uefiTileTextFont.IsAvailable
+                ? _uefiTileTextFont : null;
+        }
         
         /// <summary>
         /// Initialize
@@ -179,6 +192,8 @@ namespace guideXOS.GUI {
                 _customPosX = null;
                 _customPosY = null;
                 _uefiImageTileDrawReported = false;
+                _uefiTileBitmapFont = null;
+                _uefiTileTextFont = null;
                 UefiDesktopInput.Reset();
                 return;
             }
@@ -207,6 +222,8 @@ namespace guideXOS.GUI {
             _iconDragging = false;
             _iconDragId = -1;
             _iconDragStarted = false;
+            _uefiTileBitmapFont = null;
+            _uefiTileTextFont = null;
             if (_customPosIds != null) { _customPosIds.Dispose(); _customPosIds = null; }
             if (_customPosX != null) { _customPosX.Dispose(); _customPosX = null; }
             if (_customPosY != null) { _customPosY.Dispose(); _customPosY = null; }
@@ -672,10 +689,13 @@ namespace guideXOS.GUI {
             int screenW = Framebuffer.Width;
             int workAreaBottom = Framebuffer.Height - BarHeight;
             if (workAreaBottom < 0) workAreaBottom = 0;
+            SharedTextFont textFont = GetUefiTileTextFont();
             int maxLabelWidth = 0;
             for (int i = 0; i < UefiDesktopIconCount; i++) {
-                int width = WindowManager.font == null ? 0 :
-                    WindowManager.font.MeasureString(UefiDesktopLabels[i]);
+                int width, height;
+                bool measured = UefiDesktopLabelRenderer.TryMeasure(textFont,
+                    UefiDesktopLabels[i], out width, out height);
+                if (!measured) width = 0;
                 if (width > maxLabelWidth) maxLabelWidth = width;
             }
 
@@ -686,10 +706,12 @@ namespace guideXOS.GUI {
                 int iconHeight = icon == null ? IconSize : icon.Height;
                 int tileSize = Math.Max(iconWidth, iconHeight) +
                                UefiDesktopTilePadding;
-                int labelWidth = WindowManager.font == null ? 0 :
-                    WindowManager.font.MeasureString(UefiDesktopLabels[i]);
-                int labelHeight = WindowManager.font == null ? 0 :
-                    WindowManager.font.FontSize;
+                int labelWidth, labelHeight;
+                if (!UefiDesktopLabelRenderer.TryMeasure(textFont,
+                        UefiDesktopLabels[i], out labelWidth, out labelHeight)) {
+                    labelWidth = 0;
+                    labelHeight = 0;
+                }
                 UefiDesktopIconGeometry sample = UefiDesktopIconGeometry.Create(
                     i, 0, 0, tileSize, labelWidth, labelHeight,
                     UefiDesktopLabelGap);
@@ -883,9 +905,9 @@ namespace guideXOS.GUI {
                     ((geometry.TileSize - icon.Height) / 2);
                 graphics.DrawImage(imageX, imageY, icon);
             }
-            if (WindowManager.font != null && label != null) {
-                WindowManager.font.DrawString(geometry.LabelX,
-                    geometry.LabelY, label);
+            SharedTextFont textFont = GetUefiTileTextFont();
+            if (UefiDesktopLabelRenderer.Draw(graphics, textFont, geometry,
+                                               label)) {
                 Program.MarkUefiDesktopTextRendered();
             }
             if (selected) {

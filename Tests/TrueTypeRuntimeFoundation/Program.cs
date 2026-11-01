@@ -20,10 +20,11 @@ namespace guideXOS.FontTests {
             CheckCompositeCycle(fontBytes);
             CheckBoundsAndCache(fontBytes);
             CheckHostedRendering(fontBytes);
+            int fonts2Failures = SharedTextFontChecks.Run(fontBytes);
 
             Console.WriteLine("FONTS1 hosted checks: " + _checks +
                               ", failures: " + _failures);
-            return _failures == 0 ? 0 : 1;
+            return _failures == 0 && fonts2Failures == 0 ? 0 : 1;
         }
 
         private static void CheckValidSizeMatrix(byte[] fontBytes) {
@@ -460,6 +461,16 @@ namespace System.Drawing {
     }
 }
 
+namespace guideXOS.Kernel.Drivers {
+    public static class Framebuffer {
+        public static guideXOS.Graph.Graphics Graphics;
+    }
+}
+
+public static class BootConsole {
+    public static void WriteLine(string value) { }
+}
+
 namespace guideXOS.Graph {
     /// <summary>
     /// Hosted stand-in for guideXOS.Graph.Graphics. It enforces bounds and uses
@@ -518,6 +529,11 @@ namespace guideXOS.Graph {
                 hash = (hash ^ (byte)pixel) * 1099511628211UL;
             }
             return hash;
+        }
+
+        public uint GetPixel(int x, int y) {
+            if (x < 0 || y < 0 || x >= Width || y >= Height) return 0;
+            return _pixels[y * Width + x];
         }
     }
 }

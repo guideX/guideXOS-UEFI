@@ -190,6 +190,14 @@ namespace guideXOS.Misc {
         }
 
         /// <summary>
+        /// Return the pen advance used by DrawString for one atlas character.
+        /// Missing atlas characters retain the legacy zero-width behavior.
+        /// </summary>
+        public int GetGlyphAdvance(char chr) {
+            return GetAdvance(GetGlyphWidth(chr));
+        }
+
+        /// <summary>
         /// Return whether the atlas contains a valid cell for a character.
         /// Space is a valid glyph even though it has no visible pixels.
         /// </summary>
@@ -284,6 +292,75 @@ namespace guideXOS.Misc {
             }
         }
 
+        /// <summary>
+        /// Draw using the atlas's existing cell and advance rules while also
+        /// clipping pixels to a caller-owned rectangle. The rectangle uses
+        /// half-open bounds: [clipX, clipX + clipWidth) by
+        /// [clipY, clipY + clipHeight).
+        /// </summary>
+        internal void DrawStringClipped(int X, int Y, string Str, Graphics g,
+                                        int clipX, int clipY,
+                                        int clipWidth, int clipHeight) {
+            if (Str == null || g == null || clipWidth < 0 || clipHeight < 0) return;
+            long clipRight = (long)clipX + clipWidth;
+            long clipBottom = (long)clipY + clipHeight;
+            int w = 0;
+            int h = 0;
+            for (int i = 0; i < Str.Length; i++) {
+                char chr = Str[i];
+                if (chr == '\r') {
+                    if (i + 1 < Str.Length && Str[i + 1] == '\n') i++;
+                    w = 0;
+                    if (!TryAdvanceLine(ref h)) return;
+                    continue;
+                }
+                if (chr == '\n') {
+                    w = 0;
+                    if (!TryAdvanceLine(ref h)) return;
+                    continue;
+                }
+
+                int drawX, drawY;
+                if (!TryAdd(X, w, out drawX) || !TryAdd(Y, h, out drawY)) return;
+                int glyphWidth = DrawCharClipped(g, drawX, drawY, chr,
+                    clipX, clipY, clipRight, clipBottom);
+                int advance = GetAdvance(glyphWidth);
+                if (advance > int.MaxValue - w) return;
+                w += advance;
+                if (w < 0) return;
+            }
+        }
+
+        private int DrawCharClipped(Graphics g, int X, int Y, char Chr,
+                                    int clipX, int clipY,
+                                    long clipRight, long clipBottom) {
+            int baseX, baseY;
+            if (Chr == ' ') return GetGlyphRenderWidth(Chr, 0, 0);
+            if (!TryGetGlyphCell(Chr, out baseX, out baseY)) return 0;
+
+            int renderWidth = GetGlyphRenderWidth(Chr, baseX, baseY);
+            if (g == null || X == -1 || Y == -1 || renderWidth <= 0) {
+                return renderWidth;
+            }
+
+            for (int w = 0; w < renderWidth; w++) {
+                for (int h = 0; h < FontSize; h++) {
+                    long dx = (long)X + w;
+                    long dy = (long)Y + h;
+                    if (dx < clipX || dy < clipY || dx >= clipRight ||
+                        dy >= clipBottom || dx < int.MinValue ||
+                        dx > int.MaxValue || dy < int.MinValue ||
+                        dy > int.MaxValue) continue;
+                    uint color;
+                    if (TryGetPixel(baseX + w, baseY + h, out color) &&
+                        (color & 0xFF000000u) != 0) {
+                        g.DrawPoint((int)dx, (int)dy, color, true);
+                    }
+                }
+            }
+            return renderWidth;
+        }
+
         public void DrawString(int X, int Y, string Str) {
             DrawString(X, Y, Str, Framebuffer.Graphics);
         }
@@ -295,11 +372,21 @@ namespace guideXOS.Misc {
         /// ink extend beyond the measured result.
         /// </summary>
         public int MeasureString(string Str) {
-            if (Str == null || !IsValid) return 0;
+            return MeasureString(Str, 0, Str == null ? 0 : Str.Length);
+        }
+
+        /// <summary>
+        /// Measure one range using the same ink bounds and pen advances as
+        /// MeasureString, without allocating a substring.
+        /// </summary>
+        internal int MeasureString(string Str, int start, int length) {
+            if (Str == null || !IsValid || start < 0 || length < 0 ||
+                start > Str.Length - length) return 0;
 
             int pen = 0;
             int maxRight = 0;
-            for (int i = 0; i < Str.Length; i++) {
+            int end = start + length;
+            for (int i = start; i < end; i++) {
                 int glyphWidth = GetGlyphWidth(Str[i]);
                 if (glyphWidth > 0) {
                     long right = (long)pen + glyphWidth;
