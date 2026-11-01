@@ -175,6 +175,10 @@ namespace guideXOS.FS {
             get { return !_mountDisposed; }
         }
 
+        internal int MountLeaseCount {
+            get { return _mountLeaseCount; }
+        }
+
         internal bool TryAddMountLease() {
             if (_mountDisposalRequested || _mountDisposed ||
                     _mountLeaseCount == int.MaxValue) return false;

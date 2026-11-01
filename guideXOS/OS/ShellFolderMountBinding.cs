@@ -11,30 +11,63 @@ namespace guideXOS.OS {
                 out LaunchResult failure) {
             failure = null;
             if (!ValidateFolderRequest(request, out failure)) return false;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("FOLDER_BIND_BEGIN=shell=" +
+                request.SourceShellObjectId + ";path=" +
+                (request.ShellTargetValue ?? ""));
+#endif
             if (request.FileSystemMountLease != null) {
-                return TryResolveFolderRequest(request, out _, out _, out failure);
+                bool retained = TryResolveFolderRequest(request, out _, out _,
+                    out failure);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FOLDER_BIND_RESULT=retained;success=" +
+                    (retained ? "1" : "0") + ";code=" +
+                    (failure == null ? "Success" : failure.ErrorCodeName));
+#endif
+                return retained;
             }
 
             FileSystemMountLease lease;
             if (FileSystemMountLifetime.TryAcquireActive(out lease) !=
                     FileSystemMountAcquireResult.Acquired || lease == null) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FOLDER_MOUNT_ACQUIRE=result=unavailable");
+#endif
                 failure = LaunchResult.Failed(
                     LaunchErrorCode.ResourceUnavailable,
                     "The C# filesystem mount is unavailable",
                     request.TargetAppId);
                 return false;
             }
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("FOLDER_MOUNT_ACQUIRE=result=acquired;generation=" +
+                lease.Generation.ToString() + ";leases=" +
+                FileSystemMountLifetime.GetLeaseCount(lease).ToString() +
+                ";current=" + (lease.IsCurrentMount ? "1" : "0"));
+#endif
 
             FileSystem fileSystem = lease.FileSystem;
             string path;
             if (!TryInspectFolderPath(request, fileSystem, out path,
                     out failure)) {
                 lease.Dispose();
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FOLDER_MOUNT_RELEASE=reason=inspect-failed;generation=" +
+                    lease.Generation.ToString() + ";leases=" +
+                    FileSystemMountLifetime.GetLeaseCount(lease).ToString());
+                Program.MarkUefiAppRuntime("FOLDER_BIND_RESULT=success=0;code=" +
+                    (failure == null ? "BackendUnavailable" : failure.ErrorCodeName));
+#endif
                 return false;
             }
             if (!request.AttachFileSystemMountLease(lease)) {
                 lease.Dispose();
                 if (path != null && path.Length > 0) path.Dispose();
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FOLDER_MOUNT_RELEASE=reason=attach-failed;generation=" +
+                    lease.Generation.ToString() + ";leases=" +
+                    FileSystemMountLifetime.GetLeaseCount(lease).ToString());
+#endif
                 failure = LaunchResult.Failed(
                     LaunchErrorCode.BackendUnavailable,
                     "The selected C# filesystem mount could not be retained",
@@ -42,6 +75,11 @@ namespace guideXOS.OS {
                 return false;
             }
             if (path != null && path.Length > 0) path.Dispose();
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("FOLDER_BIND_RESULT=success=1;generation=" +
+                lease.Generation.ToString() + ";leases=" +
+                FileSystemMountLifetime.GetLeaseCount(lease).ToString());
+#endif
             return true;
         }
 
@@ -66,12 +104,22 @@ namespace guideXOS.OS {
             }
             FileSystemMountLease operationLease;
             if (!lease.TryClone(out operationLease) || operationLease == null) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FOLDER_REINSPECT=result=lease-clone-failed;generation=" +
+                    lease.Generation.ToString() + ";leases=" +
+                    FileSystemMountLifetime.GetLeaseCount(lease).ToString());
+#endif
                 failure = LaunchResult.Failed(
                     LaunchErrorCode.BackendUnavailable,
                     "The retained C# filesystem mount could not be used",
                     request.TargetAppId);
                 return false;
             }
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("FOLDER_REINSPECT_BEGIN=generation=" +
+                lease.Generation.ToString() + ";leases=" +
+                FileSystemMountLifetime.GetLeaseCount(lease).ToString());
+#endif
             try {
                 fileSystem = operationLease.FileSystem;
                 if (!TryInspectFolderPath(request, fileSystem,
@@ -82,6 +130,12 @@ namespace guideXOS.OS {
                 return true;
             } finally {
                 operationLease.Dispose();
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FOLDER_REINSPECT_END=generation=" +
+                    lease.Generation.ToString() + ";leases=" +
+                    FileSystemMountLifetime.GetLeaseCount(lease).ToString() +
+                    ";valid=" + (lease.IsValid ? "1" : "0"));
+#endif
             }
         }
 
@@ -119,12 +173,21 @@ namespace guideXOS.OS {
             if (!ShellFolderTargetPath.TryResolveExistingDirectory(
                     request.ShellTargetValue, probe, out fileSystemPath,
                     out pathFailure)) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FOLDER_INSPECT=result=" +
+                    pathFailure.ToString() + ";path=" +
+                    (request.ShellTargetValue ?? ""));
+#endif
                 failure = LaunchResult.Failed(
                     FolderFailureToLaunchError(pathFailure),
                     "C# folder inspection failed",
                     request.TargetAppId);
                 return false;
             }
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("FOLDER_INSPECT=result=Directory;path=" +
+                (request.ShellTargetValue ?? ""));
+#endif
             return true;
         }
 

@@ -144,6 +144,11 @@ namespace guideXOS.DefaultApps {
             _suppressMouseUntilRelease = true;
             _leftDownPrev = true;
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("FILES_FOLDER_WINDOW=path=" +
+                (string.IsNullOrEmpty(initialFolderPath) ? "/" :
+                    "/" + initialFolderPath) + ";generation=" +
+                (_mountLease == null ? "0" : _mountLease.Generation.ToString()) +
+                ";leases=" + FileSystemMountLifetime.GetLeaseCount(_mountLease).ToString());
             Program.MarkUefiAppRuntime("FILES_WINDOW_BOUNDS=x=" + X.ToString() +
                 ";y=" + Y.ToString() + ";w=" + Width.ToString() +
                 ";h=" + Height.ToString());
@@ -917,7 +922,22 @@ namespace guideXOS.DefaultApps {
             }
             FileSystemMountLease mountLease = _mountLease;
             _mountLease = null;
-            if (mountLease != null) mountLease.Dispose();
+            if (mountLease != null) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FILES_MOUNT_RELEASE_BEGIN=instance=" +
+                    ApplicationInstanceHandle.ToString() + ";generation=" +
+                    mountLease.Generation.ToString() + ";leases=" +
+                    FileSystemMountLifetime.GetLeaseCount(mountLease).ToString());
+#endif
+                mountLease.Dispose();
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FILES_MOUNT_RELEASE_END=instance=" +
+                    ApplicationInstanceHandle.ToString() + ";generation=" +
+                    mountLease.Generation.ToString() + ";leases=" +
+                    FileSystemMountLifetime.GetLeaseCount(mountLease).ToString() +
+                    ";valid=" + (mountLease.IsValid ? "1" : "0"));
+#endif
+            }
             _fs = null;
             
             base.Dispose();

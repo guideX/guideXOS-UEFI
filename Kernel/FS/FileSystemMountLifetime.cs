@@ -119,6 +119,16 @@ namespace guideXOS.FS {
             }
         }
 
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+        internal static int GetLeaseCount(FileSystemMountLease lease) {
+            if (lease == null) return 0;
+            lock (_sync) {
+                FileSystem resource = lease.Resource;
+                return resource == null ? 0 : resource.MountLeaseCount;
+            }
+        }
+#endif
+
         internal static bool TryClone(FileSystemMountLease lease,
                                       out FileSystemMountLease clone) {
             clone = null;

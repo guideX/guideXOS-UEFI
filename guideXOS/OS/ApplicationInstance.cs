@@ -1231,6 +1231,14 @@ namespace guideXOS.OS {
                 : ApplicationLifecycleResult.Succeeded(terminatedHandle, from,
                     ApplicationInstanceLifecycleState.Terminated, reason);
             Remove(instance);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("INSTANCE_TERMINATED=instance=" +
+                terminatedHandle.ToString() + ";reason=" + reason.ToString() +
+                ";transition=" + (terminated ? "1" : "0") +
+                ";active=" + ActiveCount.ToString() +
+                ";terminated=" + _terminatedCount.ToString() +
+                ";stale=" + _staleOwnershipCount.ToString());
+#endif
             return result;
         }
 

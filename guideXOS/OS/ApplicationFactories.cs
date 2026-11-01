@@ -821,8 +821,17 @@ namespace guideXOS.OS {
         private static bool AttachFactoryWindows(ApplicationInstance instance,
                                                  ApplicationFactoryResult result) {
             for (int i = 0; i < result.AttachedWindowCount; i++) {
+                Window window = result.GetWindowAt(i);
                 if (!ApplicationInstanceRegistry.TryAttachWindow(instance,
-                        result.GetWindowAt(i))) return false;
+                        window)) return false;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("WINDOW_ATTACHED=app=" +
+                    instance.DescriptorId + ";instance=" +
+                    instance.Handle.ToString() + ";owner=" +
+                    window.OwnerId.ToString() + ";window-instance=" +
+                    window.ApplicationInstanceHandle.ToString() +
+                    ";owned=" + instance.OwnedWindowCount.ToString());
+#endif
             }
             return true;
         }
@@ -875,6 +884,7 @@ namespace guideXOS.OS {
             Program.MarkUefiAppRuntime("FACTORY_LAUNCH=app=" +
                 descriptor.AppId + ";instance=" + instance.Handle.ToString() +
                 ";reused=" + (reused ? "1" : "0") +
+                ";created=" + (reused ? "0" : "1") +
                 ";windows=" + result.AttachedWindowCount.ToString());
 #endif
         }

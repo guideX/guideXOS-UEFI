@@ -51,12 +51,19 @@
 .EXAMPLE
     .\build.ps1 -CreateISO
     Build and create ISO image
+
+.EXAMPLE
+    .\build.ps1 -RamdiskVersion 2 -RamdiskImagePath .\out\rdsk-v2.img
+    Build an opt-in RDSK v2 image without writing to ramdisk.img.
 #>
 
 param(
     [switch]$SkipBootloader,
     [switch]$SkipKernel,
     [switch]$SkipRamdisk,
+    [ValidateSet('1', '2')]
+    [string]$RamdiskVersion = '1',
+    [string]$RamdiskImagePath = '',
     [switch]$SkipConversion,
     [switch]$CreateISO,
     [switch]$Clean,
@@ -117,6 +124,22 @@ $KernelProject = "$RootDir\guideXOS\guideXOS.csproj"
 $RamdiskSrc = "$RootDir\ramdisk_src"
 $ESPDir = "$RootDir\ESP"
 $ToolsDir = "$RootDir\tools"
+$normalRamdiskPath = [System.IO.Path]::GetFullPath((Join-Path $RootDir 'ramdisk.img'))
+$ramdiskImageWasExplicit = -not [string]::IsNullOrWhiteSpace($RamdiskImagePath)
+if ($ramdiskImageWasExplicit) {
+    $RamdiskImagePath = [System.IO.Path]::GetFullPath($RamdiskImagePath)
+} elseif ($RamdiskVersion -eq '2') {
+    $RamdiskImagePath = [System.IO.Path]::GetFullPath((Join-Path $RootDir 'ramdisk-v2.img'))
+} else {
+    $RamdiskImagePath = $normalRamdiskPath
+}
+if ($RamdiskVersion -eq '2' -and $RamdiskImagePath -eq $normalRamdiskPath) {
+    throw 'RDSK v2 cannot be written to the normal ramdisk.img path.'
+}
+if ($SkipRamdisk -and ($RamdiskVersion -eq '2' -or $ramdiskImageWasExplicit) -and
+    -not (Test-Path -LiteralPath $RamdiskImagePath -PathType Leaf)) {
+    throw "The selected RDSK image does not exist: $RamdiskImagePath"
+}
 
 # If the bootloader project isn't at the default path, try to discover it
 if (-not (Test-Path $BootloaderProject)) {
@@ -271,7 +294,8 @@ if ((-not $SkipKernel) -or (-not $SkipRamdisk)) {
 # Check for Python
 $pythonExe = $null
 $pythonExeArgs = @()
-if ((-not $SkipRamdisk) -or (-not $SkipConversion) -or (-not $SkipKernel)) {
+if ((-not $SkipRamdisk) -or (-not $SkipConversion) -or (-not $SkipKernel) -or
+    $RamdiskVersion -eq '2' -or $ramdiskImageWasExplicit) {
     $bundledPython = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
     if (Test-Path $bundledPython) {
         $pythonExe = $bundledPython
@@ -952,7 +976,7 @@ if (-not $SkipRamdisk) {
     }
 
     $ramdiskBuilder = (Resolve-Path "$ToolsDir\ramdisk_builder.py").Path
-    $ramdiskOutput = (Join-Path $RootDir "ramdisk.img")
+    $ramdiskOutput = $RamdiskImagePath
     $ramdiskSource = (Resolve-Path $RamdiskSrc).Path
     
     if (-not (Test-Path $ramdiskBuilder)) {
@@ -960,30 +984,56 @@ if (-not $SkipRamdisk) {
         exit 1
     }
     
-    Write-Info "Building ramdisk with Python..."
-    & $pythonExe @pythonExeArgs $ramdiskBuilder $ramdiskSource $ramdiskOutput
+    Write-Info "Building RDSK v$RamdiskVersion image with Python..."
+    $ramdiskBuildArgs = @($ramdiskBuilder, $ramdiskSource, $ramdiskOutput)
+    if ($RamdiskVersion -eq '2') {
+        $ramdiskBuildArgs += @('--version', '2')
+    }
+    & $pythonExe @pythonExeArgs @ramdiskBuildArgs
     
     if ($LASTEXITCODE -eq 0 -and (Test-Path $ramdiskOutput)) {
         $size = (Get-Item $ramdiskOutput).Length
         Write-Success "Ramdisk built successfully ($([math]::Round($size/1KB, 2)) KB)"
-        $identityTool = Join-Path $RootDir "Tools\ManagedArtifacts\managed_artifacts.py"
-        $identitySource = Join-Path $RootDir "guideXOS\obj\ManagedArtifactIdentities.g.cs"
-        $identityReport = Join-Path $RootDir "out\h2c-managed-artifact-audit.csv"
-        $identityStage = if ($SkipKernel) { "generated" } else { "after" }
-        $identityVerifyArgs = @($identityTool, "--audit-only", "--stage", $identityStage, "--ramdisk-source", (Join-Path $RamdiskSrc "Native"), "--ramdisk-image", $ramdiskOutput, "--report-csv", $identityReport)
-        if (-not $SkipKernel) {
-            $identityVerifyArgs += @("--identity-source", $identitySource, "--kernel-built")
-        }
-        & $pythonExe @pythonExeArgs @identityVerifyArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "Final ramdisk managed-artifact verification failed: $LASTEXITCODE"
-        }
     } else {
         Write-Error "Ramdisk build failed"
         exit 1
     }
 } else {
     Write-Header "[4/5] Skipping Ramdisk Build"
+}
+
+# Audit the exact image that the package step will stage. RDSK v2 uses the
+# same managed-artifact checks as v1, including descriptor, staging, and
+# compiled-allowlist agreement.
+$identityTool = Join-Path $RootDir "Tools\ManagedArtifacts\managed_artifacts.py"
+$identitySource = Join-Path $RootDir "guideXOS\obj\ManagedArtifactIdentities.g.cs"
+$identityReportName = if ($RamdiskImagePath -eq $normalRamdiskPath) {
+    "h2c-managed-artifact-audit.csv"
+} else {
+    "managed-artifacts-" + [System.IO.Path]::GetFileNameWithoutExtension($RamdiskImagePath) + ".csv"
+}
+$identityReport = Join-Path $RootDir "out\$identityReportName"
+$identityStage = if (Test-Path -LiteralPath $identitySource -PathType Leaf) { "after" } else { "generated" }
+$identityVerifyArgs = @($identityTool, "--audit-only", "--stage", $identityStage,
+    "--ramdisk-source", (Join-Path $RamdiskSrc "Native"),
+    "--expected-version", [int]$RamdiskVersion, "--report-csv", $identityReport)
+if (Test-Path -LiteralPath $RamdiskImagePath -PathType Leaf) {
+    $identityVerifyArgs += @("--ramdisk-image", $RamdiskImagePath)
+} elseif ($RamdiskVersion -eq '2' -or $ramdiskImageWasExplicit) {
+    throw "The selected RDSK image is missing before packaging: $RamdiskImagePath"
+}
+if (Test-Path -LiteralPath $identitySource -PathType Leaf) {
+    $identityVerifyArgs += @("--identity-source", $identitySource, "--kernel-built")
+}
+if ($pythonExe) {
+    & $pythonExe @pythonExeArgs @identityVerifyArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Selected ramdisk managed-artifact verification failed: $LASTEXITCODE"
+    }
+} elseif ($RamdiskVersion -eq '2' -or $ramdiskImageWasExplicit) {
+    throw "Python is required to validate the selected RDSK image: $RamdiskImagePath"
+} else {
+    Write-Warning "Python is unavailable; managed-artifact image verification was skipped."
 }
 
 # Step 5: Assemble ESP Structure
@@ -1058,8 +1108,9 @@ if (Test-Path $kernelSrc) {
     exit 1
 }
 
-# Copy ramdisk
-$ramdiskSrc = "$RootDir\ramdisk.img"
+# Copy the selected RDSK image. The normal v1 build still selects ramdisk.img;
+# an opt-in v2 build selects its separately named image or the explicit path.
+$ramdiskSrc = $RamdiskImagePath
 $ramdiskDst = "$ESPDir\ramdisk.img"
 if (Test-Path $ramdiskSrc) {
     Copy-Item $ramdiskSrc $ramdiskDst -Force
@@ -1075,11 +1126,16 @@ if (Test-Path $ramdiskSrc) {
     Write-Info "  source SHA-256: $($ramdiskSrcInfo.Hash)"
     Write-Info "  staged SHA-256: $($ramdiskDstInfo.Hash)"
 } else {
+    if ($RamdiskVersion -eq '2' -or $ramdiskImageWasExplicit) {
+        throw "Selected RDSK image not found: $ramdiskSrc"
+    }
     Write-Warning "Ramdisk not found: $ramdiskSrc"
 }
 
 # Verify ESP structure
 Write-Header "Build Summary"
+Write-Info "Selected RDSK version: v$RamdiskVersion"
+Write-Info "Selected RDSK image: $RamdiskImagePath"
 Write-Info "ESP Structure:"
 if (Test-Path "$ESPDir\EFI\BOOT\BOOTX64.EFI") {
     $size = (Get-Item "$ESPDir\EFI\BOOT\BOOTX64.EFI").Length

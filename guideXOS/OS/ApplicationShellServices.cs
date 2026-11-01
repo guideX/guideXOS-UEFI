@@ -406,6 +406,11 @@ namespace guideXOS.OS {
 
         private static LaunchResult OpenShellFolder(string shellObjectId,
                                                     string canonicalFolderPath) {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("SHELL_FOLDER_REQUEST=shell=" +
+                (shellObjectId ?? "") + ";path=" +
+                (canonicalFolderPath ?? ""));
+#endif
             ShellObjectTarget target;
             LaunchRequest request;
             ShellObjectResolution resolution;
@@ -425,7 +430,16 @@ namespace guideXOS.OS {
                     "Resolved shell target is not a verified folder",
                     "gxos.builtin.files");
             }
-            return LaunchPreparedFolderRequest(request);
+            LaunchResult result = LaunchPreparedFolderRequest(request);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            Program.MarkUefiAppRuntime("SHELL_FOLDER_RESULT=app=" +
+                (result == null ? "" : (result.AppId ?? "")) +
+                ";success=" + (result != null && result.Success ? "1" : "0") +
+                ";code=" + (result == null ? "BackendUnavailable" :
+                    result.ErrorCodeName) + ";instance=" +
+                (result == null ? "" : (result.InstanceId ?? "")));
+#endif
+            return result;
         }
 
         private static LaunchResult LaunchPreparedFolderRequest(

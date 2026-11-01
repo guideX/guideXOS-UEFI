@@ -15,6 +15,7 @@ import json
 import re
 import struct
 import sys
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -309,10 +310,9 @@ def collect_rows(root: Path, ramdisk_source: Path) -> list[dict[str, str]]:
     return rows
 
 
-def verify_ramdisk_image(image_path: Path, ramdisk_source: Path, rows: list[dict[str, str]]) -> None:
-    data = image_path.read_bytes()
+def read_v1_ramdisk_entries(data: bytes, image_path: Path) -> dict[str, bytes]:
     if len(data) < 12 or data[:4] != b"RDSK" or struct.unpack_from("<I", data, 4)[0] != 1:
-        raise ValueError(f"Ramdisk header is invalid: {image_path}")
+        raise ValueError(f"Ramdisk v1 header is invalid: {image_path}")
     count = struct.unpack_from("<I", data, 8)[0]
     offset = 12
     entries: dict[str, bytes] = {}
@@ -334,19 +334,146 @@ def verify_ramdisk_image(image_path: Path, ramdisk_source: Path, rows: list[dict
         entries[entry_path] = data[offset : offset + size]
         offset += size
     if offset != len(data):
-        raise ValueError(f"Ramdisk has trailing/unaccounted bytes: {image_path}")
+        raise ValueError(f"Ramdisk v1 has trailing/unaccounted bytes: {image_path}")
+    return entries
+
+
+def read_v2_ramdisk_entries(data: bytes, image_path: Path) -> dict[str, tuple[int, int]]:
+    if len(data) < 64 or data[:4] != b"RDSK":
+        raise ValueError(f"Ramdisk v2 header is invalid: {image_path}")
+    (version, header_bytes, flags, image_bytes, record_count,
+     directory_count, file_count, records_offset, records_bytes,
+     data_offset, stored_crc) = struct.unpack_from("<IIIQIIIQQQI", data, 4)
+    if (version != 2 or header_bytes != 64 or flags != 0 or
+            image_bytes != len(data) or not 1 <= record_count <= 4096 or
+            directory_count + file_count != record_count or
+            records_offset != 64 or records_bytes > 4 * 1024 * 1024 or
+            data_offset != records_offset + records_bytes or
+            data_offset > len(data)):
+        raise ValueError(f"Ramdisk v2 header bounds are invalid: {image_path}")
+
+    crc = zlib.crc32(data[:60])
+    crc = zlib.crc32(bytes(4), crc)
+    crc = zlib.crc32(data[64:], crc) & 0xFFFFFFFF
+    if crc != stored_crc:
+        raise ValueError(f"Ramdisk v2 CRC32 mismatch: {image_path}")
+
+    table_end = records_offset + records_bytes
+    offset = records_offset
+    record_paths: list[str] = []
+    record_kinds: list[int] = []
+    entries: dict[str, tuple[int, int]] = {}
+    previous_parent = 0
+    previous_name = b""
+    payload_cursor = data_offset
+    counted_directories = 0
+    counted_files = 0
+
+    for index in range(record_count):
+        if offset + 28 > table_end:
+            raise ValueError(f"Ramdisk v2 record header is truncated: {image_path}")
+        kind, record_flags, name_bytes, parent, payload_offset, payload_bytes, reserved = struct.unpack_from(
+            "<BBHIQQI", data, offset
+        )
+        name_start = offset + 28
+        name_end = name_start + name_bytes
+        if (kind not in (1, 2) or record_flags != 0 or reserved != 0 or
+                name_bytes > 255 or name_end > table_end):
+            raise ValueError(f"Ramdisk v2 record metadata is invalid: {image_path}")
+        name_raw = data[name_start:name_end]
+        try:
+            name = name_raw.decode("ascii", errors="strict")
+        except UnicodeDecodeError as error:
+            raise ValueError(f"Ramdisk v2 pathname is not ASCII: {image_path}") from error
+
+        if index == 0:
+            if (kind != 1 or name_bytes != 0 or parent != 0xFFFFFFFF or
+                    payload_offset != 0 or payload_bytes != 0):
+                raise ValueError(f"Ramdisk v2 root record is invalid: {image_path}")
+            path = ""
+            counted_directories += 1
+        else:
+            if (name_bytes == 0 or parent >= index or record_kinds[parent] != 1 or
+                    parent < previous_parent or
+                    any(ord(char) < 0x20 or ord(char) > 0x7E for char in name) or
+                    "/" in name or "\\" in name or name in (".", "..")):
+                raise ValueError(f"Ramdisk v2 pathname or parent is invalid: {image_path}")
+            if parent == previous_parent and name_raw <= previous_name:
+                raise ValueError(f"Ramdisk v2 sibling names are not strictly ordered: {image_path}")
+            if parent != previous_parent:
+                previous_name = b""
+            parent_path = record_paths[parent]
+            path = name if not parent_path else f"{parent_path}/{name}"
+            if len(path.encode("ascii")) > 1023 or path in record_paths:
+                raise ValueError(f"Ramdisk v2 path is duplicated or too long: {image_path}")
+            if kind == 1:
+                counted_directories += 1
+            else:
+                counted_files += 1
+
+        if kind == 1:
+            if payload_offset != 0 or payload_bytes != 0:
+                raise ValueError(f"Ramdisk v2 directory has a payload: {image_path}")
+        else:
+            if (payload_bytes > 100 * 1024 * 1024 or
+                    payload_offset != payload_cursor or
+                    payload_offset > len(data) or
+                    payload_bytes > len(data) - payload_offset):
+                raise ValueError(f"Ramdisk v2 file payload extent is invalid: {image_path}")
+            entries[path] = (payload_offset, payload_bytes)
+            payload_cursor += payload_bytes
+
+        record_paths.append(path)
+        record_kinds.append(kind)
+        if index != 0:
+            previous_parent = parent
+            previous_name = name_raw
+        offset = name_end
+
+    if (offset != table_end or payload_cursor != len(data) or
+            counted_directories != directory_count or counted_files != file_count):
+        raise ValueError(f"Ramdisk v2 counts or exact extents are invalid: {image_path}")
+    return entries
+
+
+def verify_ramdisk_image(
+    image_path: Path,
+    ramdisk_source: Path,
+    rows: list[dict[str, str]],
+    expected_version: int | None = None,
+) -> None:
+    data = image_path.read_bytes()
+    if len(data) < 8 or data[:4] != b"RDSK":
+        raise ValueError(f"Ramdisk header is invalid: {image_path}")
+    version = struct.unpack_from("<I", data, 4)[0]
+    if expected_version is not None and version != expected_version:
+        raise ValueError(
+            f"Ramdisk version {version} does not match expected version "
+            f"{expected_version}: {image_path}"
+        )
+    if version == 1:
+        entries: dict[str, bytes] | dict[str, tuple[int, int]] = read_v1_ramdisk_entries(data, image_path)
+    elif version == 2:
+        entries = read_v2_ramdisk_entries(data, image_path)
+    else:
+        raise ValueError(f"Ramdisk version is unsupported: {image_path}")
 
     for row in rows:
         filename = Path(row["executable_path"]).name
         gxmi_name = Path(row["descriptor_path"]).name
-        expected_exe = (ramdisk_source / filename).read_bytes()
-        expected_gxmi = (ramdisk_source / gxmi_name).read_bytes()
-        archive_exe = entries.get(f"Native/{filename}")
-        archive_gxmi = entries.get(f"Native/{gxmi_name}")
-        if archive_exe != expected_exe:
-            raise ValueError(f"Ramdisk executable differs from staged file: Native/{filename}")
-        if archive_gxmi != expected_gxmi:
-            raise ValueError(f"Ramdisk descriptor differs from staged file: Native/{gxmi_name}")
+        expected = {
+            f"Native/{filename}": (ramdisk_source / filename).read_bytes(),
+            f"Native/{gxmi_name}": (ramdisk_source / gxmi_name).read_bytes(),
+        }
+        for entry_path, expected_bytes in expected.items():
+            archived = entries.get(entry_path)
+            if isinstance(archived, tuple):
+                start, length = archived
+                matches = length == len(expected_bytes) and data[start : start + length] == expected_bytes
+            else:
+                matches = archived == expected_bytes
+            if not matches:
+                raise ValueError(f"Ramdisk artifact differs from staged file: {entry_path}")
         row["ramdisk_equals_source"] = "true"
 
 
@@ -438,6 +565,7 @@ def main() -> int:
     parser.add_argument("--report-csv", type=Path)
     parser.add_argument("--kernel-source", type=Path)
     parser.add_argument("--ramdisk-image", type=Path)
+    parser.add_argument("--expected-version", type=int, choices=(1, 2))
     parser.add_argument("--stage", choices=("before", "generated", "after"), default="after")
     parser.add_argument("--kernel-built", action="store_true")
     parser.add_argument("--audit-only", action="store_true")
@@ -447,7 +575,10 @@ def main() -> int:
     ramdisk_source = args.ramdisk_source or root / "ramdisk_src" / "Native"
     rows = collect_rows(root, ramdisk_source.resolve())
     if args.ramdisk_image:
-        verify_ramdisk_image(args.ramdisk_image.resolve(), ramdisk_source.resolve(), rows)
+        verify_ramdisk_image(
+            args.ramdisk_image.resolve(), ramdisk_source.resolve(), rows,
+            expected_version=args.expected_version,
+        )
     accepted: dict[str, str] = {}
     if args.kernel_source:
         accepted = read_legacy_kernel_hashes(args.kernel_source)

@@ -21,15 +21,11 @@ def main() -> int:
     inspector = read("Kernel/FS/RdskFSDirectoryInspector.cs")
     reader = read("Kernel/FS/RdskFS.cs")
     builder = read("Tools/ramdisk_builder.py")
+    managed_artifacts = read("Tools/ManagedArtifacts/managed_artifacts.py")
     build_script = read("build.ps1")
     hosted_project = read("Tests/AMCONV2FRdskV2Tests/AMCONV2FRdskV2Tests.csproj")
     hosted_runner = read("Tests/AMCONV2FRdskV2Tests/run_tests.py")
     folder_binding = read("guideXOS/OS/ShellFolderMountBinding.cs")
-    image_builder_calls = "\n".join(
-        line for line in build_script.splitlines()
-        if "$ramdiskBuilder" in line and "$ramdiskSource" in line
-    )
-
     checks = [
         ("the production parser detects v1 and v2 and rejects unknown versions",
          "imageVersion == Version1" in inspector and
@@ -50,10 +46,15 @@ def main() -> int:
         ("production listing and reading retain distinct v1 and v2 paths",
          "GetV2Files" in reader and "GetV1Files" in reader and
          "ReadV2File" in reader and "ReadV1File" in reader),
-        ("the existing build remains on the default v1 image generator",
+        ("the build defaults to v1 and selects v2 only through a separate image path",
          "default=1" in builder and
-         "$pythonExe @pythonExeArgs $ramdiskBuilder $ramdiskSource $ramdiskOutput" in build_script and
-         "--version 2" not in image_builder_calls),
+         "[string]$RamdiskVersion = '1'" in build_script and
+         "ramdisk-v2.img" in build_script and
+         "if ($RamdiskVersion -eq '2')" in build_script and
+         "@('--version', '2')" in build_script and
+         "RDSK v2 cannot be written to the normal ramdisk.img path" in build_script and
+         '"--expected-version", [int]$RamdiskVersion' in build_script and
+         'parser.add_argument("--expected-version", type=int, choices=(1, 2))' in managed_artifacts),
         ("v2 names are strict ASCII and generator record order is stable",
          "errors=\"strict\"" in builder and
          "encoded_entries.sort(key=lambda pair: pair[0])" in builder),
