@@ -67,6 +67,12 @@ namespace guideXOS.FontTests {
                   metrics.LineHeight == bitmap.FontSize &&
                   metrics.Baseline == bitmap.FontSize && metrics.Descent == 0,
                   "bitmap top-left baseline and line-height remain atlas-sized");
+            int bitmapLineHeight, bitmapBaseline;
+            Check(shared.GetLineHeight(out bitmapLineHeight) &&
+                  shared.GetBaseline(out bitmapBaseline) &&
+                  bitmapLineHeight == metrics.LineHeight &&
+                  bitmapBaseline == metrics.Baseline,
+                  "bitmap line-height and baseline accessors agree with metrics");
 
             UefiDesktopIconGeometry geometry = UefiDesktopIconGeometry.Create(
                 0, 40, 20, 30, measured.Width, metrics.LineHeight, 4);
@@ -140,6 +146,12 @@ namespace guideXOS.FontTests {
                       metrics.Baseline == metrics.Ascent &&
                       metrics.LineHeight == renderer.LineHeight,
                       "TrueType signed ascent/descent and baseline at " + sizes[i] + " px");
+                int lineHeight, baseline;
+                Check(selected.GetLineHeight(out lineHeight) &&
+                      selected.GetBaseline(out baseline) &&
+                      lineHeight == metrics.LineHeight &&
+                      baseline == metrics.Baseline,
+                      "TrueType line-height and baseline accessors at " + sizes[i] + " px");
                 Check(selected.FontSize == renderer.FontSize,
                       "requested TrueType size is retained at " + sizes[i] + " px");
 
@@ -387,6 +399,42 @@ namespace guideXOS.FontTests {
                   ttfGeometry.HitHeight == ttfGeometry.TileSize + 4 +
                                            ttfHeight,
                   "TrueType opt-in layout derives label and hit bounds from its own metrics");
+
+            string[] labels = { "DOCS", "IMAGES", "AUDIO" };
+            for (int i = 0; i < labels.Length; i++) {
+                int labelWidth, labelHeight;
+                bool labelMeasured = UefiDesktopLabelRenderer.TryMeasure(
+                    optIn, labels[i], out labelWidth, out labelHeight);
+                UefiDesktopIconGeometry labelGeometry =
+                    UefiDesktopIconGeometry.Create(i + 1, 48, 32, 30,
+                        labelMeasured ? labelWidth : 0,
+                        labelMeasured ? labelHeight : 0, 4);
+                Graphics labelPixels = new Graphics(200, 100, 0xFF102030u);
+                bool labelDrawn = UefiDesktopLabelRenderer.Draw(labelPixels,
+                    optIn, labelGeometry, labels[i]);
+                UefiDesktopIconGeometry[] labelTiles = { labelGeometry };
+                bool insideHit = UefiDesktopIconGeometry.HitTest(labelTiles,
+                    labelGeometry.LabelX, labelGeometry.LabelY) == i + 1;
+                bool outsideHit = labelGeometry.LabelWidth > labelGeometry.TileSize &&
+                    UefiDesktopIconGeometry.HitTest(labelTiles,
+                        labelGeometry.HitX - 1, labelGeometry.LabelY) == -1;
+                bool inkOutsideLabel = false;
+                for (int y = 0; y < labelPixels.Height; y++) {
+                    for (int x = 0; x < labelPixels.Width; x++) {
+                        if ((x < labelGeometry.LabelX ||
+                             x >= labelGeometry.LabelX + labelGeometry.LabelWidth ||
+                             y < labelGeometry.LabelY ||
+                             y >= labelGeometry.LabelY + labelGeometry.LabelHeight) &&
+                            labelPixels.GetPixel(x, y) != 0xFF102030u) {
+                            inkOutsideLabel = true;
+                        }
+                    }
+                }
+                Check(labelMeasured && labelDrawn && insideHit && outsideHit &&
+                      !inkOutsideLabel,
+                      "TrueType tile layout clips and hit-tests label length " +
+                      labels[i].Length);
+            }
         }
 
         private static void Check(bool condition, string description) {
