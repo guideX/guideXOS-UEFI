@@ -1,0 +1,39 @@
+--- a/src/coreclr/nativeaot/Runtime/CMakeLists.txt
++++ b/src/coreclr/nativeaot/Runtime/CMakeLists.txt
+@@ -136,6 +136,7 @@ elseif (CLR_CMAKE_TARGET_GUIDEXOS)
+   set(GC_HEADERS
+     ${GC_DIR}/env/gcenv.guidexos.inl)
+   list(APPEND COMMON_RUNTIME_SOURCES
++    guidexos/PalRedhawkStackBounds.cpp
+     ${GC_DIR}/guidexos/gcenv.guidexos.cpp
+   )
+   if (CLR_CMAKE_HOST_WIN32)
+--- /dev/null
++++ b/src/coreclr/nativeaot/Runtime/guidexos/PalRedhawkStackBounds.cpp
+@@ -0,0 +1,26 @@
++// Licensed to the .NET Foundation under one or more agreements.
++// The .NET Foundation licenses this file to you under the MIT license.
++
++#include "common.h"
++#include "PalRedhawk.h"
++
++// GUIDEXOS currently has no PAL contract that can identify the complete,
++// accessible stack allocation owned by the calling OS thread. In particular,
++// the boot handoff's stack and the kernel's later per-thread stacks are not
++// registered with NativeAOT's ThreadStore. Returning an address inferred from
++// RSP would therefore turn a guess into an apparently authoritative bound.
++//
++// Keep thread attachment fail-closed until the OS and PAL provide per-thread
++// stack provenance. Thread::Construct treats false as a fatal initialization
++// failure. Never let the output retain stale caller values on that path.
++extern "C" bool __stdcall PalGetMaximumStackBounds(
++    void** ppStackLowOut,
++    void** ppStackHighOut)
++{
++    if (ppStackLowOut != nullptr)
++        *ppStackLowOut = nullptr;
++    if (ppStackHighOut != nullptr)
++        *ppStackHighOut = nullptr;
++
++    return false;
++}
