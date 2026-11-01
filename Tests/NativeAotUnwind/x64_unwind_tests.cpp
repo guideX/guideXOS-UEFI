@@ -1,4 +1,5 @@
 #include "../../Tools/Phase23/x64_unwind_bounded.h"
+#include "../../Tools/Phase23/target_pe_preflight.h"
 
 #include <array>
 #include <cstddef>
@@ -122,6 +123,84 @@ struct Fixture {
         context.Rsp = StackBase() + stackOffset;
         context.Rip = ImageBase() + kFunctionBeginRva + 0x10;
         return context;
+    }
+};
+
+struct PeStagingFixture {
+    static constexpr std::uint32_t kNtHeaderOffset = 0x80;
+    static constexpr std::uint32_t kOptionalHeaderOffset = 0x98;
+    static constexpr std::uint32_t kSectionTableOffset = 0x188;
+    static constexpr std::uint32_t kExceptionDirectoryRva = 0x2000;
+    static constexpr std::uint32_t kUnwindInfoRva = 0x3000;
+
+    std::array<std::uint8_t, 0x4000> Image{};
+    void* ClasslibFunctions[1]{};
+
+    PeStagingFixture() {
+        Put16(0, 0x5A4D); // MZ
+        Put32(0x3C, kNtHeaderOffset);
+        Put32(kNtHeaderOffset, 0x00004550); // PE\0\0
+        Put16(kNtHeaderOffset + 4, 0x8664); // AMD64
+        Put16(kNtHeaderOffset + 6, 3);
+        Put16(kNtHeaderOffset + 20, 0xF0);
+
+        Put16(kOptionalHeaderOffset, 0x020B); // PE32+
+        Put32(kOptionalHeaderOffset + 56, static_cast<std::uint32_t>(Image.size()));
+        Put32(kOptionalHeaderOffset + 60, 0x400);
+        Put32(kOptionalHeaderOffset + 108, 16);
+        SetExceptionDirectory(kExceptionDirectoryRva, 12);
+
+        PutSection(kSectionTableOffset, 0x1000, 0x1000, 0x60000020); // .text
+        PutSection(kSectionTableOffset + 40, 0x2000, 0x100, 0x40000040); // .pdata
+        PutSection(kSectionTableOffset + 80, 0x3000, 0x100, 0x40000040); // .xdata
+        SetRuntimeFunction(0, 0x1000, 0x1020, kUnwindInfoRva);
+        Put8(kUnwindInfoRva, 1); // version 1, no handler or chain flags
+    }
+
+    std::uintptr_t ImageBase() const {
+        return reinterpret_cast<std::uintptr_t>(Image.data());
+    }
+
+    guidexos::registration::RegistrationRequest Request() const {
+        return {{Image.data(), Image.size(), ImageBase()},
+                {ImageBase() + 0x1000, 0x80},
+                {ImageBase() + 0x1080, 0x80},
+                ClasslibFunctions, 1};
+    }
+
+    void Put8(std::size_t offset, std::uint8_t value) {
+        Image[offset] = value;
+    }
+
+    void Put16(std::size_t offset, std::uint16_t value) {
+        Put8(offset, static_cast<std::uint8_t>(value));
+        Put8(offset + 1, static_cast<std::uint8_t>(value >> 8));
+    }
+
+    void Put32(std::size_t offset, std::uint32_t value) {
+        for (std::size_t index = 0; index < 4; ++index)
+            Put8(offset + index, static_cast<std::uint8_t>(value >> (index * 8)));
+    }
+
+    void PutSection(std::size_t offset, std::uint32_t virtualAddress,
+                    std::uint32_t size, std::uint32_t characteristics) {
+        Put32(offset + 8, size);
+        Put32(offset + 12, virtualAddress);
+        Put32(offset + 16, size);
+        Put32(offset + 36, characteristics);
+    }
+
+    void SetExceptionDirectory(std::uint32_t rva, std::uint32_t size) {
+        Put32(kOptionalHeaderOffset + 112 + 3 * 8, rva);
+        Put32(kOptionalHeaderOffset + 116 + 3 * 8, size);
+    }
+
+    void SetRuntimeFunction(std::size_t index, std::uint32_t begin,
+                            std::uint32_t end, std::uint32_t unwindRva) {
+        const std::size_t offset = kExceptionDirectoryRva + index * 12;
+        Put32(offset, begin);
+        Put32(offset + 4, end);
+        Put32(offset + 8, unwindRva);
     }
 };
 
@@ -1604,6 +1683,162 @@ int main() {
         CHECK(FindRuntimeFunction(invalid, kFunctionEntryRva,
               sizeof(RuntimeFunction), invalid.BaseAddress + kFunctionBeginRva,
               &function, &entryRva) == Status::InvalidArgument);
+        return true;
+    });
+
+    Run("PE preflight stages valid AMD64 image with publication disabled", [] {
+        PeStagingFixture fixture;
+        guidexos::registration::StagedRegistration staged{};
+        CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+              guidexos::registration::PreflightStatus::ValidatedForStaging);
+        CHECK(staged.ImageBase == fixture.ImageBase());
+        CHECK(staged.ImageSize == fixture.Image.size());
+        CHECK(staged.RuntimeFunctionCount == 1);
+        CHECK(staged.ExceptionDirectoryRva == PeStagingFixture::kExceptionDirectoryRva);
+        CHECK(!staged.GcEhMetadataValidated);
+        CHECK(!staged.ManagerConstructionAllowed);
+        CHECK(!staged.PublicationAllowed);
+        return true;
+    });
+
+    Run("PE preflight rejects invalid image identity and optional headers", [] {
+        {
+            PeStagingFixture fixture;
+            fixture.Put16(0, 0);
+            guidexos::registration::StagedRegistration staged{};
+            CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+                  guidexos::registration::PreflightStatus::InvalidDosHeader);
+        }
+        {
+            PeStagingFixture fixture;
+            fixture.Put16(PeStagingFixture::kNtHeaderOffset + 4, 0x014C);
+            guidexos::registration::StagedRegistration staged{};
+            CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+                  guidexos::registration::PreflightStatus::UnsupportedMachine);
+        }
+        {
+            PeStagingFixture fixture;
+            fixture.Put16(PeStagingFixture::kOptionalHeaderOffset, 0x010B);
+            guidexos::registration::StagedRegistration staged{};
+            CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+                  guidexos::registration::PreflightStatus::UnsupportedOptionalHeader);
+        }
+        return true;
+    });
+
+    Run("PE preflight rejects non-executable and overlapping code ranges", [] {
+        {
+            PeStagingFixture fixture;
+            auto request = fixture.Request();
+            request.ManagedCode.Start = fixture.ImageBase() + 0x1FF0;
+            request.ManagedCode.Size = 0x40;
+            guidexos::registration::StagedRegistration staged{};
+            CHECK(guidexos::registration::PrepareRegistration(request, &staged) ==
+                  guidexos::registration::PreflightStatus::InvalidCodeRange);
+        }
+        {
+            PeStagingFixture fixture;
+            auto request = fixture.Request();
+            request.UnboxingStubs.Start = request.ManagedCode.Start + 0x40;
+            request.UnboxingStubs.Size = 0x40;
+            guidexos::registration::StagedRegistration staged{};
+            CHECK(guidexos::registration::PrepareRegistration(request, &staged) ==
+                  guidexos::registration::PreflightStatus::OverlappingCodeRanges);
+        }
+        return true;
+    });
+
+    Run("PE preflight rejects truncated or misaligned exception directories", [] {
+        {
+            PeStagingFixture fixture;
+            fixture.SetExceptionDirectory(PeStagingFixture::kExceptionDirectoryRva, 13);
+            guidexos::registration::StagedRegistration staged{};
+            CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+                  guidexos::registration::PreflightStatus::InvalidExceptionDirectory);
+        }
+        {
+            PeStagingFixture fixture;
+            fixture.SetExceptionDirectory(0x2002, 12);
+            guidexos::registration::StagedRegistration staged{};
+            CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+                  guidexos::registration::PreflightStatus::InvalidExceptionDirectory);
+        }
+        return true;
+    });
+
+    Run("PE preflight rejects overlapping runtime-function entries", [] {
+        PeStagingFixture fixture;
+        fixture.SetExceptionDirectory(PeStagingFixture::kExceptionDirectoryRva, 24);
+        fixture.SetRuntimeFunction(1, 0x1010, 0x1030, PeStagingFixture::kUnwindInfoRva);
+        guidexos::registration::StagedRegistration staged{};
+        CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+              guidexos::registration::PreflightStatus::InvalidRuntimeFunction);
+        return true;
+    });
+
+    Run("PE preflight rejects truncated and unsupported unwind records", [] {
+        {
+            PeStagingFixture fixture;
+            fixture.SetRuntimeFunction(0, 0x1000, 0x1020, 0x3FFC);
+            fixture.Put8(0x3FFC, 1);
+            fixture.Put8(0x3FFE, 1);
+            guidexos::registration::StagedRegistration staged{};
+            CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+                  guidexos::registration::PreflightStatus::InvalidUnwindInfo);
+        }
+        {
+            PeStagingFixture fixture;
+            fixture.Put8(PeStagingFixture::kUnwindInfoRva, 2);
+            guidexos::registration::StagedRegistration staged{};
+            CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+                  guidexos::registration::PreflightStatus::UnsupportedUnwindInfo);
+        }
+        {
+            PeStagingFixture fixture;
+            fixture.Put8(PeStagingFixture::kUnwindInfoRva, 9); // handler flag
+            guidexos::registration::StagedRegistration staged{};
+            CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+                  guidexos::registration::PreflightStatus::UnsupportedUnwindInfo);
+        }
+        {
+            PeStagingFixture fixture;
+            fixture.Put8(PeStagingFixture::kUnwindInfoRva + 2, 1);
+            fixture.Put8(PeStagingFixture::kUnwindInfoRva + 4, 1);
+            fixture.Put8(PeStagingFixture::kUnwindInfoRva + 5, 0x01); // ALLOC_LARGE with missing operand
+            guidexos::registration::StagedRegistration staged{};
+            CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+                  guidexos::registration::PreflightStatus::InvalidUnwindInfo);
+        }
+        return true;
+    });
+
+    Run("PE preflight rejects unsupported unwind opcodes", [] {
+        PeStagingFixture fixture;
+        fixture.Put8(PeStagingFixture::kUnwindInfoRva + 1, 1);
+        fixture.Put8(PeStagingFixture::kUnwindInfoRva + 2, 1);
+        fixture.Put8(PeStagingFixture::kUnwindInfoRva + 4, 1);
+        fixture.Put8(PeStagingFixture::kUnwindInfoRva + 5, 0x0A); // PUSH_MACHFRAME
+        guidexos::registration::StagedRegistration staged{};
+        CHECK(guidexos::registration::PrepareRegistration(fixture.Request(), &staged) ==
+              guidexos::registration::PreflightStatus::UnsupportedUnwindOpcode);
+        return true;
+    });
+
+    Run("PE preflight rejects invalid classlib and preserves prior staging result", [] {
+        PeStagingFixture fixture;
+        auto request = fixture.Request();
+        request.ClasslibFunctions = nullptr;
+        guidexos::registration::StagedRegistration staged{};
+        staged.ImageBase = 0x1234;
+        CHECK(guidexos::registration::PrepareRegistration(request, &staged) ==
+              guidexos::registration::PreflightStatus::InvalidArgument);
+        CHECK(staged.ImageBase == 0x1234);
+
+        request = fixture.Request();
+        request.Image.AccessibleSize = fixture.Image.size() - 1;
+        CHECK(guidexos::registration::PrepareRegistration(request, &staged) ==
+              guidexos::registration::PreflightStatus::InvalidImageBounds);
+        CHECK(staged.ImageBase == 0x1234);
         return true;
     });
 
