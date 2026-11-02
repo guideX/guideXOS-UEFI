@@ -103,7 +103,9 @@ namespace guideXOS.GUI {
             int mx = Control.MousePosition.X; int my = Control.MousePosition.Y;
             bool hover = (mx >= itemX && mx < itemX + itemW && my >= itemY && my < itemY + itemH);
             if (hover) Framebuffer.Graphics.FillRectangle(itemX, itemY, itemW, itemH, 0xFF353535);
-            WindowManager.font.DrawString(itemX + 6, itemY + (itemH / 2 - WindowManager.font.FontSize / 2), "Task Manager");
+            WindowManager.DrawShellText(itemX + 6,
+                itemY + (itemH / 2 - WindowManager.font.FontSize / 2),
+                "Task Manager", itemW - 12, itemH);
         }
     }
 }

@@ -613,17 +613,33 @@ namespace guideXOS.GUI {
             if (UISettings.EnableTextRendering && UISettings.EnableWindowTitles) {
                 bool titleIsEmpty = string.IsNullOrEmpty(Title);
                 if (!titleIsEmpty) {
-                    int measured = WindowManager.font.MeasureString(Title);
+                    SharedTextFont titleFont = WindowManager.ShellTextFont;
+                    int measured = titleFont == null ||
+                        titleFont.Provider == SharedFontProviderKind.BitmapAtlas
+                            ? WindowManager.font.MeasureString(Title) : 0;
                     int tx = X + (Width / 2) - (measured / 2);
                     int ty = Y - BarHeight + (BarHeight / 4);
-                    WindowManager.font.DrawString(tx, ty, Title);
-                } else {
-                    // Only allocate string.Empty if needed
-                    string title = string.Empty;
-                    int measured = WindowManager.font.MeasureString(title);
-                    int tx = X + (Width / 2) - (measured / 2);
-                    int ty = Y - BarHeight + (BarHeight / 4);
-                    WindowManager.font.DrawString(tx, ty, title);
+                    int titleClipX = barX + 8;
+                    int titleClipRight = barX + barW - 8;
+                    if (UISettings.EnableTitleBarButtons) {
+                        ComputeButtonRects();
+                        int firstButtonX = _rcCloseX;
+                        if (ShowTombstone && _rcTombX < firstButtonX)
+                            firstButtonX = _rcTombX;
+                        if (ShowMaximize) {
+                            int maximizeX = IsMaximized ? _rcRestoreX : _rcMaxX;
+                            if (maximizeX < firstButtonX) firstButtonX = maximizeX;
+                        }
+                        if (ShowMinimize && _rcMinX < firstButtonX)
+                            firstButtonX = _rcMinX;
+                        titleClipRight = firstButtonX - 8;
+                    }
+                    int titleClipWidth = titleClipRight - titleClipX;
+                    if (titleClipWidth < 0) titleClipWidth = 0;
+                    ShellTextSurfaceRenderer.DrawWindowTitle(
+                        Framebuffer.Graphics, titleFont,
+                        WindowManager.font, Title, tx, ty, titleClipX, barY,
+                        titleClipWidth, barH);
                 }
             }
 

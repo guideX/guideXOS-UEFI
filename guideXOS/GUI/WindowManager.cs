@@ -20,6 +20,59 @@ namespace guideXOS.GUI {
         /// Font
         /// </summary>
         public static IFont font;
+        private static SharedTextFontSelection _shellTextFontSelection;
+
+        /// <summary>
+        /// Shared provider for migrated shell text surfaces. Bitmap is the
+        /// default; callers can opt in through the existing validated
+        /// SharedTextFont TrueType selector.
+        /// </summary>
+        internal static SharedTextFont ShellTextFont {
+            get {
+                if (_shellTextFontSelection == null)
+                    _shellTextFontSelection = new SharedTextFontSelection();
+                return _shellTextFontSelection.Resolve(font);
+            }
+        }
+
+        internal static int ShellTextFontGeneration {
+            get {
+                if (_shellTextFontSelection == null)
+                    _shellTextFontSelection = new SharedTextFontSelection();
+                _shellTextFontSelection.Resolve(font);
+                return _shellTextFontSelection.Generation;
+            }
+        }
+
+        internal static bool TrySelectShellTrueType(byte[] fontData,
+                                                     int fontSize) {
+            if (_shellTextFontSelection == null)
+                _shellTextFontSelection = new SharedTextFontSelection();
+            SharedTextFont selected;
+            return _shellTextFontSelection.TrySelectTrueType(fontData,
+                fontSize, font, out selected);
+        }
+
+        internal static void SelectBitmapShellTextFont() {
+            if (_shellTextFontSelection == null)
+                _shellTextFontSelection = new SharedTextFontSelection();
+            _shellTextFontSelection.SelectBitmap(font);
+        }
+
+        internal static bool DrawShellText(int x, int y, string text) {
+            guideXOS.Graph.Graphics graphics = Framebuffer.Graphics;
+            return ShellTextSurfaceRenderer.DrawStartMenuText(graphics,
+                ShellTextFont, font, x, y, text, 0, 0,
+                graphics == null ? 0 : graphics.Width,
+                graphics == null ? 0 : graphics.Height, false);
+        }
+
+        internal static bool DrawShellText(int x, int y, string text,
+                                           int width, int height) {
+            return ShellTextSurfaceRenderer.DrawStartMenuText(
+                Framebuffer.Graphics, ShellTextFont, font, x, y, text,
+                x, y, width, height, true);
+        }
 
         // The normal guideXOS text system is an IFont bitmap atlas. UEFI
         // selects the same atlas and object model; only the byte-to-Image
@@ -90,6 +143,7 @@ namespace guideXOS.GUI {
         /// </summary>
         public static void Initialize() {
             Windows = new List<Window>();
+            _shellTextFontSelection = null;
             if (BootConsole.CurrentMode == guideXOS.BootMode.UEFI) {
                 CloseButton = new Image(16, 16);
                 MinimizeButton = new Image(16, 16);

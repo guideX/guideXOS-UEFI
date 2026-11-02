@@ -229,16 +229,12 @@ namespace guideXOS.GUI {
             } finally { r3ClockScope.Dispose(); }
 #endif
 
+            int clockTextWidth = GetUefiTaskbarClockTextWidth();
             if (WindowManager.font != null && _cachedTime != null) {
-                int timeWidth = WindowManager.font.MeasureString(_cachedTime);
-                int timeX = Framebuffer.Width - 12 - timeWidth;
-                int timeY = yTop + ((_barHeight - WindowManager.font.FontSize) / 2) -
-                            (WindowManager.font.FontSize / 2);
-                WindowManager.font.DrawString(timeX, timeY, _cachedTime);
-                if (_cachedDate != null) {
-                    WindowManager.font.DrawString(timeX, timeY + WindowManager.font.FontSize,
-                                                _cachedDate);
-                }
+                ShellTextSurfaceRenderer.DrawTaskbarClock(graphics,
+                    WindowManager.ShellTextFont, WindowManager.font,
+                    _cachedTime, _cachedDate, yTop, _barHeight,
+                    clockTextWidth, 12);
                 Program.MarkUefiTaskbarTextRendered();
             }
 
@@ -276,7 +272,6 @@ namespace guideXOS.GUI {
                 }
             }
 
-            int clockTextWidth = GetUefiTaskbarClockTextWidth();
             int taskbarContentRight = Framebuffer.Width - 12 - clockTextWidth;
             DrawUefiApplicationButtons(graphics, yTop, startX + startWidth,
                                        taskbarContentRight);
@@ -362,11 +357,10 @@ namespace guideXOS.GUI {
                 int textWidth = buttonRight - textX - 6;
                 if (textWidth > 0 && WindowManager.font != null &&
                         WindowManager.font.FontSize > 0) {
-                    int textY = buttonY + (buttonHeight -
-                        WindowManager.font.FontSize) / 2;
-                    WindowManager.font.DrawString(textX, textY,
-                        entry.DisplayName ?? "", textWidth,
-                        WindowManager.font.FontSize);
+                    ShellTextSurfaceRenderer.DrawTaskbarLabel(graphics,
+                        WindowManager.ShellTextFont, WindowManager.font,
+                        textX, buttonY, textWidth, buttonHeight,
+                        entry.DisplayName ?? "");
                 }
                 buttons++;
             }

@@ -156,16 +156,28 @@ namespace guideXOS.Misc {
         }
 
         public bool MeasureText(string text, out SharedTextMeasurement measurement) {
+            return MeasureTextRange(text, 0, text == null ? 0 : text.Length,
+                                    out measurement);
+        }
+
+        /// <summary>
+        /// Measure a UTF-16 range without allocating a substring. This keeps
+        /// single-line truncation and drawing on the same provider metrics.
+        /// </summary>
+        internal bool MeasureTextRange(string text, int start, int length,
+                                       out SharedTextMeasurement measurement) {
             measurement = new SharedTextMeasurement();
-            if (!IsAvailable || text == null) return false;
+            if (!IsAvailable || text == null || start < 0 || length < 0 ||
+                start > text.Length - length) return false;
 
             int lineHeight;
             if (!GetLineHeight(out lineHeight)) return false;
             int lineCount = 1;
             long maxWidth = 0;
-            int lineStart = 0;
-            for (int i = 0; i <= text.Length; i++) {
-                bool atEnd = i == text.Length;
+            int end = start + length;
+            int lineStart = start;
+            for (int i = start; i <= end; i++) {
+                bool atEnd = i == end;
                 char current = atEnd ? '\0' : text[i];
                 if (!atEnd && current != '\r' && current != '\n') continue;
 
@@ -233,6 +245,64 @@ namespace guideXOS.Misc {
                              int clipWidth, int clipHeight) {
             return DrawText(graphics, x, y, text, color, clipX, clipY,
                 clipWidth, clipHeight, SharedTextAlignment.Left, 0);
+        }
+    }
+
+    /// <summary>
+    /// Holds the selected shared provider for shell text surfaces. The bitmap
+    /// atlas remains the default and is restored automatically if its owner is
+    /// replaced. TrueType opt-in is delegated to SharedTextFont's existing
+    /// validated selector; this object stores only the resulting shared handle.
+    /// </summary>
+    internal sealed class SharedTextFontSelection {
+        private IFont _bitmapOwner;
+        private SharedTextFont _selected;
+        private bool _initialized;
+
+        public int Generation { get; private set; }
+
+        public SharedTextFont Resolve(IFont bitmap) {
+            if (!_initialized || !object.ReferenceEquals(bitmap, _bitmapOwner)) {
+                _initialized = true;
+                _bitmapOwner = bitmap;
+                _selected = SharedTextFont.CreateDefaultBitmap(bitmap);
+                BumpGeneration();
+            }
+            return _selected;
+        }
+
+        public bool TrySelectTrueType(TrueTypeFont trueType, IFont bitmap,
+                                      out SharedTextFont selected) {
+            Resolve(bitmap);
+            bool success = SharedTextFont.TrySelectTrueType(trueType, bitmap,
+                                                              out selected);
+            _selected = selected;
+            BumpGeneration();
+            return success;
+        }
+
+        public bool TrySelectTrueType(byte[] fontData, int fontSize,
+                                      IFont bitmap,
+                                      out SharedTextFont selected) {
+            TrueTypeFont parsed;
+            bool parsedSuccessfully = TrueTypeFont.TryCreate(fontData,
+                                                               fontSize,
+                                                               out parsed);
+            return TrySelectTrueType(parsedSuccessfully ? parsed : null,
+                                     bitmap, out selected);
+        }
+
+        public void SelectBitmap(IFont bitmap) {
+            Resolve(bitmap);
+            SharedTextFont next = SharedTextFont.CreateDefaultBitmap(bitmap);
+            if (!object.ReferenceEquals(next, _selected)) {
+                _selected = next;
+                BumpGeneration();
+            }
+        }
+
+        private void BumpGeneration() {
+            if (Generation < int.MaxValue) Generation++;
         }
     }
 }

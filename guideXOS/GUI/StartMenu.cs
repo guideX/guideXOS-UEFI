@@ -68,6 +68,7 @@ namespace guideXOS.GUI {
 
         private bool _leftDownPrev; // edge detect
         private bool _constructed;
+        private int _lastShellTextFontGeneration = -1;
 
         // Captured by the fatal Ring 3 ABI gate if Start foreground routing is
         // still in progress. Phase values are documented in the H2d closeout.
@@ -636,6 +637,12 @@ namespace guideXOS.GUI {
 #endif
             if (!Visible) return;
 
+            int textFontGeneration = WindowManager.ShellTextFontGeneration;
+            if (_lastShellTextFontGeneration != textFontGeneration) {
+                _lastShellTextFontGeneration = textFontGeneration;
+                _frameDirty = true;
+            }
+
             // Smart frame caching: reuse last frame if recent and no state change
             if (!_frameDirty && _frameCache != null) {
                 ulong age = (ulong)(Timer.Ticks - _frameCacheTick);
@@ -726,7 +733,7 @@ namespace guideXOS.GUI {
                         Framebuffer.Graphics.FillRectangle(hx, hy, 3, hh, 0x883F7FBF);
                     }
                     Framebuffer.Graphics.DrawImage(listX, y, icon);
-                    WindowManager.font.DrawString(listX + iw + 10, y + (ih / 2) - (WindowManager.font.FontSize / 2), name, listW - (iw + 22), WindowManager.font.FontSize);
+                    WindowManager.DrawShellText(listX + iw + 10, y + (ih / 2) - (WindowManager.font.FontSize / 2), name, listW - (iw + 22), WindowManager.font.FontSize);
                     y += Spacing;
                     if (!isWindow) name.Dispose();
                 }
@@ -757,7 +764,7 @@ namespace guideXOS.GUI {
                         Framebuffer.Graphics.FillRectangle(hx, hy, 3, hh, 0x883F7FBF);
                     }
                     Framebuffer.Graphics.DrawImage(listX, y, icon);
-                    WindowManager.font.DrawString(listX + iw + 10, y + (ih / 2) - (WindowManager.font.FontSize / 2), name, listW - (iw + 22), WindowManager.font.FontSize);
+                    WindowManager.DrawShellText(listX + iw + 10, y + (ih / 2) - (WindowManager.font.FontSize / 2), name, listW - (iw + 22), WindowManager.font.FontSize);
                     y += Spacing;
                 }
             }
@@ -827,7 +834,7 @@ namespace guideXOS.GUI {
             }
             Framebuffer.Graphics.DrawImage(rcX + RightColInnerPad, rcCursorY, cfIcon);
             string cfText = TruncateToWidth("Computer Files", textMax);
-            WindowManager.font.DrawString(rcX + RightColInnerPad + cfIcon.Width + 8, rcCursorY + (cfIcon.Height / 2) - (WindowManager.font.FontSize / 2), cfText);
+            WindowManager.DrawShellText(rcX + RightColInnerPad + cfIcon.Width + 8, rcCursorY + (cfIcon.Height / 2) - (WindowManager.font.FontSize / 2), cfText, textMax, cfIcon.Height);
             rcCursorY += cfIcon.Height + 16;
             cfText.Dispose();
 
@@ -839,7 +846,7 @@ namespace guideXOS.GUI {
             }
             Framebuffer.Graphics.DrawImage(rcX + RightColInnerPad, rcCursorY, cfIcon);
             string dmText = TruncateToWidth("Disk Manager", textMax);
-            WindowManager.font.DrawString(rcX + RightColInnerPad + cfIcon.Width + 8, rcCursorY + (cfIcon.Height / 2) - (WindowManager.font.FontSize / 2), dmText);
+            WindowManager.DrawShellText(rcX + RightColInnerPad + cfIcon.Width + 8, rcCursorY + (cfIcon.Height / 2) - (WindowManager.font.FontSize / 2), dmText, textMax, cfIcon.Height);
             rcCursorY += cfIcon.Height + 16;
             dmText.Dispose();
 
@@ -853,7 +860,7 @@ namespace guideXOS.GUI {
             }
             Framebuffer.Graphics.DrawImage(rcX + RightColInnerPad, rcCursorY, conIcon);
             string conText = TruncateToWidth("Console", textMax);
-            WindowManager.font.DrawString(rcX + RightColInnerPad + conIcon.Width + 8, rcCursorY + (conIcon.Height / 2) - (WindowManager.font.FontSize / 2), conText);
+            WindowManager.DrawShellText(rcX + RightColInnerPad + conIcon.Width + 8, rcCursorY + (conIcon.Height / 2) - (WindowManager.font.FontSize / 2), conText, textMax, conIcon.Height);
             rcCursorY += conIcon.Height + 16;
             conText.Dispose();
 
@@ -867,7 +874,7 @@ namespace guideXOS.GUI {
             }
             Framebuffer.Graphics.DrawImage(rcX + RightColInnerPad, rcCursorY, docIcon);
             string rdText = TruncateToWidth("Recent Documents", textMax);
-            WindowManager.font.DrawString(rcX + RightColInnerPad + docIcon.Width + 8, rcCursorY + (docIcon.Height / 2) - (WindowManager.font.FontSize / 2), rdText);
+            WindowManager.DrawShellText(rcX + RightColInnerPad + docIcon.Width + 8, rcCursorY + (docIcon.Height / 2) - (WindowManager.font.FontSize / 2), rdText, textMax, docIcon.Height);
 
             // USB Files indicator
             rcCursorY += docIcon.Height + 16;
@@ -879,7 +886,7 @@ namespace guideXOS.GUI {
                 }
                 Framebuffer.Graphics.DrawImage(rcX + RightColInnerPad, rcCursorY, cfIcon);
                 string usbText = TruncateToWidth("USB Files", textMax);
-                WindowManager.font.DrawString(rcX + RightColInnerPad + cfIcon.Width + 8, rcCursorY + (cfIcon.Height / 2) - (WindowManager.font.FontSize / 2), usbText);
+                WindowManager.DrawShellText(rcX + RightColInnerPad + cfIcon.Width + 8, rcCursorY + (cfIcon.Height / 2) - (WindowManager.font.FontSize / 2), usbText, textMax, cfIcon.Height);
                 usbText.Dispose();
                 rcCursorY += cfIcon.Height + 16;
                 // Draw second item for list view
@@ -890,7 +897,7 @@ namespace guideXOS.GUI {
                 }
                 Framebuffer.Graphics.DrawImage(rcX + RightColInnerPad, rcCursorY, cfIcon);
                 string usbListText = TruncateToWidth("USB Drives", textMax);
-                WindowManager.font.DrawString(rcX + RightColInnerPad + cfIcon.Width + 8, rcCursorY + (cfIcon.Height / 2) - (WindowManager.font.FontSize / 2), usbListText);
+                WindowManager.DrawShellText(rcX + RightColInnerPad + cfIcon.Width + 8, rcCursorY + (cfIcon.Height / 2) - (WindowManager.font.FontSize / 2), usbListText, textMax, cfIcon.Height);
                 usbListText.Dispose();
                 rcCursorY += cfIcon.Height + 16;
             }
@@ -911,7 +918,7 @@ namespace guideXOS.GUI {
                     var d = docs.ToArray()[i];
                     // simple filename display
                     string label = d.Path;
-                    WindowManager.font.DrawString(popX + 6, py, label, popW - 12, WindowManager.font.FontSize);
+                    WindowManager.DrawShellText(popX + 6, py, label, popW - 12, WindowManager.font.FontSize);
                     py += WindowManager.font.FontSize + 6;
                     label.Dispose();
                 }
@@ -925,10 +932,10 @@ namespace guideXOS.GUI {
             uint btnBg = 0xFF2A2A2A; uint btnBgHover = 0xFF343434; uint border = 0xFF3F3F3F;
             Framebuffer.Graphics.FillRectangle(shutdownX, bottomY, ShutdownBtnW, ShutdownBtnH, overShutdown ? btnBgHover : btnBg);
             Framebuffer.Graphics.DrawRectangle(shutdownX, bottomY, ShutdownBtnW, ShutdownBtnH, border, 1);
-            WindowManager.font.DrawString(shutdownX + 10, bottomY + (ShutdownBtnH / 2) - (WindowManager.font.FontSize / 2), "Shutdown");
+            WindowManager.DrawShellText(shutdownX + 10, bottomY + (ShutdownBtnH / 2) - (WindowManager.font.FontSize / 2), "Shutdown", ShutdownBtnW - 20, ShutdownBtnH);
             Framebuffer.Graphics.FillRectangle(arrowX, bottomY, ArrowBtnW, ArrowBtnH, overArrow ? btnBgHover : btnBg);
             Framebuffer.Graphics.DrawRectangle(arrowX, bottomY, ArrowBtnW, ArrowBtnH, border, 1);
-            WindowManager.font.DrawString(arrowX + 8, bottomY + (ArrowBtnH / 2) - (WindowManager.font.FontSize / 2), ">");
+            WindowManager.DrawShellText(arrowX + 8, bottomY + (ArrowBtnH / 2) - (WindowManager.font.FontSize / 2), ">", ArrowBtnW - 16, ArrowBtnH);
 
             if (_powerMenuVisible) {
                 int menuH = MenuPad * 2 + (MenuItemH * 2);
@@ -942,9 +949,9 @@ namespace guideXOS.GUI {
                 bool hoverReboot = (mx >= menuX && mx <= menuX + menuW && my >= itemY && my < itemY + MenuItemH);
                 bool hoverLogoff = (mx >= menuX && mx <= menuX + menuW && my >= itemY + MenuItemH && my < itemY + (2 * MenuItemH));
                 if (hoverReboot) Framebuffer.Graphics.FillRectangle(menuX + 1, itemY, menuW - 2, MenuItemH, 0xFF313131);
-                WindowManager.font.DrawString(menuX + 10, itemY + (MenuItemH / 2) - (WindowManager.font.FontSize / 2), "Reboot");
+                WindowManager.DrawShellText(menuX + 10, itemY + (MenuItemH / 2) - (WindowManager.font.FontSize / 2), "Reboot", MenuW - 20, MenuItemH);
                 if (hoverLogoff) Framebuffer.Graphics.FillRectangle(menuX + 1, itemY + MenuItemH, menuW - 2, MenuItemH, 0xFF313131);
-                WindowManager.font.DrawString(menuX + 10, itemY + MenuItemH + (MenuItemH / 2) - (WindowManager.font.FontSize / 2), "Log Off");
+                WindowManager.DrawShellText(menuX + 10, itemY + MenuItemH + (MenuItemH / 2) - (WindowManager.font.FontSize / 2), "Log Off", MenuW - 20, MenuItemH);
             }
 
             // All Programs toggle button (bottom-left)
@@ -956,7 +963,7 @@ namespace guideXOS.GUI {
             Framebuffer.Graphics.FillRectangle(allBtnX, allBtnY, allBtnW, allBtnH, overAll ? btnBgHover : btnBg);
             Framebuffer.Graphics.DrawRectangle(allBtnX, allBtnY, allBtnW, allBtnH, border, 1);
             string allText = _showAllPrograms ? "Back" : "All Programs";
-            WindowManager.font.DrawString(allBtnX + 10, allBtnY + (allBtnH / 2) - (WindowManager.font.FontSize / 2), allText);
+            WindowManager.DrawShellText(allBtnX + 10, allBtnY + (allBtnH / 2) - (WindowManager.font.FontSize / 2), allText, allBtnW - 20, allBtnH);
             allText.Dispose();
 
             DrawBorder(false);
@@ -1062,6 +1069,13 @@ namespace guideXOS.GUI {
                     OwnerId, 0, 0);
             try {
 #endif
+            SharedTextFont selected = WindowManager.ShellTextFont;
+            if (selected == null) return text;
+            if (selected.Provider == SharedFontProviderKind.TrueType) {
+                return ShellTextSurfaceRenderer.TruncateToWidth(selected,
+                    text, maxW);
+            }
+
             if (WindowManager.font.MeasureString(text) <= maxW) return text;
             // Leave space for ellipsis '...'
             string ell = "...";
@@ -1091,5 +1105,6 @@ namespace guideXOS.GUI {
             } finally { r3Scope4.Dispose(); }
 #endif
         }
+
     }
 }
