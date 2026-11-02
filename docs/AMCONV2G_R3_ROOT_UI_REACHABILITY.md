@@ -12,7 +12,8 @@
 
 - Starting HEAD: `7991d506e9b376294d1e86ba2b5ed838e6af9a15`.
 - The branch stayed on `APP_MODEL`; no reset, branch switch, merge, rebase, cherry-pick, or push occurred.
-- The same HEAD was used throughout offline source/build/package qualification. The implementation and this report were committed locally afterward; the resulting commit ID is recorded in the final R3 delivery summary.
+- The same HEAD was used throughout offline source/build/package qualification.
+- Ending code HEAD: `d9bd68abded31029229050381e9e383199bc8e68` (`feat: expose C# root through Computer Files`). The report and revised acceptance procedure are committed in a documentation-only follow-up; its final repository HEAD is recorded in the R3 delivery summary.
 - The pre-existing untracked D/E/F test `bin/` and `obj/` directories were preserved. .NET runs used isolated artifact paths under `out/amconv2g-20261102-r3-final/test-artifacts/`.
 - Work stayed in this APP_MODEL checkout. Reference checkouts were only read. No QEMU, QAC admission, or guest process was used.
 
