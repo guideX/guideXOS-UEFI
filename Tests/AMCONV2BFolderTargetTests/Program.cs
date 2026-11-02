@@ -128,6 +128,27 @@ internal static class Program {
               failure == ShellFolderTargetFailure.MountUnavailable,
               "missing filesystem probe is unavailable");
 
+        var directoryDispatch = new DirectoryProbe();
+        var failingDispatch = new IoFailureProbe();
+        ShellFolderDirectoryProbe directoryReference = directoryDispatch;
+        ShellFolderDirectoryProbe failingReference = failingDispatch;
+        Check(ShellFolderTargetPath.TryResolveExistingDirectory("/Repeated",
+                  directoryReference, out path, out failure) &&
+              path == "Repeated" && failure == ShellFolderTargetFailure.None &&
+              directoryDispatch.InspectCount == 1 &&
+              directoryDispatch.LastPath == "Repeated",
+              "base-typed dispatch selects the directory probe override");
+        Check(!ShellFolderTargetPath.TryResolveExistingDirectory("/Repeated",
+                  failingReference, out path, out failure) && path == null &&
+              failure == ShellFolderTargetFailure.IoFailure &&
+              failingDispatch.InspectCount == 1 &&
+              failingDispatch.LastPath == "Repeated",
+              "base-typed dispatch selects the independent I/O failure override");
+        Check(ShellFolderTargetPath.TryResolveExistingDirectory("/Repeated",
+                  directoryReference, out path, out failure) &&
+              directoryDispatch.InspectCount == 2,
+              "repeated virtual dispatch preserves the selected result and call count");
+
         TestProductionFolderBinding();
 
         Console.WriteLine("AMCONV2B_FOLDER_RUNTIME_ASSERTIONS=" + _passed);
@@ -405,7 +426,7 @@ internal static class Program {
               "repeated acquire/replace/release cycles leave no retained leases");
     }
 
-    private sealed class FakeProbe : IShellFolderDirectoryProbe {
+    private sealed class FakeProbe : ShellFolderDirectoryProbe {
         private readonly Dictionary<string, ShellFolderDirectoryProbeResult> _results =
             new Dictionary<string, ShellFolderDirectoryProbeResult>(StringComparer.Ordinal);
         internal int InspectCount { get; private set; }
@@ -415,12 +436,34 @@ internal static class Program {
             _results[path] = result;
         }
 
-        public ShellFolderDirectoryProbeResult Inspect(string fileSystemPath) {
+        public override ShellFolderDirectoryProbeResult Inspect(string fileSystemPath) {
             InspectCount++;
             LastPath = fileSystemPath;
             ShellFolderDirectoryProbeResult result;
             return _results.TryGetValue(fileSystemPath, out result)
                 ? result : ShellFolderDirectoryProbeResult.Missing;
+        }
+    }
+
+    private sealed class DirectoryProbe : ShellFolderDirectoryProbe {
+        internal int InspectCount { get; private set; }
+        internal string LastPath { get; private set; }
+
+        public override ShellFolderDirectoryProbeResult Inspect(string fileSystemPath) {
+            InspectCount++;
+            LastPath = fileSystemPath;
+            return ShellFolderDirectoryProbeResult.Directory;
+        }
+    }
+
+    private sealed class IoFailureProbe : ShellFolderDirectoryProbe {
+        internal int InspectCount { get; private set; }
+        internal string LastPath { get; private set; }
+
+        public override ShellFolderDirectoryProbeResult Inspect(string fileSystemPath) {
+            InspectCount++;
+            LastPath = fileSystemPath;
+            return ShellFolderDirectoryProbeResult.IoFailure;
         }
     }
 }

@@ -27,8 +27,13 @@ namespace guideXOS.OS {
         IndeterminateBackendFailure
     }
 
-    internal interface IShellFolderDirectoryProbe {
-        ShellFolderDirectoryProbeResult Inspect(string fileSystemPath);
+    /// <summary>
+    /// Polymorphic folder inspection seam. The bare-metal kernel runtime supports
+    /// ordinary virtual dispatch; this boundary must not require NativeAOT's
+    /// cached interface-dispatch resolver.
+    /// </summary>
+    internal abstract class ShellFolderDirectoryProbe {
+        public abstract ShellFolderDirectoryProbeResult Inspect(string fileSystemPath);
     }
 
     /// <summary>
@@ -85,7 +90,7 @@ namespace guideXOS.OS {
         }
 
         internal static bool TryResolveExistingDirectory(
-                string canonicalPath, IShellFolderDirectoryProbe probe,
+                string canonicalPath, ShellFolderDirectoryProbe probe,
                 out string fileSystemPath, out ShellFolderTargetFailure failure) {
             fileSystemPath = null;
             failure = ShellFolderTargetFailure.None;

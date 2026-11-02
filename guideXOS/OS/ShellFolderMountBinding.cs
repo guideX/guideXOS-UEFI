@@ -168,7 +168,7 @@ namespace guideXOS.OS {
             fileSystemPath = null;
             failure = null;
             ShellFolderTargetFailure pathFailure;
-            IShellFolderDirectoryProbe probe =
+            ShellFolderDirectoryProbe probe =
                 new CSharpFileSystemFolderProbe(fileSystem);
             if (!ShellFolderTargetPath.TryResolveExistingDirectory(
                     request.ShellTargetValue, probe, out fileSystemPath,
@@ -213,14 +213,14 @@ namespace guideXOS.OS {
         }
 
         private sealed class CSharpFileSystemFolderProbe :
-                IShellFolderDirectoryProbe {
+                ShellFolderDirectoryProbe {
             private readonly FileSystem _fileSystem;
 
             internal CSharpFileSystemFolderProbe(FileSystem fileSystem) {
                 _fileSystem = fileSystem;
             }
 
-            public ShellFolderDirectoryProbeResult Inspect(string path) {
+            public override ShellFolderDirectoryProbeResult Inspect(string path) {
                 if (_fileSystem == null || path == null)
                     return ShellFolderDirectoryProbeResult.FilesystemUnavailable;
                 try {

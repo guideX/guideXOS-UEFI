@@ -19,6 +19,10 @@
 		<DefineConstants>Kernel;NETWORK;X64;UseAPIC</DefineConstants>
 
 		<IlcSystemModule>guideXOS</IlcSystemModule>
+		<!-- Keep the compiler and its NativeAOT runtime archive on one pinned package version. -->
+		<KernelNativeAotVersion>7.0.0-alpha.1.22074.1</KernelNativeAotVersion>
+		<!-- Allow isolated native publishes to keep their linker map out of retained build outputs. -->
+		<KernelLinkMapPath Condition="'$(KernelLinkMapPath)' == ''">Kernel.map</KernelLinkMapPath>
 		<!-- Keep the native wrapper symbol available for the UEFI entry integration. -->
 		<EntryPointSymbol>KMainWrapper</EntryPointSymbol>
 		<LinkerSubsystem>NATIVE</LinkerSubsystem>
@@ -221,33 +225,32 @@
 	</Target>
 
 	<ItemGroup>
-		<LinkerArg Include="/fixed /base:0x10000000 /map:Kernel.map" />
-		<LinkerArg Include="/FORCE:UNRESOLVED" />
+		<LinkerArg Include="/fixed /base:0x10000000 /map:&quot;$(KernelLinkMapPath)&quot;" />
 		<!-- Force include KMainWrapper from native_stubs.obj so it is not stripped. -->
 		<LinkerArg Include="/INCLUDE:KMainWrapper" />
 	</ItemGroup>
 
 	<!--Warning: This package is modified(/packages). Using official one may cause it fail to compile!-->
   <ItemGroup>
-    <PackageReference Include="Microsoft.DotNet.ILCompiler" Version="7.0.0-alpha.1.22074.1" />
+    <PackageReference Include="Microsoft.DotNet.ILCompiler" Version="$(KernelNativeAotVersion)" />
   </ItemGroup>
 
 	<!-- Manually define PackageDefinitions to fix ILCompiler -->
 	<ItemGroup>
 		<PackageDefinitions Include="Microsoft.DotNet.ILCompiler">
 			<Name>Microsoft.DotNet.ILCompiler</Name>
-			<ResolvedPath>$(NuGetPackageRoot)microsoft.dotnet.ilcompiler\7.0.0-alpha.1.22074.1\</ResolvedPath>
+			<ResolvedPath>$(NuGetPackageRoot)microsoft.dotnet.ilcompiler\$(KernelNativeAotVersion)\</ResolvedPath>
 		</PackageDefinitions>
 		<PackageDefinitions Include="runtime.win-x64.Microsoft.DotNet.ILCompiler">
 			<Name>runtime.win-x64.Microsoft.DotNet.ILCompiler</Name>
-			<ResolvedPath>$(NuGetPackageRoot)runtime.win-x64.microsoft.dotnet.ilcompiler\7.0.0-alpha.1.22074.1\</ResolvedPath>
+			<ResolvedPath>$(NuGetPackageRoot)runtime.win-x64.microsoft.dotnet.ilcompiler\$(KernelNativeAotVersion)\</ResolvedPath>
 		</PackageDefinitions>
 	</ItemGroup>
 
 	<Import Project="..\Kernel\Kernel.projitems" Label="Shared" />
 
 	<!-- Ensure native output directory exists for loader.o and native exe -->
-	<Target Name="EnsureNativeOutDir" BeforeTargets="BuildISO">
+	<Target Name="EnsureNativeOutDir" BeforeTargets="BuildISO" Condition="'$(SkipISO)' != 'true'">
 		<PropertyGroup>
 			<NativeOutDir>$(MSBuildProjectDirectory)\$(NativeOutputPath)</NativeOutDir>
 		</PropertyGroup>
