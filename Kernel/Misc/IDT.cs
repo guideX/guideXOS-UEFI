@@ -876,7 +876,7 @@ public static class IDT {
         SerialWriteLineLiteral("FAULT_FRAME_CHAIN_END");
     }
 
-    private static unsafe bool CpuPushedRspSs(int irq,
+    internal static unsafe bool CpuPushedRspSs(int irq,
             InterruptReturnStack* irs) {
         if (irs == null) return false;
         if ((irs->cs & 3UL) != 0) return true;
@@ -1059,7 +1059,7 @@ public static class IDT {
                     } else if (ThreadPool.SchedulingEnabled) {
                         // Exit is terminal: never iret back to a user thread
                         // whose process has already published Exiting state.
-                        ThreadPool.Schedule(stack);
+                        ThreadPool.Schedule(stack, &stack->irs, irq);
                     }
                 }
                 RestoreInterruptContext(cpuSlot, priorNestingDepth, priorVector);
@@ -1138,7 +1138,7 @@ public static class IDT {
                         if (ThreadPool.IsDirectUser) {
                             currentProcess.PrepareDirectReturn(stack);
                         } else if (ThreadPool.SchedulingEnabled) {
-                            ThreadPool.Schedule(stack);
+                            ThreadPool.Schedule(stack, irs, irq);
                         }
                     }
                     RestoreInterruptContext(cpuSlot, priorNestingDepth, priorVector);
@@ -1206,7 +1206,7 @@ public static class IDT {
             // A native context switch may not return to this handler, so acknowledge
             // the timer before handing control to the scheduler.
             Interrupts.EndOfInterrupt((byte)irq);
-            ThreadPool.Schedule(stack);
+            ThreadPool.Schedule(stack, &stack->irs, irq);
             
             // Debug: after Schedule
             if (logIrq0) {

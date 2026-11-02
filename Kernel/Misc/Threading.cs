@@ -26,9 +26,10 @@ namespace guideXOS.Misc {
             Stack = (IDT.IDTStackGeneric*)Allocator.Allocate((ulong)sizeof(IDT.IDTStackGeneric));
             KernelStackSize = stack_size;
             KernelStackBase = (ulong)Allocator.Allocate(stack_size);
-            KernelStackTop = KernelStackBase + stack_size;
+            KernelStackTop = KernelStackBase <= ulong.MaxValue - stack_size
+                ? KernelStackBase + stack_size : 0UL;
 
-            if (Stack == null || KernelStackBase == 0) {
+            if (Stack == null || KernelStackBase == 0 || KernelStackTop == 0) {
                 if (Stack != null) Allocator.Free((IntPtr)Stack, "Threading");
                 if (KernelStackBase != 0)
                     Allocator.Free((IntPtr)KernelStackBase, "Threading");
@@ -40,12 +41,22 @@ namespace guideXOS.Misc {
                 return;
             }
 
+            if (!ExecutionContextCapture.TryCreateMicrosoftX64FunctionEntryRsp(
+                    KernelStackBase, KernelStackTop, out ulong initialRsp)) {
+                Allocator.Free((IntPtr)Stack, "Threading");
+                Allocator.Free((IntPtr)KernelStackBase, "Threading");
+                Stack = null;
+                KernelStackBase = 0;
+                KernelStackSize = 0;
+                KernelStackTop = 0;
+                Terminated = true;
+                return;
+            }
+
             Stack->irs.cs = 0x08;
             Stack->irs.ss = 0x10;
-            Stack->irs.rsp = KernelStackTop;
-
-            Stack->irs.rsp -= 8;
-            *(ulong*)(Stack->irs.rsp) = (ulong)(delegate*<void>)&ThreadPool.Terminate;
+            Stack->irs.rsp = initialRsp;
+            *(ulong*)initialRsp = (ulong)(delegate*<void>)&ThreadPool.Terminate;
 
             Stack->irs.rflags = 0x202;
 
@@ -453,7 +464,8 @@ namespace guideXOS.Misc {
         private static uint TickIdle;
 
         public static uint CPUUsage;
-        public static void Schedule(IDT.IDTStackGeneric* stack) {
+        public static void Schedule(IDT.IDTStackGeneric* stack,
+                IDT.InterruptReturnStack* returnFrame, int irq) {
             if (!Initialized) return;
             
             // If scheduling is not enabled, just return without context switching
@@ -469,32 +481,40 @@ namespace guideXOS.Misc {
             //Lock locker CPU
             if (Locked && Locker == SMP.ThisCPU) return;
 
+            if (stack == null || returnFrame == null) return;
+            bool hasHardwareRspSs =
+                IDT.CpuPushedRspSs(irq, returnFrame);
+            if (!ExecutionContextCapture.TryCaptureControlState(
+                    returnFrame->rip, returnFrame->cs,
+                    returnFrame->rflags, (ulong)returnFrame,
+                    hasHardwareRspSs,
+                    hasHardwareRspSs ? returnFrame->rsp : 0UL,
+                    hasHardwareRspSs ? returnFrame->ss : 0UL,
+                    out ExecutionContextControlState interrupted)) return;
+
             Thread current = Threads[Index];
             if (!current.Terminated &&
                 current.RunOnWhichCPU == SMP.ThisCPU) {
                 bool allowed = true;
                 if (current.IsUserThread && current.OwnerProcess != null &&
-                    stack != null && (stack->irs.cs & 3UL) == 3UL) {
+                    (interrupted.Cs & 3UL) == 3UL) {
                     allowed = current.OwnerProcess.TryAuthorizeUserEntry(
-                        stack->irs.rip);
+                        interrupted.Rip);
                 }
                 if (!allowed) {
-                    current.OwnerProcess.RejectUserDispatch(stack->irs.rip);
+                    current.OwnerProcess.RejectUserDispatch(interrupted.Rip);
                 } else {
                     CaptureUserGs(current);
                     Native.Movsb(current.Stack, stack, (ulong)sizeof(IDT.IDTStackGeneric));
-                    if (current.IsUserThread && current.OwnerProcess != null) {
+                    current.Stack->irs.rip = interrupted.Rip;
+                    current.Stack->irs.cs = interrupted.Cs;
+                    current.Stack->irs.rflags = interrupted.Rflags;
+                    current.Stack->irs.rsp = interrupted.Rsp;
+                    current.Stack->irs.ss = interrupted.Ss;
+                    if (irq == 0x20 && current.IsUserThread &&
+                            current.OwnerProcess != null) {
                         current.OwnerProcess.RecordTimerPreemption(stack);
                     }
-                }
-                if (allowed && stack != null && (stack->irs.cs & 3UL) == 0) {
-                    // The native ISR preserves the interrupted kernel RSP in
-                    // the managed irs.rsp slot for the ring-0 scheduler path.
-                    // Retain that exact value; deriving it from the managed
-                    // field address would point 24 bytes below the caller
-                    // stack with this ISR's native frame layout.
-                    ulong interruptedRsp = stack->irs.rsp;
-                    Threads[Index].Stack->irs.rsp = interruptedRsp;
                 }
             }
 
