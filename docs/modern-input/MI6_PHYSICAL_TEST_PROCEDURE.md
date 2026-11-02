@@ -39,27 +39,36 @@ trusted under the machine's current policy.
 
 1. Keep the normal operating-system boot entry and a known recovery method
    available. Record the normal boot entry name and confirm it still boots.
-2. Use a spare FAT32-formatted USB drive or another existing removable medium
-   supported by the firmware. Back up anything on that medium before changing
-   its files. Place the application at
-   `\EFI\BOOT\BOOTX64.EFI`, or use a UEFI shell/file browser to launch it from
-   its current filename.
-3. Do not overwrite a normal OS bootloader or another existing
-   `BOOTX64.EFI`. Use a separate blank test medium if that path is already in
-   use.
+2. Prefer a dedicated, blank FAT32-formatted USB drive supported by the
+   firmware. Put the application on its root as
+   `guideXOS-XhciProbe.efi`. A firmware **Boot from EFI file** browser or UEFI
+   shell can launch that filename directly. If the firmware only launches the
+   removable-media fallback path, use a dedicated blank drive and place the
+   application at `\EFI\BOOT\BOOTX64.EFI` on that drive.
+3. Never overwrite a normal OS bootloader or an existing `BOOTX64.EFI`. If a
+   suitable dedicated medium is unavailable, stop and prepare one before
+   testing.
 4. Leave Secure Boot, xHCI mode, ownership, USB, and other firmware settings
    unchanged. Do not create a persistent firmware boot entry or change boot
    order.
 5. Prefer the firmware's one-time **Boot from EFI file** menu or an already
-   available UEFI shell. If using a shell, launch the file from its mapped
-   filesystem (for example, `fs0:\EFI\BOOT\BOOTX64.EFI`).
-6. The application writes to the firmware text console and keeps the final
-   screen for five seconds. Arrange a camera before launch so the PCI
-   controller identity, BAR0 lines, capability lines, and status can be
-   captured. A serial capture path is not implemented.
+   available UEFI shell. In a shell, run `map -r`, inspect the mapped
+   filesystems to identify the dedicated medium, then launch the file by its
+   actual mapping (for example, `fsN:\guideXOS-XhciProbe.efi`, or
+   `fsN:\EFI\BOOT\BOOTX64.EFI` if using the fallback path). Do not assume
+   the medium is `fs0:`.
+6. Before selecting the EFI file, start a continuous video recording that
+   shows the firmware launch and the full display. The application writes to
+   the firmware text console and requests a five-second final-screen hold
+   through UEFI `Stall` when that service is available. It does not wait for
+   keyboard or mouse input, and serial output is not implemented. If the
+   screen returns immediately or the hold is unavailable, use the video
+   recorded before launch and review its frames; do not rely on a keypress,
+   pause prompt, or assumed working keyboard/mouse to preserve the output.
 7. Keep nonessential USB devices disconnected during the probe. Retain the
-   removable boot medium needed to launch it. Do not attach a USB keyboard or
-   mouse for the diagnostic's operation.
+   removable boot medium needed to launch it. Input may be needed to choose a
+   one-time firmware menu or operate a shell, but the diagnostic itself does
+   not require keyboard or mouse input.
 
 ## Observe and record
 
