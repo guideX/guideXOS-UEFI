@@ -31,10 +31,12 @@ namespace guideXOS.FontTests {
             CheckFallback(bitmap);
             CheckDesktopTileLayout(bitmap, defaultFont, fontBytes);
             int shellTextFailures = ShellTextIntegrationChecks.Run(fontBytes);
+            int dialogNotificationFailures =
+                DialogNotificationTextChecks.Run(fontBytes);
 
             Console.WriteLine("FONTS2 hosted checks: " + _checks +
                               ", failures: " + _failures);
-            return _failures + shellTextFailures;
+            return _failures + shellTextFailures + dialogNotificationFailures;
         }
 
         private static IFont CreateBitmapFont(out Image image) {

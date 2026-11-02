@@ -1,4 +1,5 @@
 using guideXOS.Kernel.Drivers;
+using guideXOS.Misc;
 using System;
 using System.Windows.Forms;
 
@@ -31,11 +32,45 @@ namespace guideXOS.GUI {
         }
         public override void OnDraw() {
             base.OnDraw(); int cx = X + _padding; int cy = Y + _padding; int w = Width - _padding * 2; int h = Height - _padding * 2; string msg = "Do you want to save changes?";
-            WindowManager.font.DrawString(cx, cy + 8, msg);
+            SharedTextFont selected = WindowManager.ShellTextFont;
             int by = Y + Height - _padding - _btnH; int saveX = cx; int dontX = saveX + _btnW + 8; int cancelX = dontX + _btnW + 8;
-            Framebuffer.Graphics.FillRectangle(saveX, by, _btnW, _btnH, 0xFF3A3A3A); WindowManager.font.DrawString(saveX + 16, by + (_btnH / 2 - WindowManager.font.FontSize / 2), "Save");
-            Framebuffer.Graphics.FillRectangle(dontX, by, _btnW, _btnH, 0xFF3A3A3A); WindowManager.font.DrawString(dontX + 6, by + (_btnH / 2 - WindowManager.font.FontSize / 2), "Don't Save");
-            Framebuffer.Graphics.FillRectangle(cancelX, by, _btnW, _btnH, 0xFF3A3A3A); WindowManager.font.DrawString(cancelX + 8, by + (_btnH / 2 - WindowManager.font.FontSize / 2), "Cancel");
+            if (selected != null &&
+                selected.Provider == SharedFontProviderKind.TrueType) {
+                int bodyWidth = w < 0 ? 0 : w;
+                int bodyHeight = by - (cy + 8) - 4;
+                if (bodyHeight < 0) bodyHeight = 0;
+                ShellTextSurfaceRenderer.DrawWrappedText(
+                    Framebuffer.Graphics, selected, msg, cx, cy + 8,
+                    bodyWidth, 0, 0xFFFFFFFFu, cx, cy + 8, bodyWidth,
+                    bodyHeight, SharedTextAlignment.Left);
+            } else {
+                WindowManager.font.DrawString(cx, cy + 8, msg);
+            }
+
+            Framebuffer.Graphics.FillRectangle(saveX, by, _btnW, _btnH, 0xFF3A3A3A);
+            Framebuffer.Graphics.FillRectangle(dontX, by, _btnW, _btnH, 0xFF3A3A3A);
+            Framebuffer.Graphics.FillRectangle(cancelX, by, _btnW, _btnH, 0xFF3A3A3A);
+            DrawButtonLabel(selected, "Save", saveX, by, 16);
+            DrawButtonLabel(selected, "Don't Save", dontX, by, 6);
+            DrawButtonLabel(selected, "Cancel", cancelX, by, 8);
+        }
+
+        private void DrawButtonLabel(SharedTextFont selected, string text,
+                                     int x, int y, int legacyInset) {
+            if (selected == null ||
+                selected.Provider == SharedFontProviderKind.BitmapAtlas) {
+                WindowManager.font.DrawString(x + legacyInset,
+                    y + (_btnH / 2 - WindowManager.font.FontSize / 2), text);
+                return;
+            }
+
+            int lineHeight;
+            if (!selected.GetLineHeight(out lineHeight)) return;
+            ShellTextSurfaceRenderer.DrawFixedText(Framebuffer.Graphics,
+                selected, text, x + 4,
+                y + (_btnH - lineHeight) / 2, _btnW - 8,
+                x, y, _btnW, _btnH, 0xFFFFFFFFu,
+                SharedTextAlignment.Center);
         }
 
         internal void SetServiceCloseCallback(Action callback) {

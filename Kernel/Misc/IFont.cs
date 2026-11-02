@@ -301,15 +301,30 @@ namespace guideXOS.Misc {
         internal void DrawStringClipped(int X, int Y, string Str, Graphics g,
                                         int clipX, int clipY,
                                         int clipWidth, int clipHeight) {
-            if (Str == null || g == null || clipWidth < 0 || clipHeight < 0) return;
+            if (Str == null) return;
+            DrawStringRangeClipped(X, Y, Str, 0, Str.Length, g, clipX,
+                clipY, clipWidth, clipHeight);
+        }
+
+        /// <summary>
+        /// Draw one UTF-16 range using the atlas's current cell and advance
+        /// rules. Callers keep ranges on Unicode scalar boundaries.
+        /// </summary>
+        internal void DrawStringRangeClipped(int X, int Y, string Str,
+                                             int start, int length, Graphics g,
+                                             int clipX, int clipY,
+                                             int clipWidth, int clipHeight) {
+            if (Str == null || g == null || clipWidth < 0 || clipHeight < 0 ||
+                start < 0 || length < 0 || start > Str.Length - length) return;
             long clipRight = (long)clipX + clipWidth;
             long clipBottom = (long)clipY + clipHeight;
             int w = 0;
             int h = 0;
-            for (int i = 0; i < Str.Length; i++) {
+            int end = start + length;
+            for (int i = start; i < end; i++) {
                 char chr = Str[i];
                 if (chr == '\r') {
-                    if (i + 1 < Str.Length && Str[i + 1] == '\n') i++;
+                    if (i + 1 < end && Str[i + 1] == '\n') i++;
                     w = 0;
                     if (!TryAdvanceLine(ref h)) return;
                     continue;

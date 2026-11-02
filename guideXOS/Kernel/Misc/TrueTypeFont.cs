@@ -1272,9 +1272,9 @@ namespace guideXOS.Misc {
         /// </summary>
         public int DrawStringMeasured(Graphics graphics, int x, int y, string text,
                                       uint color = 0xFFFFFFFFu) {
-            if (graphics == null) return 0;
-            return DrawStringCore(graphics, x, y, text, color, 0, 0,
-                                  graphics.Width, graphics.Height);
+            if (graphics == null || text == null) return 0;
+            return DrawStringCore(graphics, x, y, text, 0, text.Length,
+                color, 0, 0, graphics.Width, graphics.Height);
         }
 
         /// <summary>
@@ -1286,15 +1286,28 @@ namespace guideXOS.Misc {
                                      string text, uint color,
                                      int clipX, int clipY,
                                      int clipWidth, int clipHeight) {
-            if (clipWidth < 0 || clipHeight < 0) return 0;
-            return DrawStringCore(graphics, x, y, text, color, clipX, clipY,
-                (long)clipX + clipWidth, (long)clipY + clipHeight);
+            if (text == null) return 0;
+            return DrawStringRangeClipped(graphics, x, y, text, 0,
+                text.Length, color, clipX, clipY, clipWidth, clipHeight);
+        }
+
+        internal int DrawStringRangeClipped(Graphics graphics, int x, int y,
+                                            string text, int start, int length,
+                                            uint color, int clipX, int clipY,
+                                            int clipWidth, int clipHeight) {
+            if (clipWidth < 0 || clipHeight < 0 || text == null || start < 0 ||
+                length < 0 || start > text.Length - length) return 0;
+            return DrawStringCore(graphics, x, y, text, start, length, color,
+                clipX, clipY, (long)clipX + clipWidth,
+                (long)clipY + clipHeight);
         }
 
         private int DrawStringCore(Graphics graphics, int x, int y, string text,
-                                   uint color, long clipLeft, long clipTop,
+                                   int start, int length, uint color,
+                                   long clipLeft, long clipTop,
                                    long clipRight, long clipBottom) {
             if (!IsValid || graphics == null || text == null ||
+                start < 0 || length < 0 || start > text.Length - length ||
                 graphics.Width <= 0 || graphics.Height <= 0) return 0;
 
             long penX = x;
@@ -1302,19 +1315,20 @@ namespace guideXOS.Misc {
             long maximumLineWidth = 0;
             int foregroundAlpha = (int)((color >> 24) & 0xFF);
             uint rgb = color & 0x00FFFFFFu;
-            for (int i = 0; i < text.Length; i++) {
+            int end = start + length;
+            for (int i = start; i < end; i++) {
                 char character = text[i];
                 if (character == '\r' || character == '\n') {
                     long lineWidth = penX - x;
                     if (lineWidth > maximumLineWidth) maximumLineWidth = lineWidth;
                     penX = x;
                     lineTop += LineHeight;
-                    if (character == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+                    if (character == '\r' && i + 1 < end && text[i + 1] == '\n') i++;
                     continue;
                 }
 
                 int codePoint = character;
-                if (IsHighSurrogate(character) && i + 1 < text.Length &&
+                if (IsHighSurrogate(character) && i + 1 < end &&
                     IsLowSurrogate(text[i + 1])) {
                     codePoint = ToUtf32(character, text[i + 1]);
                     i++;

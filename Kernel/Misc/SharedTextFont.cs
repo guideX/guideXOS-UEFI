@@ -155,6 +155,25 @@ namespace guideXOS.Misc {
             return true;
         }
 
+        /// <summary>
+        /// Return the provider's pen advance and the ink width used by its
+        /// measurement contract for one Unicode scalar. Bitmap measurement
+        /// includes visible cell width because atlas padding may be negative;
+        /// TrueType measurement follows its hmtx advances.
+        /// </summary>
+        internal bool GetGlyphLayoutMetrics(int codePoint, out int advance,
+                                            out int inkWidth) {
+            advance = 0;
+            inkWidth = 0;
+            if (!GetGlyphAdvance(codePoint, out advance)) return false;
+            if (_provider == SharedFontProviderKind.TrueType) {
+                inkWidth = advance;
+            } else if (codePoint <= 0xFFFF) {
+                inkWidth = _bitmap.GetGlyphWidth((char)codePoint);
+            }
+            return true;
+        }
+
         public bool MeasureText(string text, out SharedTextMeasurement measurement) {
             return MeasureTextRange(text, 0, text == null ? 0 : text.Length,
                                     out measurement);
@@ -245,6 +264,27 @@ namespace guideXOS.Misc {
                              int clipWidth, int clipHeight) {
             return DrawText(graphics, x, y, text, color, clipX, clipY,
                 clipWidth, clipHeight, SharedTextAlignment.Left, 0);
+        }
+
+        /// <summary>
+        /// Draw a measured UTF-16 range without allocating a substring. The
+        /// caller must keep start/length on Unicode scalar boundaries.
+        /// </summary>
+        internal bool DrawTextRange(Graphics graphics, int x, int y,
+                                    string text, int start, int length,
+                                    uint color, int clipX, int clipY,
+                                    int clipWidth, int clipHeight) {
+            if (!IsAvailable || graphics == null || text == null || start < 0 ||
+                length < 0 || start > text.Length - length || clipWidth < 0 ||
+                clipHeight < 0) return false;
+            if (_provider == SharedFontProviderKind.TrueType) {
+                _trueType.DrawStringRangeClipped(graphics, x, y, text, start,
+                    length, color, clipX, clipY, clipWidth, clipHeight);
+            } else {
+                _bitmap.DrawStringRangeClipped(x, y, text, start, length,
+                    graphics, clipX, clipY, clipWidth, clipHeight);
+            }
+            return true;
         }
     }
 

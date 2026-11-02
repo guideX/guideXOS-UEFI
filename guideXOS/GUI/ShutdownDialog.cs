@@ -1,4 +1,5 @@
 using guideXOS.Kernel.Drivers;
+using guideXOS.Misc;
 using System.Windows.Forms;
 
 namespace guideXOS.GUI {
@@ -69,7 +70,21 @@ namespace guideXOS.GUI {
             // Message text (wrap area is Width - 2*Padding)
             int textX = X + Padding;
             int textY = Y + BarHeight + Padding;
-            WindowManager.font.DrawString(textX, textY, _message, Width - Padding * 2, WindowManager.font.FontSize * 3);
+            SharedTextFont selected = WindowManager.ShellTextFont;
+            if (selected != null &&
+                selected.Provider == SharedFontProviderKind.TrueType) {
+                int bodyWidth = Width - Padding * 2;
+                int bodyHeight = Y + Height - Padding - BtnH - textY;
+                if (bodyWidth < 0) bodyWidth = 0;
+                if (bodyHeight < 0) bodyHeight = 0;
+                ShellTextSurfaceRenderer.DrawWrappedText(
+                    Framebuffer.Graphics, selected, _message, textX, textY,
+                    bodyWidth, 0, 0xFFFFFFFFu, textX, textY, bodyWidth,
+                    bodyHeight, SharedTextAlignment.Left);
+            } else {
+                WindowManager.font.DrawString(textX, textY, _message,
+                    Width - Padding * 2, WindowManager.font.FontSize * 3);
+            }
 
             // Buttons
             int btnY = Y + Height - Padding - BtnH;
@@ -89,12 +104,36 @@ namespace guideXOS.GUI {
             // No button
             Framebuffer.Graphics.FillRectangle(noX, btnY, BtnW, BtnH, overNo ? btnBgHover : btnBg);
             Framebuffer.Graphics.DrawRectangle(noX, btnY, BtnW, BtnH, border, 1);
-            WindowManager.font.DrawString(noX + 24, btnY + BtnH / 2 - WindowManager.font.FontSize / 2, "No");
+            if (selected != null &&
+                selected.Provider == SharedFontProviderKind.TrueType) {
+                int lineHeight;
+                if (selected.GetLineHeight(out lineHeight)) {
+                    ShellTextSurfaceRenderer.DrawFixedText(
+                        Framebuffer.Graphics, selected, "No", noX + 4,
+                        btnY + (BtnH - lineHeight) / 2, BtnW - 8, noX, btnY,
+                        BtnW, BtnH, 0xFFFFFFFFu, SharedTextAlignment.Center);
+                }
+            } else {
+                WindowManager.font.DrawString(noX + 24,
+                    btnY + BtnH / 2 - WindowManager.font.FontSize / 2, "No");
+            }
 
             // Yes button
             Framebuffer.Graphics.FillRectangle(yesX, btnY, BtnW, BtnH, overYes ? btnBgHover : btnBg);
             Framebuffer.Graphics.DrawRectangle(yesX, btnY, BtnW, BtnH, border, 1);
-            WindowManager.font.DrawString(yesX + 22, btnY + BtnH / 2 - WindowManager.font.FontSize / 2, "Yes");
+            if (selected != null &&
+                selected.Provider == SharedFontProviderKind.TrueType) {
+                int lineHeight;
+                if (selected.GetLineHeight(out lineHeight)) {
+                    ShellTextSurfaceRenderer.DrawFixedText(
+                        Framebuffer.Graphics, selected, "Yes", yesX + 4,
+                        btnY + (BtnH - lineHeight) / 2, BtnW - 8, yesX, btnY,
+                        BtnW, BtnH, 0xFFFFFFFFu, SharedTextAlignment.Center);
+                }
+            } else {
+                WindowManager.font.DrawString(yesX + 22,
+                    btnY + BtnH / 2 - WindowManager.font.FontSize / 2, "Yes");
+            }
         }
     }
 }

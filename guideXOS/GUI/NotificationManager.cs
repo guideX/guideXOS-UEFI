@@ -1,5 +1,6 @@
 ﻿using guideXOS.Kernel.Drivers;
 using System.Collections.Generic;
+using guideXOS.Misc;
 
 namespace guideXOS.GUI {
     public enum NotificationLevel {
@@ -14,9 +15,13 @@ namespace guideXOS.GUI {
         public NotificationLevel NotificationLevel;
         public int SWidth;
         public int SHeight;
+        internal int AnimationWidth;
 
         public ulong DisposeUntil;
         public Animation ani;
+        internal int LayoutFontGeneration = -1;
+        internal int LayoutMaximumWidth = -1;
+        internal string LayoutMessage;
 
         public Notify(string msg, NotificationLevel level = NotificationLevel.None) {
             Initialize(msg, level, null);
@@ -35,12 +40,15 @@ namespace guideXOS.GUI {
             X = 0; Y = 0;
             SWidth = WindowManager.font == null ? 0 :
                 WindowManager.font.MeasureString(Message);
+            AnimationWidth = SWidth > int.MaxValue - NotificationManager.Threshold
+                ? int.MaxValue - NotificationManager.Threshold : SWidth;
             SHeight = WindowManager.font == null ? 0 : WindowManager.font.FontSize;
+            LayoutMessage = Message;
             NotificationLevel = level;
 
             ani = new Animation()
             {
-                MaximumValue = NotificationManager.Threshold + SWidth,
+                MaximumValue = NotificationManager.Threshold + AnimationWidth,
                 Stopped = true,
             };
             Animator.AddAnimation(ani);
@@ -114,9 +122,20 @@ namespace guideXOS.GUI {
         public const int DisposeUntil = 1000;
 
         public static void Update() {
+            if (Notifications == null || Framebuffer.Graphics == null) return;
+
+            SharedTextFont selected = WindowManager.ShellTextFont;
+            int fontGeneration = WindowManager.ShellTextFontGeneration;
+            int maximumTextWidth = Framebuffer.Width - Threshold;
+            if (maximumTextWidth < 0) maximumTextWidth = 0;
+            for (int i = 0; i < Notifications.Count; i++) {
+                RefreshTextBounds(Notifications[i], selected,
+                    fontGeneration, maximumTextWidth);
+            }
+
             for (int i = 0; i < Notifications.Count; i++) {
                 var v = Notifications[i];
-                if (v.X < (Threshold + v.SWidth)) {
+                if (v.X < (Threshold + v.AnimationWidth)) {
                     v.ani.Stopped = false;
                     v.X = v.ani.Value;
                     break;
@@ -126,7 +145,7 @@ namespace guideXOS.GUI {
             for (int i = 0; i < Notifications.Count; i++) {
                 var v = Notifications[i];
 
-                if (v.X < (Threshold + v.SWidth)) {
+                if (v.X < (Threshold + v.AnimationWidth)) {
                     break;
                 } else {
                     if (v.DisposeUntil == 0) {
@@ -146,16 +165,55 @@ namespace guideXOS.GUI {
             for (int i = 0; i < Notifications.Count; i++) {
                 var v = Notifications[i];
 
-                Framebuffer.Graphics.FillRectangle(Framebuffer.Width - v.X, v.Y + y, v.SWidth + Devide, v.SHeight + Devide, 0xFF111111);
-                Framebuffer.Graphics.DrawRectangle(Framebuffer.Width - v.X, v.Y + y, v.SWidth + Devide, v.SHeight + Devide, 0xFF222222);
-                Framebuffer.Graphics.FillRectangle(Framebuffer.Width - v.X, v.Y + y, 5, v.SHeight + Devide, v.NotificationLevel == NotificationLevel.None ? 0xFF80B000 : 0xFFE74C3C);
-                if (WindowManager.font != null) {
-                    WindowManager.font.DrawString(Framebuffer.Width - v.X + (Devide / 2), v.Y + y + (Devide / 2), v.Message);
+                long boxXValue = (long)Framebuffer.Width - v.X +
+                    ((long)v.AnimationWidth - v.SWidth);
+                if (boxXValue < int.MinValue) boxXValue = int.MinValue;
+                if (boxXValue > int.MaxValue) boxXValue = int.MaxValue;
+                int boxX = (int)boxXValue;
+                int boxY = v.Y + y;
+                Framebuffer.Graphics.FillRectangle(boxX, boxY,
+                    v.SWidth + Devide, v.SHeight + Devide, 0xFF111111);
+                Framebuffer.Graphics.DrawRectangle(boxX, boxY,
+                    v.SWidth + Devide, v.SHeight + Devide, 0xFF222222);
+                Framebuffer.Graphics.FillRectangle(boxX, boxY, 5,
+                    v.SHeight + Devide,
+                    v.NotificationLevel == NotificationLevel.None
+                        ? 0xFF80B000 : 0xFFE74C3C);
+                if (selected != null && v.SWidth > 0 && v.SHeight > 0) {
+                    int textX = boxX + (Devide / 2);
+                    int textY = boxY + (Devide / 2);
+                    ShellTextSurfaceRenderer.DrawWrappedText(
+                        Framebuffer.Graphics, selected, v.Message, textX,
+                        textY, v.SWidth, 0, 0xFFFFFFFFu, textX, textY,
+                        v.SWidth, v.SHeight, SharedTextAlignment.Left);
                 }
 
                 y += v.SHeight + Devide;
                 y += Devide;
             }
+        }
+
+        private static void RefreshTextBounds(Notify notification,
+                                              SharedTextFont selected,
+                                              int fontGeneration,
+                                              int maximumTextWidth) {
+            if (notification == null || selected == null) return;
+            if (notification.LayoutFontGeneration == fontGeneration &&
+                notification.LayoutMaximumWidth == maximumTextWidth &&
+                object.ReferenceEquals(notification.LayoutMessage,
+                                       notification.Message)) return;
+
+            SharedTextMeasurement measurement;
+            bool truncated;
+            if (!ShellTextSurfaceRenderer.MeasureWrappedText(selected,
+                    notification.Message, maximumTextWidth, 0,
+                    out measurement, out truncated)) return;
+
+            notification.SWidth = measurement.Width;
+            notification.SHeight = measurement.Height;
+            notification.LayoutFontGeneration = fontGeneration;
+            notification.LayoutMaximumWidth = maximumTextWidth;
+            notification.LayoutMessage = notification.Message;
         }
     }
 }

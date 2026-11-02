@@ -9,6 +9,79 @@ namespace guideXOS.GUI {
     /// uses the selected provider for both measurement and clipped drawing.
     /// </summary>
     internal static class ShellTextSurfaceRenderer {
+        private static SharedTextLayout _wrappedLayout;
+
+        /// <summary>
+        /// Measure a provider-aware wrapped block with bounded, reusable line
+        /// storage. The caller owns the returned scalar values, not the scratch
+        /// layout or a font cache.
+        /// </summary>
+        internal static bool MeasureWrappedText(SharedTextFont selected,
+                                                string text, int maxWidth,
+                                                int lineSpacing,
+                                                out SharedTextMeasurement measurement,
+                                                out bool truncated) {
+            measurement = new SharedTextMeasurement();
+            truncated = false;
+            if (selected == null) return false;
+            if (_wrappedLayout == null) _wrappedLayout = new SharedTextLayout();
+            if (!_wrappedLayout.TryLayout(selected, text, maxWidth,
+                                          lineSpacing)) return false;
+            measurement.Width = _wrappedLayout.Width;
+            measurement.Height = _wrappedLayout.Height;
+            measurement.LineCount = _wrappedLayout.LineCount;
+            truncated = _wrappedLayout.WasTruncated;
+            return true;
+        }
+
+        /// <summary>
+        /// Draw a wrapped block inside a half-open caller-owned rectangle.
+        /// Empty clips are successful no-ops. Line origins retain the selected
+        /// provider's baseline metrics through SharedTextLayout.
+        /// </summary>
+        internal static bool DrawWrappedText(Graphics graphics,
+                                             SharedTextFont selected,
+                                             string text, int x, int y,
+                                             int maxWidth, int lineSpacing,
+                                             uint color, int clipX, int clipY,
+                                             int clipWidth, int clipHeight,
+                                             SharedTextAlignment alignment) {
+            if (graphics == null || selected == null || text == null ||
+                clipWidth < 0 || clipHeight < 0) return false;
+            if (_wrappedLayout == null) _wrappedLayout = new SharedTextLayout();
+            if (!_wrappedLayout.TryLayout(selected, text, maxWidth,
+                                          lineSpacing)) return false;
+            int viewportX, viewportY, viewportWidth, viewportHeight;
+            if (!TryIntersectViewport(graphics, clipX, clipY, clipWidth,
+                    clipHeight, out viewportX, out viewportY, out viewportWidth,
+                    out viewportHeight)) return true;
+            return _wrappedLayout.Draw(graphics, x, y, color, viewportX,
+                viewportY, viewportWidth, viewportHeight, alignment);
+        }
+
+        /// <summary>
+        /// Draw one unwrapped label in fixed control bounds. Alignment affects
+        /// pixels only; this method never changes a control or hit rectangle.
+        /// </summary>
+        internal static bool DrawFixedText(Graphics graphics,
+                                           SharedTextFont selected,
+                                           string text, int x, int y,
+                                           int alignmentWidth,
+                                           int clipX, int clipY,
+                                           int clipWidth, int clipHeight,
+                                           uint color,
+                                           SharedTextAlignment alignment) {
+            if (graphics == null || selected == null || text == null ||
+                clipWidth < 0 || clipHeight < 0) return false;
+            int viewportX, viewportY, viewportWidth, viewportHeight;
+            if (!TryIntersectViewport(graphics, clipX, clipY, clipWidth,
+                    clipHeight, out viewportX, out viewportY, out viewportWidth,
+                    out viewportHeight)) return true;
+            return selected.DrawText(graphics, x, y, text, color, viewportX,
+                viewportY, viewportWidth, viewportHeight, alignment,
+                alignmentWidth);
+        }
+
         public static bool DrawWindowTitle(Graphics graphics,
                                            SharedTextFont selected,
                                            IFont bitmap,

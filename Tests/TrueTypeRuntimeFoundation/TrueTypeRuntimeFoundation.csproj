@@ -11,9 +11,11 @@
     <Compile Include="Program.cs" />
     <Compile Include="SharedTextFontChecks.cs" />
     <Compile Include="ShellTextIntegrationChecks.cs" />
+    <Compile Include="DialogNotificationTextChecks.cs" />
     <Compile Include="../../guideXOS/Kernel/Misc/TrueTypeFont.cs" Link="TrueTypeFont.cs" />
     <Compile Include="../../Kernel/Misc/IFont.cs" Link="IFont.cs" />
     <Compile Include="../../Kernel/Misc/SharedTextFont.cs" Link="SharedTextFont.cs" />
+    <Compile Include="../../Kernel/Misc/SharedTextLayout.cs" Link="SharedTextLayout.cs" />
     <Compile Include="../../guideXOS/GUI/UefiDesktopInteraction.cs" Link="UefiDesktopInteraction.cs" />
     <Compile Include="../../guideXOS/GUI/UefiDesktopLabelRenderer.cs" Link="UefiDesktopLabelRenderer.cs" />
     <Compile Include="../../guideXOS/GUI/ShellTextSurfaceRenderer.cs" Link="ShellTextSurfaceRenderer.cs" />

@@ -1,4 +1,6 @@
 using guideXOS.GUI;
+using guideXOS.Kernel.Drivers;
+using guideXOS.Misc;
 namespace guideXOS.GUI {
     /// <summary>
     /// Message Box
@@ -27,7 +29,16 @@ namespace guideXOS.GUI {
                 this.Width = WindowManager.font.MeasureString(_message);
             base.OnDraw();
             if (this._message != null) {
-                WindowManager.font.DrawString(X, Y, _message);
+                SharedTextFont selected = WindowManager.ShellTextFont;
+                if (selected != null &&
+                    selected.Provider == SharedFontProviderKind.TrueType) {
+                    ShellTextSurfaceRenderer.DrawWrappedText(
+                        Framebuffer.Graphics, selected, _message, X, Y,
+                        Width, 0, 0xFFFFFFFFu, X, Y, Width, Height,
+                        SharedTextAlignment.Left);
+                } else {
+                    WindowManager.font.DrawString(X, Y, _message);
+                }
             }
         }
         /// <summary>
