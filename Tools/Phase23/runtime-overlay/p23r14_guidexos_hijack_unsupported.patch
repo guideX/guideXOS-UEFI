@@ -1,0 +1,77 @@
+diff --git a/src/coreclr/nativeaot/Runtime/CMakeLists.txt b/src/coreclr/nativeaot/Runtime/CMakeLists.txt
+index 0000000..0000000 100644
+--- a/src/coreclr/nativeaot/Runtime/CMakeLists.txt
++++ b/src/coreclr/nativeaot/Runtime/CMakeLists.txt
+@@ -133,6 +133,8 @@ elseif (CLR_CMAKE_TARGET_GUIDEXOS)
+   set(GC_HEADERS
+     ${GC_DIR}/env/gcenv.guidexos.inl)
+   list(APPEND COMMON_RUNTIME_SOURCES
++    guidexos/PalRedhawkHijackUnsupported.cpp
++    guidexos/PalRedhawkHijackRegistrationUnsupported.cpp
+     guidexos/PalRedhawkStackBounds.cpp
+     ${GC_DIR}/guidexos/gcenv.guidexos.cpp
+   )
+diff --git a/src/coreclr/nativeaot/Runtime/guidexos/PalRedhawkHijackUnsupported.cpp b/src/coreclr/nativeaot/Runtime/guidexos/PalRedhawkHijackUnsupported.cpp
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/src/coreclr/nativeaot/Runtime/guidexos/PalRedhawkHijackUnsupported.cpp
+@@ -0,0 +1,43 @@
++// guideXOS has no NativeAOT-safe cross-thread suspension or return-address
++// write service. Keep the target runtime from advertising an unusable hijack.
++#include "common.h"
++#include "PalRedhawk.h"
++#include "GuidexosGcPal.h"
++
++namespace
++{
++constexpr uint32_t kUnsupportedHijackReason = 0x4758484Au; // "GXHJ"
++constexpr uint32_t kUnknownCetStateReason = 0x47584345u;   // "GXCE"
++
++[[noreturn]] void FailFastUnsupportedHijack(uint32_t reason)
++{
++    guidexos_pal_fail_fast(reason, nullptr);
++    for (;;)
++    {
++    }
++}
++}
++
++// A null result is only safe here because the matching registration provider
++// always rejects the callback, so ThreadStore::Create cannot succeed.
++REDHAWK_PALEXPORT HijackFunc* REDHAWK_PALAPI PalGetHijackTarget(HijackFunc* defaultHijackTarget)
++{
++    (void)defaultHijackTarget;
++    return nullptr;
++}
++
++// Fail closed if any path reaches suspension despite rejected callback
++// registration. Never report successful suspension without a saved context.
++REDHAWK_PALEXPORT void REDHAWK_PALAPI PalHijack(HANDLE hThread, void* pThreadToHijack)
++{
++    (void)hThread;
++    (void)pThreadToHijack;
++    FailFastUnsupportedHijack(kUnsupportedHijackReason);
++}
++
++// guideXOS does not yet expose verified CET/shadow-stack ownership state.
++// Do not report "disabled" based on the boot environment or processor model.
++REDHAWK_PALEXPORT UInt32_BOOL REDHAWK_PALAPI PalAreShadowStacksEnabled()
++{
++    FailFastUnsupportedHijack(kUnknownCetStateReason);
++}
+diff --git a/src/coreclr/nativeaot/Runtime/guidexos/PalRedhawkHijackRegistrationUnsupported.cpp b/src/coreclr/nativeaot/Runtime/guidexos/PalRedhawkHijackRegistrationUnsupported.cpp
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/src/coreclr/nativeaot/Runtime/guidexos/PalRedhawkHijackRegistrationUnsupported.cpp
+@@ -0,0 +1,9 @@
++// This target adapter cannot deliver the callback from a stable saved context.
++#include "common.h"
++#include "PalRedhawk.h"
++
++REDHAWK_PALEXPORT UInt32_BOOL REDHAWK_PALAPI PalRegisterHijackCallback(PalHijackCallback callback)
++{
++    (void)callback;
++    return UInt32_FALSE;
++}
