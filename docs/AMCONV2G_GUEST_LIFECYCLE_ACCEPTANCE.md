@@ -1,5 +1,29 @@
 # AMCONV2G Guest Lifecycle Acceptance
 
+## Current R3 acceptance status and procedure
+
+**Current status:** `AMCONV2G_R3_UI_AND_PACKAGES_READY`; guest execution remains `QAC_GUEST_PENDING`.
+
+R3 adds the production **Open Root** row to the existing Computer Files left navigation pane. The click submits `ApplicationShellOpenRequest.ForShellFolder("gxos.shell.root", "/")` through the current application shell service context. The updated Candidate A (RDSK v1) and Candidate B (RDSK v2) ESPs and full hashes are recorded in [the R3 report](AMCONV2G_R3_ROOT_UI_REACHABILITY.md). Both are offline-ready only; no guest boot or UI result is claimed.
+
+Use this sequence in the next separately authorized QAC acceptance run:
+
+1. Boot Candidate A through QAC and wait for desktop startup.
+2. Open Start → **Computer Files** and confirm the ordinary drive chooser remains available.
+3. Click **Open Root** in the Computer Files left pane. Confirm a root folder window or the existing typed error window.
+4. Verify serial order and values for `FILES_ROOT_ACTION=begin`, `SHELL_FOLDER_REQUEST`, folder bind/inspection, `FACTORY_LAUNCH`, `FILES_FOLDER_WINDOW`, and `FILES_ROOT_ACTION=result`. Confirm the result identifies `gxos.builtin.files` and a new instance handle.
+5. Navigate into a populated directory, return with **Up Level**, close the window, and verify instance termination plus mount-release markers.
+6. Boot Candidate B and repeat ordinary Computer Files launch and **Open Root**.
+7. Open `WithFiles` and confirm `inside.txt` and `Child`; open `Empty` and confirm it is listed with no entries; also inspect `Nested/DeepEmpty` and return to the parent.
+8. Open a second Root window, close one while the other remains usable, then close the other and verify normal instance and lease release.
+9. Shut down through QAC and verify guest exit and QAC cleanup.
+
+The mouse path is the existing PS/2 → `MouseEventDispatcher` → `Control.MouseButtons` path; the new action needs only a left click. No R3 GUI event or service/factory/window lifecycle was executed. The full acceptance procedure must capture actual guest serial output and keep each assertion pending until it is observed.
+
+Mount replacement remains deferred: no supported production operation was found to replace the active filesystem and request disposal. Hosted mount-lifetime replacement tests do not make that scenario guest-reachable.
+
+The remainder of this file is the dated R1 acceptance record. Its package-readiness and UI-reachability status describes the earlier qualification point; R3 results and the current procedure above supersede it for the next run.
+
 **Outcome C — `AMCONV2G_QAC_OR_EXECUTION_BLOCKED`**
 
 **Detailed status: `QAC_GUEST_PENDING`**

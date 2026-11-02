@@ -1,4 +1,5 @@
 using guideXOS.GUI;
+using guideXOS.DefaultApps;
 using guideXOS.FS;
 using guideXOS.Kernel.Drivers;
 using guideXOS.Kernel.Tools;
@@ -2601,7 +2602,198 @@ namespace guideXOS.OS {
                     observed.Value.Value.ResultCode !=
                         ApplicationServiceResultCode.NotFound) return false;
 
+            if (!RunTypedRootServiceRouteSelfTest(context, access))
+                return false;
+
             return true;
+        }
+
+        private static bool RunTypedRootServiceRouteSelfTest(
+                ApplicationServiceContext context,
+                ApplicationServiceAccess access) {
+            FileSystem mount = File.Instance;
+            if (context == null || access == null || access.Shell == null ||
+                    mount == null) return false;
+
+            ApplicationDescriptor filesDescriptor;
+            if (!ApplicationDescriptorRegistry.TryGetById(
+                    "gxos.builtin.files", out filesDescriptor) ||
+                    filesDescriptor == null || filesDescriptor.ShellPolicy == null ||
+                    filesDescriptor.ShellPolicy.InstancePolicy !=
+                        ApplicationInstancePolicy.MultiInstance) return false;
+
+            int baselineInstances = ApplicationInstanceRegistry.ActiveCount;
+            int baselineMountLeases = mount.MountLeaseCount;
+            ApplicationInstanceHandle firstHandle =
+                ApplicationInstanceHandle.None;
+            ApplicationInstanceHandle secondHandle =
+                ApplicationInstanceHandle.None;
+            bool routesPassed = false;
+            try {
+                ApplicationShellOpenRequest firstRequest =
+                    ApplicationShellOpenRequest.ForShellFolder(
+                        "gxos.shell.root", "/");
+                if (!firstRequest.IsValid || firstRequest.TargetKind !=
+                        ApplicationShellOpenTargetKind.ShellFolder ||
+                        firstRequest.Target != "gxos.shell.root" ||
+                        firstRequest.ShellTargetValue != "/") return false;
+                ApplicationServiceResult<ApplicationServiceRequestHandle> firstBegin =
+                    access.Shell.Begin(context, firstRequest);
+                if (firstBegin == null || !firstBegin.Succeeded ||
+                        !firstBegin.Value.IsValid) {
+                    if (firstBegin != null) firstBegin.Dispose();
+                    return false;
+                }
+                ApplicationServiceResult<ApplicationServiceRequestStatus<
+                    ApplicationShellResult>> firstObserve = null;
+                try {
+                    firstObserve = access.Shell.Observe(context,
+                        firstBegin.Value);
+                    if (firstObserve == null || !firstObserve.Succeeded ||
+                            firstObserve.Value == null ||
+                            !firstObserve.Value.IsTerminal ||
+                            firstObserve.Value.Value == null) return false;
+                    if (firstObserve.Value.Value.Succeeded)
+                        firstHandle = firstObserve.Value.Value.InstanceHandle;
+                    if (!firstObserve.Value.Value.Succeeded ||
+                            firstObserve.Value.Value.AppId !=
+                                "gxos.builtin.files") return false;
+                } finally {
+                    firstBegin.Dispose();
+                    if (firstObserve != null) firstObserve.Dispose();
+                }
+
+                ApplicationInstance firstInstance;
+                if (!firstHandle.IsValid ||
+                        !ApplicationInstanceRegistry.TryGet(firstHandle,
+                            out firstInstance) || firstInstance == null ||
+                        firstInstance.DescriptorId != "gxos.builtin.files" ||
+                        firstInstance.OwnedWindowCount != 1 ||
+                        !(firstInstance.GetOwnedWindowAt(0) is ComputerFiles)) {
+                    return false;
+                }
+
+                ApplicationShellOpenRequest secondRequest =
+                    ApplicationShellOpenRequest.ForShellFolder(
+                        "gxos.shell.root", "/");
+                ApplicationServiceResult<ApplicationServiceRequestHandle> secondBegin =
+                    access.Shell.Begin(context, secondRequest);
+                if (secondBegin == null || !secondBegin.Succeeded ||
+                        !secondBegin.Value.IsValid) {
+                    if (secondBegin != null) secondBegin.Dispose();
+                    return false;
+                }
+                ApplicationServiceResult<ApplicationServiceRequestStatus<
+                    ApplicationShellResult>> secondObserve = null;
+                try {
+                    secondObserve = access.Shell.Observe(context,
+                        secondBegin.Value);
+                    if (secondObserve == null || !secondObserve.Succeeded ||
+                            secondObserve.Value == null ||
+                            !secondObserve.Value.IsTerminal ||
+                            secondObserve.Value.Value == null) return false;
+                    if (secondObserve.Value.Value.Succeeded)
+                        secondHandle = secondObserve.Value.Value.InstanceHandle;
+                    if (!secondObserve.Value.Value.Succeeded ||
+                            secondObserve.Value.Value.AppId !=
+                                "gxos.builtin.files") return false;
+                } finally {
+                    secondBegin.Dispose();
+                    if (secondObserve != null) secondObserve.Dispose();
+                }
+
+                ApplicationInstance secondInstance;
+                if (!secondHandle.IsValid || secondHandle == firstHandle ||
+                        !ApplicationInstanceRegistry.TryGet(secondHandle,
+                            out secondInstance) || secondInstance == null ||
+                        secondInstance.DescriptorId != "gxos.builtin.files" ||
+                        secondInstance.OwnedWindowCount != 1 ||
+                        !(secondInstance.GetOwnedWindowAt(0) is ComputerFiles)) {
+                    return false;
+                }
+
+                routesPassed = true;
+            } catch {
+                routesPassed = false;
+            } finally {
+                bool firstClosed = !firstHandle.IsValid ||
+                    ApplicationInstanceRegistry.TryTerminate(firstHandle,
+                        "typed C# Root shell service self-test cleanup");
+                bool secondClosed = !secondHandle.IsValid ||
+                    ApplicationInstanceRegistry.TryTerminate(secondHandle,
+                        "repeated typed C# Root shell service self-test cleanup");
+                routesPassed = routesPassed && firstClosed && secondClosed &&
+                    ApplicationInstanceRegistry.ActiveCount == baselineInstances &&
+                    mount.MountLeaseCount == baselineMountLeases;
+            }
+            if (!routesPassed) return false;
+
+            int failedProbeInstances = ApplicationInstanceRegistry.ActiveCount;
+            int failedProbeLeases = mount.MountLeaseCount;
+            ApplicationShellOpenRequest missing =
+                ApplicationShellOpenRequest.ForShellFolder(
+                    "gxos.shell.root",
+                    "/__amconv2g_r3_missing_root_probe__.txt");
+            ApplicationServiceResult<ApplicationServiceRequestHandle> missingBegin =
+                access.Shell.Begin(context, missing);
+            if (missingBegin == null || !missingBegin.Succeeded ||
+                    !missingBegin.Value.IsValid) {
+                if (missingBegin != null) missingBegin.Dispose();
+                return false;
+            }
+            ApplicationServiceResult<ApplicationServiceRequestStatus<
+                ApplicationShellResult>> missingObserve = null;
+            try {
+                missingObserve = access.Shell.Observe(context,
+                    missingBegin.Value);
+                if (missingObserve == null || !missingObserve.Succeeded ||
+                        missingObserve.Value == null ||
+                        missingObserve.Value.Value == null ||
+                        missingObserve.Value.Value.ResultCode !=
+                            ApplicationServiceResultCode.ResourceUnavailable ||
+                        missingObserve.Value.Value.AppId !=
+                            "gxos.builtin.files" ||
+                        missingObserve.Value.Value.InstanceHandle.IsValid) {
+                    return false;
+                }
+            } finally {
+                missingBegin.Dispose();
+                if (missingObserve != null) missingObserve.Dispose();
+            }
+            if (ApplicationInstanceRegistry.ActiveCount !=
+                    failedProbeInstances || mount.MountLeaseCount !=
+                    failedProbeLeases) return false;
+
+            ApplicationShellOpenRequest unsupportedServerFolder =
+                ApplicationShellOpenRequest.ForShellFolder(
+                    "gxos.shell.this-system", "/");
+            ApplicationServiceResult<ApplicationServiceRequestHandle> serverBegin =
+                access.Shell.Begin(context, unsupportedServerFolder);
+            if (serverBegin == null || !serverBegin.Succeeded ||
+                    !serverBegin.Value.IsValid) {
+                if (serverBegin != null) serverBegin.Dispose();
+                return false;
+            }
+            ApplicationServiceResult<ApplicationServiceRequestStatus<
+                ApplicationShellResult>> serverObserve = null;
+            try {
+                serverObserve = access.Shell.Observe(context,
+                    serverBegin.Value);
+                if (serverObserve == null || !serverObserve.Succeeded ||
+                        serverObserve.Value == null ||
+                        serverObserve.Value.Value == null ||
+                        serverObserve.Value.Value.ResultCode !=
+                            ApplicationServiceResultCode.UnsupportedTarget ||
+                        serverObserve.Value.Value.InstanceHandle.IsValid) {
+                    return false;
+                }
+            } finally {
+                serverBegin.Dispose();
+                if (serverObserve != null) serverObserve.Dispose();
+            }
+            return ApplicationInstanceRegistry.ActiveCount ==
+                    failedProbeInstances && mount.MountLeaseCount ==
+                    failedProbeLeases;
         }
 
         private sealed class ServiceWindowProbe : Window {

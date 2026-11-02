@@ -1397,7 +1397,7 @@ namespace guideXOS.GUI {
             }
         }
 
-    private static void ShowOpenError(int x, int y, string text) {
+    internal static void ShowOpenError(int x, int y, string text) {
         MessageBox box = EnsureMessageBox();
         box.X = x;
         box.Y = y;

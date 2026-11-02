@@ -371,6 +371,86 @@ namespace guideXOS.DefaultApps {
 #endif
         }
 
+        private void OpenCSharpRootThroughShellService() {
+            if (_serviceContext == null || _services == null ||
+                    _services.Shell == null) {
+                Desktop.ShowOpenError(X + 60, Y + 60,
+                    "Open Root failed: application shell service is unavailable");
+                return;
+            }
+
+            ApplicationShellOpenRequest request =
+                ApplicationShellOpenRequest.ForShellFolder(
+                    "gxos.shell.root", "/");
+            ApplicationServiceResult<ApplicationServiceRequestHandle> begun =
+                null;
+            ApplicationServiceResult<
+                ApplicationServiceRequestStatus<ApplicationShellResult>> observed =
+                    null;
+            try {
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FILES_ROOT_ACTION=begin;source=" +
+                    _serviceContext.ApplicationId + ";shell=gxos.shell.root;path=/");
+#endif
+                begun = _services.Shell.Begin(_serviceContext, request);
+                if (begun == null || !begun.Succeeded) {
+                    ShowRootOpenFailure(
+                        begun == null ? ApplicationServiceResultCode.BackendFailure :
+                            begun.Code,
+                        begun == null ? "Shell service returned no result" :
+                            begun.BoundedDiagnostic);
+                    return;
+                }
+
+                observed = _services.Shell.Observe(_serviceContext,
+                    begun.Value);
+                if (observed == null || !observed.Succeeded ||
+                        observed.Value == null || !observed.Value.IsTerminal ||
+                        observed.Value.Value == null) {
+                    ShowRootOpenFailure(
+                        observed == null ? ApplicationServiceResultCode.BackendFailure :
+                            observed.Succeeded ?
+                                ApplicationServiceResultCode.InvalidState :
+                                observed.Code,
+                        observed == null ? "Shell service returned no status" :
+                            observed.Succeeded ?
+                                "Root request did not complete" :
+                                observed.BoundedDiagnostic);
+                    return;
+                }
+
+                ApplicationShellResult result = observed.Value.Value;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+                Program.MarkUefiAppRuntime("FILES_ROOT_ACTION=result;code=" +
+                    result.ResultCode.ToString() + ";success=" +
+                    (result.Succeeded ? "1" : "0") + ";app=" +
+                    (result.AppId ?? "") + ";instance=" +
+                    result.InstanceHandle.ToString() + ";detail=" +
+                    (result.BoundedDiagnostic ?? ""));
+#endif
+                if (!result.Succeeded) {
+                    ShowRootOpenFailure(result.ResultCode,
+                        result.BoundedDiagnostic);
+                }
+            } catch {
+                ShowRootOpenFailure(
+                    ApplicationServiceResultCode.BackendFailure,
+                    "Shell service could not open C# Root");
+            } finally {
+                request.Dispose();
+                if (begun != null) begun.Dispose();
+                if (observed != null) observed.Dispose();
+            }
+        }
+
+        private void ShowRootOpenFailure(ApplicationServiceResultCode code,
+                                         string diagnostic) {
+            string message = "Open Root failed: " + code.ToString();
+            if (!string.IsNullOrEmpty(diagnostic))
+                message += " - " + diagnostic;
+            Desktop.ShowOpenError(X + 60, Y + 60, message);
+        }
+
         private bool TryOpenDocumentThroughService(string path) {
             if (_serviceContext == null || _services == null ||
                     _services.Shell == null || string.IsNullOrEmpty(path)) {
@@ -575,6 +655,12 @@ namespace guideXOS.DefaultApps {
                     // Computer Files root
                     if (my >= cursorY && my <= cursorY + iconH) {
                         OpenRootChooserFromShell();
+                        return;
+                    }
+                    cursorY += iconH + 10;
+                    // Open the typed C# filesystem Root through the shell service.
+                    if (my >= cursorY && my <= cursorY + iconH) {
+                        OpenCSharpRootThroughShellService();
                         return;
                     }
                     cursorY += iconH + 10;
@@ -826,6 +912,10 @@ namespace guideXOS.DefaultApps {
             // Computer Files root
             if (_iconFolder != null) Framebuffer.Graphics.DrawImage(X + 10, cursorY, _iconFolder);
             WindowManager.font.DrawString(X + 10 + _iconFolder.Width + 8, cursorY + _iconFolder.Height / 2 - WindowManager.font.FontSize / 2, "Computer Files", maxLeftText, WindowManager.font.FontSize);
+            cursorY += _iconFolder.Height + 10;
+            // This command opens the active C# filesystem root through the typed shell route.
+            if (_iconFolder != null) Framebuffer.Graphics.DrawImage(X + 10, cursorY, _iconFolder);
+            WindowManager.font.DrawString(X + 10 + _iconFolder.Width + 8, cursorY + _iconFolder.Height / 2 - WindowManager.font.FontSize / 2, "Open Root", maxLeftText, WindowManager.font.FontSize);
             cursorY += _iconFolder.Height + 10;
             // USB drive indicator - FIXED: properly dispose strings
             if (USBStorage.Count > 0) {

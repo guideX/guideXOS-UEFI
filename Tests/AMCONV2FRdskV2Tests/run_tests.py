@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import subprocess
 import sys
@@ -42,6 +43,14 @@ def make_fixture(root: Path) -> Path:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--artifacts-path",
+        type=Path,
+        help="isolate dotnet run outputs outside the test source directory",
+    )
+    arguments = parser.parse_args()
+
     if not BUILDER.is_file() or not CS_PROJ.is_file():
         raise RuntimeError("The RDSK v2 runner must be used from this checkout")
 
@@ -108,9 +117,14 @@ def main() -> int:
         print("AMCONV2F_GENERATOR_REJECTION=PASS (non-ASCII, invalid components, "
               "overlong path, and output inside source tree)")
 
-        hosted = run(["dotnet", "run", "--project", str(CS_PROJ),
-                      "--configuration", "Release", "--",
-                      str(image_a), str(legacy), str(empty_image)])
+        hosted_command = ["dotnet", "run", "--project", str(CS_PROJ),
+                          "--configuration", "Release"]
+        if arguments.artifacts_path is not None:
+            hosted_command.extend([
+                "--artifacts-path", str(arguments.artifacts_path.resolve())
+            ])
+        hosted_command.extend(["--", str(image_a), str(legacy), str(empty_image)])
+        hosted = run(hosted_command)
         print(hosted.stdout, end="")
         if hosted.stderr:
             print(hosted.stderr, file=sys.stderr, end="")
