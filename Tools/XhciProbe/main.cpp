@@ -76,6 +76,7 @@ static const wchar_t* FailureStageName(guideXOS::xhci_probe::FailureStage stage)
     case FailureStage::InvalidBarConfiguration: return L"unsupported BAR0 configuration";
     case FailureStage::GetBarAttributes: return L"GetBarAttributes";
     case FailureStage::MalformedBarDescriptor: return L"malformed BAR0 resource descriptor";
+    case FailureStage::UnsupportedBarResourceList: return L"unsupported multi-range BAR0 resource list";
     case FailureStage::InvalidBarResource: return L"invalid or undersized BAR0 resource";
     case FailureStage::ReadCapabilities: return L"EFI_PCI_IO_PROTOCOL.Mem.Read";
     case FailureStage::MalformedCapabilityHeader: return L"malformed capability header";
@@ -104,21 +105,71 @@ static void PrintController(const guideXOS::xhci_probe::ProbeResult* result) {
     ConsoleWriteHex(result->Subclass, 2);
     ConsoleWrite(L"/");
     ConsoleWriteHex(result->ProgrammingInterface, 2);
+    ConsoleWrite(L"\r\n  GetBarAttributes EFI_STATUS=");
+    if (result->Bar.HasGetBarAttributesStatus)
+        ConsoleWriteHex(result->Bar.GetBarAttributesStatus, 16);
+    else
+        ConsoleWrite(L"not called");
     ConsoleWrite(L"\r\n  BAR0 firmware resource: ");
     ConsoleWrite(result->BarUsable ? L"usable" : L"unusable");
-    if (result->HasBarInfo) {
-        ConsoleWrite(L"  width=");
-        ConsoleWriteDecimal(result->Bar.AddressWidth);
-        ConsoleWrite(L"  base=");
-        ConsoleWriteHex(result->Bar.Base, 16);
-        ConsoleWrite(L"  length=");
-        ConsoleWriteHex(result->Bar.Length, 16);
+    ConsoleWrite(L"\r\n");
+    if (result->Bar.HasDescriptorHeader) {
+        ConsoleWrite(L"  Descriptor type=");
+        ConsoleWriteHex(result->Bar.DescriptorType, 2);
+        ConsoleWrite(L"  payload length=");
+        ConsoleWriteHex(result->Bar.DescriptorLength, 4);
+        ConsoleWrite(L"\r\n");
+    } else {
+        ConsoleWrite(L"  Descriptor header: unavailable\r\n");
+    }
+    if (result->Bar.HasQwordFields) {
+        ConsoleWrite(L"  Raw resource type=");
+        ConsoleWriteHex(result->Bar.ResourceType, 2);
+        ConsoleWrite(L"  general flags=");
+        ConsoleWriteHex(result->Bar.GeneralFlags, 2);
+        ConsoleWrite(L"  specific flags=");
+        ConsoleWriteHex(result->Bar.SpecificFlags, 2);
+        ConsoleWrite(L"  granularity=");
+        ConsoleWriteHex(result->Bar.RawGranularity, 16);
+        ConsoleWrite(L"\r\n  Raw base=");
+        ConsoleWriteHex(result->Bar.RawBase, 16);
         ConsoleWrite(L"  max=");
-        ConsoleWriteHex(result->Bar.Maximum, 16);
+        ConsoleWriteHex(result->Bar.RawMaximum, 16);
         ConsoleWrite(L"  translation=");
-        ConsoleWriteHex(result->Bar.TranslationOffset, 16);
-        ConsoleWrite(L"\r\n  BAR0 attributes: ");
+        ConsoleWriteHex(result->Bar.RawTranslationOffset, 16);
+        ConsoleWrite(L"  length=");
+        ConsoleWriteHex(result->Bar.RawLength, 16);
+        ConsoleWrite(L"\r\n");
+    } else if (result->Bar.HasDescriptorHeader) {
+        ConsoleWrite(L"  QWORD fields: unavailable (type/length unsupported)\r\n");
+    }
+    if (result->Bar.HasListTail) {
+        ConsoleWrite(L"  Bytes after first descriptor=");
+        ConsoleWriteHex(result->Bar.ListTailByte0, 2);
+        ConsoleWrite(L" ");
+        ConsoleWriteHex(result->Bar.ListTailByte1, 2);
+        ConsoleWrite(result->Bar.ListTailByte0 == 0x79 ?
+            L"  (End Tag, second byte is checksum)" :
+            L"  (expected End Tag 0x79 for single-range form)");
+        ConsoleWrite(L"\r\n");
+    }
+    if (result->HasBarInfo) {
+        ConsoleWrite(L"  Parser: ");
+        ConsoleWrite(result->Bar.DescriptorValid ? L"accepted" : L"rejected");
+        ConsoleWrite(L"  BAR0 supported attributes=");
         ConsoleWriteHex(result->Bar.SupportedAttributes, 16);
+        if (result->Bar.DescriptorValid) {
+            ConsoleWrite(L"\r\n  Validated width=");
+            ConsoleWriteDecimal(result->Bar.AddressWidth);
+            ConsoleWrite(L"  base=");
+            ConsoleWriteHex(result->Bar.Base, 16);
+            ConsoleWrite(L"  length=");
+            ConsoleWriteHex(result->Bar.Length, 16);
+            ConsoleWrite(L"  max=");
+            ConsoleWriteHex(result->Bar.Maximum, 16);
+            ConsoleWrite(L"  translation=");
+            ConsoleWriteHex(result->Bar.TranslationOffset, 16);
+        }
         ConsoleWrite(result->BarPrefetchable ? L"  prefetchable=yes" :
                                                   L"  prefetchable=no");
     } else if (result->BarConfigurationBase != 0) {

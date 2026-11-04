@@ -317,12 +317,10 @@ namespace guideXOS.Kernel.Drivers {
                 return false;
             }
 
-            // Accept only ordinary, static, non-prefetchable memory resources.
-            // The kernel maps this range UC regardless of any firmware cache
-            // hint, but cacheable, write-combining, translated, or reserved
-            // address-space descriptors are outside this contract.
+            // The kernel maps this range UC regardless of the firmware's
+            // memory cacheability hint. Memory flags [2:1] are valid ACPI
+            // cacheability values; [7:3] remain outside this BAR contract.
             if ((entry.SpecificFlags & 0xF8) != 0 ||
-                (entry.SpecificFlags & 0x06) != 0 ||
                 (entry.GeneralFlags & 0xF0) != 0 || entry.Reserved != 0) {
                 failure = ResourceFailure.InvalidMemoryAttributes;
                 return false;

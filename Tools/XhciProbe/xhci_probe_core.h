@@ -20,17 +20,39 @@ inline bool IsErrorStatus(uint64_t status) {
     return (status & UEFI_ERROR_BIT) != 0;
 }
 
+// The standalone EFI image intentionally has no CRT. Volatile byte stores
+// keep MSVC from lowering large aggregate zero-initialization to memset.
+inline void ZeroBytes(void* buffer, size_t byteCount) {
+    volatile uint8_t* bytes = (volatile uint8_t*)buffer;
+    for (size_t index = 0; index < byteCount; ++index) bytes[index] = 0;
+}
+
 struct BarResource {
     bool DescriptorValid;
     bool IsMemory;
+    bool HasDescriptorHeader;
+    bool HasQwordFields;
+    bool HasListTail;
+    bool HasGetBarAttributesStatus;
     uint8_t AddressWidth;
     uint8_t GeneralFlags;
     uint8_t SpecificFlags;
+    uint8_t DescriptorType;
+    uint8_t ResourceType;
+    uint8_t ListTailByte0;
+    uint8_t ListTailByte1;
+    uint16_t DescriptorLength;
     uint64_t Base;
     uint64_t Maximum;
     uint64_t Length;
     uint64_t TranslationOffset;
     uint64_t SupportedAttributes;
+    uint64_t GetBarAttributesStatus;
+    uint64_t RawGranularity;
+    uint64_t RawBase;
+    uint64_t RawMaximum;
+    uint64_t RawTranslationOffset;
+    uint64_t RawLength;
 };
 
 typedef uint64_t (*GetBarDescriptor)(void* context,
@@ -47,10 +69,12 @@ inline uint64_t TryGetBarResource(void* context,
     if (getDescriptor == nullptr || releaseDescriptor == nullptr ||
         result == nullptr) return EFI_INVALID_PARAMETER_VALUE;
 
-    *result = {};
+    ZeroBytes(result, sizeof(*result));
     const uint8_t* bytes = nullptr;
     uint64_t attributes = 0;
     uint64_t status = getDescriptor(context, &attributes, &bytes);
+    result->HasGetBarAttributesStatus = true;
+    result->GetBarAttributesStatus = status;
     if (IsErrorStatus(status)) {
         if (bytes != nullptr) {
             (void)releaseDescriptor(context, bytes);
@@ -59,16 +83,46 @@ inline uint64_t TryGetBarResource(void* context,
     }
     if (bytes == nullptr) return EFI_DEVICE_ERROR_VALUE;
 
+    // GetBarAttributes does not return a buffer length. UEFI 2.10 permits one
+    // or more QWORD descriptors followed by an End Tag. This probe supports a
+    // bounded single-range form: a 43-byte QWORD payload plus a 2-byte tail.
+    // Read the fixed header first; only access QWORD fields when the
+    // descriptor advertises that complete payload.
+    result->HasDescriptorHeader = true;
+    result->DescriptorType = bytes[0];
+    result->DescriptorLength = (uint16_t)bytes[1] |
+                               ((uint16_t)bytes[2] << 8);
+    if (result->DescriptorType == 0x8A &&
+        result->DescriptorLength == 0x2B) {
+        result->HasQwordFields = true;
+        result->ResourceType = bytes[3];
+        result->GeneralFlags = bytes[4];
+        result->SpecificFlags = bytes[5];
+        result->RawGranularity =
+            guideXOS::pci_resource::ReadLittleEndian64(bytes + 6);
+        result->RawBase =
+            guideXOS::pci_resource::ReadLittleEndian64(bytes + 14);
+        result->RawMaximum =
+            guideXOS::pci_resource::ReadLittleEndian64(bytes + 22);
+        result->RawTranslationOffset =
+            guideXOS::pci_resource::ReadLittleEndian64(bytes + 30);
+        result->RawLength =
+            guideXOS::pci_resource::ReadLittleEndian64(bytes + 38);
+        result->HasListTail = true;
+        result->ListTailByte0 = bytes[46];
+        result->ListTailByte1 = bytes[47];
+    }
+
     guideXOS::pci_resource::QwordMemoryResource parsed = {};
     bool valid = guideXOS::pci_resource::TryParseSingleQwordMemoryResource(
         bytes, guideXOS::pci_resource::SINGLE_QWORD_RESOURCE_SIZE, &parsed);
 
+    result->SupportedAttributes = attributes;
     uint64_t releaseStatus = releaseDescriptor(context, bytes);
     if (IsErrorStatus(releaseStatus)) return releaseStatus;
 
     result->DescriptorValid = valid;
     result->IsMemory = valid;
-    result->SupportedAttributes = attributes;
     if (valid) {
         result->AddressWidth = parsed.AddressWidth;
         result->GeneralFlags = parsed.GeneralFlags;
@@ -114,6 +168,7 @@ enum class FailureStage : uint8_t {
     InvalidBarConfiguration,
     GetBarAttributes,
     MalformedBarDescriptor,
+    UnsupportedBarResourceList,
     InvalidBarResource,
     ReadCapabilities,
     MalformedCapabilityHeader,
@@ -225,7 +280,6 @@ inline bool ValidateBarResource(const ProbeResult& result) {
         (bar.AddressWidth != 32 && bar.AddressWidth != 64) ||
         (bar.GeneralFlags & 0xF0U) != 0 ||
         (bar.SpecificFlags & 0xF8U) != 0 ||
-        (bar.SpecificFlags & 0x06U) != 0 ||
         bar.AddressWidth != result.BarConfigurationWidth ||
         bar.Base == 0 || bar.Base != result.BarConfigurationBase ||
         bar.Base < 0x100000ULL || bar.Length == 0 ||
@@ -387,7 +441,11 @@ inline bool ProbeXhciController(const ControllerOps& controller,
     }
     result->HasBarInfo = true;
     if (!result->Bar.DescriptorValid) {
-        SetFailure(result, FailureStage::MalformedBarDescriptor);
+        SetFailure(result,
+            result->Bar.HasQwordFields && result->Bar.HasListTail &&
+            result->Bar.ListTailByte0 == 0x8A ?
+                FailureStage::UnsupportedBarResourceList :
+                FailureStage::MalformedBarDescriptor);
         return false;
     }
     if (!ValidateBarResource(*result)) {
@@ -444,7 +502,8 @@ inline void ProcessHandle(const PlatformOps& platform, uint32_t index,
     }
 
     ++summary->ControllersFound;
-    ProbeResult result = {};
+    ProbeResult result;
+    ZeroBytes(&result, sizeof(result));
     result.PciLocation = location;
     result.VendorId = (uint16_t)(identity & 0xFFFFU);
     result.DeviceId = (uint16_t)(identity >> 16);

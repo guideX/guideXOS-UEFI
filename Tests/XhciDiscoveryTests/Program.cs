@@ -536,9 +536,13 @@ internal static class Program {
 
         resource = Valid32BitResource();
         resource.SpecificFlags = 0x02;
-        Check(!Validate32(resource, out failure) &&
-              failure == XhciDiscovery.ResourceFailure.InvalidMemoryAttributes,
-              "cacheable resource attributes rejected");
+        Check(Validate32(resource, out failure),
+              "cacheable memory resource remains valid when mapped UC");
+
+        resource = Valid32BitResource();
+        resource.SpecificFlags = 0x06;
+        Check(Validate32(resource, out failure),
+              "write-combining and prefetchable memory flags remain valid when mapped UC");
 
         resource = Valid32BitResource();
         resource.SpecificFlags = 0x40;

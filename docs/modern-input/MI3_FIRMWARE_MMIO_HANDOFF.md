@@ -79,10 +79,13 @@ the allocator can reuse it.
 
 The kernel rejects invalid signatures, versions, entry sizes, counts, status,
 duplicate BDF/BAR keys, malformed addresses, inconsistent maxima, unsupported
-widths or resource types, nonzero translations, and cacheable or reserved
-memory attributes. It associates every entry with the kernel's own PCI scan,
-including segment/BDF, vendor/device ID, xHCI class, and BAR0 base. Any mismatch
-stops the entire resource path.
+widths or resource types, nonzero translations, and reserved memory attributes.
+ACPI memory cacheability bits [2:1] are accepted as valid descriptor hints;
+the kernel still maps the xHCI range uncached. It associates every entry with
+the kernel's own PCI scan, including segment/BDF, vendor/device ID, xHCI class,
+and BAR0 base. Any mismatch stops the entire resource path. The MI7 audit and
+change are detailed in
+[MI7_SARAH_DT_BAR0_INVESTIGATION.md](MI7_SARAH_DT_BAR0_INVESTIGATION.md).
 
 ## MMIO mapping and capability reads
 

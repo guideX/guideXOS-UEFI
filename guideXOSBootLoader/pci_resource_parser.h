@@ -93,8 +93,11 @@ inline bool TryParseSingleQwordMemoryResource(const uint8_t* bytes,
 
     if ((granularity != 32 && granularity != 64) ||
         (parsed.GeneralFlags & 0xF0) != 0 ||
+        // For memory resources, bits 2:1 encode cacheability (including
+        // write-combining and prefetchable). They are valid ACPI flags and do
+        // not alter the address bounds validated below. Bits 7:3 remain
+        // unsupported for this BAR resource profile.
         (parsed.SpecificFlags & 0xF8) != 0 ||
-        (parsed.SpecificFlags & 0x06) != 0 ||
         parsed.Base < 0x100000ULL || parsed.Length == 0 ||
         parsed.Base > (~(uint64_t)0) - (parsed.Length - 1) ||
         parsed.Maximum != parsed.Base + parsed.Length - 1 ||

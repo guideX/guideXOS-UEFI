@@ -132,6 +132,8 @@ static uint64_t FakeOpen(void* context, uint32_t index, ControllerOps* controlle
         FakePci* device = (FakePci*)item;
         ++device->BarReadCount;
         *resource = device->Resource;
+        resource->HasGetBarAttributesStatus = true;
+        resource->GetBarAttributesStatus = device->BarStatus;
         return device->BarStatus;
     };
     controller->ReadMem32 = [](void* item, uint64_t offset,
@@ -232,6 +234,9 @@ static void TestMissingBarResource() {
           "missing resource reports GetBarAttributes stage");
     Check(OnlyResult(&fixture).FirmwareStatus == kEfiNotFound,
           "exact EFI_NOT_FOUND status preserved");
+    Check(OnlyResult(&fixture).Bar.HasGetBarAttributesStatus &&
+          OnlyResult(&fixture).Bar.GetBarAttributesStatus == kEfiNotFound,
+          "GetBarAttributes status is available in the diagnostic record");
     Check(fixture.Devices[0].MemReadCount == 0, "no MMIO after missing resource");
 }
 
@@ -245,12 +250,27 @@ static void TestMalformedResourceDescriptor() {
     Check(OnlyResult(&fixture).Stage == FailureStage::MalformedBarDescriptor,
           "malformed descriptor rejected explicitly");
     Check(fixture.Devices[0].MemReadCount == 0, "malformed resource blocks MMIO");
+
+    Fixture multiple = {};
+    multiple.Count = 1;
+    multiple.Devices[0] = MakeValidPci();
+    multiple.Devices[0].Resource.DescriptorValid = false;
+    multiple.Devices[0].Resource.HasQwordFields = true;
+    multiple.Devices[0].Resource.HasListTail = true;
+    multiple.Devices[0].Resource.ListTailByte0 = 0x8A;
+    summary = RunFixture(&multiple);
+    Check(summary.ControllersFound == 1 &&
+          OnlyResult(&multiple).Stage == FailureStage::UnsupportedBarResourceList,
+          "second QWORD descriptor is reported as a valid unsupported list shape");
+    Check(multiple.Devices[0].MemReadCount == 0,
+          "unsupported multi-range resource list blocks MMIO");
 }
 
 static void TestBar32And64Handling() {
     Fixture fixture = {};
     fixture.Count = 2;
     fixture.Devices[0] = MakeValidPci(0, false);
+    fixture.Devices[0].Resource.SpecificFlags = 0x07;
     fixture.Devices[1] = MakeValidPci(1, true);
     ProbeSummary summary = RunFixture(&fixture);
     Check(summary.ControllersFound == 2, "32-bit and 64-bit BAR controllers found");
@@ -260,6 +280,9 @@ static void TestBar32And64Handling() {
           "64-bit BAR width decoded");
     Check(fixture.Reporter.Results[1].BarConfigurationBase == 0x180000000ULL,
           "upper BAR dword included in base");
+    Check(fixture.Reporter.Results[0].Stage == FailureStage::None &&
+          fixture.Reporter.Results[0].Bar.SpecificFlags == 0x07,
+          "prefetchable cacheability flags pass without changing BAR validation");
     Check(fixture.Devices[1].ConfigReadCount == 4,
           "64-bit BAR reads BAR1 config dword while 32-bit does not");
 }
@@ -456,6 +479,16 @@ static void TestDescriptorCleanup() {
           "firmware descriptor allocation is released exactly once");
     Check(resource.DescriptorValid && resource.Base == 0x80000000ULL,
           "descriptor copied before firmware buffer release");
+    Check(resource.HasGetBarAttributesStatus &&
+          resource.GetBarAttributesStatus == 0 &&
+          resource.HasDescriptorHeader && resource.DescriptorType == 0x8A &&
+          resource.DescriptorLength == 0x2B,
+          "firmware query status and bounded descriptor header retained");
+    Check(resource.HasQwordFields && resource.ResourceType == 0 &&
+          resource.RawBase == 0x80000000ULL && resource.RawLength == 0x1000 &&
+          resource.HasListTail && resource.ListTailByte0 == 0x79 &&
+          resource.ListTailByte1 == 0,
+          "raw QWORD fields and termination copied before firmware buffer release");
 
     FakeDescriptorLease malformed = {};
     FillDescriptor(&malformed, 0x80000000ULL, 0x1000, 32);
@@ -464,8 +497,23 @@ static void TestDescriptorCleanup() {
                                MockReleaseDescriptor, &resource);
     Check(!IsErrorStatus(status) && !resource.DescriptorValid,
           "malformed descriptor is rejected by the shared parser");
+    Check(resource.HasGetBarAttributesStatus &&
+          resource.GetBarAttributesStatus == 0 &&
+          resource.HasDescriptorHeader && resource.DescriptorType == 0,
+          "malformed descriptor retains successful query status and raw type");
     Check(malformed.ReleaseCount == 1 && !malformed.Allocated,
           "malformed descriptor allocation is still released");
+
+    FakeDescriptorLease unterminated = {};
+    FillDescriptor(&unterminated, 0x80000000ULL, 0x1000, 32);
+    unterminated.Bytes[46] = 0;
+    status = TryGetBarResource(&unterminated, AcquireDescriptor,
+                               MockReleaseDescriptor, &resource);
+    Check(!IsErrorStatus(status) && !resource.DescriptorValid &&
+          resource.HasListTail && resource.ListTailByte0 == 0,
+          "unterminated descriptor is rejected with raw terminator retained");
+    Check(unterminated.ReleaseCount == 1 && !unterminated.Allocated,
+          "unterminated resource allocation is still released");
 
     FakeDescriptorLease failed = {};
     FillDescriptor(&failed, 0x80000000ULL, 0x1000, 32);
@@ -473,6 +521,9 @@ static void TestDescriptorCleanup() {
     status = TryGetBarResource(&failed, AcquireDescriptor,
                                MockReleaseDescriptor, &resource);
     Check(status == kEfiNotFound, "failed GetBarAttributes status is preserved");
+    Check(resource.HasGetBarAttributesStatus &&
+          resource.GetBarAttributesStatus == kEfiNotFound,
+          "failed query EFI status is retained for diagnostics");
     Check(failed.ReleaseCount == 1 && !failed.Allocated,
           "returned allocation is released even when firmware reports failure");
 }

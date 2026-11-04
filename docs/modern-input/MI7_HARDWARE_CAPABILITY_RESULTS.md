@@ -2,13 +2,15 @@
 
 ## Outcome
 
-**`MI7_HARDWARE_EVIDENCE_PENDING`**
+**`MI7_HARDWARE_EVIDENCE_INCOMPLETE; SARAH_DT_BAR0_RETEST_PROPOSED`**
 
-The MI6 diagnostic artifact, committed source revision, and physical test
-procedure have been checked. No physical machine has been launched in this
-work session and no real controller capability values have been supplied.
-Hardware qualification is not accepted. This record contains readiness
-information and the evidence checklist for the owner-run tests.
+An operator report is now available for SARAH_DT's first physical MI7 run. The
+application launched from the UEFI Shell, found one xHCI controller, rejected
+BAR0, and returned to the Shell without reading capability registers. Raw BAR
+descriptor values and a recording were not captured, so hardware qualification
+remains incomplete. The software investigation and proposed second SARAH_DT
+test are recorded in
+[MI7_SARAH_DT_BAR0_INVESTIGATION.md](MI7_SARAH_DT_BAR0_INVESTIGATION.md).
 
 ## Image identity and source verification
 
@@ -84,35 +86,35 @@ settings, or write PCI configuration or xHCI registers.
 
 ## Per-machine evidence
 
-All rows below are **pending owner evidence**. `Pending` does not mean a
-successful launch, zero controllers, or a missing capability. Populate values
-only from that machine's capture. Preserve the original image or a verbatim
-transcript with each completed record.
+The SARAH_DT rows include the operator's reported first run. Missing details
+remain pending; preserve the original image or a verbatim transcript when
+available. ASUS VivoBook and AIDA_LPT remain pending owner evidence.
 
 ### SARAH_DT
 
 | Field | Observation |
 | --- | --- |
-| Test date/time and time zone | Pending |
-| Exact model / firmware version | Pending |
-| Launch method / dedicated media | Pending |
-| Secure Boot or trust-policy result | Pending |
-| Application launched / returned successfully | Pending |
-| Capture file or transcript | Pending |
-| xHCI controller count reported | Pending |
-| PCI segment:bus:device.function | Pending |
-| Vendor / device IDs | Pending |
-| BAR0 width / base / length / maximum / translation / attributes | Pending |
-| BAR0 resource validation result and failure reason, if any | Pending |
-| xHCI interface version / CAPLENGTH | Pending |
-| Maximum slots / root ports / interrupters | Pending |
-| Scratchpad-buffer requirement | Pending |
-| Context size / 64-bit addressing support | Pending |
-| DBOFF / RTSOFF and reported capability words | Pending |
-| HCCPARAMS2, if reported for this interface version | Pending |
-| First failed stage and exact EFI status, if any | Pending |
-| Hang, firmware message, or recovery action | Pending |
-| Confirmation that no controller or PCI write was attempted | Pending |
+| Test date/time and time zone | Not recorded |
+| Exact model / firmware version | Not reported |
+| Launch method / dedicated media | Launched from UEFI Shell; medium not reported |
+| Secure Boot or trust-policy result | Application launched; exact trust-policy state not recorded |
+| Application launched / returned successfully | Yes; returned to UEFI Shell |
+| Capture file or transcript | Not provided |
+| xHCI controller count reported | 1 |
+| PCI segment:bus:device.function | `0000:00:14.0` |
+| Vendor / device IDs | `8086:06ED` |
+| PCI class tuple | `0C/03/30` |
+| BAR0 width / base / length / maximum / translation / attributes | Screen showed width/base/length `0`; these were parser defaults, not raw fields. Other values unavailable. |
+| BAR0 resource validation result and failure reason, if any | Rejected as `malformed BAR0 resource descriptor`; raw descriptor unavailable |
+| xHCI interface version / CAPLENGTH | Not read |
+| Maximum slots / root ports / interrupters | Not read |
+| Scratchpad-buffer requirement | Not read |
+| Context size / 64-bit addressing support | Not read |
+| DBOFF / RTSOFF and reported capability words | Not read |
+| HCCPARAMS2, if reported for this interface version | Not read |
+| First failed stage and exact EFI status, if any | Parser rejection; exact EFI status not displayed |
+| Hang, firmware message, or recovery action | Returned to UEFI Shell; no hang reported |
+| Confirmation that no controller or PCI write was attempted | Probe is read-only; no write was reported |
 
 ### ASUS VivoBook
 

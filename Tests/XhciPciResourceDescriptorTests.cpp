@@ -130,6 +130,22 @@ int main() {
     Check(!TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
           "missing end tag rejected");
     MakeResource(bytes, 64, 0x00000001FEC01000ULL, 0x10000ULL);
+    bytes[46] = 0x7A;
+    Check(!TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
+          "wrong end-tag descriptor rejected");
+    MakeResource(bytes, 64, 0x00000001FEC01000ULL, 0x10000ULL);
+    uint8_t trailing[49];
+    memcpy(trailing, bytes, sizeof(bytes));
+    trailing[48] = 0x00;
+    Check(!TryParseSingleQwordMemoryResource(trailing, sizeof(trailing), &parsed),
+          "trailing data after end tag rejected");
+    uint8_t multipleRanges[94] = {};
+    MakeResource(multipleRanges, 32, 0xE0000000ULL, 0x1000);
+    MakeResource(multipleRanges + 46, 32, 0xE0001000ULL, 0x1000);
+    Check(!TryParseSingleQwordMemoryResource(multipleRanges,
+              sizeof(multipleRanges), &parsed),
+          "multiple QWORD ranges fail closed outside the single-range contract");
+    MakeResource(bytes, 64, 0x00000001FEC01000ULL, 0x10000ULL);
     bytes[47] = 0x01;
     Check(!TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
           "invalid nonzero checksum rejected");
@@ -147,8 +163,16 @@ int main() {
           "reserved general flags rejected");
     MakeResource(bytes, 64, 0x00000001FEC01000ULL, 0x10000ULL);
     bytes[5] = 0x02;
-    Check(!TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
-          "cacheable resource attributes rejected");
+    Check(TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
+          "cacheable memory resource accepted");
+    MakeResource(bytes, 64, 0x00000001FEC01000ULL, 0x10000ULL);
+    bytes[5] = 0x04;
+    Check(TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
+          "write-combining memory resource accepted");
+    MakeResource(bytes, 64, 0x00000001FEC01000ULL, 0x10000ULL);
+    bytes[5] = 0x07;
+    Check(TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
+          "read-write prefetchable memory resource accepted");
     MakeResource(bytes, 64, 0x00000001FEC01000ULL, 0x10000ULL);
     bytes[5] = 0x40;
     Check(!TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
