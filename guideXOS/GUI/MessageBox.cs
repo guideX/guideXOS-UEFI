@@ -10,6 +10,9 @@ namespace guideXOS.GUI {
         string _message;
         private System.Action _serviceCloseCallback;
         private bool _serviceCallbackRaised;
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+        private bool _diagnosticOpenErrorPending;
+#endif
         /// <summary>
         /// Constructor
         /// </summary>
@@ -47,8 +50,21 @@ namespace guideXOS.GUI {
             _serviceCallbackRaised = false;
         }
 
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+        internal void MarkDiagnosticOpenError() {
+            _diagnosticOpenErrorPending = true;
+        }
+#endif
+
         public override void OnSetVisible(bool value) {
             base.OnSetVisible(value);
+#if UEFI_DIAGNOSTIC_APP_RUNTIME
+            if (!value && _diagnosticOpenErrorPending) {
+                _diagnosticOpenErrorPending = false;
+                global::Program.MarkUefiAppRuntime(
+                    "ERROR_WINDOW_DISMISSED=1");
+            }
+#endif
             if (!value && _serviceCloseCallback != null &&
                     !_serviceCallbackRaised) {
                 _serviceCallbackRaised = true;

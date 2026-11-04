@@ -1,28 +1,31 @@
 # AMCONV2G Guest Lifecycle Acceptance
 
-## Current R3 acceptance status and procedure
+## Current R4R1 status and procedure
 
-**Current status:** `AMCONV2G_R3_UI_AND_PACKAGES_READY`; guest execution remains `QAC_GUEST_PENDING`.
+**Current status:** `AMCONV2G_R4R1_SERVICES_REPAIRED_HOSTED`; guest acceptance remains pending. The R4 Candidate A services diagnostic failure was attributed to a save-selection/persistence assumption and corrected in source. The corrected diagnostic has not been run in a guest. See [the R4R1 recovery report](AMCONV2G_R4R1_SERVICES_AND_QAC_RECOVERY.md) for evidence, builds, tests, package hashes, and QAC contract details.
 
-R3 adds the production **Open Root** row to the existing Computer Files left navigation pane. The click submits `ApplicationShellOpenRequest.ForShellFolder("gxos.shell.root", "/")` through the current application shell service context. The updated Candidate A (RDSK v1) and Candidate B (RDSK v2) ESPs and full hashes are recorded in [the R3 report](AMCONV2G_R3_ROOT_UI_REACHABILITY.md). Both are offline-ready only; no guest boot or UI result is claimed.
+Fresh offline AppRuntime packages are under `out/amconv2g-r4r1-20261104/packages-final/`: Candidate A uses RDSK v1; Candidate B uses RDSK v2. Their manifests and complete hashes are in the recovery report. They have not been booted. The accepted R3 package directories remain unchanged.
 
-Use this sequence in the next separately authorized QAC acceptance run:
+The live coordinator used during R4 did not retain a reservation when asked and returned `UnknownCommand` for `finishChild`. Although the checked-in QAC source/docs describe a retained acceptance workflow, the next run should use two separate default one-child reservations with the observed live coordinator. Obtain explicit authorization for both sequential reservations. Do not request retained mode or call `finishChild` for this workflow. For each candidate, the same owner process must request admission and launch/register its direct QEMU child. QAC releases the default reservation after verified child exit; inspect that exact reservation as `Released`, then require clean `status`/`list` before requesting the next one. If the live response differs, stop before launching another child.
 
-1. Boot Candidate A through QAC and wait for desktop startup.
-2. Open Start → **Computer Files** and confirm the ordinary drive chooser remains available.
-3. Click **Open Root** in the Computer Files left pane. Confirm a root folder window or the existing typed error window.
-4. Verify serial order and values for `FILES_ROOT_ACTION=begin`, `SHELL_FOLDER_REQUEST`, folder bind/inspection, `FACTORY_LAUNCH`, `FILES_FOLDER_WINDOW`, and `FILES_ROOT_ACTION=result`. Confirm the result identifies `gxos.builtin.files` and a new instance handle.
-5. Navigate into a populated directory, return with **Up Level**, close the window, and verify instance termination plus mount-release markers.
-6. Boot Candidate B and repeat ordinary Computer Files launch and **Open Root**.
-7. Open `WithFiles` and confirm `inside.txt` and `Child`; open `Empty` and confirm it is listed with no entries; also inspect `Nested/DeepEmpty` and return to the parent.
-8. Open a second Root window, close one while the other remains usable, then close the other and verify normal instance and lease release.
-9. Shut down through QAC and verify guest exit and QAC cleanup.
+### Candidate A — RDSK v1 baseline
 
-The mouse path is the existing PS/2 → `MouseEventDispatcher` → `Control.MouseButtons` path; the new action needs only a left click. No R3 GUI event or service/factory/window lifecycle was executed. The full acceptance procedure must capture actual guest serial output and keep each assertion pending until it is observed.
+1. Before requesting admission, verify QAC is healthy and the acceptance lane is clear: no conflicting reservation, foreign QEMU, or census warning. Confirm the authorization explicitly covers this Candidate A reservation and the separate Candidate B request.
+2. The owner/launcher process requests a default exclusive acceptance reservation and records its ID. Require `Granted` and `retainReservationOnChildExit=false`; if queued/blocked, do not launch. Use `prepareLaunch`, start a direct QEMU child from that owner, and register the exact child.
+3. Boot the fresh Candidate A package. Capture firmware/kernel handoff, RDSK mount, desktop, and framebuffer. Verify `APP_RUNTIME_SERVICES_RESULT=PASS`, `NOTEPAD_SAVE_SELECTION=PASS`, `NOTEPAD_SAVE_CANCEL=PASS`, service cleanup, and `NOTEPAD_SAVE_PERSISTENCE=NOT_TESTED`. Keep the guest services result pending until the actual markers are captured.
+4. Open Start → **Computer Files** and confirm the ordinary drive chooser. Click **Open Root**. Record `FILES_ROOT_ACTION=begin`, `SHELL_FOLDER_REQUEST`, typed shell result, folder binding/inspection, factory launch, `FILES_FOLDER_WINDOW`, and `FILES_ROOT_ACTION=result`. Confirm `gxos.builtin.files` and the new instance handle.
+5. Navigate into a populated directory, return with **Up Level**, and close the Root window. Verify `INSTANCE_TERMINATED` and `FILES_MOUNT_RELEASE_BEGIN` / `FILES_MOUNT_RELEASE_END`. If a typed error window appears, capture `ERROR_WINDOW_BOUNDS`, its typed shell result, and `ERROR_WINDOW_DISMISSED=1` after closing; a failed Root activation is not a pass.
+6. Shut down through the owned QMP endpoint. Wait for and reap the exact child, inspect the exact QAC reservation as `Released`, and check `status`/`list` for zero reservations, managed/foreign QEMU, queued/blocked requests, and census warnings before ending the owner.
 
-Mount replacement remains deferred: no supported production operation was found to replace the active filesystem and request disposal. Hosted mount-lifetime replacement tests do not make that scenario guest-reachable.
+### Candidate B — RDSK v2
 
-The remainder of this file is the dated R1 acceptance record. Its package-readiness and UI-reachability status describes the earlier qualification point; R3 results and the current procedure above supersede it for the next run.
+7. Recheck explicit authorization and QAC availability. Request a new default exclusive acceptance reservation with a new ID, again from the direct-child owner process. Repeat the boot, corrected service diagnostic, Computer Files launch, and Open Root assertions above with Candidate B.
+8. Inspect `WithFiles` and its `Child`; inspect `Empty` and confirm it has no entries; inspect `Nested/DeepEmpty` and return to its parent. Open a second Root window, close one while the other remains usable, then close the last and verify instance termination and lease release.
+9. Shut down, wait/reap, verify Candidate B's exact reservation is `Released`, and perform the same clean final QAC `status`/`list` checks. Keep A and B evidence and outcomes separate.
+
+The mouse action uses the existing PS/2 → `MouseEventDispatcher` → `Control.MouseButtons` path and needs only a left click. Existing diagnostic markers cover shell request/result, factory selection, folder inspection, window attachment, instance termination, mount release, error-window display bounds, and (in this AppRuntime build) dismissal on the real hide transition. No guest UI or lifecycle claim is made until it is captured. Mount replacement remains deferred because no supported production operation was found to replace the active filesystem and request disposal; hosted replacement tests do not make it guest-reachable.
+
+The remainder of this file is the dated R1 acceptance record. R1/R3 package-readiness and procedure notes describe earlier qualification points; the current R4R1 result and procedure above supersede them for the next run.
 
 **Outcome C — `AMCONV2G_QAC_OR_EXECUTION_BLOCKED`**
 

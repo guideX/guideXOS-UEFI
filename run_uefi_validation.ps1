@@ -3441,8 +3441,8 @@ if ($isAppRuntimeValidation) {
         '(?m)^APP_RUNTIME_PHASE9_OPEN_SUCCESS=1$').Count
     $phase9OpenCancel = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_PHASE9_OPEN_CANCEL=1$').Count
-    $phase9SaveResult = [regex]::Matches($finalContent,
-        '(?m)^APP_RUNTIME_PHASE9_SAVE_RESULT=(success|cancel)$').Count
+    $phase9SaveDialogResult = [regex]::Matches($finalContent,
+        '(?m)^APP_RUNTIME_PHASE9_SAVE_DIALOG_RESULT=selected$').Count
     $phase9Confirmation = [regex]::Matches($finalContent,
         '(?m)^APP_RUNTIME_PHASE9_CONFIRMATION_RESULT=(accepted|rejected|cancelled)$').Count
     $phase9ShellLaunch = [regex]::Matches($finalContent,
@@ -3546,7 +3546,7 @@ if ($isAppRuntimeValidation) {
         phase9Runtime = $phase9Runtime
         phase9OpenSuccess = $phase9OpenSuccess
         phase9OpenCancel = $phase9OpenCancel
-        phase9SaveResult = $phase9SaveResult
+        phase9SaveDialogResult = $phase9SaveDialogResult
         phase9Confirmation = $phase9Confirmation
         phase9ShellLaunch = $phase9ShellLaunch
         phase9DocumentOpen = $phase9DocumentOpen

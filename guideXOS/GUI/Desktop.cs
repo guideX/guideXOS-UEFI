@@ -1407,6 +1407,7 @@ namespace guideXOS.GUI {
         // bar path used for application windows. MessageBox normally sizes
         // itself on draw; mirror that calculation before emitting bounds so
         // the harness can dismiss the visible error deterministically.
+        box.MarkDiagnosticOpenError();
         box.Width = WindowManager.font.MeasureString(text);
         Program.MarkUefiAppRuntime("ERROR_WINDOW_BOUNDS=x=" + x.ToString() +
             ";y=" + y.ToString() + ";w=" + box.Width.ToString());

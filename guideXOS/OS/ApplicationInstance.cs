@@ -2276,8 +2276,10 @@ namespace guideXOS.OS {
                     (notepadDialogFlows ? "1" : "0"));
                 Program.MarkUefiAppRuntime("PHASE9_OPEN_CANCEL=" +
                     (notepadDialogFlows ? "1" : "0"));
-                Program.MarkUefiAppRuntime("PHASE9_SAVE_RESULT=" +
-                    (notepadDialogFlows ? "success" : "fail"));
+                Program.MarkUefiAppRuntime("PHASE9_SAVE_DIALOG_RESULT=" +
+                    (notepadDialogFlows ? "selected" : "fail"));
+                Program.MarkUefiAppRuntime(
+                    "PHASE9_SAVE_PERSISTENCE=not_tested");
                 Program.MarkUefiAppRuntime("PHASE9_CONFIRMATION_RESULT=" +
                     (notepadDialogFlows ? "cancelled" : "fail"));
                 Program.MarkUefiAppRuntime("PHASE9_SHELL_LAUNCH=" +

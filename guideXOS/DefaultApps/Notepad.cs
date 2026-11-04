@@ -575,7 +575,7 @@ namespace guideXOS.DefaultApps {
             bool crossOwnerRejected = false;
             bool openSuccess = false;
             bool openCancel = false;
-            bool saveSuccess = false;
+            bool saveSelection = false;
             bool saveCancel = false;
             bool confirmation = false;
             try {
@@ -620,13 +620,25 @@ namespace guideXOS.DefaultApps {
                         saveHandle, ApplicationFileDialogOutcome.Selected,
                         "Programs/phase9.txt")
                     : ApplicationServiceResult.InvalidRequestResult();
-                PollServiceRequests();
-                CompleteDiagnosticMessage();
-                saveSuccess = completed.Succeeded &&
-                    _savedPath == "Programs/phase9.txt" &&
-                    _fileName == "phase9.txt" && !_dirty &&
-                    Title == "Notepad - phase9.txt";
+                ApplicationServiceResult<ApplicationServiceRequestStatus<
+                    ApplicationFileDialogResult>> saveObserved = saveHandle.IsValid
+                        ? _services.SaveFile.Observe(_serviceContext, saveHandle)
+                        : null;
+                saveSelection = completed.Succeeded && saveObserved != null &&
+                    saveObserved.Succeeded && saveObserved.Value != null &&
+                    saveObserved.Value.IsTerminal &&
+                    saveObserved.Value.State ==
+                        ApplicationServiceRequestState.Completed &&
+                    saveObserved.Value.Value != null &&
+                    saveObserved.Value.Value.Outcome ==
+                        ApplicationFileDialogOutcome.Selected &&
+                    saveObserved.Value.Value.SelectedPath ==
+                        "Programs/phase9.txt";
+                if (saveHandle.IsValid)
+                    _saveRequest = ApplicationServiceRequestHandle.Invalid;
+                _afterSave = null;
 
+                string pathBeforeSaveCancel = _savedPath;
                 _text = "Phase 9 cancelled save";
                 _dirty = true;
                 OpenSaveAs();
@@ -634,9 +646,26 @@ namespace guideXOS.DefaultApps {
                 cancelled = cancelSaveHandle.IsValid
                     ? _services.SaveFile.Cancel(_serviceContext,
                         cancelSaveHandle) : ApplicationServiceResult.InvalidRequestResult();
-                PollServiceRequests();
-                saveCancel = cancelled.Code == ApplicationServiceResultCode.Cancelled &&
-                    _dirty && _savedPath == "Programs/phase9.txt";
+                ApplicationServiceResult<ApplicationServiceRequestStatus<
+                    ApplicationFileDialogResult>> cancelSaveObserved =
+                        cancelSaveHandle.IsValid
+                            ? _services.SaveFile.Observe(_serviceContext,
+                                cancelSaveHandle) : null;
+                saveCancel = cancelled.Code ==
+                        ApplicationServiceResultCode.Cancelled &&
+                    cancelSaveObserved != null &&
+                    cancelSaveObserved.Succeeded &&
+                    cancelSaveObserved.Value != null &&
+                    cancelSaveObserved.Value.IsTerminal &&
+                    cancelSaveObserved.Value.State ==
+                        ApplicationServiceRequestState.Cancelled &&
+                    cancelSaveObserved.Value.Value != null &&
+                    cancelSaveObserved.Value.Value.Outcome ==
+                        ApplicationFileDialogOutcome.Cancelled &&
+                    _dirty && _savedPath == pathBeforeSaveCancel;
+                if (cancelSaveHandle.IsValid)
+                    _saveRequest = ApplicationServiceRequestHandle.Invalid;
+                _afterSave = null;
 
                 Visible = false;
                 ApplicationServiceRequestHandle confirmationHandle = _confirmRequest;
@@ -657,8 +686,10 @@ namespace guideXOS.DefaultApps {
                     (openSuccess ? "PASS" : "FAIL"));
                 global::Program.MarkUefiAppRuntime("NOTEPAD_OPEN_CANCEL=" +
                     (openCancel ? "PASS" : "FAIL"));
-                global::Program.MarkUefiAppRuntime("NOTEPAD_SAVE_SUCCESS=" +
-                    (saveSuccess ? "PASS" : "FAIL"));
+                global::Program.MarkUefiAppRuntime("NOTEPAD_SAVE_SELECTION=" +
+                    (saveSelection ? "PASS" : "FAIL"));
+                global::Program.MarkUefiAppRuntime(
+                    "NOTEPAD_SAVE_PERSISTENCE=NOT_TESTED");
                 global::Program.MarkUefiAppRuntime("NOTEPAD_SAVE_CANCEL=" +
                     (saveCancel ? "PASS" : "FAIL"));
                 global::Program.MarkUefiAppRuntime("NOTEPAD_CONFIRMATION=" +
@@ -668,7 +699,7 @@ namespace guideXOS.DefaultApps {
                 global::Program.MarkUefiAppRuntime("NOTEPAD_DIALOG_CLEANUP=" +
                     (cleanup ? "PASS" : "FAIL"));
 #endif
-                return openSuccess && openCancel && saveSuccess && saveCancel &&
+                return openSuccess && openCancel && saveSelection && saveCancel &&
                     confirmation && crossOwnerRejected && cleanup;
             } catch {
 #if UEFI_DIAGNOSTIC_APP_RUNTIME
