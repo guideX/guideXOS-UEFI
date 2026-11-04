@@ -1,84 +1,73 @@
 # AMCONV2G-R4 — QAC Guest Acceptance Results
 
-**Outcome C — `AMCONV2G_R4_QAC_OR_EXECUTION_BLOCKED`**
-**Detailed status: `QAC_GUEST_PENDING`**
-**Qualification date:** 2026-11-02
-**Branch:** `APP_MODEL`
+| Field | Result |
+|---|---|
+| Outcome | `AMCONV2G_R4_QAC_OR_EXECUTION_BLOCKED` |
+| Guest status | Candidate A booted to desktop; production lifecycle acceptance incomplete |
+| Qualification date | 2026-11-04 |
+| Branch | `APP_MODEL` |
 
 ## Decision
 
-No guest was admitted or launched. This conversation contained no separate, explicit authorization for APP_MODEL QAC guest testing, and the task instructions explicitly state that the request itself does not grant authorization. QAC admission, live coordinator queries, QEMU census, and guest interaction were therefore not attempted. The detailed guest status remains `QAC_GUEST_PENDING`.
+The authorized run reached the Candidate A (RDSK v1) desktop and produced real guest serial and framebuffer evidence. The live coordinator granted APP_MODEL an exclusive acceptance reservation and registered the direct QEMU child. The coordinator did not honor `retainReservationOnChildExit: true`, and it does not implement the documented `finishChild` command. That prevents the required retained two-candidate workflow. Candidate A was shut down through its QMP endpoint, and QAC now confirms its reservation is released with no managed or foreign QEMU process. Candidate B was not launched.
 
-Both preserved R3 offline ESP candidates were revalidated read-only against their existing manifests. Their loader, kernel, ramdisk, and ESP tree identities match the accepted values. This confirms offline package integrity only; it does not establish firmware boot, runtime startup, GUI behavior, application lifecycle, or cleanup in a guest.
+The guest reached `KMAIN`, initialized the RDSK filesystem and desktop, entered the continuous desktop loop, and emitted valid graphics heartbeats. The boot-time AppRuntime diagnostics emitted factory/window/instance lifecycle markers, but the application-services diagnostic reported `APP_RUNTIME_SERVICES_RESULT=FAIL` (`APP_RUNTIME_NOTEPAD_SERVICE_DIAGNOSTIC=FAIL`, `APP_RUNTIME_PHASE9_RUNTIME_OK=0`). The production Computer Files drive chooser and Open Root interaction were not attempted. No Root factory/window or mount-lease markers were observed.
 
-## Revision identity and repository state
+## Revision and preservation
 
 - Starting branch: `APP_MODEL`.
-- Starting HEAD: `0a3dd6956009ff7ce600fae1debb3e5ce225bdd8`, matching the requested baseline.
-- Ending tested source HEAD before this report-only commit: `0a3dd6956009ff7ce600fae1debb3e5ce225bdd8`; no source, test, or tooling changes were made.
-- This report is recorded in a separate local documentation-only commit immediately after that source HEAD.
-- The starting worktree contained only these untracked test output directories; they were preserved:
-  - `Tests/AMCONV2DFatInspectionTests/bin/` and `obj/`
-  - `Tests/AMCONV2ERdskInspectionTests/bin/` and `obj/`
-  - `Tests/AMCONV2FRdskV2Tests/bin/` and `obj/`
-- The four requested AMCONV2G reports/procedures were read. The AMCONV2G-R3 report already records the production Open Root source route and the pending guest assertions.
-- QAC operating guidance was read from the QAC README and Phase 4R2 coordination procedure in the separate QAC checkout, which remained read-only.
+- Source HEAD: `dace1f25c3ad7f9b2014f6a5b62ad44684ae6738` (the requested commit). No tracked source, tests, or production tooling files were changed. Run-only helper scripts and evidence are isolated under `out/amconv2g-20261104-r4-acceptance/`.
+- The only pre-existing worktree entries were untracked `bin/` and `obj/` directories under the D, E, and F inspection tests. They were preserved.
+- The accepted R3 candidate ESPs remained read-only inputs. QEMU used an isolated runtime copy of Candidate A and a per-run writable OVMF variables file. Candidate B was not copied or launched.
+- Original candidate file hashes before and after the guest run match the accepted R3 identities:
 
-## Authorization, admission, and cleanup
-
-No separate APP_MODEL guest-test authorization was present in the current session. The QAC coordinator's current health, reservations, running QEMU processes, and owner were not queried because the authorization gate was not crossed. Historical QAC observations in earlier reports were not treated as current state.
-
-No reservation was requested, no QEMU command was launched, no guest was interacted with, and no reservation or process was created by this run. There is no reservation ID, QEMU PID, serial log, screenshot, or cleanup action to report. No QAC resource was held by this run, so no release was required.
-
-The documented admission path is an exclusive acceptance reservation with a direct `qemu-system-*.exe` child. Sequential candidate boots must remain under the same verified owner using the documented retained-acceptance workflow; graceful shutdown is through a QMP endpoint bound to the verified child. These are procedure notes only, not evidence of current QAC state or admission.
-
-## Candidate package verification
-
-The existing manifests under `out/amconv2g-20261102-r3-final/` report `offline package ready for guest testing`, `guest_boot_claimed: false`, and diagnostic mode `AppRuntime`. The read-only command below checked each staged ESP against its manifest, exact file set, accepted loader and ramdisk hashes, and ELF constraints; it did not rewrite either manifest or package:
-
-```powershell
-python Tools/AMCONV2G/validate_candidate_packages.py `
-  --output-root out/amconv2g-20261102-r3-final `
-  --audit-a out/amconv2g-20261102-r3-final/package-pipeline-seed/out/managed-artifacts-rdsk-candidate-a-v1.csv `
-  --audit-b out/amconv2g-20261102-r3-final/package-pipeline-seed/out/managed-artifacts-rdsk-candidate-b-v2.csv `
-  --check-only
-```
-
-Both candidates passed. Each ESP contains exactly `EFI/BOOT/BOOTX64.EFI`, `kernel.elf`, and `ramdisk.img`. The kernel is ELF64 little-endian `ET_EXEC`, `EM_X86_64`, has eight load segments, an executable entry at `0x1004DE14`, and no dynamic or interpreter segments.
-
-| Candidate | RDSK | Loader SHA-256 | Kernel SHA-256 | Ramdisk SHA-256 | ESP tree SHA-256 |
+| Candidate | RDSK | Loader SHA-256 | Kernel SHA-256 | Ramdisk SHA-256 | Accepted ESP tree SHA-256 |
 |---|---:|---|---|---|---|
 | A | v1 | `C185B725E46D5D2E0E6F441D69B3578AD987FEC238152F60FD59657069DE78C9` | `862B3A95420E1C02411061610487664100908A4F2FCB2311B633586A99BD7DF1` | `B11822A04AE5BE3A0C858851ECD3BC3C2C8EDCA7C9A4157A1753E0E8C080785E` | `C4991782ABE5B6A65CF2700562041D4E0529CA26BAF6BB2CB817D1639082BB79` |
 | B | v2 | `C185B725E46D5D2E0E6F441D69B3578AD987FEC238152F60FD59657069DE78C9` | `862B3A95420E1C02411061610487664100908A4F2FCB2311B633586A99BD7DF1` | `18AC75ABEA193CD2F80E08D13A0558646303580131EC6847000E9CEAD7D15BD4` | `CBAC27CF8A23554B9FA86D8A6879F5C155D2A4603A1FFD4A4DB140D0EE61CE3B` |
 
-Both packages declare `AppRuntime`; `guideXOS/guideXOS.csproj` maps that diagnostic mode to `UEFI_DIAGNOSTIC_APP_RUNTIME`. The accepted kernel hash is `862B3A95420E1C02411061610487664100908A4F2FCB2311B633586A99BD7DF1`. The prior reports document a Q35 8.2 / OVMF code plus writable variables profile, 1024 MiB RAM, serial capture, and no-reboot. That profile was not executed or independently verified against current firmware files in this run. The existing direct-launch validation script builds/uses the root ESP and is not a substitute for a QAC-managed launch of these immutable candidates.
+No builds, package generation, offline preparation, or hosted suites were repeated. The run evidence and the QAC owner harness are under the ignored output directory `out/amconv2g-20261104-r4-acceptance/`. They do not alter the preserved candidate directories under `out/amconv2g-20261102-r3-final/`.
 
-## Guest acceptance results
+## QAC admission and cleanup
 
-No guest assertions were performed. Pass/fail count for guest assertions: **0 performed**. Candidate A was not launched, so Candidate B was not launched either.
+- Preflight at 2026-11-04 12:56:16 UTC: coordinator `guideXOS QAC 2.0.0`, PID `1696`, healthy; zero reservations, zero QEMU processes, zero foreign QEMU processes, and no census warning.
+- Reservation `3beb3ebcf7d04d5a80591d776867e099` was immediately granted to APP_MODEL in exclusive acceptance mode. Owner PowerShell PID `17392` started direct `qemu-system-x86_64.exe` child PID `21136` at 12:56:17 UTC. QAC verified its executable, start time, and owner; the reservation was not degraded.
+- The owner sent the retained-acceptance request field as `true`, but QAC recorded `retainReservationOnChildExit: false`. After the guest shutdown, QAC returned `UnknownCommand` for `finishChild`; the running coordinator's supported-command response omitted that operation. The running coordinator was not restarted or modified.
+- Candidate A was shut down with QMP `quit` on loopback port `62074` at 12:59:24 UTC. The owner process exited after the unsupported `finishChild` response. QAC inspection then confirmed the session reservation state `Released`, reason `Registered child process exited.`, and owner liveness `Exited`.
+- Final `qac list` and `qac status`: zero reservations, zero managed sessions, zero QEMU processes, zero foreign processes, zero queued or blocked requests. No QAC resources from this session remain held. The QAC coordinator itself was left running.
 
-| Acceptance area | Result |
+The documented R4 procedure requires the same verified owner to retain an exclusive acceptance lane between Candidate A and Candidate B. Using separate reservation requests would not follow that procedure, so the run stopped after Candidate A cleanup.
+
+## Candidate A guest observations
+
+QEMU used the existing `pc-q35-8.2` and OVMF code profile, a fresh writable variables file, 1024 MiB RAM, the isolated Candidate A ESP through the existing FAT directory drive, serial capture, `-no-reboot`, no NIC, and a loopback QMP endpoint. The guest reached a 1280×800 desktop; the screenshot shows the Files, Docs, Images, and Audio desktop icons.
+
+| Acceptance area | Actual result |
 |---|---|
-| QAC authorization, admission, and reservation ownership | `QAC_GUEST_PENDING`; not attempted |
-| Firmware start, EFI loader, ELF loading, kernel entry, NativeAOT/runtime initialization | Not observed; no guest run |
-| Application services, desktop, GUI responsiveness, Computer Files availability | Not observed; no guest run |
-| Guest keyboard/mouse focus or event delivery | Not attempted; no guest run |
-| Ordinary drive chooser | Not attempted; no guest run |
-| Production Open Root click and typed shell request | Not attempted; no guest run |
-| Shell resolution, filesystem lease, root inspection, production factory, window activation | Not observed; no guest run |
-| Instance identity, separate windows, repeated Root activation, close behavior, registry cleanup | Not observed; no guest run |
-| Mount lease release, stale ownership, double disposal, restart behavior | Not observed; no guest run |
-| RDSK v1/v2 guest parsing, enumeration, and navigation comparison | Not observed; no guest run |
-| Missing path, file-as-directory, unsupported Server alias, typed error presentation | Not attempted; no guest run |
-| Guest mount replacement and deferred disposal | Deferred; no supported production replacement/disposal path was identified in the prior R2/R3 review |
-| Serial trace, screenshots, shutdown, QAC process/reservation release | None; no guest or reservation was created |
+| Firmware / EFI loader / kernel entry | Observed. Serial contains loader handoff, `[KMAIN] INITIALIZE`, and subsequent runtime startup. |
+| Candidate A RDSK and filesystem startup | Observed. The isolated ESP's ramdisk hash matches the accepted RDSK v1 image; guest serial shows ramdisk initialization, `RdskFS` initialization, and `[FS] mounted`. |
+| Desktop | Observed. `[DESKTOP] initialized`, `SMAIN_DISPATCH_REASON=UEFI_CONTINUOUS_DESKTOP`, `CONTINUOUS_DESKTOP_ENTER`, four `CONTINUOUS_HEARTBEAT_GRAPHICS_VALID=1` markers, and a QMP framebuffer capture. |
+| Boot-time factory/window/application-instance diagnostics | Observed as AppRuntime diagnostic output: 17 `APP_RUNTIME_FACTORY_LAUNCH` markers, 16 `APP_RUNTIME_INSTANCE_TERMINATED` markers, and 11 successful `APP_RUNTIME_LAUNCH_RESULT` markers. These are startup diagnostics, not the requested Computer Files Open Root interaction. |
+| AppRuntime application-services diagnostic | Failed: `APP_RUNTIME_SERVICES_RESULT=FAIL`, `APP_RUNTIME_NOTEPAD_SERVICE_DIAGNOSTIC=FAIL`, and `APP_RUNTIME_PHASE9_RUNTIME_OK=0`. Preserve this as a guest failure; no source repair was attempted in this acceptance session. |
+| Ordinary Computer Files drive chooser | Not attempted. |
+| Production Open Root click and typed shell request | Not attempted; no `FILES_ROOT_ACTION`, `SHELL_FOLDER_REQUEST`, or `SHELL_FOLDER_RESULT` marker. |
+| Root folder factory, window, and application instance | Not observed; no `gxos.builtin.files` Root launch, `FILES_FOLDER_WINDOW`, or Root result marker. |
+| Root mount lease acquire/release | Not observed; no folder mount or `FILES_MOUNT_RELEASE_*` marker. |
+| Directory navigation, separate Root windows, close behavior | Not attempted. |
+| Candidate B RDSK v2 guest parsing and lifecycle | Not run because the retained acceptance workflow was unavailable. |
+| Guest keyboard/mouse event delivery | Not attempted. |
+| Graceful guest exit and QAC release | Observed and verified as described above. |
 
-R3 source review documents that the real Computer Files **Open Root** row submits `ApplicationShellOpenRequest.ForShellFolder("gxos.shell.root", "/")` through the shell service, with the existing factory and `MultiInstance` registry handling the request. The corresponding click uses the existing PS/2 mouse path through `MouseEventDispatcher` and `Control.MouseButtons`. Prior Desktop P3 evidence documents QMP pointer input on this source family. None of these guest transitions or inputs were exercised in R4. The eventual GUI run must click inside the QEMU display first to establish guest focus as specified in the acceptance procedure. If event delivery fails, classify that separately as `INPUT_OR_UI_BLOCKED`.
+Evidence files:
 
-## Source changes, commits, and remaining work
+- Serial trace: `out/amconv2g-20261104-r4-acceptance/candidate-a/serial.log` — SHA-256 `6C46958D606EC4AC035F5C2FD373B07C24B63081B256E855AAD2828BF0F64A9D`.
+- Desktop framebuffer: `out/amconv2g-20261104-r4-acceptance/candidate-a/desktop-before-stop.png` (1280×800) — SHA-256 `27D8E495A3597FE8C81A44E577F9050CA8058AE1C524DAC00987B99E53DE1899`.
+- QAC owner log: `out/amconv2g-20261104-r4-acceptance/qac-owner.log`.
+- QAC reservation snapshot: `out/amconv2g-20261104-r4-acceptance/qac-inspect-released.json`.
+- QEMU launch metadata: `out/amconv2g-20261104-r4-acceptance/candidate-a-session.json`.
 
-No source repair, rebuild, hosted regression, or test suite was run. The only intended repository artifact from this attempt is this acceptance results report. Candidate packages and pre-existing untracked test outputs were preserved. Nothing was pushed.
+## Remaining acceptance work
 
-The blocker is the missing separate APP_MODEL guest-testing authorization. After authorization is provided, the operator must query current QAC health and ownership, establish the exclusive retained reservation, verify the chosen candidate and complete launch preflight, and run Candidate A before Candidate B. No current QAC availability or owner is asserted here.
+The R4 guest matrix remains incomplete. Resume only after the QAC coordinator used by this workstation supports and reports retained acceptance ownership across sequential children, including `finishChild`. Then run the existing Candidate A → Candidate B procedure, capture the production Computer Files / Open Root route and mount-lease lifecycle, and investigate the observed AppRuntime services diagnostic failure as a separate guest result. No offline preparation needs to be repeated.
 
-AMCONV2H should remain deferred until AMCONV2G has meaningful guest lifecycle evidence. Then choose a focused next scope, such as RDSK v2 UTF-8 path support or Server/C# namespace convergence. The current strict ASCII pathname contract remains in force; this report makes no UTF-8 support claim.
+No source or test changes were made, and nothing was pushed. This report is the intended documentation-only change for the current run; the local report commit follows the unchanged source HEAD above.
