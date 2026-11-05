@@ -10,7 +10,7 @@ The starting revision was `2c29f32df19e0f576f665e2a448a5f8e5f798cf6` on `FONT_SU
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| FONTS1–FONTS4 hosted baseline | Pass: 446 font checks, 0 failures; 42 desktop interaction assertions; pixel hash `0xEC1A69C86C9C5CC6` retained | `out\FONTS5-logs` build-worktree logs; the hosted runner used unique temporary `BaseOutputPath` and `BaseIntermediateOutputPath` values so the pre-existing untracked desktop test `bin/` and `obj/` stayed untouched |
+| FONTS1–FONTS4 hosted regressions | Pass: current FONTS5 harness 446 checks, 0 failures; exact starting-revision baseline 444 checks, 0 failures; 42 desktop interaction assertions; pixel hash `0xEC1A69C86C9C5CC6` retained | `out\FONTS5-verification-20261105\font-baseline-2c29.log`, `font-current-45ba.log`, and `desktop-interaction-net8.log`; all outputs were isolated so the pre-existing untracked desktop test `bin/` and `obj/` stayed untouched |
 | Runtime and Phase payload prerequisites | Reconstructed from their pinned/source build scripts; no fabricated metadata or substitute runtime inputs | Phase20/22/23 and Phase26–35 logs below |
 | Full kernel and UEFI ESP build | Pass; kernel compiled, converted to ELF, custom entry point resolved, and ESP assembled | `out\FONTS5-logs\final-image-build-complete.log` |
 | Managed artifact identity and staging audit | Pass: 41 identities; descriptor, build, RAM-disk, and compiled allowlist hashes agree 41/41 | `out\FONTS5-logs\final-managed-artifact-audit.csv` |
@@ -37,9 +37,11 @@ The clean build exposed and repaired several pipeline defects on `FONT_SUPPORT`:
 4. The UEFI source build's TrueType code called `char.IsHighSurrogate`/`IsLowSurrogate`, which are unavailable in this target profile. The shared internal range classifiers in `TrueTypeFont` are now used by both text layout and shell rendering, with two UTF-16 boundary regression checks.
 5. The project's legacy GRUB ISO target fails without `Tools\grub2\boot\grub\i386-pc\eltorito.img`. The production `build.ps1` assembles the UEFI ESP itself, so it now passes `-p:SkipISO=true` and does not invoke that unrelated ISO path.
 
+The image was produced from the detached build worktree with the FONTS5 source and phase-script changes applied. The checked FONTS5 source and phase-script files match the committed source; the detached `build.ps1` differs at one optional diagnostic-mode property concatenation (`=` versus `+=`). The production invocation used the default empty diagnostic mode, so that branch was not executed. The detached build worktree had 115 `git status --short` entries at final inspection and was left untouched; without a pre-build status snapshot, not every entry can be attributed to this qualification.
+
 ### Toolchain
 
-- .NET SDK: pinned `10.0.401` (`global.json`; the system SDK is not used for this build).
+- .NET SDK: pinned to `10.0.401` by `UserManagedProof\global.json`; the build log resolves it under `C:\Users\guideX\.dotnet`.
 - Runtime-source builder: Visual Studio 18 Community / MSVC 19.51.36260, CMake 4.3.1, Ninja 1.13.2.
 - Top-level packaging: bundled Python 3.12.14; Visual Studio 18 x64 native tools; LLVM `llvm-objcopy.exe` from `C:\Program Files\LLVM\bin`.
 - Windows SDK headers: `10.0.26100.0`.
@@ -71,6 +73,8 @@ The ELF conversion located `KMain` at VA `0x10044580`. The RAM-disk parser check
 The hosted `TrueTypeRuntimeFoundation` run reported FONTS1=234, FONTS2=73, FONTS3=111 (109 existing plus the two new surrogate classifier boundary checks), and FONTS4=28: **446 checks, 0 failures**. The 42 desktop interaction assertions passed. The fixture pixel hash remained `0xEC1A69C86C9C5CC6`. The run used isolated output/intermediate directories to preserve the existing untracked `Tests\UefiDesktopInteractionTests\bin\` and `obj\` directories.
 
 On 2026-11-05, the exact pre-FONTS5 font baseline was replayed from a temporary detached worktree at starting HEAD 2c29f32df19e0f576f665e2a448a5f8e5f798cf6: FONTS1=234, FONTS2=73, FONTS3=109, and FONTS4=28, all with zero failures; the pixel hash remained 0xEC1A69C86C9C5CC6. The current FONTS5 source adds two FONTS3 UTF-16 boundary checks, giving 446 total. The desktop interaction suite also passed all 42 assertions with the original .NET 8 target, using DOTNET_ROLL_FORWARD=Major because this host has the .NET 10 runtime and .NET 8 targeting pack. All verification outputs were isolated outside the repository's existing bin/ and obj/ directories.
+
+The latest current-tree 300-draw warm-host sample measured 39,525 ns/draw, with 11,797 cache hits, 39 rasterizations, and 2,188 cached coverage bytes. Timing varied across runs and is not a UEFI performance claim.
 
 Reproduction command for the font harness (with unique output paths when run in this checkout):
 
