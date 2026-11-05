@@ -1200,11 +1200,11 @@ namespace guideXOS.Misc {
             return value < truncated ? truncated - 1 : truncated;
         }
 
-        private static bool IsHighSurrogate(char value) {
+        internal static bool IsHighSurrogate(char value) {
             return value >= '\uD800' && value <= '\uDBFF';
         }
 
-        private static bool IsLowSurrogate(char value) {
+        internal static bool IsLowSurrogate(char value) {
             return value >= '\uDC00' && value <= '\uDFFF';
         }
 

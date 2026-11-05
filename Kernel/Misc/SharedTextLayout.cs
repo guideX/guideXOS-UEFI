@@ -315,8 +315,8 @@ namespace guideXOS.Misc {
             char first = text[start];
             codePoint = first;
             next = start + 1;
-            if (char.IsHighSurrogate(first) && next < end &&
-                char.IsLowSurrogate(text[next])) {
+            if (TrueTypeFont.IsHighSurrogate(first) && next < end &&
+                TrueTypeFont.IsLowSurrogate(text[next])) {
                 codePoint = 0x10000 + ((first - 0xD800) << 10) +
                             (text[next] - 0xDC00);
                 next++;

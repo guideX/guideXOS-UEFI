@@ -34,8 +34,10 @@ foreach ($payload in $record.payloads) {
     if ([string]::IsNullOrWhiteSpace($base)) { throw "Unknown Phase 31 payload mode: $mode" }
     $payloadRoot = Split-Path -Parent (Split-Path -Parent $artifact)
     $map = Join-Path $payloadRoot 'guidexos.map'
+    # The Phase23 builder sets BaseIntermediateOutputPath to the per-mode
+    # output root, so native link inputs live under obj\Release.
     $linkResponse = Join-Path $payloadRoot `
-        'obj\x64\Release\net9.0\guidexos-x64\native\link.rsp'
+        'obj\Release\net9.0\guidexos-x64\native\link.rsp'
     if (-not (Test-Path -LiteralPath $map)) { throw "Phase 31 map is absent: $map" }
     if (-not (Test-Path -LiteralPath $linkResponse)) {
         throw "Phase 31 link response is absent: $linkResponse"

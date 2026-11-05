@@ -522,6 +522,29 @@ if (-not $SkipRamdisk) {
     $phase23SourcePatchRoot = Join-Path $RootDir "out\dotnet\phase23-source-patch"
     $phase23SourcePatchRecord = Join-Path $phase23SourcePatchRoot "phase23-ilc-source-patch-record.json"
     $runtimeSourceRoot = Join-Path $RootDir "out\rt"
+    $runtimeSourceLockPath = Join-Path $RootDir "Tools\Phase20\runtime-source.lock.json"
+    if (-not (Test-Path -LiteralPath $runtimeSourceLockPath -PathType Leaf)) {
+        throw "Pinned runtime source lock is missing: $runtimeSourceLockPath"
+    }
+    $runtimeSourceLock = Get-Content -LiteralPath $runtimeSourceLockPath -Raw | ConvertFrom-Json
+    $runtimeRepository = [string]$runtimeSourceLock.source.repository
+    $runtimeCommit = [string]$runtimeSourceLock.source.commit
+    if (-not (Test-Path -LiteralPath $runtimeSourceRoot)) {
+        Write-Info "Pinned runtime checkout is absent; cloning $runtimeRepository at $runtimeCommit..."
+        & git -c core.longpaths=true clone --no-checkout $runtimeRepository $runtimeSourceRoot
+        if ($LASTEXITCODE -ne 0) { throw "Unable to clone the pinned runtime repository: $LASTEXITCODE" }
+        & git -C $runtimeSourceRoot config core.longpaths true
+        if ($LASTEXITCODE -ne 0) { throw "Unable to enable long-path checkout for $runtimeSourceRoot" }
+        & git -C $runtimeSourceRoot checkout --detach $runtimeCommit
+        if ($LASTEXITCODE -ne 0) { throw "Unable to check out pinned runtime commit $runtimeCommit" }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $runtimeSourceRoot 'build.cmd') -PathType Leaf)) {
+        throw "Runtime source path exists without a repository build entry point; preserving it: $runtimeSourceRoot"
+    }
+    $runtimeHead = (& git -C $runtimeSourceRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $runtimeHead -ne $runtimeCommit) {
+        throw "Runtime source mismatch. Expected pinned commit $runtimeCommit, found $runtimeHead."
+    }
     $phase21SourcePatchRoot = Join-Path $RootDir "out\dotnet\phase21-source-patch"
     $phase21SourcePatchRecord = Join-Path $phase21SourcePatchRoot "phase21-source-patch-record.json"
     $phase22SourcePatchRoot = Join-Path $RootDir "out\dotnet\phase22-source-patch"
@@ -602,6 +625,66 @@ if (-not $SkipRamdisk) {
         $phase23PrivateIlcRebuilt = $true
     }
 
+    # Phase 23 packages consume target-built helper archives and the native
+    # startup object. The source checkout is pinned above and its Phase 22
+    # transforms have already been verified, so produce the complete target
+    # set through the existing builder before staging the package.
+    $phase22RuntimeBuildDirectory = Join-Path $runtimeSourceRoot 'artifacts\obj\coreclr\guidexos.x64.Release'
+    $phase22NativeRuntimeOutput = Join-Path $RootDir 'out\dotnet\phase22-native-runtime'
+    $phase22NativeRuntimeRecord = Join-Path $phase22NativeRuntimeOutput 'native-build-record.json'
+    $phase22NativeTargets = 'Runtime.WorkstationGC bootstrapper Runtime.VxsortDisabled standalonegc-disabled zlibstatic.lib'
+    $phase22NativeAssets = @(
+        (Join-Path $phase22RuntimeBuildDirectory 'nativeaot\Runtime\Full\Runtime.WorkstationGC.lib'),
+        (Join-Path $phase22RuntimeBuildDirectory 'nativeaot\Runtime\Full\Runtime.VxsortDisabled.lib'),
+        (Join-Path $phase22RuntimeBuildDirectory 'nativeaot\Runtime\Full\standalonegc-disabled.lib'),
+        (Join-Path $phase22RuntimeBuildDirectory '_deps\fetchzlibng-build\zlibstatic.lib')
+    )
+    $phase22BootstrapSearchRoot = Join-Path $phase22RuntimeBuildDirectory 'nativeaot\Bootstrap\base\CMakeFiles\bootstrapper.dir'
+    $phase22NativeRuntimeRebuilt = $false
+    $phase22NativeRuntimeReady = (Test-Path -LiteralPath $phase22NativeRuntimeRecord -PathType Leaf) -and
+        (Test-Path -LiteralPath $phase22BootstrapSearchRoot -PathType Container)
+    if ($phase22NativeRuntimeReady) {
+        try {
+            $phase22RecordData = Get-Content -LiteralPath $phase22NativeRuntimeRecord -Raw | ConvertFrom-Json
+            $requiredPhase22Targets = @($phase22NativeTargets -split '\s+')
+            $recordedPhase22Targets = @([string]$phase22RecordData.buildTarget -split '\s+')
+            $phase22NativeRuntimeReady = $phase22RecordData.sourceCommit -eq $runtimeCommit -and
+                $phase22RecordData.exitCode -eq 0 -and
+                @($requiredPhase22Targets | Where-Object { $_ -notin $recordedPhase22Targets }).Count -eq 0
+        } catch {
+            $phase22NativeRuntimeReady = $false
+        }
+    }
+    if ($phase22NativeRuntimeReady) {
+        foreach ($requiredPath in $phase22NativeAssets) {
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                $phase22NativeRuntimeReady = $false
+                break
+            }
+        }
+    }
+    if ($phase22NativeRuntimeReady) {
+        $phase22BootstrapObject = Get-ChildItem -LiteralPath $phase22BootstrapSearchRoot -Filter 'main.cpp.obj' -File -Recurse | Select-Object -First 1
+        $phase22NativeRuntimeReady = $null -ne $phase22BootstrapObject
+    }
+    if (-not $phase22NativeRuntimeReady) {
+        $phase22NativeRuntimeBuilder = Join-Path $RootDir 'Tools\Phase22\build_guidexos_native_runtime.ps1'
+        if (-not (Test-Path -LiteralPath $phase22NativeRuntimeBuilder -PathType Leaf)) {
+            throw "Phase 22 native runtime inputs are absent or stale, and the builder is missing: $phase22NativeRuntimeBuilder"
+        }
+        Write-Info 'Building Phase 22 GUIDEXOS runtime, helper archives, and bootstrapper prerequisites...'
+        & $phase22NativeRuntimeBuilder -SourceRoot $runtimeSourceRoot -OutputRoot $phase22NativeRuntimeOutput -BuildTarget $phase22NativeTargets
+        if ($LASTEXITCODE -ne 0) { throw "Phase 22 native runtime build failed: $LASTEXITCODE" }
+        foreach ($requiredPath in $phase22NativeAssets) {
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                throw "Phase 22 native runtime build did not produce required asset: $requiredPath"
+            }
+        }
+        $phase22BootstrapObject = Get-ChildItem -LiteralPath $phase22BootstrapSearchRoot -Filter 'main.cpp.obj' -File -Recurse | Select-Object -First 1
+        if ($null -eq $phase22BootstrapObject) { throw "Phase 22 native runtime build did not produce the bootstrapper object under $phase22BootstrapSearchRoot" }
+        $phase22NativeRuntimeRebuilt = $true
+    }
+
     $phase23RuntimePack = Join-Path $RootDir "out\dotnet\phase23-runtime-pack"
     $phase23RuntimePackRequiredFiles = @(
         "guidexos-runtime-pack.manifest.json",
@@ -611,6 +694,7 @@ if (-not $SkipRamdisk) {
         "packages\runtime.win-x64.microsoft.dotnet.ilcompiler.9.0.0.nupkg"
     )
     $phase23RuntimePackReady = (-not $phase23PrivateIlcRebuilt) -and
+        (-not $phase22NativeRuntimeRebuilt) -and
         (Test-Path -LiteralPath $phase23RuntimePack -PathType Container)
     foreach ($relativePath in $phase23RuntimePackRequiredFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $phase23RuntimePack $relativePath) -PathType Leaf)) {
@@ -631,6 +715,53 @@ if (-not $SkipRamdisk) {
             if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
                 throw "Phase 23 runtime pack staging did not produce a required file: $requiredPath"
             }
+        }
+    }
+
+    # Phase 26's target CoreLib build uses the runtime checkout's bootstrapped
+    # .NET SDK. A normal checkout has no ignored out/rt state, so reproduce the
+    # pinned Phase 20 source build when that host toolchain is unavailable.
+    $phase20SourceBuildRoot = Join-Path $RootDir 'out\dotnet\phase20-source-build'
+    $phase20SourceBuildRecord = Join-Path $phase20SourceBuildRoot 'source-build-record.json'
+    $phase20Dotnet = Join-Path $runtimeSourceRoot '.dotnet\dotnet.exe'
+    $phase20AotSdk = Join-Path $runtimeSourceRoot 'artifacts\bin\coreclr\windows.x64.Release\aotsdk'
+    $phase20SourceBuildReady = (Test-Path -LiteralPath $phase20Dotnet -PathType Leaf) -and
+        (Test-Path -LiteralPath $phase20AotSdk -PathType Container) -and
+        (Test-Path -LiteralPath $phase20SourceBuildRecord -PathType Leaf)
+    if ($phase20SourceBuildReady) {
+        try {
+            $phase20RecordData = Get-Content -LiteralPath $phase20SourceBuildRecord -Raw | ConvertFrom-Json
+            $phase20SourceBuildReady = $phase20RecordData.source.commit -eq $runtimeCommit -and
+                $phase20RecordData.customRuntimePack -eq $false -and
+                $phase20RecordData.customTarget -eq $false
+            if ($phase20SourceBuildReady) {
+                Push-Location -LiteralPath $runtimeSourceRoot
+                try {
+                    $phase20SdkVersion = @(& $phase20Dotnet --version 2>$null)
+                    $phase20SdkExitCode = $LASTEXITCODE
+                } finally { Pop-Location }
+                $phase20SourceBuildReady = $phase20SdkExitCode -eq 0 -and
+                    $phase20SdkVersion.Count -gt 0
+            }
+        } catch {
+            $phase20SourceBuildReady = $false
+        }
+    }
+    if (-not $phase20SourceBuildReady) {
+        $phase20SourceBuilder = Join-Path $RootDir 'Tools\Phase20\build_pinned_runtime_source.ps1'
+        if (-not (Test-Path -LiteralPath $phase20SourceBuilder -PathType Leaf)) {
+            throw "Phase 20 pinned runtime source builder is missing: $phase20SourceBuilder"
+        }
+        Write-Info 'Building the pinned NativeAOT source baseline to provision Phase 26 CoreLib inputs...'
+        & $phase20SourceBuilder -SourceRoot $runtimeSourceRoot -OutputRoot $phase20SourceBuildRoot
+        if ($LASTEXITCODE -ne 0) { throw "Phase 20 pinned source build failed: $LASTEXITCODE" }
+        foreach ($requiredPath in @($phase20Dotnet, $phase20SourceBuildRecord)) {
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                throw "Phase 20 source build did not produce required bootstrap input: $requiredPath"
+            }
+        }
+        if (-not (Test-Path -LiteralPath $phase20AotSdk -PathType Container)) {
+            throw "Phase 20 source build did not produce the NativeAOT SDK directory: $phase20AotSdk"
         }
     }
 
@@ -784,11 +915,14 @@ if (-not $SkipKernel) {
         Write-Info "NuGet assets not found; restore will run for the kernel build"
     }
 
-    $publishPropertyArgs = @()
-    $publishPropertySuffix = ''
+    # The UEFI image is assembled by this script from the ESP directory. The
+    # project-level legacy GRUB ISO target requires an El Torito image that is
+    # not part of the UEFI packaging path.
+    $publishPropertyArgs = @('-p:SkipISO=true')
+    $publishPropertySuffix = ' -p:SkipISO=true'
     if ($UefiDiagnosticMode) {
         $publishPropertyArgs += "-p:UefiDiagnosticMode=$UefiDiagnosticMode"
-        $publishPropertySuffix = " -p:UefiDiagnosticMode=$UefiDiagnosticMode"
+        $publishPropertySuffix += " -p:UefiDiagnosticMode=$UefiDiagnosticMode"
         Write-Info "UEFI diagnostic build mode: $UefiDiagnosticMode"
     }
 

@@ -25,11 +25,25 @@ namespace guideXOS.FontTests {
                 _bitmapClockHash.ToString("X16") + ", start-menu=0x" +
                 _bitmapMenuHash.ToString("X16"));
             CheckSelectionAndFallback(fontBytes, bitmap);
+            CheckSurrogateBoundaries();
             CheckUnicodeTruncation(fontBytes, bitmap);
             CheckTrueTypeSurfaces(fontBytes, bitmap);
             Console.WriteLine("FONTS3 shell text checks: " + _checks +
                               ", failures: " + _failures);
             return _failures;
+        }
+
+        private static void CheckSurrogateBoundaries() {
+            Check(!TrueTypeFont.IsHighSurrogate('\uD7FF') &&
+                  TrueTypeFont.IsHighSurrogate('\uD800') &&
+                  TrueTypeFont.IsHighSurrogate('\uDBFF') &&
+                  !TrueTypeFont.IsHighSurrogate('\uDC00'),
+                  "high-surrogate classifier matches the UTF-16 range");
+            Check(!TrueTypeFont.IsLowSurrogate('\uDBFF') &&
+                  TrueTypeFont.IsLowSurrogate('\uDC00') &&
+                  TrueTypeFont.IsLowSurrogate('\uDFFF') &&
+                  !TrueTypeFont.IsLowSurrogate('\uE000'),
+                  "low-surrogate classifier matches the UTF-16 range");
         }
 
         private static IFont CreateCompleteBitmapFont() {

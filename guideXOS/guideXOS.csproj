@@ -204,8 +204,8 @@
 		<NativeLibrary Include="$(MSBuildStartupDirectory)\..\x64\Debug\Doom.lib" Condition="Exists('$(MSBuildStartupDirectory)\..\x64\Debug\Doom.lib')" />
 		<!-- CPUID object file for CPU feature detection - using safe pointer-based version -->
 		<NativeLibrary Include="$(MSBuildProjectDirectory)\cpuid_safe.obj" Condition="Exists('$(MSBuildProjectDirectory)\cpuid_safe.obj')" />
-		<!-- Stubs for missing native symbols (built from native_stubs.asm) -->
-		<NativeLibrary Include="$(MSBuildProjectDirectory)\native_stubs.obj" Condition="Exists('$(MSBuildProjectDirectory)\native_stubs.obj')" />
+		<!-- BuildNativeStubs creates this after project evaluation on a clean build. -->
+		<NativeLibrary Include="$(MSBuildProjectDirectory)\native_stubs.obj" />
 	</ItemGroup>
 
 	<!-- Build NASM stubs if the real native libs are not present. -->

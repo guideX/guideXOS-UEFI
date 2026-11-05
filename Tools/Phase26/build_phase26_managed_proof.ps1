@@ -163,11 +163,11 @@ foreach ($path in @($runtimeDotnet, $coreLibProject, $coreLibSource, $startupCod
 # here so rebuilding from a clean runtime checkout does not depend on ignored
 # edits under out/rt.
 $startupCodeExtensionsText = Get-Content -LiteralPath $startupCodeExtensionsSource -Raw
-$startupWindowsGuardMatches = [regex]::Matches($startupCodeExtensionsText, '(?m)^#if TARGET_WINDOWS$')
+$startupWindowsGuardMatches = [regex]::Matches($startupCodeExtensionsText, '(?m)^#if TARGET_WINDOWS\r?$')
 if ($startupWindowsGuardMatches.Count -eq 1) {
     $startupCodeExtensionsText = [regex]::Replace(
         $startupCodeExtensionsText,
-        '(?m)^#if TARGET_WINDOWS$',
+        '(?m)^#if TARGET_WINDOWS\r?$',
         '#if TARGET_WINDOWS && !TARGET_GUIDEXOS',
         1)
 }
@@ -235,6 +235,37 @@ elseif (-not $threadNativeAotWindowsText.Contains('return ThreadPriority.Normal;
     [Text.UTF8Encoding]::new($false))
 
 $coreLibText = Get-Content -LiteralPath $coreLibSource -Raw
+$coreLibNewline = if ($coreLibText.Contains("`r`n")) { "`r`n" } else { "`n" }
+$lastErrorReadTarget = @(
+    '#if TARGET_GUIDEXOS'
+    '            int lastSystemError = Marshal.GetLastPInvokeError();'
+    '#else'
+    '            int lastSystemError = Marshal.GetLastSystemError();'
+    '#endif'
+) -join $coreLibNewline
+$lastErrorWriteTarget = @(
+    '#if TARGET_GUIDEXOS'
+    '            Marshal.SetLastPInvokeError(lastSystemError);'
+    '#else'
+    '            Marshal.SetLastSystemError(lastSystemError);'
+    '#endif'
+) -join $coreLibNewline
+$lastErrorReadMatches = [regex]::Matches($coreLibText, 'int lastSystemError = Marshal\.GetLastSystemError\(\);')
+$lastErrorWriteMatches = [regex]::Matches($coreLibText, 'Marshal\.SetLastSystemError\(lastSystemError\);')
+if ($lastErrorReadMatches.Count -eq 1 -and $lastErrorWriteMatches.Count -eq 1) {
+    $coreLibText = $coreLibText.Replace(
+        '            int lastSystemError = Marshal.GetLastSystemError();',
+        $lastErrorReadTarget)
+    $coreLibText = $coreLibText.Replace(
+        '            Marshal.SetLastSystemError(lastSystemError);',
+        $lastErrorWriteTarget)
+    [IO.File]::WriteAllText($coreLibSource, $coreLibText,
+        [Text.UTF8Encoding]::new($false))
+}
+elseif (-not $coreLibText.Contains($lastErrorReadTarget) -or
+        -not $coreLibText.Contains($lastErrorWriteTarget)) {
+    throw 'The pinned NativeAOT CoreLib last-error target seam is absent or ambiguous.'
+}
 if (-not $coreLibText.Contains('TARGET_GUIDEXOS') -or
     -not $coreLibText.Contains('Marshal.GetLastPInvokeError()') -or
     -not $coreLibText.Contains('Marshal.SetLastPInvokeError(lastSystemError)')) {
@@ -684,31 +715,96 @@ if ($null -eq $textSection -or $null -eq $managedSection -or $managedSection.vir
 }
 $managedStartRva = [uint32]$managedSection.virtualAddress
 $managedEndRva = [uint32]($managedSection.virtualAddress + $managedSection.virtualSize)
-$wmainStartPattern = [byte[]](0x48, 0x8D, 0x15, 0x7D, 0xFB, 0xFF, 0xFF)
-$wmainEndPattern = [byte[]](0x4C, 0x8D, 0x05, 0x97, 0xFB, 0xFF, 0xFF)
-function Find-UniquePattern([byte[]]$bytes, [byte[]]$pattern, [string]$label) {
-    $found = -1
-    for ($offset = 0; $offset -le $bytes.Length - $pattern.Length; $offset++) {
-        $matches = $true
-        for ($index = 0; $index -lt $pattern.Length; $index++) {
-            if ($bytes[$offset + $index] -ne $pattern[$index]) {
-                $matches = $false
-                break
-            }
-        }
-        if ($matches) {
-            if ($found -ge 0) { throw "Phase 26 $label instruction pattern is not unique." }
-            $found = $offset
-        }
-    }
-    if ($found -lt 0) { throw "Phase 26 $label instruction pattern was not found." }
-    return $found
-}
 function Get-RvaForRawOffset([int]$rawOffset, $section) {
     return [uint32]($section.virtualAddress + ($rawOffset - $section.rawPointer))
 }
-$wmainStartOffset = Find-UniquePattern $artifactBytes $wmainStartPattern 'managed-range start'
-$wmainEndOffset = Find-UniquePattern $artifactBytes $wmainEndPattern 'managed-range end'
+
+# Locate the wmain marker arguments by their decoded RIP-relative targets,
+# using the generated link map. Exact displacement bytes change when the
+# source-built compiler or payload layout changes; the map symbols and target
+# RVAs keep this patch constrained to the two expected LEAs in wmain.
+$mapPath = Join-Path $OutputRoot 'guidexos.map'
+if (-not (Test-Path -LiteralPath $mapPath -PathType Leaf)) {
+    throw "Phase 26 link map is absent: $mapPath"
+}
+$mapText = Get-Content -LiteralPath $mapPath -Raw
+$mapEntries = [regex]::Matches($mapText,
+    '(?m)^\s*(?<section>[0-9A-Fa-f]{4}):(?<offset>[0-9A-Fa-f]{8})\s+(?<symbol>\S+)\s+(?<address>[0-9A-Fa-f]{16})\b')
+$wmainEntries = @($mapEntries | Where-Object { $_.Groups['symbol'].Value -eq 'wmain' })
+$markerStartEntries = @($mapEntries | Where-Object { $_.Groups['symbol'].Value -match '__managedcode_a@@' })
+$markerEndEntries = @($mapEntries | Where-Object { $_.Groups['symbol'].Value -match '__managedcode_z@@' })
+if ($wmainEntries.Count -ne 1 -or $markerStartEntries.Count -ne 1 -or
+        $markerEndEntries.Count -ne 1) {
+    throw 'Phase 26 link map does not uniquely identify wmain and managed-code markers.'
+}
+$optionalHeaderMagic = [BitConverter]::ToUInt16($artifactBytes, $optionalOffset)
+if ($optionalHeaderMagic -ne 0x20B) { throw 'Phase 26 managed-range patch requires a PE32+ image.' }
+$imageBase = [BitConverter]::ToUInt64($artifactBytes, $optionalOffset + 24)
+$wmainMapEntry = $wmainEntries[0]
+$wmainMapSection = $wmainMapEntry.Groups['section'].Value
+$wmainSectionOffset = [Convert]::ToInt32($wmainMapEntry.Groups['offset'].Value, 16)
+$wmainAddress = [Convert]::ToUInt64($wmainMapEntry.Groups['address'].Value, 16)
+$markerStartAddress = [Convert]::ToUInt64($markerStartEntries[0].Groups['address'].Value, 16)
+$markerEndAddress = [Convert]::ToUInt64($markerEndEntries[0].Groups['address'].Value, 16)
+if ($wmainAddress -lt $imageBase -or $markerStartAddress -lt $imageBase -or
+        $markerEndAddress -lt $imageBase) {
+    throw 'Phase 26 managed-range map addresses precede the PE image base.'
+}
+$wmainFunctionRva = [uint32]($wmainAddress - $imageBase)
+$markerStartRva = [uint32]($markerStartAddress - $imageBase)
+$markerEndRva = [uint32]($markerEndAddress - $imageBase)
+$wmainTextOffset = [int]($wmainFunctionRva - $textSection.virtualAddress)
+if ($wmainTextOffset -ne $wmainSectionOffset -or
+        $markerStartRva -ne $textSection.virtualAddress -or
+        $markerEndRva -le $markerStartRva) {
+    throw 'Phase 26 managed-range map symbols do not match the PE .text section.'
+}
+$nextWmainSymbolOffsets = @($mapEntries | Where-Object {
+    $_.Groups['section'].Value -eq $wmainMapSection -and
+    [Convert]::ToInt32($_.Groups['offset'].Value, 16) -gt $wmainSectionOffset
+} | ForEach-Object { [Convert]::ToInt32($_.Groups['offset'].Value, 16) })
+if ($nextWmainSymbolOffsets.Count -eq 0) { throw 'Phase 26 link map has no symbol after wmain.' }
+$wmainFunctionEndOffset = ($nextWmainSymbolOffsets | Measure-Object -Minimum).Minimum
+$wmainRawStart = [int]($textSection.rawPointer + $wmainTextOffset)
+$wmainRawEnd = [int]($textSection.rawPointer + $wmainFunctionEndOffset)
+if ($wmainRawStart -lt $textSection.rawPointer -or
+        $wmainRawEnd -le $wmainRawStart -or
+        $wmainRawEnd -gt ($textSection.rawPointer + $textSection.virtualSize) -or
+        $wmainRawEnd -gt $artifactBytes.Length) {
+    throw 'Phase 26 wmain range is outside the PE .text section.'
+}
+$managedRangeStartInstructions = [System.Collections.Generic.List[int]]::new()
+$managedRangeEndInstructions = [System.Collections.Generic.List[int]]::new()
+for ($instructionOffset = $wmainRawStart;
+     $instructionOffset -le ($wmainRawEnd - 7); $instructionOffset++) {
+    $targetRva = $null
+    if ($artifactBytes[$instructionOffset] -eq 0x48 -and
+            $artifactBytes[$instructionOffset + 1] -eq 0x8D -and
+            $artifactBytes[$instructionOffset + 2] -eq 0x15) {
+        $instructionRva = Get-RvaForRawOffset $instructionOffset $textSection
+        $targetRva = [long]$instructionRva + 7 +
+            [BitConverter]::ToInt32($artifactBytes, $instructionOffset + 3)
+        if ($targetRva -eq $markerStartRva) {
+            $managedRangeStartInstructions.Add($instructionOffset)
+        }
+    }
+    if ($artifactBytes[$instructionOffset] -eq 0x4C -and
+            $artifactBytes[$instructionOffset + 1] -eq 0x8D -and
+            $artifactBytes[$instructionOffset + 2] -eq 0x05) {
+        $instructionRva = Get-RvaForRawOffset $instructionOffset $textSection
+        $targetRva = [long]$instructionRva + 7 +
+            [BitConverter]::ToInt32($artifactBytes, $instructionOffset + 3)
+        if ($targetRva -eq $markerEndRva) {
+            $managedRangeEndInstructions.Add($instructionOffset)
+        }
+    }
+}
+if ($managedRangeStartInstructions.Count -ne 1 -or
+        $managedRangeEndInstructions.Count -ne 1) {
+    throw 'Phase 26 wmain does not contain unique managed-code marker LEAs.'
+}
+$wmainStartOffset = $managedRangeStartInstructions[0]
+$wmainEndOffset = $managedRangeEndInstructions[0]
 $wmainStartRva = Get-RvaForRawOffset $wmainStartOffset $textSection
 $wmainEndRva = Get-RvaForRawOffset $wmainEndOffset $textSection
 $startDisplacement = [int]($managedStartRva - ($wmainStartRva + 7))

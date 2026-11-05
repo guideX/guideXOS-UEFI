@@ -261,8 +261,9 @@ namespace guideXOS.GUI {
             const int maximumPrefixScalars = 256;
             while (end < text.Length && scalarCount < maximumPrefixScalars) {
                 int next = end + 1;
-                if (next < text.Length && char.IsHighSurrogate(text[end]) &&
-                        char.IsLowSurrogate(text[next])) next++;
+                if (next < text.Length &&
+                        TrueTypeFont.IsHighSurrogate(text[end]) &&
+                        TrueTypeFont.IsLowSurrogate(text[next])) next++;
                 SharedTextMeasurement prefixMeasurement;
                 if (!selected.MeasureTextRange(text, 0, next,
                         out prefixMeasurement) ||
@@ -299,8 +300,8 @@ namespace guideXOS.GUI {
 #endif
                 if (end == 0) return string.Empty;
                 end--;
-                if (end > 0 && char.IsLowSurrogate(text[end]) &&
-                        char.IsHighSurrogate(text[end - 1])) end--;
+                if (end > 0 && TrueTypeFont.IsLowSurrogate(text[end]) &&
+                        TrueTypeFont.IsHighSurrogate(text[end - 1])) end--;
             }
         }
 

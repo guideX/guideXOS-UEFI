@@ -15,12 +15,65 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "Tools" / "Phase24"))
 sys.path.insert(0, str(ROOT / "Tools" / "Phase27"))
 from verify_phase24 import Rejected, read_descriptor, validate  # noqa: E402
-from verify_phase27 import verify_map  # noqa: E402
+from verify_phase27 import BASE  # noqa: E402
 
 from phase35_flags import PHASE35_FLAGS  # noqa: E402
 
 BASE_FLAGS = 0x0F
 PHASE26 = 1 << 4
+
+
+def verify_phase35_map(map_path: Path, link_response: Path,
+                       require_persistent_read: bool) -> dict:
+    """Validate Phase 35's dedicated persistent-read PAL boundary.
+
+    Phase 35 deliberately does not retain Phase 27's generic service-request
+    helper. Reuse its address-space and host-link checks, but require the
+    phase-specific read helper and the syscall trampoline that backs it.
+    """
+    map_text = map_path.read_text(errors="replace")
+    addresses = {}
+    read_symbol = "guidexos_pal_persistent_storage_read"
+    if not require_persistent_read and read_symbol in map_text:
+        raise Rejected("PERSISTENT_READ_PAL_UNEXPECTED")
+    symbol_names = ["guidexos_pal_syscall5"]
+    if require_persistent_read:
+        symbol_names.append(read_symbol)
+    for name in symbol_names:
+        function_flag = r"\s+f" if name == read_symbol else ""
+        pattern = re.compile(
+            rf"^\s*[0-9A-Fa-f]{{4}}:[0-9A-Fa-f]{{8}}\s+{name}\s+"
+            rf"([0-9A-Fa-f]{{16}}){function_flag}\s+",
+            re.MULTILINE,
+        )
+        match = pattern.search(map_text)
+        if not match:
+            raise Rejected("PAL_SYMBOL_MISSING:" + name)
+        address = int(match.group(1), 16)
+        if address < BASE or address - BASE >= 0x10000000:
+            raise Rejected("PAL_SYMBOL_RANGE:" + name)
+        addresses[name] = address
+
+    response_text = link_response.read_text(errors="replace").lower()
+    forbidden = (
+        "kernel32.lib", "user32.lib", "advapi32.lib", "ole32.lib",
+        "ntdll.lib", "ws2_32.lib", "kernel32.dll", "user32.dll",
+        "advapi32.dll", "ole32.dll", "ntdll.dll", "ws2_32.dll",
+    )
+    foreign = [name for name in forbidden if name in response_text]
+    if foreign:
+        raise Rejected("FOREIGN_LINK_INPUT:" + ",".join(foreign))
+    result = {
+        "foreignLinkInputs": foreign,
+        "persistentReadHelperRequired": require_persistent_read,
+        "syscall5HelperAddress": f"0x{addresses['guidexos_pal_syscall5']:016x}",
+        "syscall5HelperRva": f"0x{addresses['guidexos_pal_syscall5'] - BASE:x}",
+    }
+    if require_persistent_read:
+        address = addresses[read_symbol]
+        result["persistentReadHelperAddress"] = f"0x{address:016x}"
+        result["persistentReadHelperRva"] = f"0x{address - BASE:x}"
+    return result
 
 
 def map_metrics(map_path: Path) -> dict:
@@ -105,9 +158,8 @@ def main() -> int:
     descriptor_bytes = args.descriptor.read_bytes()
     descriptor = validate_mode(image, descriptor_bytes, args.mode)
     map_text = args.map.read_text(errors="replace")
-    if "guidexos_pal_persistent_storage_read" not in map_text:
-        raise Rejected("PERSISTENT_READ_PAL_SYMBOL_MISSING")
-    link = verify_map(args.map, args.link_response)
+    link = verify_phase35_map(args.map, args.link_response,
+                              args.mode != "no-read")
     metrics = map_metrics(args.map)
     if any(name in args.link_response.read_text(errors="replace").lower()
            for name in ("kernel32.lib", "user32.lib", "advapi32.lib",
@@ -136,7 +188,9 @@ def main() -> int:
         "tlsDirectory": False,
         "rwxSections": 0,
         "pal": link,
-        "persistentReadPalSymbol": "guidexos_pal_persistent_storage_read",
+        "persistentReadPalSymbol": (
+            "absent-by-design" if args.mode == "no-read" else
+            "guidexos_pal_persistent_storage_read"),
         "mapMetrics": metrics,
         "phase34DependencyDelta": dependency_delta,
         "negativeCases": negative_matrix(image, descriptor_bytes, args.mode),
