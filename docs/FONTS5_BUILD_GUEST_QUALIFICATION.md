@@ -70,6 +70,8 @@ The ELF conversion located `KMain` at VA `0x10044580`. The RAM-disk parser check
 
 The hosted `TrueTypeRuntimeFoundation` run reported FONTS1=234, FONTS2=73, FONTS3=111 (109 existing plus the two new surrogate classifier boundary checks), and FONTS4=28: **446 checks, 0 failures**. The 42 desktop interaction assertions passed. The fixture pixel hash remained `0xEC1A69C86C9C5CC6`. The run used isolated output/intermediate directories to preserve the existing untracked `Tests\UefiDesktopInteractionTests\bin\` and `obj\` directories.
 
+On 2026-11-05, the exact pre-FONTS5 font baseline was replayed from a temporary detached worktree at starting HEAD 2c29f32df19e0f576f665e2a448a5f8e5f798cf6: FONTS1=234, FONTS2=73, FONTS3=109, and FONTS4=28, all with zero failures; the pixel hash remained 0xEC1A69C86C9C5CC6. The current FONTS5 source adds two FONTS3 UTF-16 boundary checks, giving 446 total. The desktop interaction suite also passed all 42 assertions with the original .NET 8 target, using DOTNET_ROLL_FORWARD=Major because this host has the .NET 10 runtime and .NET 8 targeting pack. All verification outputs were isolated outside the repository's existing bin/ and obj/ directories.
+
 Reproduction command for the font harness (with unique output paths when run in this checkout):
 
 ```powershell
@@ -77,6 +79,8 @@ Reproduction command for the font harness (with unique output paths when run in 
 ```
 
 ## QAC and guest observations
+
+At a later read-only host check on 2026-11-05 15:10:27 -08:00, one qemu-system-x86_64.exe process was present (started at 15:06:02). No QAC status or reservation interface is exposed in this session, so its owner and current reservation state could not be confirmed. No new guest launch, input, or process-control operation was performed. The reservation results below describe the completed historical runs and are not a live QAC status claim.
 
 Before the first launch, QAC reported Coordinator Online with zero QEMU processes and zero managed sessions. Reservation `d79ab154e9664f67b2857fadcc91ec42` was granted to project `guideXOSUEFI-FONTS5` in acceptance mode with QEMU PID 16824; it was released after that managed child exited. On resume, QAC again reported zero QEMU processes and zero managed sessions, so a second acceptance reservation was granted: `c36fbb3d629c425eb15e311f8b349ffa`, QEMU PID 25220. The second QEMU process was stopped through its QMP `quit` command. QAC reported the reservation **Released**, reason `Managed child exited.`, and final status Coordinator Online, zero QEMU processes, and zero managed sessions.
 
