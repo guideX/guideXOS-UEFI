@@ -148,18 +148,25 @@ namespace guideXOS.GUI {
             new UefiDesktopIconGeometry[UefiDesktopIconCount];
         private static readonly UefiDesktopInteraction UefiDesktopInput =
             new UefiDesktopInteraction();
-        private static IFont _uefiTileBitmapFont;
-        private static SharedTextFont _uefiTileTextFont;
+        private static IFont _uefiTileLayoutBitmapOwner;
+        private static SharedTextFont _uefiTileLayoutFont;
 
         private static SharedTextFont GetUefiTileTextFont() {
+            SharedTextFont selected = WindowManager.ShellTextFont;
+            return selected != null && selected.IsAvailable ? selected : null;
+        }
+
+        private static SharedTextFont GetUefiTileLayoutFont() {
             IFont bitmap = WindowManager.font;
             if (bitmap == null) return null;
-            if (_uefiTileTextFont == null || _uefiTileBitmapFont != bitmap) {
-                _uefiTileBitmapFont = bitmap;
-                _uefiTileTextFont = SharedTextFont.CreateDefaultBitmap(bitmap);
+            if (_uefiTileLayoutFont == null ||
+                    !object.ReferenceEquals(_uefiTileLayoutBitmapOwner,
+                                            bitmap)) {
+                _uefiTileLayoutBitmapOwner = bitmap;
+                _uefiTileLayoutFont = SharedTextFont.CreateDefaultBitmap(bitmap);
             }
-            return _uefiTileTextFont != null && _uefiTileTextFont.IsAvailable
-                ? _uefiTileTextFont : null;
+            return _uefiTileLayoutFont != null &&
+                _uefiTileLayoutFont.IsAvailable ? _uefiTileLayoutFont : null;
         }
         
         /// <summary>
@@ -689,7 +696,10 @@ namespace guideXOS.GUI {
             int screenW = Framebuffer.Width;
             int workAreaBottom = Framebuffer.Height - BarHeight;
             if (workAreaBottom < 0) workAreaBottom = 0;
-            SharedTextFont textFont = GetUefiTileTextFont();
+            // Tile hit bounds remain tied to the established bitmap metrics.
+            // Switching the renderer therefore changes text pixels without
+            // moving desktop icons or changing their interaction geometry.
+            SharedTextFont textFont = GetUefiTileLayoutFont();
             int maxLabelWidth = 0;
             for (int i = 0; i < UefiDesktopIconCount; i++) {
                 int width, height;

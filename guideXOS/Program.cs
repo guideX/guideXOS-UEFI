@@ -1918,6 +1918,7 @@ unsafe class Program {
 #if UEFI_TASKMANAGER_MEMORY_R3_PROBE
         TaskManagerMemoryR3Probe.TraceAfterTaskbarDraw();
 #endif
+        WindowManager.ReportShellTextFontUsage();
 
         SetUefiFrameBreadcrumb(4, 1, 401);
         _uefiMultiFrameLastCodeAddress = Native.ReadCallSite();

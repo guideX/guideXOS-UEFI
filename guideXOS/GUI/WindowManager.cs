@@ -21,6 +21,7 @@ namespace guideXOS.GUI {
         /// </summary>
         public static IFont font;
         private static SharedTextFontSelection _shellTextFontSelection;
+        private static int _shellFontUsageReportedGeneration = -1;
 
         /// <summary>
         /// Shared provider for migrated shell text surfaces. Bitmap is the
@@ -44,19 +45,89 @@ namespace guideXOS.GUI {
             }
         }
 
+        internal static SharedFontProviderKind RequestedShellTextFontProvider {
+            get {
+                if (_shellTextFontSelection == null)
+                    _shellTextFontSelection = new SharedTextFontSelection();
+                _shellTextFontSelection.Resolve(font);
+                return _shellTextFontSelection.RequestedProvider;
+            }
+        }
+
+        internal static string ShellTextFontFallbackReason {
+            get {
+                if (_shellTextFontSelection == null)
+                    _shellTextFontSelection = new SharedTextFontSelection();
+                _shellTextFontSelection.Resolve(font);
+                return _shellTextFontSelection.FallbackReason;
+            }
+        }
+
         internal static bool TrySelectShellTrueType(byte[] fontData,
                                                      int fontSize) {
             if (_shellTextFontSelection == null)
                 _shellTextFontSelection = new SharedTextFontSelection();
             SharedTextFont selected;
-            return _shellTextFontSelection.TrySelectTrueType(fontData,
-                fontSize, font, out selected);
+            bool success = _shellTextFontSelection.TrySelectTrueType(
+                fontData, fontSize, font, out selected);
+            LogShellTextFontSelection();
+            return success;
         }
 
         internal static void SelectBitmapShellTextFont() {
             if (_shellTextFontSelection == null)
                 _shellTextFontSelection = new SharedTextFontSelection();
             _shellTextFontSelection.SelectBitmap(font);
+            LogShellTextFontSelection();
+        }
+
+        internal static void ReportShellTextFontUsage() {
+            SharedTextFont selected = ShellTextFont;
+            if (selected == null || selected.DrawCalls <= 0) return;
+            if (selected.Provider == SharedFontProviderKind.TrueType &&
+                    (selected.TrueTypeRasterizations <= 0 ||
+                     selected.TrueTypeCacheHits <= 0)) return;
+
+            int generation = ShellTextFontGeneration;
+            if (_shellFontUsageReportedGeneration == generation) return;
+            _shellFontUsageReportedGeneration = generation;
+            string diagnostic = "[FONT_PROVIDER] used=" +
+                ProviderName(selected.Provider) + " drawCalls=" +
+                selected.DrawCalls.ToString();
+            if (selected.Provider == SharedFontProviderKind.TrueType) {
+                diagnostic += " rasterizations=" +
+                    selected.TrueTypeRasterizations.ToString() +
+                    " cacheHits=" + selected.TrueTypeCacheHits.ToString() +
+                    " cacheMisses=" + selected.TrueTypeCacheMisses.ToString() +
+                    " cacheEntries=" +
+                    selected.TrueTypeCacheEntryCount.ToString() +
+                    " cacheBytes=" + selected.TrueTypeCacheBytes.ToString();
+            }
+            BootConsole.WriteLine(diagnostic + " generation=" +
+                                  generation.ToString());
+        }
+
+        private static void LogShellTextFontSelection() {
+            if (_shellTextFontSelection == null) return;
+            SharedTextFont selected = _shellTextFontSelection.Selected;
+            string requested = ProviderName(
+                _shellTextFontSelection.RequestedProvider);
+            string initialized = _shellTextFontSelection.HasInitializedProvider
+                ? ProviderName(_shellTextFontSelection.InitializedProvider)
+                : "None";
+            string fallback = _shellTextFontSelection.FallbackReason ?? "none";
+            BootConsole.WriteLine("[FONT_PROVIDER] requested=" + requested +
+                " initialized=" + initialized + " active=" +
+                (selected == null ? "None" : ProviderName(selected.Provider)) +
+                " used=" + (_shellTextFontSelection.HasProviderBeenUsed
+                    ? ProviderName(_shellTextFontSelection.ProviderActuallyUsed)
+                    : "not-yet") + " fallback=" + fallback + " generation=" +
+                _shellTextFontSelection.Generation.ToString());
+        }
+
+        private static string ProviderName(SharedFontProviderKind provider) {
+            return provider == SharedFontProviderKind.TrueType
+                ? "TrueType" : "Bitmap";
         }
 
         internal static bool DrawShellText(int x, int y, string text) {
@@ -156,6 +227,8 @@ namespace guideXOS.GUI {
             }
 
             InitializeFont();
+            _shellFontUsageReportedGeneration = -1;
+            SelectBitmapShellTextFont();
             MouseHandled = false;
             _pending = new List<PendingWindow>();
             _cpuEpochTick = 0;

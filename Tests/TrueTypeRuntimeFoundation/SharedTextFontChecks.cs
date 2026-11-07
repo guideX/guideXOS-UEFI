@@ -33,10 +33,13 @@ namespace guideXOS.FontTests {
             int shellTextFailures = ShellTextIntegrationChecks.Run(fontBytes);
             int dialogNotificationFailures =
                 DialogNotificationTextChecks.Run(fontBytes);
+            int productionProviderFailures =
+                ProductionFontProviderChecks.Run(fontBytes);
 
             Console.WriteLine("FONTS2 hosted checks: " + _checks +
                               ", failures: " + _failures);
-            return _failures + shellTextFailures + dialogNotificationFailures;
+            return _failures + shellTextFailures +
+                   dialogNotificationFailures + productionProviderFailures;
         }
 
         private static IFont CreateBitmapFont(out Image image) {

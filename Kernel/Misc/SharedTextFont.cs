@@ -41,6 +41,7 @@ namespace guideXOS.Misc {
         private readonly IFont _bitmap;
         private readonly TrueTypeFont _trueType;
         private readonly SharedFontProviderKind _provider;
+        private int _drawCalls;
 
         private SharedTextFont(IFont bitmap) {
             _bitmap = bitmap;
@@ -53,6 +54,26 @@ namespace guideXOS.Misc {
         }
 
         public SharedFontProviderKind Provider { get { return _provider; } }
+        public int DrawCalls { get { return _drawCalls; } }
+        public int TrueTypeFontSize {
+            get { return _trueType == null ? 0 : _trueType.FontSize; }
+        }
+        public int TrueTypeRasterizations {
+            get { return _trueType == null ? 0 : _trueType.Rasterizations; }
+        }
+        public int TrueTypeCacheHits {
+            get { return _trueType == null ? 0 : _trueType.CacheHits; }
+        }
+        public int TrueTypeCacheMisses {
+            get { return _trueType == null ? 0 : _trueType.CacheMisses; }
+        }
+        public int TrueTypeCacheEntryCount {
+            get { return _trueType == null ? 0 : _trueType.CacheEntryCount; }
+        }
+        public int TrueTypeCacheBytes {
+            get { return _trueType == null ? 0 : _trueType.CacheBytes; }
+        }
+        internal TrueTypeFont TrueTypeRenderer { get { return _trueType; } }
 
         public int FontSize {
             get {
@@ -256,6 +277,7 @@ namespace guideXOS.Misc {
                 _bitmap.DrawStringClipped((int)origin, y, text, graphics,
                     clipX, clipY, clipWidth, clipHeight);
             }
+            RecordDrawCall();
             return true;
         }
 
@@ -284,7 +306,17 @@ namespace guideXOS.Misc {
                 _bitmap.DrawStringRangeClipped(x, y, text, start, length,
                     graphics, clipX, clipY, clipWidth, clipHeight);
             }
+            RecordDrawCall();
             return true;
+        }
+
+        internal void RecordLegacyBitmapDrawCall() {
+            if (_provider != SharedFontProviderKind.BitmapAtlas) return;
+            RecordDrawCall();
+        }
+
+        private void RecordDrawCall() {
+            if (_drawCalls < int.MaxValue) _drawCalls++;
         }
     }
 
@@ -300,12 +332,27 @@ namespace guideXOS.Misc {
         private bool _initialized;
 
         public int Generation { get; private set; }
+        public SharedFontProviderKind RequestedProvider { get; private set; }
+        public SharedFontProviderKind InitializedProvider { get; private set; }
+        public bool HasInitializedProvider { get; private set; }
+        public string FallbackReason { get; private set; }
+        public SharedTextFont Selected { get { return _selected; } }
+        public bool HasProviderBeenUsed {
+            get { return _selected != null && _selected.DrawCalls > 0; }
+        }
+        public SharedFontProviderKind ProviderActuallyUsed {
+            get { return _selected == null ? SharedFontProviderKind.BitmapAtlas : _selected.Provider; }
+        }
 
         public SharedTextFont Resolve(IFont bitmap) {
             if (!_initialized || !object.ReferenceEquals(bitmap, _bitmapOwner)) {
                 _initialized = true;
                 _bitmapOwner = bitmap;
                 _selected = SharedTextFont.CreateDefaultBitmap(bitmap);
+                RequestedProvider = SharedFontProviderKind.BitmapAtlas;
+                InitializedProvider = SharedFontProviderKind.BitmapAtlas;
+                HasInitializedProvider = _selected != null && _selected.IsAvailable;
+                FallbackReason = null;
                 BumpGeneration();
             }
             return _selected;
@@ -314,31 +361,69 @@ namespace guideXOS.Misc {
         public bool TrySelectTrueType(TrueTypeFont trueType, IFont bitmap,
                                       out SharedTextFont selected) {
             Resolve(bitmap);
+            if (trueType != null && _selected != null &&
+                    _selected.Provider == SharedFontProviderKind.TrueType &&
+                    object.ReferenceEquals(_selected.TrueTypeRenderer,
+                                           trueType)) {
+                RequestedProvider = SharedFontProviderKind.TrueType;
+                InitializedProvider = SharedFontProviderKind.TrueType;
+                HasInitializedProvider = true;
+                FallbackReason = null;
+                selected = _selected;
+                return true;
+            }
             bool success = SharedTextFont.TrySelectTrueType(trueType, bitmap,
                                                               out selected);
+            RequestedProvider = SharedFontProviderKind.TrueType;
             _selected = selected;
-            BumpGeneration();
+            HasInitializedProvider = selected != null && selected.IsAvailable;
+            InitializedProvider = selected == null
+                ? SharedFontProviderKind.BitmapAtlas : selected.Provider;
+            FallbackReason = success ? null : GetTrueTypeFailure(trueType);
+            if (success || selected != null) BumpGeneration();
             return success;
         }
 
         public bool TrySelectTrueType(byte[] fontData, int fontSize,
                                       IFont bitmap,
                                       out SharedTextFont selected) {
-            TrueTypeFont parsed;
-            bool parsedSuccessfully = TrueTypeFont.TryCreate(fontData,
-                                                               fontSize,
-                                                               out parsed);
-            return TrySelectTrueType(parsedSuccessfully ? parsed : null,
-                                     bitmap, out selected);
+            Resolve(bitmap);
+            if (_selected != null &&
+                    _selected.Provider == SharedFontProviderKind.TrueType &&
+                    _selected.TrueTypeFontSize == fontSize &&
+                    _selected.TrueTypeRenderer.MatchesSourceBytes(fontData)) {
+                RequestedProvider = SharedFontProviderKind.TrueType;
+                InitializedProvider = SharedFontProviderKind.TrueType;
+                HasInitializedProvider = true;
+                FallbackReason = null;
+                selected = _selected;
+                return true;
+            }
+            TrueTypeFont parsed = new TrueTypeFont(fontData, fontSize);
+            return TrySelectTrueType(parsed, bitmap, out selected);
         }
 
         public void SelectBitmap(IFont bitmap) {
             Resolve(bitmap);
-            SharedTextFont next = SharedTextFont.CreateDefaultBitmap(bitmap);
-            if (!object.ReferenceEquals(next, _selected)) {
+            RequestedProvider = SharedFontProviderKind.BitmapAtlas;
+            InitializedProvider = SharedFontProviderKind.BitmapAtlas;
+            HasInitializedProvider = _selected != null && _selected.IsAvailable;
+            FallbackReason = null;
+            if (_selected == null ||
+                    _selected.Provider != SharedFontProviderKind.BitmapAtlas ||
+                    !object.ReferenceEquals(bitmap, _bitmapOwner)) {
+                SharedTextFont next = SharedTextFont.CreateDefaultBitmap(bitmap);
                 _selected = next;
+                if (next != null) HasInitializedProvider = next.IsAvailable;
                 BumpGeneration();
             }
+        }
+
+        private static string GetTrueTypeFailure(TrueTypeFont trueType) {
+            if (trueType == null) return "font-initialization-failed";
+            if (!trueType.IsValid) return trueType.LoadFailure ??
+                "font-initialization-failed";
+            return "unsupported-size";
         }
 
         private void BumpGeneration() {

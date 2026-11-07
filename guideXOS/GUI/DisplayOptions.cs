@@ -57,6 +57,9 @@ namespace guideXOS.GUI {
         private int _selectedFontSize = 18; // Default
         private int[] _fontSizes = new[] { 12, 14, 16, 18, 20, 24, 28, 32 };
         private bool _fontsLoaded = false;
+        private const string SharedTrueTypeFontPath =
+            "Fonts/roboto/Roboto-Regular.ttf";
+        private const int SharedTrueTypeFontSize = 20;
 
         public DisplayOptions(int X, int Y, int W = 800, int H = 600) : base(X, Y, W, H) {
             _serviceContext = null;
@@ -457,6 +460,12 @@ namespace guideXOS.GUI {
 
                 // Font Settings tab
                 if (_currentTab == 3) {
+                    if (MouseEventDispatcher.WasPressedThisFrame(
+                            MouseButtons.Left) &&
+                            HandleFontProviderClick(cx, contentY, cw, mx, my)) {
+                        return;
+                    }
+
                     int listY = contentY + WindowManager.font.FontSize + 16;
                     int listH = contentH - WindowManager.font.FontSize - 16 - _btnH - 20;
                     int listW = cw - 14;
@@ -776,12 +785,82 @@ namespace guideXOS.GUI {
                 }
 
                 WindowManager.font = newFont;
+                WindowManager.SelectBitmapShellTextFont();
                 
                 NotifyApplication("Font applied successfully", false);
                 this.Visible = false;
             } catch {
                 NotifyApplication("Failed to apply font", true);
             }
+        }
+
+        private void DrawFontProviderControls(int cx, int contentY, int cw) {
+            const int buttonWidth = 136;
+            const int buttonHeight = 28;
+            const int gap = 8;
+            int buttonY = contentY - 4;
+            int trueTypeX = cx + cw - buttonWidth;
+            int bitmapX = trueTypeX - gap - buttonWidth;
+            SharedTextFont selected = WindowManager.ShellTextFont;
+            bool trueTypeSelected = selected != null &&
+                selected.Provider == SharedFontProviderKind.TrueType;
+            DrawFontProviderButton(bitmapX, buttonY, buttonWidth,
+                buttonHeight, "Bitmap", !trueTypeSelected);
+            DrawFontProviderButton(trueTypeX, buttonY, buttonWidth,
+                buttonHeight, "TrueType", trueTypeSelected);
+        }
+
+        private void DrawFontProviderButton(int x, int y, int width,
+                                            int height, string label,
+                                            bool selected) {
+            uint background = selected ? 0xFF2E4A7Fu : 0xFF2A2A2Au;
+            Framebuffer.Graphics.FillRectangle(x, y, width, height,
+                                               background);
+            Framebuffer.Graphics.DrawRectangle(x, y, width, height,
+                                               0xFF4F4F4Fu, 1);
+            int textWidth = WindowManager.font.MeasureString(label);
+            WindowManager.font.DrawString(x + (width - textWidth) / 2,
+                y + (height - WindowManager.font.FontSize) / 2, label);
+        }
+
+        private bool HandleFontProviderClick(int cx, int contentY, int cw,
+                                             int mx, int my) {
+            const int buttonWidth = 136;
+            const int buttonHeight = 28;
+            const int gap = 8;
+            int buttonY = contentY - 4;
+            int trueTypeX = cx + cw - buttonWidth;
+            int bitmapX = trueTypeX - gap - buttonWidth;
+            if (my < buttonY || my > buttonY + buttonHeight) return false;
+
+            if (mx >= bitmapX && mx <= bitmapX + buttonWidth) {
+                WindowManager.SelectBitmapShellTextFont();
+                NotifyApplication(
+                    "Bitmap renderer enabled for this session", false);
+                return true;
+            }
+            if (mx >= trueTypeX && mx <= trueTypeX + buttonWidth) {
+                SelectTrueTypeProvider();
+                return true;
+            }
+            return false;
+        }
+
+        private void SelectTrueTypeProvider() {
+            byte[] fontData = null;
+            bool selected = false;
+            try {
+                fontData = File.ReadAllBytes(SharedTrueTypeFontPath);
+                selected = WindowManager.TrySelectShellTrueType(fontData,
+                    SharedTrueTypeFontSize);
+            } catch {
+                selected = WindowManager.TrySelectShellTrueType(null,
+                    SharedTrueTypeFontSize);
+            }
+            NotifyApplication(selected
+                    ? "TrueType renderer enabled for this session (Roboto 20 px)"
+                    : "TrueType could not initialize; Bitmap remains active",
+                !selected);
         }
 
         private void NotifyApplication(string message, bool error) {
@@ -1138,6 +1217,7 @@ namespace guideXOS.GUI {
             } else if (_currentTab == 3) {
                 // Font Settings tab
                 WindowManager.font.DrawString(cx, contentY, "Select a font and size:");
+                DrawFontProviderControls(cx, contentY, cw);
 
                 if (!_fontsLoaded) {
                     WindowManager.font.DrawString(cx + 20, contentY + WindowManager.font.FontSize + 20, "Loading fonts...");

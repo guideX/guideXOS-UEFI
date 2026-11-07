@@ -101,6 +101,8 @@ namespace guideXOS.GUI {
                     bitmap.DrawStringClipped(legacyX, legacyY, text,
                         graphics, bitmapClipX, bitmapClipY,
                         bitmapClipWidth, bitmapClipHeight);
+                    if (selected != null)
+                        selected.RecordLegacyBitmapDrawCall();
                 }
                 return true;
             }
@@ -136,6 +138,7 @@ namespace guideXOS.GUI {
                 if (bitmap == null || bitmap.FontSize <= 0) return false;
                 int textY = y + (height - bitmap.FontSize) / 2;
                 bitmap.DrawString(x, textY, text, width, bitmap.FontSize);
+                if (selected != null) selected.RecordLegacyBitmapDrawCall();
                 return true;
             }
 
@@ -170,9 +173,15 @@ namespace guideXOS.GUI {
                 int timeY = yTop + ((barHeight - bitmap.FontSize) / 2) -
                             (bitmap.FontSize / 2);
                 bitmap.DrawString(timeX, timeY, time, graphics);
-                if (date != null)
-                    bitmap.DrawString(timeX, timeY + bitmap.FontSize, date,
+                if (selected != null) selected.RecordLegacyBitmapDrawCall();
+                if (date != null) {
+                    int dateWidth = bitmap.MeasureString(date);
+                    int dateX = graphics.Width - rightPadding - dateWidth;
+                    bitmap.DrawString(dateX, timeY + bitmap.FontSize, date,
                                       graphics);
+                }
+                if (date != null && selected != null)
+                    selected.RecordLegacyBitmapDrawCall();
                 return true;
             }
 
@@ -221,9 +230,34 @@ namespace guideXOS.GUI {
             if (selected == null ||
                     selected.Provider == SharedFontProviderKind.BitmapAtlas) {
                 if (bitmap == null) return false;
-                if (bounded) bitmap.DrawString(x, y, text, clipWidth, clipHeight);
-                else bitmap.DrawString(x, y, text);
-                return true;
+                string drawText = bounded && selected != null
+                    ? TruncateToWidth(selected, text, clipWidth) : text;
+                try {
+                    if (bounded) {
+                        int bitmapViewportX, bitmapViewportY,
+                            bitmapViewportWidth, bitmapViewportHeight;
+                        if (TryIntersectViewport(graphics, clipX, clipY,
+                                clipWidth, clipHeight,
+                                out bitmapViewportX, out bitmapViewportY,
+                                out bitmapViewportWidth,
+                                out bitmapViewportHeight)) {
+                            bitmap.DrawStringClipped(x, y, drawText, graphics,
+                                bitmapViewportX, bitmapViewportY,
+                                bitmapViewportWidth, bitmapViewportHeight);
+                        }
+                    } else {
+                        bitmap.DrawString(x, y, drawText);
+                    }
+                    if (selected != null)
+                        selected.RecordLegacyBitmapDrawCall();
+                    return true;
+                } finally {
+#if Kernel
+                    if (drawText != null &&
+                            !object.ReferenceEquals(drawText, text))
+                        drawText.Dispose();
+#endif
+                }
             }
 
             int lineHeight;
@@ -246,8 +280,7 @@ namespace guideXOS.GUI {
 
         public static string TruncateToWidth(SharedTextFont selected,
                                              string text, int maxWidth) {
-            if (text == null || maxWidth <= 0 || selected == null ||
-                    selected.Provider != SharedFontProviderKind.TrueType)
+            if (text == null || maxWidth <= 0 || selected == null)
                 return string.Empty;
             if (text.Length == 0) return text;
 

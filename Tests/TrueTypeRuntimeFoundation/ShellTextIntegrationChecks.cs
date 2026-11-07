@@ -117,7 +117,8 @@ namespace guideXOS.FontTests {
             int timeY = 48 + ((40 - bitmap.FontSize) / 2) -
                         (bitmap.FontSize / 2);
             bitmap.DrawString(timeX, timeY, time);
-            bitmap.DrawString(timeX, timeY + bitmap.FontSize, date);
+            int dateX = expectedClock.Width - 12 - bitmap.MeasureString(date);
+            bitmap.DrawString(dateX, timeY + bitmap.FontSize, date);
             Framebuffer.Graphics = clockPixels;
             bool clockDrawn = ShellTextSurfaceRenderer.DrawTaskbarClock(
                 clockPixels, selected, bitmap, time, date, 48, 40,
@@ -125,7 +126,7 @@ namespace guideXOS.FontTests {
                          bitmap.MeasureString(date)), 12);
             Check(clockDrawn && expectedClock.PixelHash() ==
                   clockPixels.PixelHash(),
-                  "bitmap taskbar clock and date retain their original pixels");
+                  "bitmap taskbar clock right-aligns both lines without clipping the date");
             _bitmapClockHash = expectedClock.PixelHash();
 
             const int menuX = 18;

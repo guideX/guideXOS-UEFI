@@ -1071,36 +1071,8 @@ namespace guideXOS.GUI {
 #endif
             SharedTextFont selected = WindowManager.ShellTextFont;
             if (selected == null) return text;
-            if (selected.Provider == SharedFontProviderKind.TrueType) {
-                return ShellTextSurfaceRenderer.TruncateToWidth(selected,
-                    text, maxW);
-            }
-
-            if (WindowManager.font.MeasureString(text) <= maxW) return text;
-            // Leave space for ellipsis '...'
-            string ell = "...";
-            int ellW = WindowManager.font.MeasureString(ell);
-            int w = 0;
-            int i = 0;
-            for (; i < text.Length; i++) {
-                int chW = WindowManager.font.MeasureString(text[i].ToString());
-                if (w + chW + ellW > maxW) break;
-                w += chW;
-            }
-            string prefix = text.Substring(0, i);
-            string sub;
-            try {
-                sub = prefix + ell;
-            } finally {
-                // Concat copies the characters into a distinct result. This
-                // local substring has no remaining aliases after the copy.
-                if (prefix != null &&
-                        !object.ReferenceEquals(prefix, text) &&
-                        !object.ReferenceEquals(prefix, ell))
-                    prefix.Dispose();
-            }
-            ell.Dispose();
-            return sub;
+            return ShellTextSurfaceRenderer.TruncateToWidth(selected, text,
+                                                             maxW);
 #if UEFI_TASKMANAGER_MEMORY_R3_PROBE
             } finally { r3Scope4.Dispose(); }
 #endif

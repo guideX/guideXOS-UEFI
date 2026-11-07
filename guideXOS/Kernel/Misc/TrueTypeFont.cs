@@ -178,6 +178,15 @@ namespace guideXOS.Misc {
         public int Rasterizations { get; private set; }
         public int RasterizationFailures { get; private set; }
 
+        internal bool MatchesSourceBytes(byte[] fontData) {
+            if (!IsValid || _data == null || fontData == null ||
+                fontData.Length != _data.Length) return false;
+            for (int i = 0; i < _data.Length; i++) {
+                if (_data[i] != fontData[i]) return false;
+            }
+            return true;
+        }
+
         public TrueTypeFont(byte[] fontData, int fontSize = 16) {
             FontSize = fontSize;
             LoadFailure = "not-initialized";
