@@ -157,7 +157,7 @@ def build_manifest(name: str, root: Path, kernel_sha: str,
         "esp_tree_sha256": esp_hash,
         "files": file_rows,
         "validation": {
-            "production_pipeline": "isolated copy of build.ps1; kernel, conversion, and ramdisk build skipped only after fresh kernel and retained RDSK inputs were independently verified",
+            "production_pipeline": "fresh NativeAOT kernel built in an isolated copy of build.ps1; Candidate A assembled with the retained RDSK v1 image, then Candidate B assembled with kernel/conversion/ramdisk steps skipped using the same fresh kernel and retained RDSK v2 image",
             "managed_artifact_audit": "41/41 descriptor, build/staging, ramdisk/staging, and compiled allowlist",
             "candidate_audit_csv": str(audit_csv.resolve()),
         },

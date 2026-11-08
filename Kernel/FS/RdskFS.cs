@@ -11,6 +11,16 @@ namespace guideXOS.FS {
     internal unsafe class RdskFS : FileSystem {
         private readonly byte* _imageBase;
         private readonly ulong _imageSizeBytes;
+        private readonly object _imageValidationSync = new object();
+        private bool _imageValidationComplete;
+        private bool _imageValid;
+        private uint _imageVersion;
+#if GUIDEXOS_RDSK_HOSTED_TESTS
+        private int _imageValidationCountForHostedTests;
+        internal int ImageValidationCountForHostedTests {
+            get { return _imageValidationCountForHostedTests; }
+        }
+#endif
 
         public RdskFS() {
             BootConsole.WriteLine("[RdskFS] Constructor called");
@@ -29,8 +39,19 @@ namespace guideXOS.FS {
 
         internal override FileSystemDirectoryInspection InspectDirectory(
                 string path) {
-            return RdskFSDirectoryInspector.Inspect(_imageBase,
-                _imageSizeBytes, path);
+            uint version;
+            if (!TryGetValidatedVersion(out version)) {
+                if (!FileSystemDirectoryInspection.IsValidRelativePath(path)) {
+                    return FileSystemDirectoryInspection.Create(
+                        FileSystemDirectoryInspectionStatus.InvalidPath);
+                }
+                return FileSystemDirectoryInspection.Create(
+                    _imageBase == null
+                        ? FileSystemDirectoryInspectionStatus.FilesystemUnavailable
+                        : FileSystemDirectoryInspectionStatus.Indeterminate);
+            }
+            return RdskFSDirectoryInspector.InspectValidated(_imageBase,
+                _imageSizeBytes, version, path);
         }
 
         public override List<FileInfo> GetFiles(string Directory) {
@@ -38,8 +59,7 @@ namespace guideXOS.FS {
             if (Directory == null || _imageBase == null) return result;
 
             uint version;
-            if (!RdskFSDirectoryInspector.ValidateImage(_imageBase,
-                    _imageSizeBytes, out version)) return result;
+            if (!TryGetValidatedVersion(out version)) return result;
 
             string directory;
             bool ownsDirectory;
@@ -243,11 +263,31 @@ namespace guideXOS.FS {
         public override byte[] ReadAllBytes(string Name) {
             if (Name == null || _imageBase == null) return null;
             uint version;
-            if (!RdskFSDirectoryInspector.ValidateImage(_imageBase,
-                    _imageSizeBytes, out version)) return null;
+            if (!TryGetValidatedVersion(out version)) return null;
             return version == RdskFSDirectoryInspector.Version2
                 ? ReadV2File(Name)
                 : ReadV1File(Name);
+        }
+
+        /// <summary>
+        /// Validate the captured read-only ramdisk once per mount. The image
+        /// backing pointer and captured size are fixed for this mount, and
+        /// RdskFS exposes no write operation, so repeating the complete v2
+        /// CRC for every file read only repeats the same work.
+        /// </summary>
+        private bool TryGetValidatedVersion(out uint version) {
+            lock (_imageValidationSync) {
+                if (!_imageValidationComplete) {
+                    _imageValid = RdskFSDirectoryInspector.ValidateImage(
+                        _imageBase, _imageSizeBytes, out _imageVersion);
+#if GUIDEXOS_RDSK_HOSTED_TESTS
+                    _imageValidationCountForHostedTests++;
+#endif
+                    _imageValidationComplete = true;
+                }
+                version = _imageValid ? _imageVersion : 0;
+                return _imageValid;
+            }
         }
 
         private byte[] ReadV2File(string name) {

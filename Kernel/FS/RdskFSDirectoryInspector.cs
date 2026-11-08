@@ -67,6 +67,27 @@ namespace guideXOS.FS {
             if (!ValidateImage(image, imageSizeBytes, out version)) {
                 return Result(FileSystemDirectoryInspectionStatus.Indeterminate);
             }
+            return InspectValidated(image, imageSizeBytes, version, path);
+        }
+
+        /// <summary>
+        /// Inspects a path after the owning read-only mount has validated and
+        /// retained this exact image. This avoids repeating the whole-image
+        /// CRC for every lookup while keeping the standalone inspector's
+        /// fail-closed validation contract.
+        /// </summary>
+        internal static FileSystemDirectoryInspection InspectValidated(
+                byte* image, ulong imageSizeBytes, uint version, string path) {
+            if (!FileSystemDirectoryInspection.IsValidRelativePath(path)) {
+                return Result(FileSystemDirectoryInspectionStatus.InvalidPath);
+            }
+            if (image == null) {
+                return Result(
+                    FileSystemDirectoryInspectionStatus.FilesystemUnavailable);
+            }
+            if (version != Version1 && version != Version2) {
+                return Result(FileSystemDirectoryInspectionStatus.Indeterminate);
+            }
             if (!IsAscii(path)) {
                 // Neither the legacy v1 reader nor the bounded v2 subset
                 // silently decodes or replaces non-ASCII path characters.

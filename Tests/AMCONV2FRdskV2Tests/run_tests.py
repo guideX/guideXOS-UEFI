@@ -49,6 +49,11 @@ def main() -> int:
         type=Path,
         help="isolate dotnet run outputs outside the test source directory",
     )
+    parser.add_argument(
+        "--accepted-candidate-b",
+        type=Path,
+        help="also exercise the production reader against an accepted Candidate B image",
+    )
     arguments = parser.parse_args()
 
     if not BUILDER.is_file() or not CS_PROJ.is_file():
@@ -124,6 +129,13 @@ def main() -> int:
                 "--artifacts-path", str(arguments.artifacts_path.resolve())
             ])
         hosted_command.extend(["--", str(image_a), str(legacy), str(empty_image)])
+        if arguments.accepted_candidate_b is not None:
+            candidate_b = arguments.accepted_candidate_b.resolve()
+            if not candidate_b.is_file():
+                raise RuntimeError(
+                    f"Accepted Candidate B image does not exist: {candidate_b}"
+                )
+            hosted_command.append(str(candidate_b))
         hosted = run(hosted_command)
         print(hosted.stdout, end="")
         if hosted.stderr:

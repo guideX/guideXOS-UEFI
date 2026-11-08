@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using guideXOS.FS;
 using guideXOS.Kernel.Drivers;
+using guideXOS.Misc;
 using guideXOS.OS;
 using FileInfo = guideXOS.FS.FileInfo;
 
@@ -13,8 +15,8 @@ internal static unsafe class Program {
     private static int _failed;
 
     private static int Main(string[] args) {
-        if (args == null || args.Length != 3) {
-            Console.Error.WriteLine("Usage: AMCONV2FRdskV2Tests <v2> <v1> <empty-v2>");
+        if (args == null || (args.Length != 3 && args.Length != 4)) {
+            Console.Error.WriteLine("Usage: AMCONV2FRdskV2Tests <v2> <v1> <empty-v2> [accepted-candidate-b-v2]");
             return 2;
         }
 
@@ -25,10 +27,116 @@ internal static unsafe class Program {
         TestV2Inspection(v2, emptyV2);
         TestV2OperationsAndFolderBinding(v2, v1);
         TestV1Compatibility(v1);
+        if (args.Length == 4) {
+            TestAcceptedCandidateWallpaper(
+                System.IO.File.ReadAllBytes(args[3]), emptyV2);
+        }
 
         Console.WriteLine("AMCONV2F_RDSK_V2_ASSERTIONS=" + _passed);
         Console.WriteLine("AMCONV2F_RDSK_V2_FAILURES=" + _failed);
         return _failed == 0 ? 0 : 1;
+    }
+
+    private static void TestAcceptedCandidateWallpaper(byte[] image,
+                                                        byte[] replacementImage) {
+        const string expectedHash =
+            "90B8E521205D2052E04560A623ADFA96B058E5A9EE5C489030BE78077FCEFE08";
+        const ulong expectedOffset = 17648825UL;
+        const ulong expectedLength = 1177051UL;
+        var imagePin = new PinnedRdskImage(image);
+        var mounted = new RdskFS();
+        FileSystemMountLifetime.SetActiveFileSystem(mounted);
+
+        List<FileInfo> backgrounds = mounted.GetFiles("Backgrounds/");
+        FileInfo wallpaperEntry = FindEntry(backgrounds, "tronporche.png");
+        Check(wallpaperEntry != null &&
+              wallpaperEntry.Attribute == FileAttribute.Archive &&
+              wallpaperEntry.Param0 == expectedOffset &&
+              wallpaperEntry.Param1 == expectedLength,
+            "accepted Candidate B resolves the wallpaper record and exact extent");
+        Check(ContainsEntry(backgrounds, "tronporche_thumb.png",
+                FileAttribute.Archive),
+            "accepted Candidate B enumerates the containing wallpaper directory");
+        DisposeEntries(backgrounds);
+
+        byte[] before = mounted.ReadAllBytes(
+            "Backgrounds/tronporche_thumb.png");
+        byte[] first = mounted.ReadAllBytes("Backgrounds/tronporche.png");
+        byte[] repeated = mounted.ReadAllBytes("Backgrounds/tronporche.png");
+        byte[] after = mounted.ReadAllBytes(
+            "Backgrounds/tronporche_thumb.png");
+        string firstHash = first == null ? "" :
+            Convert.ToHexString(SHA256.HashData(first));
+        string repeatedHash = repeated == null ? "" :
+            Convert.ToHexString(SHA256.HashData(repeated));
+        Check(first != null && (ulong)first.Length == expectedLength &&
+              firstHash == expectedHash,
+            "production reader returns the accepted wallpaper bytes and SHA-256");
+        if (first != null) TestProductionPngDecoder(first);
+        Check(first != null && repeated != null &&
+              repeated.Length == first.Length &&
+              repeatedHash == expectedHash,
+            "repeated production wallpaper reads return identical full-length bytes");
+        Check(before != null && after != null && before.Length == after.Length &&
+              BytesEqual(before, after),
+            "a neighboring file reads identically before and after the wallpaper");
+
+        FileSystemMountLease lease;
+        bool leaseAcquired = FileSystemMountLifetime.TryAcquireActive(out lease) ==
+            FileSystemMountAcquireResult.Acquired;
+        var replacementPin = new PinnedRdskImage(replacementImage);
+        var replacement = new RdskFS();
+        FileSystemMountLifetime.SetActiveFileSystem(replacement);
+        mounted.Dispose();
+        byte[] retainedRead = leaseAcquired
+            ? lease.FileSystem.ReadAllBytes("Backgrounds/tronporche.png")
+            : null;
+        string retainedHash = retainedRead == null ? "" :
+            Convert.ToHexString(SHA256.HashData(retainedRead));
+        Check(leaseAcquired && retainedRead != null &&
+              (ulong)retainedRead.Length == expectedLength &&
+              retainedHash == expectedHash && !mounted.IsDisposed,
+            "a retained Candidate B mount reads the wallpaper after replacement");
+        if (lease != null) lease.Dispose();
+        Check(mounted.IsDisposed && mounted.DisposalCount == 1,
+            "the retained Candidate B mount disposes after its final lease release");
+#if GUIDEXOS_RDSK_HOSTED_TESTS
+        Check(mounted.ImageValidationCountForHostedTests == 1,
+            "the exact Candidate B image receives one full validation per mount");
+#endif
+
+        FileSystemMountLifetime.SetActiveFileSystem(null);
+        replacement.Dispose();
+        imagePin.Dispose();
+        replacementPin.Dispose();
+    }
+
+    private static void TestProductionPngDecoder(byte[] pngBytes) {
+        if (!PngLoader.Initialize()) {
+            Check(false, "production PNG decoder initializes for the accepted payload");
+            return;
+        }
+
+        System.Drawing.Image decoded;
+        bool decodeSucceeded = PngLoader.Load(pngBytes, out decoded);
+        Check(decodeSucceeded && decoded != null && decoded.RawData != null,
+            "the production PNG decoder accepts the exact Candidate B wallpaper");
+        if (!decodeSucceeded || decoded == null || decoded.RawData == null) {
+            if (decoded != null) decoded.Dispose();
+            return;
+        }
+
+        long expectedPixels = checked((long)1024 * 768);
+        long decodedBytes = checked(expectedPixels * sizeof(int));
+        long desktopBytes = checked((long)1280 * 800 * sizeof(int));
+        Check(decoded.Width == 1024 && decoded.Height == 768 &&
+              decoded.RawData.Length == expectedPixels,
+            "decoded dimensions and pixel count match the independently validated IHDR");
+        Check(decodedBytes == 3145728L && desktopBytes == 4096000L &&
+              decodedBytes <= 16L * 1024L * 1024L &&
+              desktopBytes <= 16L * 1024L * 1024L,
+            "decoded and framebuffer-sized ARGB buffers fit bounded size calculations");
+        decoded.Dispose();
     }
 
     private static void TestV2Inspection(byte[] image, byte[] emptyImage) {

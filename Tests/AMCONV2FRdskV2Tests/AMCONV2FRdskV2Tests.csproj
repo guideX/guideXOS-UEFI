@@ -10,6 +10,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="PngLoaderHostedImage.cs" />
+    <Compile Include="../../Kernel/Misc/PngLoader.cs" Link="PngLoader.cs" />
     <Compile Include="../AMCONV2ERdskInspectionTests/RdskFSHostedStubs.cs" Link="RdskFSHostedStubs.cs" />
     <Compile Include="../AMCONV2BFolderTargetTests/MountLifetimeTestStubs.cs" Link="MountLifetimeTestStubs.cs" />
     <Compile Include="../../guideXOS/OS/ShellFolderTargetPath.cs" Link="ShellFolderTargetPath.cs" />

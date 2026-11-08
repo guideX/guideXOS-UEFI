@@ -40,9 +40,13 @@ def main() -> int:
          "recordKinds[parentIndex]" in inspector and
          "CompareNames" in inspector),
         ("RDSK operations validate the retained pointer and captured image size",
-         "ValidateImage(_imageBase" in reader and
+         "ValidateImage(" in reader and "TryGetValidatedVersion" in reader and
          "_imageSizeBytes" in reader and
-         "Inspect(_imageBase" in reader),
+         "InspectValidated(_imageBase" in reader),
+        ("a read-only mount caches complete image validation after CRC verification",
+         "_imageValidationComplete" in reader and
+         "RdskFSDirectoryInspector.ValidateImage(" in reader and
+         "RdskFS exposes no write operation" in reader),
         ("production listing and reading retain distinct v1 and v2 paths",
          "GetV2Files" in reader and "GetV1Files" in reader and
          "ReadV2File" in reader and "ReadV1File" in reader),
