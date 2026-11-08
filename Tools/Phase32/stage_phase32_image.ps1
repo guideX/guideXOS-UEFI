@@ -39,13 +39,18 @@ foreach ($payload in $record.payloads) {
     }
     $payloadRoot = Split-Path -Parent (Split-Path -Parent $artifact)
     $map = Join-Path $payloadRoot 'guidexos.map'
-    $linkResponse = Join-Path $payloadRoot `
-        'obj\Release\net9.0\guidexos-x64\native\link.rsp'
+    $linkResponseCandidates = @(
+        (Join-Path $payloadRoot 'obj\Release\net9.0\guidexos-x64\native\link.rsp'),
+        (Join-Path $payloadRoot 'obj\x64\Release\net9.0\guidexos-x64\native\link.rsp')
+    )
+    $linkResponse = $linkResponseCandidates |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+        Select-Object -First 1
     if (-not (Test-Path -LiteralPath $map)) {
         throw "Phase 32 map is absent: $map"
     }
     if (-not (Test-Path -LiteralPath $linkResponse)) {
-        throw "Phase 32 link response is absent: $linkResponse"
+        throw "Phase 32 link response is absent; checked: $($linkResponseCandidates -join ', ')"
     }
     $exeTarget = Join-Path $RamdiskSource ($base + '.exe')
     $descriptorTarget = Join-Path $RamdiskSource ($base + '.gxmi')

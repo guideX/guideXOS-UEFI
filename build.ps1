@@ -18,6 +18,9 @@
 .PARAMETER SkipKernel
     Skip building the C# kernel
 
+.PARAMETER SkipManagedProofs
+    Skip rebuilding managed proof payloads already staged into the ramdisk source
+
 .PARAMETER SkipRamdisk
     Skip building the ramdisk
 
@@ -56,6 +59,7 @@
 param(
     [switch]$SkipBootloader,
     [switch]$SkipKernel,
+    [switch]$SkipManagedProofs,
     [switch]$SkipRamdisk,
     [switch]$SkipConversion,
     [switch]$CreateISO,
@@ -416,7 +420,7 @@ if (-not $SkipBootloader) {
 # Managed proof identities must be final before the kernel is compiled.
 # Their descriptors remain untrusted at runtime; this step only creates the
 # kernel's strict compile-time allowlist from the finalized staged bytes.
-if (-not $SkipRamdisk) {
+if ((-not $SkipRamdisk) -and (-not $SkipManagedProofs)) {
     Write-Header "[Managed Proofs] Build and stage managed payload cohort"
     # Phase 24 uses the existing RDSK source path.  Stage only the exact,
     # already-validated Phase 23 image; the kernel still treats both the PE and

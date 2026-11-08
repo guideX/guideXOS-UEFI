@@ -1,4 +1,5 @@
 using guideXOS.Kernel.Drivers;
+using guideXOS.Kernel.Drivers.Input;
 using guideXOS.FS;
 using guideXOS.Misc;
 using guideXOS.OS;

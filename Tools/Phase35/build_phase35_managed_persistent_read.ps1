@@ -142,6 +142,16 @@ foreach ($mode in $modes) {
     $payloadRoot = Join-Path (Join-Path $OutputRoot 'payloads') $mode.Name
     $archiveArtifact = Join-Path (Join-Path $payloadRoot 'publish') $artifact.Name
     $archiveMap = Join-Path $payloadRoot 'guidexos.map'
+    $linkResponseCandidates = @(
+        (Join-Path $output 'obj\Release\net9.0\guidexos-x64\native\link.rsp'),
+        (Join-Path $output 'obj\x64\Release\net9.0\guidexos-x64\native\link.rsp')
+    )
+    $linkResponseSource = $linkResponseCandidates |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+        Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace([string]$linkResponseSource)) {
+        throw "Phase 35 $($mode.Name) link response is absent; checked: $($linkResponseCandidates -join ', ')"
+    }
     $archiveLinkResponse = Join-Path $payloadRoot `
         'obj\Release\net9.0\guidexos-x64\native\link.rsp'
     New-Item -ItemType Directory -Force -Path `
@@ -150,8 +160,7 @@ foreach ($mode in $modes) {
     Copy-Item -LiteralPath $artifact.FullName -Destination $archiveArtifact -Force
     Copy-Item -LiteralPath (Join-Path $output 'guidexos.map') `
         -Destination $archiveMap -Force
-    Copy-Item -LiteralPath (Join-Path $output `
-        'obj\Release\net9.0\guidexos-x64\native\link.rsp') `
+    Copy-Item -LiteralPath $linkResponseSource `
         -Destination $archiveLinkResponse -Force
     foreach ($recordName in @('phase26-managed-proof-build.json',
             'user-managed-proof-build.json')) {

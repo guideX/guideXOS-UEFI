@@ -34,13 +34,17 @@ foreach ($payload in $record.payloads) {
     if ([string]::IsNullOrWhiteSpace($base)) { throw "Unknown Phase 31 payload mode: $mode" }
     $payloadRoot = Split-Path -Parent (Split-Path -Parent $artifact)
     $map = Join-Path $payloadRoot 'guidexos.map'
-    # The Phase23 builder sets BaseIntermediateOutputPath to the per-mode
-    # output root, so native link inputs live under obj\Release.
-    $linkResponse = Join-Path $payloadRoot `
-        'obj\Release\net9.0\guidexos-x64\native\link.rsp'
+    # Platform=x64 adds an architecture segment to obj on some SDK layouts.
+    $linkResponseCandidates = @(
+        (Join-Path $payloadRoot 'obj\Release\net9.0\guidexos-x64\native\link.rsp'),
+        (Join-Path $payloadRoot 'obj\x64\Release\net9.0\guidexos-x64\native\link.rsp')
+    )
+    $linkResponse = $linkResponseCandidates |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+        Select-Object -First 1
     if (-not (Test-Path -LiteralPath $map)) { throw "Phase 31 map is absent: $map" }
     if (-not (Test-Path -LiteralPath $linkResponse)) {
-        throw "Phase 31 link response is absent: $linkResponse"
+        throw "Phase 31 link response is absent; checked: $($linkResponseCandidates -join ', ')"
     }
     $exeTarget = Join-Path $RamdiskSource ($base + '.exe')
     $descriptorTarget = Join-Path $RamdiskSource ($base + '.gxmi')

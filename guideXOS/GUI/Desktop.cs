@@ -199,8 +199,8 @@ namespace guideXOS.GUI {
                 _customPosX = null;
                 _customPosY = null;
                 _uefiImageTileDrawReported = false;
-                _uefiTileBitmapFont = null;
-                _uefiTileTextFont = null;
+                _uefiTileLayoutBitmapOwner = null;
+                _uefiTileLayoutFont = null;
                 UefiDesktopInput.Reset();
                 return;
             }
@@ -229,8 +229,8 @@ namespace guideXOS.GUI {
             _iconDragging = false;
             _iconDragId = -1;
             _iconDragStarted = false;
-            _uefiTileBitmapFont = null;
-            _uefiTileTextFont = null;
+            _uefiTileLayoutBitmapOwner = null;
+            _uefiTileLayoutFont = null;
             if (_customPosIds != null) { _customPosIds.Dispose(); _customPosIds = null; }
             if (_customPosX != null) { _customPosX.Dispose(); _customPosX = null; }
             if (_customPosY != null) { _customPosY.Dispose(); _customPosY = null; }
