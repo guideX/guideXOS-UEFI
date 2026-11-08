@@ -73,13 +73,15 @@ namespace paging
     {
         UINT64 KernelSpanBytes;
         UINT64 PageTablePages[MAX_PT_PAGES + 1];
-#if defined(UEFI_DIAGNOSTIC_BM1)
+        // Preserve the native GOP mode in every build; the fixed v1 BootInfo
+        // carries the physical byte pitch and firmware-reported capacity.
         UINT32 GopPixelFormat;
         UINT32 GopRedMask;
         UINT32 GopGreenMask;
         UINT32 GopBlueMask;
         UINT32 GopReservedMask;
-        UINT32 GopMetadataReserved;
+        UINT32 FramebufferMappingFlags;
+#if defined(UEFI_DIAGNOSTIC_BM1)
         BareMetalDiagnosticRecord Diagnostics;
 #endif
     };

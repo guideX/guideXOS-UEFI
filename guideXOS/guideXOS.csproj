@@ -205,7 +205,7 @@
 		<!-- CPUID object file for CPU feature detection - using safe pointer-based version -->
 		<NativeLibrary Include="$(MSBuildProjectDirectory)\cpuid_safe.obj" Condition="Exists('$(MSBuildProjectDirectory)\cpuid_safe.obj')" />
 		<!-- Stubs for missing native symbols (built from native_stubs.asm) -->
-		<NativeLibrary Include="$(MSBuildProjectDirectory)\native_stubs.obj" Condition="Exists('$(MSBuildProjectDirectory)\native_stubs.obj')" />
+		<NativeLibrary Include="$(MSBuildProjectDirectory)\native_stubs.obj" Condition="Exists('$(MSBuildProjectDirectory)\native_stubs.asm')" />
 	</ItemGroup>
 
 	<!-- Build NASM stubs if the real native libs are not present. -->

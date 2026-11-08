@@ -56,7 +56,64 @@ extern "C" UINTN GetTrampolineCodeSize(void);
 EFI_GRAPHICS_OUTPUT_PROTOCOL* GOP;
 EFI_FILE_PROTOCOL* KernelFile;
 BootInfo bootInfo;      // legacy struct instance (still used elsewhere)
+static guideXOS::boot::GopFramebufferLayout gopFramebufferLayout{};
 // v1BootInfo is now allocated dynamically in EfiLoaderData pages to survive ExitBootServices
+
+#if defined(UEFI_DIAGNOSTIC_AIDA2)
+static void Aida2PrintGopEvidence(
+    const guideXOS::boot::GopFramebufferLayout& layout)
+{
+    using namespace guideXOS::debug;
+    SerialPrint("[AIDA2] GOP_WIDTH="); SerialPrintHex32(layout.Width);
+    SerialPrint(" GOP_HEIGHT="); SerialPrintHex32(layout.Height);
+    SerialPrint(" GOP_PIXELS_PER_SCANLINE=");
+    SerialPrintHex32(layout.PixelsPerScanLine);
+    SerialPrint(" PITCH_BYTES="); SerialPrintHex32(layout.PitchBytes);
+    SerialPrint(" PIXEL_FORMAT="); SerialPrintHex32(layout.PixelFormat);
+    SerialPrint(" RED_MASK="); SerialPrintHex32(layout.RedMask);
+    SerialPrint(" GREEN_MASK="); SerialPrintHex32(layout.GreenMask);
+    SerialPrint(" BLUE_MASK="); SerialPrintHex32(layout.BlueMask);
+    SerialPrint(" RESERVED_MASK="); SerialPrintHex32(layout.ReservedMask);
+    SerialPrint(" FRAMEBUFFER_BASE="); SerialPrintHex64(layout.Base);
+    SerialPrint(" FRAMEBUFFER_SIZE="); SerialPrintHex64(layout.SizeBytes);
+    SerialPrint("\n[AIDA2] STAGE=GOP_VALIDATED\n");
+}
+
+static void Aida2PrintRawGopEvidence(
+    EFI_GRAPHICS_OUTPUT_PROTOCOL* gop)
+{
+    if (!gop || !gop->Mode || !gop->Mode->Info) {
+        guideXOS::debug::SerialPrint(
+            "[AIDA2] GOP_INFO=UNAVAILABLE\n");
+        return;
+    }
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION* info = gop->Mode->Info;
+    guideXOS::debug::SerialPrint("[AIDA2] GOP_RAW_WIDTH=");
+    guideXOS::debug::SerialPrintHex32(info->HorizontalResolution);
+    guideXOS::debug::SerialPrint(" GOP_RAW_HEIGHT=");
+    guideXOS::debug::SerialPrintHex32(info->VerticalResolution);
+    guideXOS::debug::SerialPrint(" GOP_RAW_PIXELS_PER_SCANLINE=");
+    guideXOS::debug::SerialPrintHex32(info->PixelsPerScanLine);
+    guideXOS::debug::SerialPrint(" GOP_RAW_PITCH_BYTES=");
+    guideXOS::debug::SerialPrintHex64(
+        (UINT64)info->PixelsPerScanLine * 4ull);
+    guideXOS::debug::SerialPrint(" GOP_RAW_FORMAT=");
+    guideXOS::debug::SerialPrintHex32((UINT32)info->PixelFormat);
+    guideXOS::debug::SerialPrint(" GOP_RAW_RED_MASK=");
+    guideXOS::debug::SerialPrintHex32(info->PixelInformation.RedMask);
+    guideXOS::debug::SerialPrint(" GOP_RAW_GREEN_MASK=");
+    guideXOS::debug::SerialPrintHex32(info->PixelInformation.GreenMask);
+    guideXOS::debug::SerialPrint(" GOP_RAW_BLUE_MASK=");
+    guideXOS::debug::SerialPrintHex32(info->PixelInformation.BlueMask);
+    guideXOS::debug::SerialPrint(" GOP_RAW_RESERVED_MASK=");
+    guideXOS::debug::SerialPrintHex32(info->PixelInformation.ReservedMask);
+    guideXOS::debug::SerialPrint(" GOP_RAW_FRAMEBUFFER_BASE=");
+    guideXOS::debug::SerialPrintHex64(gop->Mode->FrameBufferBase);
+    guideXOS::debug::SerialPrint(" GOP_RAW_FRAMEBUFFER_SIZE=");
+    guideXOS::debug::SerialPrintHex64(gop->Mode->FrameBufferSize);
+    guideXOS::debug::SerialPrint("\n");
+}
+#endif
 
 EFI_STATUS LoadFile(EFI_FILE_PROTOCOL** file, CHAR16* path, EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     EFI_LOADED_IMAGE_PROTOCOL* LoadedImage;
@@ -543,6 +600,10 @@ static void ZeroBootInfo(BootInfo* bi) {
 }
 
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
+#if defined(UEFI_DIAGNOSTIC_AIDA2)
+    guideXOS::debug::SerialInit();
+    guideXOS::debug::SerialPrint("[AIDA2] STAGE=LOADER_ENTRY\n");
+#endif
     // Set global SystemTable pointer for uefi_shim.h functions
     gST = SystemTable;
 
@@ -588,6 +649,33 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
         Print(L"Failed to locate GOP\n");
         return status;
     }
+
+#if defined(UEFI_DIAGNOSTIC_AIDA2)
+    Aida2PrintRawGopEvidence(GOP);
+#endif
+    if (!GOP || !GOP->Mode || !GOP->Mode->Info ||
+        !guideXOS::boot::TryBuildGopFramebufferLayout(
+            (EFI_PHYSICAL_ADDRESS)GOP->Mode->FrameBufferBase,
+            (UINT64)GOP->Mode->FrameBufferSize,
+            GOP->Mode->Info->HorizontalResolution,
+            GOP->Mode->Info->VerticalResolution,
+            GOP->Mode->Info->PixelsPerScanLine,
+            (UINT32)GOP->Mode->Info->PixelFormat,
+            GOP->Mode->Info->PixelInformation.RedMask,
+            GOP->Mode->Info->PixelInformation.GreenMask,
+            GOP->Mode->Info->PixelInformation.BlueMask,
+            GOP->Mode->Info->PixelInformation.ReservedMask,
+            &gopFramebufferLayout)) {
+        Print(L"Unsupported or invalid GOP framebuffer layout\n");
+#if defined(UEFI_DIAGNOSTIC_AIDA2)
+        guideXOS::debug::SerialPrint(
+            "[AIDA2] STAGE=GOP_VALIDATION_FAILED\n");
+#endif
+        return EFI_UNSUPPORTED;
+    }
+#if defined(UEFI_DIAGNOSTIC_AIDA2)
+    Aida2PrintGopEvidence(gopFramebufferLayout);
+#endif
 
     // --- Locate Simple Pointer Protocol (Mouse) ---
     // This protocol provides relative mouse movement data from UEFI-aware pointing devices.
@@ -635,13 +723,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
 
     // === DRAW BOOT SPLASH IMMEDIATELY ===
     // This replaces the TianoCore logo as soon as we have GOP access
-    if (GOP->Mode->FrameBufferBase != 0) {
-        guideXOS::boot::BootSplash::DrawSplash(
-            (EFI_PHYSICAL_ADDRESS)GOP->Mode->FrameBufferBase,
-            GOP->Mode->Info->HorizontalResolution,
-            GOP->Mode->Info->VerticalResolution,
-            GOP->Mode->Info->PixelsPerScanLine * 4u
-        );
+    if (gopFramebufferLayout.Base != 0) {
+        guideXOS::boot::BootSplash::DrawSplash(gopFramebufferLayout);
         // Small delay so splash is visible
         SystemTable->BootServices->Stall(300000); // 300ms
     }
@@ -743,15 +826,14 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     v1BootInfo->AcpiRsdp = rsdp ? (uint64_t)(UINTN)rsdp : 0ull;
 
     // Framebuffer from GOP
-    v1BootInfo->FramebufferBase   = (uint64_t)GOP->Mode->FrameBufferBase;
-    v1BootInfo->FramebufferWidth  = GOP->Mode->Info->HorizontalResolution;
-    v1BootInfo->FramebufferHeight = GOP->Mode->Info->VerticalResolution;
-    v1BootInfo->FramebufferPitch  = GOP->Mode->Info->PixelsPerScanLine * 4u; // 32 bpp
-#if defined(UEFI_DIAGNOSTIC_BM1)
-    v1BootInfo->FramebufferSize   = (uint64_t)GOP->Mode->FrameBufferSize;
-    v1BootInfo->Reserved2         = (uint32_t)GOP->Mode->Info->PixelFormat;
+    v1BootInfo->FramebufferBase = gopFramebufferLayout.Base;
+    v1BootInfo->FramebufferSize = gopFramebufferLayout.SizeBytes;
+    v1BootInfo->FramebufferWidth = gopFramebufferLayout.Width;
+    v1BootInfo->FramebufferHeight = gopFramebufferLayout.Height;
+    v1BootInfo->FramebufferPitch = gopFramebufferLayout.PitchBytes;
+    v1BootInfo->Reserved2 = gopFramebufferLayout.PixelFormat;
 
-    switch (GOP->Mode->Info->PixelFormat) {
+    switch (gopFramebufferLayout.PixelFormat) {
         case PixelRedGreenBlueReserved8BitPerColor:
             v1BootInfo->FramebufferFormat = guideXOS::FramebufferFormat::R8G8B8A8;
             break;
@@ -759,20 +841,11 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
             v1BootInfo->FramebufferFormat = guideXOS::FramebufferFormat::B8G8R8A8;
             break;
         default:
-            // Preserve GOP's full native format/masks in the loader handoff.
-            // The normal graphics wrapper still only supports the two 32-bit
-            // channel orders; BM1's direct renderer handles GOP bit masks.
             v1BootInfo->FramebufferFormat = guideXOS::FramebufferFormat::Unknown;
             break;
     }
-#else
-    v1BootInfo->FramebufferSize   = (uint64_t)v1BootInfo->FramebufferPitch *
-                                   (uint64_t)v1BootInfo->FramebufferHeight;
-    v1BootInfo->FramebufferFormat = guideXOS::FramebufferFormat::B8G8R8A8; // typical GOP
-#endif
 
-    if (v1BootInfo->FramebufferBase != 0 && v1BootInfo->FramebufferSize != 0)
-        v1BootInfo->Flags |= (1u << 1); // framebuffer valid
+    v1BootInfo->Flags |= (1u << 1); // GOP layout validated above
 
     // Allocate a simple stack that survives ExitBootServices
     // (Some kernels assume a larger / aligned stack than what UEFI leaves us.)
@@ -1064,17 +1137,16 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
         }
     }
 
-#if defined(UEFI_DIAGNOSTIC_BM1)
-    // BuildIdentityPageTables clears its loader-owned handoff record before
-    // constructing the tables. Publish GOP metadata only after that reset.
+    // BuildIdentityPageTables clears the loader-owned handoff before building
+    // mappings, so publish native GOP metadata only after that reset.
     guideXOS::paging::BootMemoryHandoff* gopHandoff =
         guideXOS::paging::GetBootMemoryHandoff();
-    gopHandoff->GopPixelFormat = (UINT32)GOP->Mode->Info->PixelFormat;
-    gopHandoff->GopRedMask = GOP->Mode->Info->PixelInformation.RedMask;
-    gopHandoff->GopGreenMask = GOP->Mode->Info->PixelInformation.GreenMask;
-    gopHandoff->GopBlueMask = GOP->Mode->Info->PixelInformation.BlueMask;
-    gopHandoff->GopReservedMask = GOP->Mode->Info->PixelInformation.ReservedMask;
-#endif
+    gopHandoff->GopPixelFormat = gopFramebufferLayout.PixelFormat;
+    gopHandoff->GopRedMask = gopFramebufferLayout.RedMask;
+    gopHandoff->GopGreenMask = gopFramebufferLayout.GreenMask;
+    gopHandoff->GopBlueMask = gopFramebufferLayout.BlueMask;
+    gopHandoff->GopReservedMask = gopFramebufferLayout.ReservedMask;
+    gopHandoff->FramebufferMappingFlags = 0;
 
     // Map kernel virtual addresses to their physical backing
     {
@@ -1111,18 +1183,26 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     // Without this, framebuffer writes go to CPU cache and never reach the display.
 
     // Framebuffer (MMIO - must be uncached for display output)
-    if (v1BootInfo->FramebufferBase != 0 && v1BootInfo->FramebufferSize != 0) {
+    {
         EFI_STATUS st = guideXOS::paging::MapIdentityRangeUncached(
-            SystemTable,
-            pt.Pml4Phys,
-            (EFI_PHYSICAL_ADDRESS)v1BootInfo->FramebufferBase,
-            (UINTN)v1BootInfo->FramebufferSize);
+            SystemTable, pt.Pml4Phys, gopFramebufferLayout.Base,
+            (UINTN)gopFramebufferLayout.SizeBytes);
         if (EFI_ERROR(st)) {
             Print(L"Failed to map framebuffer uncached\n");
+#if defined(UEFI_DIAGNOSTIC_AIDA2)
+            guideXOS::debug::SerialPrint(
+                "[AIDA2] STAGE=FRAMEBUFFER_MAP_FAILED\n");
+#endif
             return st;
         }
-        Print(L"Mapping framebuffer (uncached): %p size %Lu\n", 
-              (VOID*)(UINTN)v1BootInfo->FramebufferBase, v1BootInfo->FramebufferSize);
+        gopHandoff->FramebufferMappingFlags |= 1u;
+        Print(L"Mapping framebuffer (uncached): %p size %Lu\n",
+              (VOID*)(UINTN)gopFramebufferLayout.Base,
+              gopFramebufferLayout.SizeBytes);
+#if defined(UEFI_DIAGNOSTIC_AIDA2)
+        guideXOS::debug::SerialPrint(
+            "[AIDA2] STAGE=FRAMEBUFFER_MAP_OK FLAGS=0x00000001\n");
+#endif
     }
 
     // Local APIC MMIO (MMIO - must be uncached)
@@ -1193,14 +1273,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     // === DRAW BOOT SPLASH ===
     // Show custom guideXOS boot splash IMMEDIATELY - covers entire screen
     // This will replace the TianoCore logo with guideXOS branding
-    if (v1BootInfo->FramebufferBase != 0 && v1BootInfo->FramebufferWidth != 0 && v1BootInfo->FramebufferHeight != 0) {
+    if (gopFramebufferLayout.Base != 0) {
         Print(L"Drawing boot splash screen...\n");
-        guideXOS::boot::BootSplash::DrawSplash(
-            v1BootInfo->FramebufferBase,
-            v1BootInfo->FramebufferWidth,
-            v1BootInfo->FramebufferHeight,
-            v1BootInfo->FramebufferPitch
-        );
+        guideXOS::boot::BootSplash::DrawSplash(gopFramebufferLayout);
         Print(L"Boot splash complete!\n");
         
         // Wait a moment so user can see the splash (500ms)
@@ -1228,20 +1303,19 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
         Print(L"ExitBootServices failed: %r\n", statusExit);
         return statusExit;
     }
+#if defined(UEFI_DIAGNOSTIC_AIDA2)
+    guideXOS::debug::SerialPrint(
+        "[AIDA2] STAGE=EXIT_BOOT_SERVICES\n");
+#endif
 
     // *** CRITICAL: No Print() or any UEFI Boot Services calls after ExitBootServices! ***
 
-    // === POST-EBS FRAMEBUFFER MARKER (Stage 1: Yellow = EBS succeeded) ===
-    if (v1BootInfo->FramebufferBase != 0) {
-        volatile uint32_t* fb = (volatile uint32_t*)(UINTN)v1BootInfo->FramebufferBase;
-        uint32_t pitch = v1BootInfo->FramebufferPitch / 4;
-        // Draw yellow square next to green = EBS succeeded
-        for (uint32_t y = 0; y < 30; y++) {
-            for (uint32_t x = 40; x < 70; x++) {
-                fb[y * pitch + x] = 0x00FFFF00; // Yellow = post-EBS
-            }
-        }
-    }
+    // Temporary loader stage markers were limited to BM1 and are omitted from
+    // the production-compatible AIDA2 image. Serial checkpoints remain active.
+#if defined(UEFI_DIAGNOSTIC_BM1)
+    guideXOS::boot::FillGopRect(gopFramebufferLayout, 40, 0, 30, 30,
+        0xFFFFFF00u);
+#endif
 
     // Fill memory map section in BootInfo v1
     v1BootInfo->MemoryMap               = (uint64_t)(UINTN)memoryMap;
@@ -1249,16 +1323,10 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     v1BootInfo->MemoryMapDescriptorSize = (uint64_t)memoryMapDescSize;
     v1BootInfo->Flags |= (1u << 0); // memory map valid
 
-    // === POST-EBS FRAMEBUFFER MARKER (Stage 2: Cyan = MemMap filled) ===
-    if (v1BootInfo->FramebufferBase != 0) {
-        volatile uint32_t* fb = (volatile uint32_t*)(UINTN)v1BootInfo->FramebufferBase;
-        uint32_t pitch = v1BootInfo->FramebufferPitch / 4;
-        for (uint32_t y = 0; y < 30; y++) {
-            for (uint32_t x = 80; x < 110; x++) {
-                fb[y * pitch + x] = 0x0000FFFF; // Cyan = memmap done
-            }
-        }
-    }
+#if defined(UEFI_DIAGNOSTIC_BM1)
+    guideXOS::boot::FillGopRect(gopFramebufferLayout, 80, 0, 30, 30,
+        0xFF00FFFFu);
+#endif
 
     // Compute checksum so that 32-bit sum of all words is 0
     guideXOS::paging::BootMemoryHandoff* memoryHandoff =
@@ -1278,62 +1346,36 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
         v1BootInfo->HeaderChecksum = 0u - sum;
     }
 
-    // === POST-EBS FRAMEBUFFER MARKER (Stage 3: Magenta = Checksum done) ===
-    if (v1BootInfo->FramebufferBase != 0) {
-        volatile uint32_t* fb = (volatile uint32_t*)(UINTN)v1BootInfo->FramebufferBase;
-        uint32_t pitch = v1BootInfo->FramebufferPitch / 4;
-        for (uint32_t y = 0; y < 30; y++) {
-            for (uint32_t x = 120; x < 150; x++) {
-                fb[y * pitch + x] = 0x00FF00FF; // Magenta = checksum done
-            }
-        }
-    }
+#if defined(UEFI_DIAGNOSTIC_BM1)
+    guideXOS::boot::FillGopRect(gopFramebufferLayout, 120, 0, 30, 30,
+        0xFFFF00FFu);
+#endif
 
     // Skip validation for now - it might be causing the panic
     // guideXOS::guidexos_validate_bootinfo_or_panic(v1BootInfo);
 
-    // === POST-EBS FRAMEBUFFER MARKER (Stage 4: Blue = Validation skipped/passed) ===
-    if (v1BootInfo->FramebufferBase != 0) {
-        volatile uint32_t* fb = (volatile uint32_t*)(UINTN)v1BootInfo->FramebufferBase;
-        uint32_t pitch = v1BootInfo->FramebufferPitch / 4;
-        for (uint32_t y = 0; y < 30; y++) {
-            for (uint32_t x = 160; x < 190; x++) {
-                fb[y * pitch + x] = 0x000000FF; // Blue = validation done
-            }
-        }
-    }
+#if defined(UEFI_DIAGNOSTIC_BM1)
+    guideXOS::boot::FillGopRect(gopFramebufferLayout, 160, 0, 30, 30,
+        0xFF0000FFu);
+#endif
 
     // === POST-EXITBOOTSERVICES DEBUGGING ===
     
-    // === FRAMEBUFFER MARKER (Stage 5: White = About to init serial) ===
-    if (v1BootInfo->FramebufferBase != 0) {
-        volatile uint32_t* fb = (volatile uint32_t*)(UINTN)v1BootInfo->FramebufferBase;
-        uint32_t pitch = v1BootInfo->FramebufferPitch / 4;
-        for (uint32_t y = 0; y < 30; y++) {
-            for (uint32_t x = 200; x < 230; x++) {
-                fb[y * pitch + x] = 0x00FFFFFF; // White = pre-serial init
-            }
-        }
-    }
+#if defined(UEFI_DIAGNOSTIC_BM1)
+    guideXOS::boot::FillGopRect(gopFramebufferLayout, 200, 0, 30, 30,
+        0xFFFFFFFFu);
+#endif
 
     guideXOS::debug::SerialInit();
 
-    // === FRAMEBUFFER MARKER (Stage 6: Orange = Serial initialized) ===
-    if (v1BootInfo->FramebufferBase != 0) {
-        volatile uint32_t* fb = (volatile uint32_t*)(UINTN)v1BootInfo->FramebufferBase;
-        uint32_t pitch = v1BootInfo->FramebufferPitch / 4;
-        for (uint32_t y = 0; y < 30; y++) {
-            for (uint32_t x = 240; x < 270; x++) {
-                fb[y * pitch + x] = 0x00FF8000; // Orange = serial done
-            }
-        }
-    }
+#if defined(UEFI_DIAGNOSTIC_BM1)
+    guideXOS::boot::FillGopRect(gopFramebufferLayout, 240, 0, 30, 30,
+        0xFFFF8000u);
+#endif
 
     guideXOS::debug::SerialPrint("\n\n=== GuideXOS Boot (Post-ExitBootServices) ===\n");
 
-    guideXOS::debug::ShowProgress(v1BootInfo, 0);
     guideXOS::debug::VerifyCpuState();
-    guideXOS::debug::ShowProgress(v1BootInfo, 1);
 
     guideXOS::debug::SerialPrint("\n=== BootInfo ===\n");
     guideXOS::debug::SerialPrint("Magic: ");
@@ -1346,10 +1388,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     guideXOS::debug::SerialPrint("x");
     guideXOS::debug::SerialPrintHex32(v1BootInfo->FramebufferHeight);
     guideXOS::debug::SerialPrint(")\n");
-    guideXOS::debug::ShowProgress(v1BootInfo, 2);
 
     guideXOS::debug::ValidateKernelEntry(entryPhys, v1BootInfo);
-    guideXOS::debug::ShowProgress(v1BootInfo, 3);
 
     // --- Handoff to kernel via trampoline ---
     // Switches stack, installs CR3, calls kernel entry using MS x64 ABI
@@ -1360,7 +1400,6 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     }
 
     guideXOS::debug::SerialPrint("\n=== Jumping to Kernel (Trampoline) ===\n");
-    guideXOS::debug::ShowProgress(v1BootInfo, 4);
 
     // Comprehensive validation before handoff
     guideXOS::debug::ValidateHandoff(
@@ -1390,12 +1429,15 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable) {
     guideXOS::debug::SerialPrint("[BOOT] PML4: ");
     guideXOS::debug::SerialPrintHex64(pt.Pml4Phys);
     guideXOS::debug::SerialPrint("\n");
-    guideXOS::debug::ShowProgress(v1BootInfo, 5);
 
     // Validate the trampoline mapping before jumping
     guideXOS::debug::SerialPrint("\n[BOOT] Validating trampoline mapping:\n");
     guideXOS::debug::ValidatePageMapping(pt.Pml4Phys, trampolinePhys);
 
+#if defined(UEFI_DIAGNOSTIC_AIDA2)
+    guideXOS::debug::SerialPrint(
+        "[AIDA2] STAGE=KERNEL_HANDOFF\n");
+#endif
     guideXOS::debug::SerialPrint("\n[BOOT] === CALLING TRAMPOLINE NOW ===\n");
 
     // Use VIRTUAL entry point. The kernel is compiled for virtual address 0x10000000.

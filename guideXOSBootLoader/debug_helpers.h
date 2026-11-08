@@ -76,50 +76,6 @@ static inline void SerialPrintHex32(uint32_t v) {
     }
 }
 
-// Draw a colored pixel directly to framebuffer
-static inline void DrawPixel(uint32_t* fb, uint32_t pitch, uint32_t x, uint32_t y, uint32_t color) {
-    fb[y * pitch + x] = color;
-}
-
-// Fill a rectangle on the framebuffer
-static inline void FillRect(uint32_t* fb, uint32_t pitch, uint32_t x, uint32_t y, 
-                            uint32_t w, uint32_t h, uint32_t color) {
-    for (uint32_t py = y; py < y + h; ++py) {
-        for (uint32_t px = x; px < x + w; ++px) {
-            fb[py * pitch + px] = color;
-        }
-    }
-}
-
-// Show progress bar on framebuffer
-// stage: 0-9, each stage shows a different colored block
-static inline void ShowProgress(const BootInfo* bi, int stage) {
-    if (!bi || !(bi->Flags & (1u << 1))) return;
-    
-    uint32_t* fb = (uint32_t*)(uintptr_t)bi->FramebufferBase;
-    uint32_t pitch = bi->FramebufferPitch / 4;
-    
-    // Colors for each stage
-    uint32_t colors[] = {
-        0x00FF0000, // Red
-        0x00FF7F00, // Orange
-        0x00FFFF00, // Yellow
-        0x007FFF00, // Yellow-green
-        0x0000FF00, // Green
-        0x0000FF7F, // Cyan-green
-        0x0000FFFF, // Cyan
-        0x00007FFF, // Light blue
-        0x000000FF, // Blue
-        0x00FFFFFF  // White
-    };
-    
-    if (stage >= 0 && stage < 10) {
-        // Draw a 50x50 square at (stage * 60 + 10, 10)
-        uint32_t x = stage * 60 + 10;
-        FillRect(fb, pitch, x, 10, 50, 50, colors[stage]);
-    }
-}
-
 // Verify CPU is in expected state after ExitBootServices
 static inline void VerifyCpuState() {
     uint64_t cr0 = __readcr0();

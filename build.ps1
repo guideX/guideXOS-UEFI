@@ -571,6 +571,57 @@ if (-not $SkipRamdisk) {
         }
     }
 
+    $phase22NativeRoot = Join-Path $RootDir "out\dotnet\phase22-native-runtime"
+    $phase22NativeRecord = Join-Path $phase22NativeRoot "native-build-record.json"
+    $phase22NativeBuild = Join-Path $RootDir "Tools\Phase22\build_guidexos_native_runtime.ps1"
+    $phase22NativeTarget = 'Runtime.WorkstationGC Runtime.VxsortDisabled standalonegc-disabled bootstrapper zlibstatic.lib'
+    $phase22BuildDirectory = Join-Path $runtimeSourceRoot "artifacts\obj\coreclr\guidexos.x64.Release"
+    $phase22RequiredObjects = @(
+        (Join-Path $phase22BuildDirectory "nativeaot\Runtime\Full\Runtime.WorkstationGC.lib"),
+        (Join-Path $phase22BuildDirectory "nativeaot\Runtime\Full\Runtime.VxsortDisabled.lib"),
+        (Join-Path $phase22BuildDirectory "nativeaot\Runtime\Full\standalonegc-disabled.lib"),
+        (Join-Path $phase22BuildDirectory "nativeaot\Bootstrap\base\CMakeFiles\bootstrapper.dir"),
+        (Join-Path $phase22BuildDirectory "_deps\fetchzlibng-build\zlibstatic.lib")
+    )
+    $phase22NativeReady = $false
+    if (Test-Path -LiteralPath $phase22NativeRecord -PathType Leaf) {
+        try {
+            $phase22NativeRecordData = Get-Content -LiteralPath $phase22NativeRecord -Raw | ConvertFrom-Json
+            $phase22Archive = Join-Path $phase22BuildDirectory "nativeaot\Runtime\Full\Runtime.WorkstationGC.lib"
+            $phase22ArchiveHash = (Get-FileHash -LiteralPath $phase22Archive -Algorithm SHA256).Hash.ToUpperInvariant()
+            $phase22NativeReady =
+                $phase22NativeRecordData.status -eq 'completed' -and
+                $phase22NativeRecordData.sourceCommit -eq '9d5a6a9aa463d6d10b0b0ba6d5982cc82f363dc3' -and
+                $phase22NativeRecordData.buildTarget -eq $phase22NativeTarget -and
+                $phase22NativeRecordData.archive.sha256 -eq $phase22ArchiveHash
+            foreach ($requiredObject in $phase22RequiredObjects) {
+                if (-not (Test-Path -LiteralPath $requiredObject)) { $phase22NativeReady = $false }
+            }
+            if ($phase22NativeReady) {
+                $bootstrapObject = Get-ChildItem -LiteralPath $phase22RequiredObjects[3] -Filter 'main.cpp.obj' -File -Recurse | Select-Object -First 1
+                if ($null -eq $bootstrapObject) { $phase22NativeReady = $false }
+            }
+        } catch {
+            $phase22NativeReady = $false
+        }
+    }
+    if (-not $phase22NativeReady) {
+        if (-not (Test-Path -LiteralPath $phase22NativeBuild -PathType Leaf)) {
+            throw "Phase 22 native inputs are absent or stale, and the native builder is missing: $phase22NativeBuild"
+        }
+        Write-Info "Phase 22 native runtime inputs are absent or stale; building the pinned target libraries and bootstrapper..."
+        & $phase22NativeBuild -SourceRoot $runtimeSourceRoot -OutputRoot $phase22NativeRoot -BuildTarget $phase22NativeTarget
+        if ($LASTEXITCODE -ne 0) { throw "Phase 22 native runtime build failed: $LASTEXITCODE" }
+        foreach ($requiredObject in $phase22RequiredObjects) {
+            if (-not (Test-Path -LiteralPath $requiredObject)) {
+                throw "Phase 22 native runtime build did not produce a required input: $requiredObject"
+            }
+        }
+        if (-not (Test-Path -LiteralPath $phase22NativeRecord -PathType Leaf)) {
+            throw "Phase 22 native runtime build did not produce its evidence record: $phase22NativeRecord"
+        }
+    }
+
     $phase23PrivateIlcRebuilt = $false
     $phase23PrivateIlcReady = (Test-Path -LiteralPath $phase23PrivateIlcPath -PathType Leaf) -and
         (Test-Path -LiteralPath $phase23PrivateIlcRecord -PathType Leaf)
@@ -784,11 +835,13 @@ if (-not $SkipKernel) {
         Write-Info "NuGet assets not found; restore will run for the kernel build"
     }
 
-    $publishPropertyArgs = @()
-    $publishPropertySuffix = ''
+    # This release pipeline assembles the UEFI ESP below; suppress the legacy
+    # GRUB ISO target attached to Publish in guideXOS.csproj.
+    $publishPropertyArgs = @('-p:SkipISO=true')
+    $publishPropertySuffix = ' -p:SkipISO=true'
     if ($UefiDiagnosticMode) {
         $publishPropertyArgs += "-p:UefiDiagnosticMode=$UefiDiagnosticMode"
-        $publishPropertySuffix = " -p:UefiDiagnosticMode=$UefiDiagnosticMode"
+        $publishPropertySuffix += " -p:UefiDiagnosticMode=$UefiDiagnosticMode"
         Write-Info "UEFI diagnostic build mode: $UefiDiagnosticMode"
     }
 

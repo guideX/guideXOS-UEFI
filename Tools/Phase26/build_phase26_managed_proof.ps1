@@ -163,11 +163,11 @@ foreach ($path in @($runtimeDotnet, $coreLibProject, $coreLibSource, $startupCod
 # here so rebuilding from a clean runtime checkout does not depend on ignored
 # edits under out/rt.
 $startupCodeExtensionsText = Get-Content -LiteralPath $startupCodeExtensionsSource -Raw
-$startupWindowsGuardMatches = [regex]::Matches($startupCodeExtensionsText, '(?m)^#if TARGET_WINDOWS$')
+$startupWindowsGuardMatches = [regex]::Matches($startupCodeExtensionsText, '(?m)^#if TARGET_WINDOWS\r?$')
 if ($startupWindowsGuardMatches.Count -eq 1) {
     $startupCodeExtensionsText = [regex]::Replace(
         $startupCodeExtensionsText,
-        '(?m)^#if TARGET_WINDOWS$',
+        '(?m)^#if TARGET_WINDOWS\r?$',
         '#if TARGET_WINDOWS && !TARGET_GUIDEXOS',
         1)
 }
@@ -235,6 +235,104 @@ elseif (-not $threadNativeAotWindowsText.Contains('return ThreadPriority.Normal;
     [Text.UTF8Encoding]::new($false))
 
 $coreLibText = Get-Content -LiteralPath $coreLibSource -Raw
+if (-not $coreLibText.Contains('private static extern unsafe IntPtr ResolveGuidexosProcAddress')) {
+    $resolverAnchor = '        internal static unsafe IntPtr ResolvePInvoke(MethodFixupCell* pCell)'
+    if ($coreLibText.IndexOf($resolverAnchor, [StringComparison]::Ordinal) -lt 0 -or
+        $coreLibText.IndexOf($resolverAnchor, [StringComparison]::Ordinal) -ne
+        $coreLibText.LastIndexOf($resolverAnchor, [StringComparison]::Ordinal)) {
+        throw 'The expected NativeAOT ResolvePInvoke declaration seam is absent or ambiguous.'
+    }
+    $resolverDeclaration = @'
+#if TARGET_GUIDEXOS
+        [MethodImpl(MethodImplOptions.InternalCall)]
+        [RuntimeImport("*", "PalGetProcAddress")]
+        private static extern unsafe IntPtr ResolveGuidexosProcAddress(IntPtr module, byte* methodName);
+#endif
+
+'@
+    $coreLibText = $coreLibText.Replace($resolverAnchor, $resolverDeclaration + $resolverAnchor)
+}
+
+$stockSystemErrorRead = '            int lastSystemError = Marshal.GetLastSystemError();'
+if ($coreLibText.Contains($stockSystemErrorRead)) {
+    $guidexosSystemErrorRead = @'
+#if TARGET_GUIDEXOS
+            // GUIDEXOS has no Windows TEB/system-error slot. The PAL keeps the
+            // NativeAOT P/Invoke error in the managed thread block, so reading
+            // the Windows Kernel32 import here would recursively resolve the
+            // very cell that is currently being fixed up.
+            int lastSystemError = Marshal.GetLastPInvokeError();
+#else
+            int lastSystemError = Marshal.GetLastSystemError();
+#endif
+'@
+    $coreLibText = $coreLibText.Replace($stockSystemErrorRead, $guidexosSystemErrorRead.TrimEnd())
+} elseif (-not $coreLibText.Contains('int lastSystemError = Marshal.GetLastPInvokeError();')) {
+    throw 'The expected NativeAOT system-error read seam is absent or ambiguous.'
+}
+
+$stockSystemErrorWrite = '            Marshal.SetLastSystemError(lastSystemError);'
+if ($coreLibText.Contains($stockSystemErrorWrite)) {
+    $guidexosSystemErrorWrite = @'
+#if TARGET_GUIDEXOS
+            Marshal.SetLastPInvokeError(lastSystemError);
+#else
+            Marshal.SetLastSystemError(lastSystemError);
+#endif
+'@
+    $coreLibText = $coreLibText.Replace($stockSystemErrorWrite, $guidexosSystemErrorWrite.TrimEnd())
+} elseif (-not $coreLibText.Contains('Marshal.SetLastPInvokeError(lastSystemError);')) {
+    throw 'The expected NativeAOT system-error write seam is absent or ambiguous.'
+}
+
+$moduleMethodPattern = '(?s)(        internal static unsafe void FixupModuleCell\(ModuleFixupCell\* pCell\)\r?\n        \{\r?\n)(.*?)(\r?\n        \}\r?\n\r?\n        internal static unsafe void FixupMethodCell)'
+$moduleMethodMatches = [regex]::Matches($coreLibText, $moduleMethodPattern)
+if ($moduleMethodMatches.Count -ne 1) {
+    throw 'The expected NativeAOT FixupModuleCell method seam is absent or ambiguous.'
+}
+if (-not $moduleMethodMatches[0].Groups[2].Value.Contains('#if TARGET_GUIDEXOS')) {
+    $guidexosModuleBody = @'
+#if TARGET_GUIDEXOS
+            // GUIDEXOS has no host loader or module handle table. The PAL
+            // resolves the bounded native entrypoint name directly, so give
+            // every module cell a stable nonzero sentinel and skip the
+            // Windows/AssemblyLoadContext loader path entirely.
+            Interlocked.CompareExchange(ref pCell->Handle, new IntPtr(1), IntPtr.Zero);
+            return;
+#else
+'@
+    $coreLibText = [regex]::Replace($coreLibText, $moduleMethodPattern, {
+        param($match)
+        $match.Groups[1].Value + $guidexosModuleBody + "`r`n" + $match.Groups[2].Value +
+            "`r`n#endif" + $match.Groups[3].Value
+    }, 1)
+}
+
+$methodResolverPattern = '(?m)^            IntPtr pTarget;\r?\n\r?\n#if FEATURE_OBJCMARSHAL\r?$'
+$methodResolverMatches = [regex]::Matches($coreLibText, $methodResolverPattern)
+if ($coreLibText.Contains('pTarget = ResolveGuidexosProcAddress(hModule, methodName);')) {
+    # The idempotent source transform was already applied.
+} elseif ($methodResolverMatches.Count -eq 1) {
+    $guidexosMethodResolver = @'
+#if TARGET_GUIDEXOS
+            pTarget = ResolveGuidexosProcAddress(hModule, methodName);
+            if (pTarget != IntPtr.Zero)
+            {
+                pCell->Target = pTarget;
+                return;
+            }
+#endif
+
+'@
+    $coreLibText = [regex]::Replace($coreLibText, $methodResolverPattern, {
+        param($match) $match.Value + "`r`n" + $guidexosMethodResolver.TrimEnd()
+    }, 1)
+} else {
+    throw 'The expected NativeAOT FixupMethodCell resolver seam is absent or ambiguous.'
+}
+[IO.File]::WriteAllText($coreLibSource, $coreLibText,
+    [Text.UTF8Encoding]::new($false))
+
 if (-not $coreLibText.Contains('TARGET_GUIDEXOS') -or
     -not $coreLibText.Contains('Marshal.GetLastPInvokeError()') -or
     -not $coreLibText.Contains('Marshal.SetLastPInvokeError(lastSystemError)')) {
@@ -303,7 +401,28 @@ if (-not (Test-Path -LiteralPath $gcCompileCommandsPath -PathType Leaf)) {
 $gcCompileEntries = Get-Content -LiteralPath $gcCompileCommandsPath -Raw | ConvertFrom-Json
 $windowsCompileCommandsPath = Join-Path $root 'out\rt\artifacts\obj\coreclr\windows.x64.Release\compile_commands.json'
 if (-not (Test-Path -LiteralPath $windowsCompileCommandsPath -PathType Leaf)) {
-    throw 'The pinned Windows NativeAOT compile command record is absent.'
+    $runtimeCoreclrRoot = Join-Path $runtimeSourceRoot 'src\coreclr'
+    $windowsConfigureLog = Join-Path $work 'windows-nativeaot-configure.log'
+    $windowsConfigureCommand = 'call "' + $vcvars + '" ' + $windowsSdkVersion +
+        ' >nul && set "VisualStudioVersion=17.0" && set "SkipVCEnvInit=1" && set "NumberOfCores=1" && build-runtime.cmd -x64 -Release -component nativeaot -os windows -outputrid win-x64 -configureonly'
+    $previousPath = $env:Path
+    $env:Path = (Split-Path -Parent $runtimeDotnet) + ';' + $previousPath
+    Push-Location $runtimeCoreclrRoot
+    try {
+        & $cmdExe /d /s /c $windowsConfigureCommand *> $windowsConfigureLog
+        $windowsConfigureExitCode = $LASTEXITCODE
+        if ($windowsConfigureExitCode -ne 0) {
+            Get-Content -LiteralPath $windowsConfigureLog -Tail 80
+            throw "The pinned Windows NativeAOT configure-only pass failed: $windowsConfigureExitCode"
+        }
+    }
+    finally {
+        Pop-Location
+        $env:Path = $previousPath
+    }
+    if (-not (Test-Path -LiteralPath $windowsCompileCommandsPath -PathType Leaf)) {
+        throw 'The pinned Windows NativeAOT configure-only pass produced no compile command record.'
+    }
 }
 $windowsCompileEntries = Get-Content -LiteralPath $windowsCompileCommandsPath -Raw | ConvertFrom-Json
 $gcCompileEntry = @($gcCompileEntries | Where-Object {

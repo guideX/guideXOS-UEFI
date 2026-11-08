@@ -62,6 +62,9 @@ namespace guideXOS.Misc {
             }
             BareMetalMilestones.RecordEarly(bootInfo, 2, 0);
 #endif
+#if UEFI_DIAGNOSTIC_AIDA2
+            Aida2FramebufferDiagnostics.Initialize();
+#endif
             // CRITICAL: Output RAW debug marker FIRST before any managed code
             // This proves we reached the kernel entry point successfully
             SerialDebugMarker();
@@ -80,15 +83,32 @@ namespace guideXOS.Misc {
             }
 
             BootConsole.WriteLine("[ALLOCATOR] INITIALIZE");
+            const ulong maximumCanonicalAddress = 0x00007FFFFFFFFFFFUL;
+            ulong memoryHandoffAddress = bootInfo->Reserved[2];
+            ulong memoryHandoffBytes = (ulong)sizeof(UefiBootMemoryHandoff);
+            if (memoryHandoffAddress == 0 || (memoryHandoffAddress & 7UL) != 0 ||
+                memoryHandoffAddress > maximumCanonicalAddress ||
+                memoryHandoffBytes == 0 ||
+                memoryHandoffBytes - 1 > maximumCanonicalAddress -
+                    memoryHandoffAddress) {
+#if UEFI_DIAGNOSTIC_BM1
+                BareMetalMilestones.RecordEarly(bootInfo, 3, 1, true);
+#endif
+                for (;;) Native.Hlt();
+            }
             UefiBootMemoryHandoff* memoryHandoff =
-                (UefiBootMemoryHandoff*)bootInfo->Reserved[2];
-            if (memoryHandoff == null || memoryHandoff->KernelSpanBytes == 0 ||
+                (UefiBootMemoryHandoff*)memoryHandoffAddress;
+            if (memoryHandoff->KernelSpanBytes == 0 ||
                     bootInfo->Reserved[0] == 0 || bootInfo->Reserved[1] == 0) {
 #if UEFI_DIAGNOSTIC_BM1
                 BareMetalMilestones.RecordEarly(bootInfo, 3, 1, true);
 #endif
                 for (;;) Native.Hlt();
             }
+#if UEFI_DIAGNOSTIC_AIDA2
+            Aida2FramebufferDiagnostics.WriteGopEvidence(
+                bootInfo, memoryHandoff);
+#endif
 #if UEFI_DIAGNOSTIC_BM1
             BareMetalMilestones.InstallEarlyExceptionTrap(memoryHandoff);
             if (bootInfo->MemoryMapEntryCount == 0 ||
@@ -103,7 +123,6 @@ namespace guideXOS.Misc {
                 bootInfo->Reserved[0], memoryHandoff->KernelSpanBytes);
             Allocator.ReserveAddressRange((IntPtr)0x4000000,
                 bootInfo->Reserved[1], memoryHandoff->KernelSpanBytes);
-            const ulong maximumCanonicalAddress = 0x00007FFFFFFFFFFFUL;
             ulong memoryMapBytes = 0;
             bool validUefiMemoryMap = bootInfo->HasMemoryMap &&
                 bootInfo->MemoryMap != 0 &&
@@ -239,12 +258,30 @@ namespace guideXOS.Misc {
                 BareMetalMilestones.Record(6, 0);
 #endif
                 Framebuffer.SetBootInfo(bootInfo);
-                Framebuffer.Initialize(
-                    (ushort)bootInfo->FramebufferWidth,
-                    (ushort)bootInfo->FramebufferHeight,
-                    (uint*)bootInfo->FramebufferBase
-                );
+                bool framebufferInitialized;
+                if (bootInfo->BootMode == BootMode.Uefi) {
+#if UEFI_DIAGNOSTIC_AIDA2
+                    Aida2FramebufferDiagnostics.GraphicsInitializeBegin();
+#endif
+                    framebufferInitialized = Framebuffer.InitializeUefi(
+                        bootInfo, memoryHandoff);
+                } else {
+                    Framebuffer.Initialize(
+                        (ushort)bootInfo->FramebufferWidth,
+                        (ushort)bootInfo->FramebufferHeight,
+                        (uint*)bootInfo->FramebufferBase);
+                    framebufferInitialized = Framebuffer.Graphics != null;
+                }
+                if (!framebufferInitialized || Framebuffer.Graphics == null) {
+#if UEFI_DIAGNOSTIC_AIDA2
+                    Aida2FramebufferDiagnostics.GraphicsInitializeResult(false);
+#endif
+                    for (;;) Native.Hlt();
+                }
                 Framebuffer.Graphics.Clear(0x0); // Clear screen
+#if UEFI_DIAGNOSTIC_AIDA2
+                Aida2FramebufferDiagnostics.GraphicsInitializeResult(true);
+#endif
 #if UEFI_DIAGNOSTIC_BM1
                 BareMetalMilestones.Record(6, 1);
                 BareMetalMilestones.RecordDisplayPointerCheckpoint(3);

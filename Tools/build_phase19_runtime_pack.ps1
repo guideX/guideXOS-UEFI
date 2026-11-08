@@ -137,7 +137,9 @@ if ($symbolText -match 'UNDEF') { throw 'PAL contract archive contains undefined
 if ($symbolText -match '(?i)kernel32|advapi32|ole32|bcrypt|ucrt|msvcrt|win32') { throw 'PAL contract archive contains a forbidden Windows/CRT dependency name.' }
 
 if ($BuildBaseline -or -not (Test-Path -LiteralPath $stockManifest -PathType Leaf)) {
-    & powershell.exe -ExecutionPolicy Bypass -File (Join-Path $root 'Tools\build_managed_user_proof.ps1') -NoRestore
+    $baselineScript = Join-Path $root 'Tools\build_managed_user_proof.ps1'
+    $baselineCommand = "powershell.exe -ExecutionPolicy Bypass -File `"$baselineScript`""
+    Invoke-NativeTools $baselineCommand
     if ($LASTEXITCODE -ne 0) { throw 'Stock Phase 17 baseline build failed.' }
 }
 Require-File $stockManifest

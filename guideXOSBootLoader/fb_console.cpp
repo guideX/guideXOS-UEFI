@@ -4,11 +4,10 @@
 // Static state
 const guideXOS::BootInfo* fb_console::s_bootInfo = nullptr;
 volatile unsigned char* fb_console::s_fbBase = nullptr;
-unsigned int fb_console::s_pitch = 0;
-unsigned int fb_console::s_bpp = 0;
 unsigned int fb_console::s_width = 0;
 unsigned int fb_console::s_height = 0;
 fb_console::PixelFormat fb_console::s_format = fb_console::PixelFormat::Unknown;
+guideXOS::boot::GopFramebufferLayout fb_console::s_layout{};
 
 unsigned int fb_console::s_cursorX = 0;
 unsigned int fb_console::s_cursorY = 0;
@@ -215,91 +214,46 @@ static const unsigned char g_font8x16[95][16] = {
     { 0,0,0,0x76,0xDC,0,0,0,0,0,0,0,0,0,0,0 }
 };
 
-fb_console::PixelFormat fb_console::DetectFormat(uint32_t bitsPerPixel)
-{
-    // We only know BitsPerPixel here, so we make conservative assumptions.
-    // GOP usually exposes XRGB32 or BGRA32.
-    if (bitsPerPixel == 32)
-    {
-        // Without explicit channel masks, assume XRGB32 (0x00RRGGBB).
-        return PixelFormat::XRGB32;
-    }
-    if (bitsPerPixel == 24)
-    {
-        // Assume packed 24-bit RGB.
-        return PixelFormat::RGB24;
-    }
-    return PixelFormat::Unknown;
-}
-
-void fb_console::Init(const guideXOS::BootInfo* bootInfo)
+bool fb_console::Init(const guideXOS::BootInfo* bootInfo)
 {
     s_bootInfo = bootInfo;
-    if (!bootInfo)
-    {
-        s_fbBase = nullptr;
-        s_pitch = s_bpp = s_width = s_height = 0;
-        s_format = PixelFormat::Unknown;
-        s_cursorX = s_cursorY = 0;
-        return;
-    }
+    s_fbBase = nullptr;
+    s_width = s_height = 0;
+    s_format = PixelFormat::Unknown;
+    s_layout = {};
+    s_cursorX = s_cursorY = 0;
 
-    s_fbBase = (volatile unsigned char*)(uintptr_t)bootInfo->FramebufferBase;
-    s_pitch  = bootInfo->FramebufferPitch;
-    s_bpp    = 32; // guideXOS v1 assumes 32bpp GOP for now
-    s_width  = bootInfo->FramebufferWidth;
-    s_height = bootInfo->FramebufferHeight;
-    s_format = DetectFormat(s_bpp);
+    if (!bootInfo || bootInfo->FramebufferPitch == 0 ||
+        (bootInfo->FramebufferPitch & 3u) != 0 ||
+        !guideXOS::boot::TryBuildGopFramebufferLayout(
+            (EFI_PHYSICAL_ADDRESS)bootInfo->FramebufferBase,
+            bootInfo->FramebufferSize,
+            bootInfo->FramebufferWidth,
+            bootInfo->FramebufferHeight,
+            bootInfo->FramebufferPitch / 4u,
+            bootInfo->Reserved2,
+            0, 0, 0, 0, &s_layout))
+        return false;
+
+    s_fbBase = (volatile unsigned char*)(uintptr_t)s_layout.Base;
+    s_width = s_layout.Width;
+    s_height = s_layout.Height;
+    s_format = PixelFormat::ValidatedGop32;
 
     s_cursorX = 0;
     s_cursorY = 0;
 
     Clear();
+    return true;
 }
 
 void fb_console::PutPixel(unsigned int x, unsigned int y, unsigned int rgb)
 {
-    if (!s_fbBase) return;
+    if (!s_fbBase || s_format == PixelFormat::Unknown) return;
     if (x >= s_width || y >= s_height) return;
-
-    unsigned int bytesPerPixel = s_bpp / 8;
-    unsigned int offset = y * s_pitch + x * bytesPerPixel;
-    volatile unsigned char* p = s_fbBase + offset;
-
-    unsigned char r = (unsigned char)((rgb >> 16) & 0xFF);
-    unsigned char g = (unsigned char)((rgb >> 8) & 0xFF);
-    unsigned char b = (unsigned char)(rgb & 0xFF);
-
-    switch (s_format)
-    {
-    case PixelFormat::XRGB32:
-    case PixelFormat::ARGB32:
-        p[0] = b;
-        p[1] = g;
-        p[2] = r;
-        p[3] = 0x00; // X / alpha = 0
-        break;
-    case PixelFormat::XBGR32:
-    case PixelFormat::ABGR32:
-        p[0] = r;
-        p[1] = g;
-        p[2] = b;
-        p[3] = 0x00;
-        break;
-    case PixelFormat::RGB24:
-        p[0] = b;
-        p[1] = g;
-        p[2] = r;
-        break;
-    case PixelFormat::BGR24:
-        p[0] = r;
-        p[1] = g;
-        p[2] = b;
-        break;
-    default:
-        // Unsupported format: do nothing.
-        break;
-    }
+    guideXOS::boot::TryWriteGopPixel(
+        (volatile UINT32*)(uintptr_t)s_layout.Base, s_layout, x, y,
+        0xFF000000u | (rgb & 0x00FFFFFFu));
 }
 
 unsigned char fb_console::GetFontRow(char c, unsigned int row)
@@ -347,21 +301,23 @@ void fb_console::ScrollIfNeeded()
 
     // Scroll up by one text row: move framebuffer pixels.
     unsigned int scrollPixels = s_charH;
-    unsigned int bytesPerPixel = s_bpp / 8;
-    unsigned int lineBytes = s_width * bytesPerPixel;
-
-    unsigned int srcOffset = scrollPixels * s_pitch;
-    unsigned int dstOffset = 0;
     unsigned int copyHeight = s_height - scrollPixels;
+    volatile UINT32* pixels =
+        (volatile UINT32*)(uintptr_t)s_layout.Base;
 
-    // Move lines up
+    // Move visible native pixels upward without touching scanline padding.
     for (unsigned int y = 0; y < copyHeight; ++y)
     {
-        volatile unsigned char* dst = s_fbBase + dstOffset + y * s_pitch;
-        volatile unsigned char* src = s_fbBase + srcOffset + y * s_pitch;
-        for (unsigned int x = 0; x < lineBytes; ++x)
+        for (unsigned int x = 0; x < s_width; ++x)
         {
-            dst[x] = src[x];
+            UINT64 destinationOffset;
+            UINT64 sourceOffset;
+            if (guideXOS::boot::TryGetGopPixelOffset(
+                    s_layout, x, y, &destinationOffset) &&
+                guideXOS::boot::TryGetGopPixelOffset(
+                    s_layout, x, y + scrollPixels, &sourceOffset))
+                pixels[destinationOffset / 4ull] =
+                    pixels[sourceOffset / 4ull];
         }
     }
 

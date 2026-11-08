@@ -150,13 +150,15 @@ namespace guideXOS.Misc {
     internal unsafe struct UefiBootMemoryHandoff {
         public ulong KernelSpanBytes;
         public fixed ulong PageTablePages[2049];
-#if UEFI_DIAGNOSTIC_BM1
+        // Production GOP contract appended after the fixed page-table list.
+        // The matching C++ layout keeps these fields present in every build.
         public uint GopPixelFormat;
         public uint GopRedMask;
         public uint GopGreenMask;
         public uint GopBlueMask;
         public uint GopReservedMask;
-        public uint GopMetadataReserved;
+        public uint FramebufferMappingFlags;
+#if UEFI_DIAGNOSTIC_BM1
         public UefiBareMetalRecord Diagnostics;
 #endif
     }

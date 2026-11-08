@@ -73,6 +73,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)FS\RdskFS.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FS\TarFS.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Graph\Graphics.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Graph\FramebufferSurface.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Graph\VMWareSVGAIIGraphics.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Helpers\StringHelper.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Kbd2Mouse.cs" />

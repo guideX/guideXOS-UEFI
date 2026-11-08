@@ -32,6 +32,8 @@ namespace guideXOS.Kernel.Drivers {
         /// VideoMemory if it gets corrupted in UEFI mode.
         /// </summary>
         public static uint* OriginalVideoMemory;
+        public static FramebufferSurfaceLayout GopSurfaceLayout;
+        public static bool HasGopSurfaceLayout;
         /// <summary>
         /// First Buffer
         /// </summary>
@@ -64,6 +66,7 @@ namespace guideXOS.Kernel.Drivers {
 
                 Graphics.VideoMemory = value ? FirstBuffer : VideoMemory;
                 if (Graphics.VideoMemory == null) return;
+                Graphics.SetPhysicalSurfaceActive(!value && HasGopSurfaceLayout);
                 Graphics.Clear(0x0);
                 _TripleBuffered = value;
                 if (!_TripleBuffered) {
@@ -107,11 +110,15 @@ namespace guideXOS.Kernel.Drivers {
             // STEP 2: If Graphics survived and already points at the active
             // render buffer, we're done.
             if (Graphics != null && (ulong)Graphics.VideoMemory == (ulong)renderMemory) {
+                Graphics.SetPhysicalSurfaceActive(
+                    !TripleBuffered && HasGopSurfaceLayout);
                 return;
             }
             // STEP 3: If Graphics exists but points elsewhere, fix it.
             if (Graphics != null && (ulong)renderMemory != 0) {
                 Graphics.VideoMemory = renderMemory;
+                Graphics.SetPhysicalSurfaceActive(
+                    !TripleBuffered && HasGopSurfaceLayout);
                 if (Width != 0 && Graphics.Width != Width) {
                     Graphics.Width = Width;
                 }
@@ -125,6 +132,10 @@ namespace guideXOS.Kernel.Drivers {
                 return;
             }
             Graphics = new Graphics(Width, Height, renderMemory);
+            if (HasGopSurfaceLayout)
+                Graphics.ConfigurePhysicalSurface(GopSurfaceLayout);
+            Graphics.SetPhysicalSurfaceActive(
+                !TripleBuffered && HasGopSurfaceLayout);
         }
 
         public static void SetBootInfo(UefiBootInfo* bootInfo) {
@@ -167,31 +178,108 @@ namespace guideXOS.Kernel.Drivers {
                 if (VideoMemory == null || FirstBuffer == null || SecondBuffer == null) {
                     return;
                 }
-                for (int i = 0; i < Width * Height; i++) {
-                    if (FirstBuffer[i] != SecondBuffer[i]) {
-                        VideoMemory[i] = FirstBuffer[i];
+                if (HasGopSurfaceLayout) {
+                    if (!FramebufferSurface.PresentChanged(VideoMemory,
+                            GopSurfaceLayout, FirstBuffer, SecondBuffer))
+                        return;
+                } else {
+                    ulong pixelCount = (ulong)Width * Height;
+                    for (ulong i = 0; i < pixelCount; i++) {
+                        if (FirstBuffer[i] != SecondBuffer[i])
+                            VideoMemory[i] = FirstBuffer[i];
                     }
                 }
-                Native.Movsd(SecondBuffer, FirstBuffer, (ulong)(Width * Height));
+                Native.Movsd(SecondBuffer, FirstBuffer,
+                    (ulong)Width * Height);
             }
             //if (Graphics != null) Graphics?.Update();
             Graphics?.Update();
         }
 
         public static void Initialize(ushort XRes, ushort YRes, uint* FB) {
+            InitializeCore(XRes, YRes, FB, default, false);
+        }
+
+        internal static bool InitializeUefi(UefiBootInfo* bootInfo,
+            UefiBootMemoryHandoff* memoryHandoff) {
+            if (bootInfo == null || memoryHandoff == null ||
+                bootInfo->Magic != 0x49425847u || bootInfo->Version != 1 ||
+                bootInfo->Size != sizeof(UefiBootInfo) ||
+                !bootInfo->HasFramebuffer || bootInfo->FramebufferBase == 0 ||
+                bootInfo->FramebufferWidth == 0 ||
+                bootInfo->FramebufferHeight == 0 ||
+                bootInfo->FramebufferWidth > 0xFFFFu ||
+                bootInfo->FramebufferHeight > 0xFFFFu ||
+                (memoryHandoff->FramebufferMappingFlags & 1u) == 0)
+                return false;
+
+            uint checksum = 0;
+            uint* bootInfoWords = (uint*)bootInfo;
+            uint bootInfoWordCount = (uint)(sizeof(UefiBootInfo) / sizeof(uint));
+            for (uint i = 0; i < bootInfoWordCount; i++)
+                checksum += bootInfoWords[i];
+            if (checksum != 0) return false;
+
+            if (!FramebufferSurface.TryCreateLayout(
+                    bootInfo->FramebufferBase,
+                    bootInfo->FramebufferWidth,
+                    bootInfo->FramebufferHeight,
+                    bootInfo->FramebufferPitch,
+                    bootInfo->FramebufferSize,
+                    memoryHandoff->GopPixelFormat,
+                    memoryHandoff->GopRedMask,
+                    memoryHandoff->GopGreenMask,
+                    memoryHandoff->GopBlueMask,
+                    memoryHandoff->GopReservedMask,
+                    out FramebufferSurfaceLayout layout)) return false;
+
+            OriginalBootInfo = bootInfo;
+            GopSurfaceLayout = layout;
+            HasGopSurfaceLayout = true;
+            InitializeCore((ushort)bootInfo->FramebufferWidth,
+                (ushort)bootInfo->FramebufferHeight,
+                (uint*)bootInfo->FramebufferBase, layout, true);
+            return Graphics != null && Graphics.VideoMemory != null &&
+                (ulong)OriginalVideoMemory == bootInfo->FramebufferBase &&
+                Graphics.HasPhysicalSurface;
+        }
+
+        private static void InitializeCore(ushort XRes, ushort YRes,
+            uint* FB, FramebufferSurfaceLayout physicalLayout,
+            bool hasPhysicalLayout) {
             Width = XRes;
             Height = YRes;
             OriginalWidth = XRes;
             OriginalHeight = YRes;
+            HasGopSurfaceLayout = hasPhysicalLayout;
+            GopSurfaceLayout = hasPhysicalLayout
+                ? physicalLayout : default;
+            _TripleBuffered = false;
             VideoMemory = FB; // Video memory must be set before any operation that might clear/draw
             OriginalVideoMemory = FB; // Permanent backup - NEVER overwritten
-            FirstBuffer = (uint*)Allocator.Allocate((ulong)(XRes * YRes * 4));
-            SecondBuffer = (uint*)Allocator.Allocate((ulong)(XRes * YRes * 4));
-            Native.Stosd(FirstBuffer, 0, (ulong)(XRes * YRes));
-            Native.Stosd(SecondBuffer, 0, (ulong)(XRes * YRes));
+            ulong pixelCount = (ulong)XRes * YRes;
+            if (pixelCount == 0 || pixelCount > 0xFFFFFFFFFFFFFFFFUL / 4UL) {
+                Graphics = null;
+                FirstBuffer = SecondBuffer = null;
+                return;
+            }
+            FirstBuffer = (uint*)Allocator.Allocate(pixelCount * 4UL);
+            SecondBuffer = (uint*)Allocator.Allocate(pixelCount * 4UL);
+            if (FirstBuffer == null || SecondBuffer == null) {
+                Graphics = null;
+                return;
+            }
+            Native.Stosd(FirstBuffer, 0, pixelCount);
+            Native.Stosd(SecondBuffer, 0, pixelCount);
             Control.MousePosition.X = XRes / 2;
             Control.MousePosition.Y = YRes / 2;
             Graphics = new Graphics(Width, Height, FB); // Ensure Graphics is created ONLY here
+            if (hasPhysicalLayout &&
+                !Graphics.ConfigurePhysicalSurface(physicalLayout)) {
+                Graphics = null;
+                return;
+            }
+            Graphics.SetPhysicalSurfaceActive(hasPhysicalLayout);
             Console.Clear();
         }
     }

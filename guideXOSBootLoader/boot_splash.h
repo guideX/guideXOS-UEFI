@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Uefi.h>
+#include "gop_framebuffer.h"
 
 namespace guideXOS {
 namespace boot {
@@ -15,10 +16,7 @@ public:
     /// Draws a teal gradient background
     /// </summary>
     static void DrawSplash(
-        EFI_PHYSICAL_ADDRESS framebufferBase,
-        UINT32 framebufferWidth,
-        UINT32 framebufferHeight,
-        UINT32 framebufferPitch
+        const GopFramebufferLayout& layout
     );
 
 private:

@@ -2,7 +2,7 @@
 param(
     [string]$SourceRoot = '',
     [string]$OutputRoot = '',
-    [string]$BuildTarget = 'Runtime.WorkstationGC',
+    [string]$BuildTarget = 'Runtime.WorkstationGC Runtime.VxsortDisabled standalonegc-disabled bootstrapper zlibstatic.lib',
     [switch]$ConfigureOnly
 )
 
@@ -18,6 +18,8 @@ if (-not (Test-Path -LiteralPath $patchRecordPath -PathType Leaf)) { throw "Phas
 if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot 'src\coreclr\build-runtime.cmd') -PathType Leaf)) { throw "Runtime source is absent: $SourceRoot" }
 $actualCommit = (& git -C $SourceRoot rev-parse HEAD).Trim()
 if ($actualCommit -ne [string]$lock.runtimeCommit) { throw "Runtime source mismatch. Expected $($lock.runtimeCommit), found $actualCommit." }
+$runtimeDotnet = Join-Path $SourceRoot '.dotnet\dotnet.exe'
+if (-not (Test-Path -LiteralPath $runtimeDotnet -PathType Leaf)) { throw "The pinned runtime SDK host is absent: $runtimeDotnet" }
 
 $vcvars = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat'
 if (-not (Test-Path -LiteralPath $vcvars -PathType Leaf)) { throw "The required native x64 compiler environment was not found: $vcvars" }
@@ -34,6 +36,8 @@ if (-not $ConfigureOnly) {
 }
 
 $exitCode = 0
+$previousPath = $env:PATH
+$env:PATH = (Split-Path -Parent $runtimeDotnet) + ';' + $previousPath
 Push-Location (Join-Path $SourceRoot 'src\coreclr')
 try {
     $previousErrorActionPreference = $ErrorActionPreference
@@ -43,7 +47,10 @@ try {
     $ErrorActionPreference = $previousErrorActionPreference
     Get-Content -LiteralPath $logPath
 }
-finally { Pop-Location }
+finally {
+    Pop-Location
+    $env:PATH = $previousPath
+}
 
 $buildDir = $buildDirectory
 $compileCommands = Join-Path $buildDir 'compile_commands.json'
