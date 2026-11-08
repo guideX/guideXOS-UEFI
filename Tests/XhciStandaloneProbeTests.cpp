@@ -468,6 +468,51 @@ static uint64_t MockReleaseDescriptor(void* context, const uint8_t* bytes) {
     return lease->ReleaseStatus;
 }
 
+static void TestSarahDtDescriptorReadOnlyProbe() {
+    FakeDescriptorLease lease = {};
+    FillDescriptor(&lease, 0xE1020000ULL, 0x10000ULL, 32);
+    WriteLe64(lease.Bytes + 22, 0xFFFFULL);
+
+    BarResource bar = {};
+    uint64_t status = TryGetBarResource(&lease, AcquireDescriptor,
+                                        MockReleaseDescriptor, &bar);
+    Check(!IsErrorStatus(status) && bar.DescriptorValid,
+          "authentic SARAH_DT descriptor is accepted by the shared probe parser");
+    Check(bar.HasQwordFields && bar.RawGranularity == 32 &&
+          bar.RawBase == 0xE1020000ULL && bar.RawMaximum == 0xFFFFULL &&
+          bar.RawTranslationOffset == 0 && bar.RawLength == 0x10000ULL &&
+          bar.ListTailByte0 == 0x79 && bar.ListTailByte1 == 0,
+          "SARAH_DT raw descriptor fields and End Tag preserved");
+    Check(bar.MaximumEncoding ==
+              guideXOS::pci_resource::ResourceMaximumEncoding::EDK2AlignmentMask &&
+          bar.Base == 0xE1020000ULL && bar.Maximum == 0xFFFFULL &&
+          bar.Length == 0x10000ULL,
+          "SARAH_DT AddrRangeMax retained as a validated alignment mask");
+    Check(lease.ReleaseCount == 1 && !lease.Allocated,
+          "SARAH_DT descriptor allocation released after parsing");
+
+    Fixture fixture = {};
+    fixture.Count = 1;
+    fixture.Devices[0] = MakeValidPci();
+    fixture.Devices[0].Identity = 0x06ED8086U;
+    fixture.Devices[0].BarLow = 0xE1020000U;
+    fixture.Devices[0].Resource = bar;
+    ProbeSummary summary = RunFixture(&fixture);
+    Check(summary.ControllersFound == 1 && OnlyResult(&fixture).HasCapabilities &&
+          OnlyResult(&fixture).Stage == FailureStage::None,
+          "SARAH_DT 0000:00:14.0 BAR0 reaches read-only capability access");
+    Check(OnlyResult(&fixture).PciLocation.Bus == 0 &&
+          OnlyResult(&fixture).PciLocation.Device == 20 &&
+          OnlyResult(&fixture).PciLocation.Function == 0 &&
+          OnlyResult(&fixture).VendorId == 0x8086 &&
+          OnlyResult(&fixture).DeviceId == 0x06ED,
+          "SARAH_DT PCI controller identity remains bound to descriptor validation");
+    Check(fixture.Devices[0].ConfigReadCount == 3 &&
+          fixture.Devices[0].BarReadCount == 1 &&
+          fixture.Devices[0].MemReadCount == 8,
+          "accepted descriptor uses only bounded identity/config/MMIO reads");
+}
+
 static void TestDescriptorCleanup() {
     FakeDescriptorLease lease = {};
     FillDescriptor(&lease, 0x80000000ULL, 0x1000, 32);
@@ -592,6 +637,7 @@ int main() {
     RunCase("scratchpad and capability bits", TestScratchpadDecoding);
     RunCase("unsupported capability offset", TestUnsupportedCapabilityOffset);
     RunCase("read-only enforcement", TestReadOnlyEnforcement);
+    RunCase("SARAH_DT EDK II alignment-mask descriptor", TestSarahDtDescriptorReadOnlyProbe);
     RunCase("descriptor cleanup", TestDescriptorCleanup);
     RunCase("safe continuation after failure", TestContinueAfterControllerFailure);
     RunCase("bounded iteration and output", TestBoundedIterationAndOutput);

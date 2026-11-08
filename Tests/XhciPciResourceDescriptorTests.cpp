@@ -109,9 +109,52 @@ int main() {
     Check(TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
           "64-bit QWORD memory descriptor accepted");
     Check(parsed.AddressWidth == 64 && parsed.Base == 0x00000001FEC01000ULL &&
-          parsed.Maximum == 0x00000001FEC10FFFULL,
+          parsed.Maximum == 0x00000001FEC10FFFULL &&
+          parsed.MaximumEncoding ==
+              guideXOS::pci_resource::ResourceMaximumEncoding::InclusiveEnd &&
+          parsed.RangeEnd == 0x00000001FEC10FFFULL,
           "64-bit descriptor end and width decoded");
 
+    // Exact descriptor reported by SARAH_DT at 0000:00:14.0.
+    MakeResource(bytes, 32, 0xE1020000ULL, 0x10000ULL);
+    bytes[4] = 0;
+    bytes[5] = 0;
+    WriteLittleEndian64(bytes + 22, 0xFFFFULL);
+    Check(TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
+          "exact SARAH_DT EDK II alignment-mask descriptor accepted");
+    Check(parsed.GeneralFlags == 0 && parsed.SpecificFlags == 0 &&
+          parsed.AddressWidth == 32 && parsed.Base == 0xE1020000ULL &&
+          parsed.Maximum == 0xFFFFULL && parsed.Length == 0x10000ULL &&
+          parsed.TranslationOffset == 0 && bytes[46] == 0x79 && bytes[47] == 0,
+          "SARAH_DT descriptor bytes and decoded values match physical evidence");
+    Check(parsed.MaximumEncoding ==
+              guideXOS::pci_resource::ResourceMaximumEncoding::EDK2AlignmentMask &&
+          parsed.RangeEnd == 0xE102FFFFULL,
+          "SARAH_DT mask is bounded to the aligned 64 KiB aperture");
+
+    MakeResource(bytes, 32, 0xE1020000ULL, 0x10000ULL);
+    WriteLittleEndian64(bytes + 22, 0xFFFEULL);
+    Check(!TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
+          "non-contiguous EDK II alignment mask rejected");
+    MakeResource(bytes, 32, 0xE1020000ULL, 0x8000ULL);
+    WriteLittleEndian64(bytes + 22, 0xFFFFULL);
+    Check(!TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
+          "alignment mask and advertised aperture size mismatch rejected");
+    MakeResource(bytes, 32, 0xE1021000ULL, 0x10000ULL);
+    WriteLittleEndian64(bytes + 22, 0xFFFFULL);
+    Check(!TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
+          "misaligned EDK II mask aperture base rejected");
+    guideXOS::pci_resource::ResourceMaximumEncoding ambiguousEncoding;
+    uint64_t ambiguousEnd = 0;
+    Check(!guideXOS::pci_resource::TryInterpretResourceMaximum(
+              0, 0xFFFFULL, 0x10000ULL, &ambiguousEncoding, &ambiguousEnd),
+          "maximum matching both interpretations rejected as ambiguous");
+    Check(!guideXOS::pci_resource::TryInterpretResourceMaximum(
+              0xFFFFFFFFFFFF0000ULL, 0x1FFFFULL, 0x20000ULL,
+              &ambiguousEncoding, &ambiguousEnd),
+          "overflowing alignment-mask aperture rejected");
+
+    MakeResource(bytes, 64, 0x00000001FEC01000ULL, 0x10000ULL);
     UpdateChecksum(bytes);
     Check(TryParseSingleQwordMemoryResource(bytes, sizeof(bytes), &parsed),
           "valid nonzero ACPI end-tag checksum accepted");

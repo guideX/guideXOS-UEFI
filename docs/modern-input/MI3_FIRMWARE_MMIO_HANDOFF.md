@@ -42,12 +42,15 @@ offset, length, and end tag.
 The shared bounded parser accepts exactly one QWORD memory descriptor followed
 by an end tag. It checks the descriptor type and length, optional end-tag
 checksum, resource type, 32/64-bit width, address flags, nonzero length,
-inclusive maximum, checked end arithmetic, lower canonical physical range,
-and zero translation offset. A multi-descriptor list or unsupported attribute
-fails the whole discovery contract. The loader separately reconstructs BAR0's
-base from PCI configuration and requires it to equal the firmware descriptor's
-base. It does not size a BAR by writing PCI configuration and does not use the
-UEFI memory map to infer its aperture.
+checked end arithmetic, lower canonical physical range, and zero translation
+offset. It accepts either a matching inclusive end or the
+bounded EDK II alignment-mask form: a contiguous low-bit mask whose derived
+power-of-two size equals the length and aligns the base. Ambiguous, malformed,
+or overflowing ranges fail closed. A multi-descriptor list or unsupported
+attribute fails the whole discovery contract. The loader separately
+reconstructs BAR0's base from PCI configuration and requires it to equal the
+firmware descriptor's base. It does not size a BAR by writing PCI
+configuration and does not use the UEFI memory map to infer its aperture.
 
 The trust boundary is UEFI's PCI I/O implementation: a successful
 `GetBarAttributes` result must point to the descriptor template specified by
@@ -65,9 +68,10 @@ fixed 528-byte `GXPR` version 1 extension follows that prefix in the loader's
 static data. It contains a 16-byte header and storage for up to eight 64-byte
 entries. Each entry records segment/BDF, vendor/device IDs, BAR index and
 width, resource and memory attributes, BAR configuration base, MMIO base,
-aperture length, inclusive maximum, translation offset, and supported
-attributes. Compile-time size and offset assertions keep the C++ and C# layouts
-aligned.
+aperture length, raw descriptor maximum, maximum-encoding marker, translation
+offset, and supported attributes. The marker uses the prior reserved 16-bit
+field; the entry remains 64 bytes and version 1. Compile-time size and offset
+assertions keep the C++ and C# layouts aligned.
 
 The loader sets BootInfo flag bit 6 only for the new extension. Older readers
 ignore that bit and continue to use the unchanged prefix. No pointer into the
@@ -78,8 +82,9 @@ set and the complete extension lies inside an `EfiLoaderCode` or
 the allocator can reuse it.
 
 The kernel rejects invalid signatures, versions, entry sizes, counts, status,
-duplicate BDF/BAR keys, malformed addresses, inconsistent maxima, unsupported
-widths or resource types, nonzero translations, and reserved memory attributes.
+duplicate BDF/BAR keys, malformed addresses, inconsistent maximum encodings,
+unsupported widths or resource types, nonzero translations, and reserved
+memory attributes.
 ACPI memory cacheability bits [2:1] are accepted as valid descriptor hints;
 the kernel still maps the xHCI range uncached. It associates every entry with
 the kernel's own PCI scan, including segment/BDF, vendor/device ID, xHCI class,
@@ -137,10 +142,11 @@ dotnet run --project Tests\XhciDiscoveryTests\XhciDiscoveryTests.csproj `
 The shared raw UEFI descriptor parser passes **19 assertions** in
 `Tests/XhciPciResourceDescriptorTests.cpp`, compiled with
 `g++ -std=c++17 -Wall -Wextra -Werror`; the executable was placed under
-`%TEMP%`. It exercises 32/64-bit QWORD entries, decoded inclusive ranges,
-checksum handling, malformed/truncated templates, I/O resources, invalid
-widths, translations, address overflow, inconsistent maxima, and unsafe
-attributes. Neither hosted harness accesses hardware.
+`%TEMP%`. It exercises 32/64-bit QWORD entries, inclusive-end and EDK II
+alignment-mask ranges, checksum handling, malformed/truncated templates, I/O
+resources, invalid widths, translations, address overflow, inconsistent
+maximum interpretations, and unsafe attributes. Neither hosted harness
+accesses hardware.
 
 ## Build checks and remaining prerequisites
 

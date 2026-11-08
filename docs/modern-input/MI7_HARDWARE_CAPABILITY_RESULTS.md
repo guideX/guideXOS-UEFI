@@ -2,15 +2,19 @@
 
 ## Outcome
 
-**`MI7_HARDWARE_EVIDENCE_INCOMPLETE; SARAH_DT_BAR0_RETEST_PROPOSED`**
+**`SARAH_DT_DESCRIPTOR_CAPTURED; REVISED_READ_ONLY_PROBE_READY; PHYSICAL_QUALIFICATION_PENDING`**
 
-An operator report is now available for SARAH_DT's first physical MI7 run. The
-application launched from the UEFI Shell, found one xHCI controller, rejected
-BAR0, and returned to the Shell without reading capability registers. Raw BAR
-descriptor values and a recording were not captured, so hardware qualification
-remains incomplete. The software investigation and proposed second SARAH_DT
-test are recorded in
-[MI7_SARAH_DT_BAR0_INVESTIGATION.md](MI7_SARAH_DT_BAR0_INVESTIGATION.md).
+Two operator-reported SARAH_DT runs are now on record. The first established
+that the diagnostic launched and returned to the UEFI Shell. The second
+captured a successful `GetBarAttributes()` response and the exact BAR0
+descriptor below, but the then-current parser rejected it before capability
+access. Source review established that EDK II reports the PCI BAR alignment
+mask in `AddrRangeMax`. The bounded compatibility change passes hosted tests,
+and a new isolated EFI image is ready for a physical retest. The revised image
+has not been run on hardware, so physical capability-register qualification
+remains pending. See
+[MI7_SARAH_DT_BAR0_INVESTIGATION.md](MI7_SARAH_DT_BAR0_INVESTIGATION.md) for
+the parser rule and test record.
 
 ## Image identity and source verification
 
@@ -25,6 +29,19 @@ Verification date: **2026-11-02 (America/Los_Angeles)**
 | SHA-256 | `5F6AC2A4927F9ABB7E1AC039B72BD3C00903BD2A6107D0599BC3C8FBF3A884F7` |
 | Hash check | Matches the expected MI6 hash |
 | EFI artifact rebuilt for MI7 | No |
+
+### MI7-R2 isolated diagnostic
+
+Build and hosted verification date: **2026-11-08 (America/Los_Angeles)**
+
+| Item | Verified value |
+| --- | --- |
+| EFI application | `out\mi7-r2\guideXOS-XhciProbe.efi` |
+| SHA-256 | `21828286BA483D2D03A8DF8A31A20281DE16F3F78D98287994A293D67577DF05` |
+| Structural verification | PASS; AMD64 PE32+, EFI Application, no imports or COM descriptor |
+| Loader build | PASS; output isolated under `out\mi7-r2-loader\` |
+| Hosted regressions | PASS, 421 assertions across four suites |
+| Physical run of this revision | None |
 
 The source reference includes `Tools/XhciProbe/main.cpp`,
 `Tools/XhciProbe/xhci_probe_core.h`, its project and structural verifier, the
@@ -104,8 +121,14 @@ available. ASUS VivoBook and AIDA_LPT remain pending owner evidence.
 | PCI segment:bus:device.function | `0000:00:14.0` |
 | Vendor / device IDs | `8086:06ED` |
 | PCI class tuple | `0C/03/30` |
-| BAR0 width / base / length / maximum / translation / attributes | Screen showed width/base/length `0`; these were parser defaults, not raw fields. Other values unavailable. |
-| BAR0 resource validation result and failure reason, if any | Rejected as `malformed BAR0 resource descriptor`; raw descriptor unavailable |
+| First-run display | Width/base/length `0 / 0 / 0`; parser defaults, not firmware values |
+| Descriptor type / payload length | `0x8A` / `0x002B` (QWORD Address Space) |
+| Resource type / flags / granularity | Memory (`0`); general `0`; specific `0`; `32` bits |
+| BAR0 base / maximum / length / translation | `0xE1020000` / `0xFFFF` / `0x10000` / `0` |
+| Descriptor terminator / EFI status | `0x79 0x00` / `EFI_SUCCESS` on the second capture |
+| BAR0 resource validation result and failure reason, if any | The captured image rejected it because it required inclusive maximum `base + length - 1` (`0xE102FFFF`). EDK II reports the BAR alignment mask here; `0xFFFF` is the mask for 64 KiB. Revised parser accepts this only with power-of-two mask/size agreement, aligned base, and checked aperture end. |
+| Revised interpretation | EDK II alignment mask; checked aperture `[0xE1020000, 0xE102FFFF]` |
+| Revised image status | Hosted tests pass; physical retest pending. No capability registers were read in the reported second run. |
 | xHCI interface version / CAPLENGTH | Not read |
 | Maximum slots / root ports / interrupters | Not read |
 | Scratchpad-buffer requirement | Not read |
@@ -178,8 +201,10 @@ C# kernel can map or read the same BAR after `ExitBootServices`.
 
 ## Limitations and MI8 objective
 
-This record does not qualify physical execution, Secure Boot acceptance,
-controller capability values, or post-`ExitBootServices` kernel MMIO. No
+This record does not qualify the revised image's physical execution, Secure
+Boot acceptance, controller capability values, or post-`ExitBootServices`
+kernel MMIO. The second capture establishes a valid resource convention and
+the prior software rejection cause, but not physical capability access. No
 controller initialization is authorized by these observations.
 
 **Proposed MI8 objective:** review the actual MI7 captures and use their
@@ -190,12 +215,13 @@ that frontier until the evidence and a separate safety review support them.
 
 ## Run summary
 
-- Outcome: `MI7_HARDWARE_EVIDENCE_PENDING`
-- Physical machines tested: none
-- Physical xHCI observations: none
-- Artifact: MI6 `guideXOS-XhciProbe.efi`, SHA-256 recorded above
-- Artifact rebuilt or source modified: no
-- Hosted tests run in this MI7 review: no
+- Outcome: `SARAH_DT_DESCRIPTOR_CAPTURED; PHYSICAL_RETEST_PENDING`
+- Operator-reported physical evidence: SARAH_DT descriptor capture; no documented capability reads
+- Revised image physically tested in this assignment: no
+- Artifact: MI7-R2 `out\mi7-r2\guideXOS-XhciProbe.efi`, SHA-256 recorded above
+- Hosted regressions: PASS, 421 assertions
+- Loader build: PASS, isolated under `out\mi7-r2-loader\`
 - QEMU: not used
 - QAC admission: not requested
+- Physical testing during this assignment: not performed
 - GitHub push: not performed

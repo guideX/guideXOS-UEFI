@@ -378,9 +378,12 @@ internal static class Program {
                 fixture.AsSpan(80, 64));
         Check(first.Segment == 0 && first.Bus == 0 && first.Device == 20 &&
               first.Function == 0 && first.VendorId == 0x8086 &&
-              first.DeviceId == 0x1234 && first.MmioBase == 0xE0000000UL &&
-              first.ApertureLength == 0x10000UL,
-              "shared fixture first 32-bit controller entry decoded at expected offsets");
+              first.DeviceId == 0x06ED && first.MmioBase == 0xE1020000UL &&
+              first.ApertureLength == 0x10000UL &&
+              first.ResourceMaximum == 0xFFFFUL &&
+              first.MaximumEncoding ==
+                  XhciDiscovery.ResourceMaximumEncoding.EDK2AlignmentMask,
+              "shared fixture SARAH_DT alignment-mask entry decoded at expected offsets");
         Check(second.Segment == 0 && second.Bus == 2 && second.Device == 3 &&
               second.Function == 1 && second.VendorId == 0x8086 &&
               second.DeviceId == 0x5678 &&
@@ -392,9 +395,9 @@ internal static class Program {
                   out XhciDiscovery.ResourceFailure failure),
               "shared fixture passes C# contract validation");
         Check(XhciDiscovery.TryValidateFirmwareResource(first, 0, 0, 20, 0,
-                  0x8086, 0x1234, 0x0C, 0x03, 0x30, 0xE0000000U, 0,
+                  0x8086, 0x06ED, 0x0C, 0x03, 0x30, 0xE1020000U, 0,
                   out failure),
-              "shared fixture first controller identity and BAR validate");
+              "shared SARAH_DT descriptor identity and BAR validate");
         Check(XhciDiscovery.TryValidateFirmwareResource(second, 0, 2, 3, 1,
                   0x8086, 0x5678, 0x0C, 0x03, 0x30, 0xFEC01004U, 1,
                   out failure),
@@ -415,7 +418,7 @@ internal static class Program {
             nameof(XhciDiscovery.FirmwareResourceEntry.SpecificFlags),
             nameof(XhciDiscovery.FirmwareResourceEntry.VendorId),
             nameof(XhciDiscovery.FirmwareResourceEntry.DeviceId),
-            nameof(XhciDiscovery.FirmwareResourceEntry.Reserved),
+            nameof(XhciDiscovery.FirmwareResourceEntry.MaximumEncoding),
             nameof(XhciDiscovery.FirmwareResourceEntry.BarConfigurationBase),
             nameof(XhciDiscovery.FirmwareResourceEntry.MmioBase),
             nameof(XhciDiscovery.FirmwareResourceEntry.ApertureLength),
@@ -469,6 +472,17 @@ internal static class Program {
               0, 0, 20, 0, 0x8086, 0x1234, 0x0C, 0x03, 0x30,
               0xE0000000U, 0, out failure),
               "32-bit GetBarAttributes memory resource matches BAR0");
+
+        XhciDiscovery.FirmwareResourceEntry sarah = SarahDtResource();
+        Check(XhciDiscovery.TryInterpretResourceMaximum(sarah.MmioBase,
+                  sarah.ResourceMaximum, sarah.ApertureLength,
+                  out XhciDiscovery.ResourceMaximumEncoding encoding,
+                  out ulong rangeEnd) &&
+              encoding == XhciDiscovery.ResourceMaximumEncoding.EDK2AlignmentMask &&
+              rangeEnd == 0xE102FFFFUL,
+              "SARAH_DT maximum mask resolves to the checked inclusive aperture end");
+        Check(ValidateSarahDt(sarah, out failure),
+              "exact SARAH_DT 0000:00:14.0 resource passes kernel handoff validation");
 
         XhciDiscovery.FirmwareResourceEntry resource = Valid32BitResource();
         resource.AddressWidth = 64;
@@ -533,6 +547,38 @@ internal static class Program {
         Check(!Validate32(resource, out failure) &&
               failure == XhciDiscovery.ResourceFailure.MissingAperture,
               "contradictory descriptor maximum rejected");
+
+        resource = SarahDtResource();
+        resource.ResourceMaximum = 0xFFFEUL;
+        Check(!ValidateSarahDt(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.MissingAperture,
+              "non-contiguous EDK II alignment mask rejected by kernel");
+
+        resource = SarahDtResource();
+        resource.ApertureLength = 0x8000UL;
+        Check(!ValidateSarahDt(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.MissingAperture,
+              "EDK II mask whose size disagrees with aperture rejected by kernel");
+
+        resource = SarahDtResource();
+        resource.MmioBase += 0x1000UL;
+        resource.BarConfigurationBase = resource.MmioBase;
+        Check(!ValidateSarahDt(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.MissingAperture,
+              "misaligned EDK II mask aperture rejected by kernel");
+
+        resource = SarahDtResource();
+        resource.MaximumEncoding = (XhciDiscovery.ResourceMaximumEncoding)2;
+        Check(!ValidateSarahDt(resource, out failure) &&
+              failure == XhciDiscovery.ResourceFailure.MissingAperture,
+              "unknown maximum interpretation rejected by kernel");
+
+        Check(!XhciDiscovery.TryInterpretResourceMaximum(0, 0xFFFFUL,
+                  0x10000UL, out _, out _),
+              "maximum matching inclusive and mask interpretations is ambiguous");
+        Check(!XhciDiscovery.TryInterpretResourceMaximum(0xFFFFFFFFFFFF0000UL,
+                  0x1FFFFUL, 0x20000UL, out _, out _),
+              "overflowing alignment-mask aperture rejected by kernel parser");
 
         resource = Valid32BitResource();
         resource.SpecificFlags = 0x02;
@@ -661,7 +707,7 @@ internal static class Program {
             SpecificFlags = 0x01,
             VendorId = 0x8086,
             DeviceId = 0x1234,
-            Reserved = 0,
+            MaximumEncoding = XhciDiscovery.ResourceMaximumEncoding.InclusiveEnd,
             BarConfigurationBase = baseAddress,
             MmioBase = baseAddress,
             ApertureLength = length,
@@ -669,6 +715,27 @@ internal static class Program {
             TranslationOffset = 0,
             SupportedAttributes = 0
         };
+    }
+
+    private static XhciDiscovery.FirmwareResourceEntry SarahDtResource() {
+        XhciDiscovery.FirmwareResourceEntry entry = Valid32BitResource();
+        entry.GeneralFlags = 0;
+        entry.SpecificFlags = 0;
+        entry.DeviceId = 0x06ED;
+        entry.BarConfigurationBase = 0xE1020000UL;
+        entry.MmioBase = 0xE1020000UL;
+        entry.ResourceMaximum = 0xFFFFUL;
+        entry.MaximumEncoding =
+            XhciDiscovery.ResourceMaximumEncoding.EDK2AlignmentMask;
+        return entry;
+    }
+
+    private static bool ValidateSarahDt(
+            XhciDiscovery.FirmwareResourceEntry entry,
+            out XhciDiscovery.ResourceFailure failure) {
+        return XhciDiscovery.TryValidateFirmwareResource(entry,
+            0, 0, 20, 0, 0x8086, 0x06ED, 0x0C, 0x03, 0x30,
+            0xE1020000U, 0, out failure);
     }
 
     private static bool Validate32(XhciDiscovery.FirmwareResourceEntry entry,

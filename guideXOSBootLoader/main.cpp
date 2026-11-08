@@ -704,7 +704,7 @@ static void DiscoverXhciPciResources(EFI_SYSTEM_TABLE* SystemTable) {
         entry.SpecificFlags = descriptor.SpecificFlags;
         entry.VendorId = vendorId;
         entry.DeviceId = deviceId;
-        entry.Reserved = 0;
+        entry.MaximumEncoding = static_cast<UINT16>(descriptor.MaximumEncoding);
         entry.BarConfigurationBase = barBase;
         entry.MmioBase = descriptor.Base;
         entry.ApertureLength = descriptor.Length;

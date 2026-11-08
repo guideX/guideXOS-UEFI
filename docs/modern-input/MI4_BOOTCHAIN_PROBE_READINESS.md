@@ -32,7 +32,7 @@ The original BootInfo layout and handoff prefix are unchanged. Older producers d
 
 The fixture covers two controllers in reverse association order and includes both a 32-bit BAR address and a 64-bit address above 4 GiB. The C# checks verify the fixed header, entries, field offsets, and exact BDF/device identity association. The match is one-to-one, bounded to eight entries, and rejects ambiguous duplicates, unsupported class codes, and missing or mismatched identities.
 
-The resource validator rejects invalid BDFs, non-BAR0 entries, non-memory or reserved attributes, zero/overflowing ranges, nonzero translations, resource/BAR disagreement, and 32/64-bit width disagreement. It accepts the ACPI memory cacheability bits [2:1] and maps the range uncached. It checks the full aperture and lower canonical x86-64 address range before mapping. The MI7 correction is documented in [MI7_SARAH_DT_BAR0_INVESTIGATION.md](MI7_SARAH_DT_BAR0_INVESTIGATION.md).
+The resource validator rejects invalid BDFs, non-BAR0 entries, non-memory or reserved attributes, zero/overflowing ranges, nonzero translations, resource/BAR disagreement, and 32/64-bit width disagreement. It accepts specification-style inclusive ends and the bounded EDK II alignment-mask form only when mask shape, aperture size, base alignment, checked end, and encoding marker agree. It accepts the ACPI memory cacheability bits [2:1] and maps the range uncached. It checks the full aperture and lower canonical x86-64 address range before mapping. The MI7 correction is documented in [MI7_SARAH_DT_BAR0_INVESTIGATION.md](MI7_SARAH_DT_BAR0_INVESTIGATION.md).
 
 ## Read-only MMIO review
 

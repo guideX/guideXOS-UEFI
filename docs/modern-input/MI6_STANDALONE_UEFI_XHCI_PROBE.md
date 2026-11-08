@@ -60,9 +60,10 @@ never dereferenced by the application.
 The shared bounded descriptor parser requires one supported QWORD memory
 resource descriptor followed by the end tag. The probe checks descriptor
 validity, memory type, 32/64-bit width agreement with the PCI BAR, nonzero base
-and aperture, descriptor maximum, checked `base + length - 1` arithmetic,
-zero translation offset, and a minimum 0x20-byte capability aperture. It
-rejects BAR configuration types it does not support. Descriptor bytes are
+and aperture, an unambiguous inclusive-end or bounded EDK II alignment-mask
+interpretation, checked `base + length - 1` arithmetic, zero translation
+offset, and a minimum 0x20-byte capability aperture. It rejects BAR
+configuration types it does not support. Descriptor bytes are
 copied into fixed-width values and their firmware pool allocation is released
 on success, malformed input, or a firmware error that nevertheless returns a
 buffer. `GetBarAttributes` supported attributes and the validated range are

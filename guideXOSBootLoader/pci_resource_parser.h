@@ -6,6 +6,11 @@
 namespace guideXOS {
 namespace pci_resource {
 
+enum class ResourceMaximumEncoding : uint16_t {
+    InclusiveEnd = 0,
+    EDK2AlignmentMask = 1
+};
+
 static const size_t QWORD_ADDRESS_DESCRIPTOR_SIZE = 46;
 static const size_t END_TAG_SIZE = 2;
 static const size_t SINGLE_QWORD_RESOURCE_SIZE =
@@ -15,11 +20,43 @@ struct QwordMemoryResource {
     uint8_t GeneralFlags;
     uint8_t SpecificFlags;
     uint8_t AddressWidth;
+    ResourceMaximumEncoding MaximumEncoding;
     uint64_t Base;
     uint64_t Maximum;
+    uint64_t RangeEnd;
     uint64_t Length;
     uint64_t TranslationOffset;
 };
+
+inline bool IsPowerOfTwo(uint64_t value) {
+    return value != 0 && (value & (value - 1)) == 0;
+}
+
+// UEFI/ACPI describes AddrRangeMax as an inclusive end, while EDK II's
+// PciIoGetBarAttributes reports PCI_BAR.Alignment here. Its value is a
+// low-order alignment mask (for example, 0xFFFF for a 64 KiB BAR). Accept
+// only one unambiguous interpretation, and retain the raw field for handoff.
+inline bool TryInterpretResourceMaximum(uint64_t base, uint64_t maximum,
+        uint64_t length, ResourceMaximumEncoding* encoding,
+        uint64_t* rangeEnd) {
+    if (encoding == nullptr || rangeEnd == nullptr || length == 0 ||
+        base > (~(uint64_t)0) - (length - 1)) return false;
+
+    const uint64_t computedEnd = base + length - 1;
+    const bool inclusiveEnd = maximum == computedEnd;
+    bool alignmentMask = false;
+    if (maximum != ~(uint64_t)0) {
+        const uint64_t maskSize = maximum + 1;
+        alignmentMask = IsPowerOfTwo(maskSize) && length == maskSize &&
+                        base % maskSize == 0;
+    }
+
+    if (inclusiveEnd == alignmentMask) return false;
+    *encoding = inclusiveEnd ? ResourceMaximumEncoding::InclusiveEnd :
+                               ResourceMaximumEncoding::EDK2AlignmentMask;
+    *rangeEnd = computedEnd;
+    return true;
+}
 
 inline uint64_t ReadLittleEndian64(const uint8_t* bytes) {
     uint64_t value = 0;
@@ -98,12 +135,12 @@ inline bool TryParseSingleQwordMemoryResource(const uint8_t* bytes,
         // not alter the address bounds validated below. Bits 7:3 remain
         // unsupported for this BAR resource profile.
         (parsed.SpecificFlags & 0xF8) != 0 ||
-        parsed.Base < 0x100000ULL || parsed.Length == 0 ||
-        parsed.Base > (~(uint64_t)0) - (parsed.Length - 1) ||
-        parsed.Maximum != parsed.Base + parsed.Length - 1 ||
+        parsed.Base < 0x100000ULL ||
         parsed.TranslationOffset != 0 ||
-        parsed.Maximum > 0x00007FFFFFFFFFFFULL ||
-        (granularity == 32 && parsed.Maximum > 0xFFFFFFFFULL)) return false;
+        !TryInterpretResourceMaximum(parsed.Base, parsed.Maximum,
+            parsed.Length, &parsed.MaximumEncoding, &parsed.RangeEnd) ||
+        parsed.RangeEnd > 0x00007FFFFFFFFFFFULL ||
+        (granularity == 32 && parsed.RangeEnd > 0xFFFFFFFFULL)) return false;
 
     parsed.AddressWidth = (uint8_t)granularity;
     *result = parsed;

@@ -1,27 +1,26 @@
-# MI7 SARAH_DT BAR0 Resource Rejection Investigation
+# MI7 SARAH_DT BAR0 Resource Compatibility
 
 ## Outcome
 
-**`MI7_SOFTWARE_VALIDATION_DEFECT_FIXED; SARAH_DT_RAW_DESCRIPTOR_UNCONFIRMED`**
+**`SARAH_DT_DESCRIPTOR_CAPTURED; EDK2_ALIGNMENT_MASK_COMPATIBILITY_FIXED; PHYSICAL_RETEST_PENDING`**
 
-Investigation date: **2026-11-04 (America/Los_Angeles)**
+Software update date: **2026-11-08 (America/Los_Angeles)**
 
-The first physical run established that the standalone application launches
-from the UEFI Shell and returns to it. The displayed zero BAR fields were
-parser defaults, not values copied from the firmware descriptor. A standards
-validity bug in the memory type-specific flag checks has been fixed in the
-shared C++ parser, standalone probe, and kernel-side handoff validator. The
-first run did not capture raw descriptor bytes, so it cannot establish that
-this flag check was the specific reason SARAH_DT's BAR0 was rejected.
+The first SARAH_DT run launched the standalone diagnostic and returned to the
+UEFI Shell, but it did not preserve the raw descriptor. The second physical
+capture reported an authentic successful `GetBarAttributes()` response for
+Intel xHCI `0000:00:14.0`, vendor/device `8086:06ED`. The image used for that
+capture still rejected BAR0 before capability access. This revision adds the
+bounded EDK II maximum-mask convention to the shared parser, standalone probe,
+loader handoff, and kernel validator. The revised image is hosted-verified and
+ready for a physical retest; it has not been run on SARAH_DT.
 
-## First physical run: reported evidence
-
-The operator reported:
+## First physical run
 
 | Field | Observation |
 | --- | --- |
-| PCI handles scanned | 14 |
-| Intel xHCI controllers found | 1 |
+| Test date/time, firmware version, capture | Not recorded/provided |
+| PCI handles scanned / Intel xHCI controllers | 14 / 1 |
 | PCI location | `0000:00:14.0` |
 | Vendor/device | `8086:06ED` |
 | PCI class | `0C/03/30` |
@@ -29,125 +28,103 @@ The operator reported:
 | Displayed width/base/length | `0 / 0 / 0` |
 | Capability registers read | None |
 | Application return | Returned to UEFI Shell |
-| Test date/time, firmware version, capture | Not recorded/provided |
 
-The descriptor bytes, End Tag, and exact EFI status were not printed by the
-first build. In that source, `TryGetBarResource()` zero-initialized its output
-and only copied width, base, maximum, and length after the parser succeeded.
-The old display printed those output fields even after parser rejection.
-Therefore the reported zero values are defaults left by rejected parsing, not
-raw firmware values.
+The displayed zero BAR values were parser defaults: output fields were only
+copied after parsing succeeded. The first run did not capture the raw resource
+descriptor and did not display the exact EFI status.
 
-The failure stage also narrows the call result: the probe only reports
-`MalformedBarDescriptor` after `GetBarAttributes()` returned a non-error
-status, supplied a non-null resource pointer, and freeing that pointer did not
-return an EFI error. The exact status was discarded by the old display, so the
-physical capture does not prove it was exactly `EFI_SUCCESS`.
+## Second physical descriptor capture
 
-## UEFI 2.10 and ACPI audit
+The operator reported these raw values and `EFI_SUCCESS`:
 
-The call uses the EDK2 declaration of
-`EFI_PCI_IO_PROTOCOL_GET_BAR_ATTRIBUTES`, whose `EFIAPI` function pointer
-signature is `(This, UINT8 BarIndex, UINT64 *Supports, VOID **Resources)`.
-The probe calls `GetBarAttributes(pci, 0, &attributes, &resources)` with both
-optional outputs supplied and frees a non-null returned pool buffer through
-`EFI_BOOT_SERVICES.FreePool()` on success, parser failure, and error-with-buffer
-paths. The ABI, parameter types, BAR index, and ownership handling match UEFI
-2.10 §14.4.18 ([UEFI 2.10 PCI Bus Support](https://uefi.org/specs/UEFI/2.10/14_Protocols_PCI_Bus_Support.html#efi-pci-io-protocolgetbarattributes)).
+| Field | Captured value |
+| --- | ---: |
+| Descriptor type / payload length | `0x8A` / `0x002B` |
+| Resource type | Memory (`0`) |
+| General / specific flags | `0` / `0` |
+| Granularity | `32` |
+| Address minimum | `0xE1020000` |
+| Address maximum | `0x000000000000FFFF` |
+| Translation | `0` |
+| Address length | `0x10000` |
+| End Tag / checksum | `0x79 0x00` |
+| EFI status | `EFI_SUCCESS` |
 
-The UEFI descriptor table defines a QWORD address-space descriptor with a
-43-byte payload: type at byte 0, little-endian payload length at bytes 1–2,
-resource type at byte 3, flags at bytes 4–5, 64-bit granularity at bytes 6–13,
-minimum at 14–21, maximum at 22–29, translation at 30–37, and length at
-38–45. Its End Tag is two bytes (`0x79`, checksum) after the resource
-descriptor. The existing byte offsets and little-endian decoding were correct;
-byte-wise reads avoid alignment assumptions. The checksum rule was also
-correct: zero means no checksum is required; a nonzero checksum must make the
-sum of the resource list zero. The probe intentionally supports a single
-QWORD range followed by End Tag. UEFI permits one or more QWORD descriptors,
-so multiple ranges remain an unsupported, fail-closed form; the new probe
-reports a second QWORD signature separately from an invalid End Tag.
+Test time, exact firmware version, and recording were not supplied. The image
+that produced this capture still rejected the descriptor, so it did not read
+capability registers.
 
-The defect was in type-specific memory flags. ACPI defines bits 2:1 as memory
-cacheability: non-cacheable, cacheable, write-combining, or cacheable and
-prefetchable ([ACPI 6.4, Memory Resource Flags](https://uefi.org/htmlspecs/ACPI_Spec_6_4_html/06_Device_Configuration/Device_Configuration.html#resource-type-specific-flags)).
-The previous parser rejected any of these bits with `(SpecificFlags & 0x06) !=
-0`, which excluded standards-valid QWORD memory descriptors. The same
-unnecessary rejection was present in the standalone validator and kernel
-handoff validator. All three checks now accept bits 2:1, while bits 7:3 remain
-rejected for this BAR contract.
+## Rejection cause and compatibility rule
 
-The change does not relax BAR geometry or mapping checks. The probe still
-requires memory type, width 32 or 64 matching PCI BAR0, matching base, minimum
-base, nonzero length, checked inclusive maximum, exact `base + length - 1`,
-zero translation, the supported lower canonical address range, a 32-bit
-maximum for a 32-bit BAR, and at least a 0x20-byte capability aperture. No
-capability access occurs unless the full resource validation succeeds.
+The exact old rejection was in
+`guideXOSBootLoader/pci_resource_parser.h`: it required
+`parsed.Maximum == parsed.Base + parsed.Length - 1`. For this descriptor that
+condition expected `0xE102FFFF`, while the raw maximum was `0xFFFF`.
 
-`GetBarAttributes()` does not return a byte count. The new diagnostics copy
-the EFI status and first three descriptor-header bytes, then copy fixed QWORD
-fields only when the type is `0x8A` and the advertised payload length is the
-complete standard `0x2B`. They also show the two bytes after that descriptor
-to distinguish the End Tag from a following descriptor. The raw fields are
-labelled separately from validated BAR values, and all fields are copied
-before freeing the firmware pool.
+TianoCore EDK II's `PciBusDxe/PciIo.c` assigns
+`PciBar[BarIndex].Alignment` to `Descriptor->AddrRangeMax`; this is the BAR
+alignment-mask convention ([EDK II source](https://github.com/tianocore/edk2/blob/master/MdeModulePkg/Bus/Pci/PciBusDxe/PciIo.c#L1882-L1885)).
+For a 64 KiB BAR, `0xFFFF` is the expected low-bit mask.
+
+The parser now accepts exactly one of these interpretations:
+
+1. **Inclusive end:** raw maximum equals the checked inclusive end
+   `base + length - 1`.
+2. **EDK II alignment mask:** `maximum + 1` is a power of two, equals the
+   advertised length, and the base is aligned to that size.
+
+Both interpretations reject overflow, ambiguous values, and ranges beyond the
+supported lower canonical address space. A 32-bit BAR must have a computed
+aperture end at or below `0xFFFFFFFF`. The EDK II form also rejects
+non-contiguous masks, length mismatches, and misaligned bases. For SARAH_DT,
+the validated aperture is `[0xE1020000, 0xE102FFFF]`.
+
+The loader preserves the raw maximum and a two-byte interpretation marker in
+the existing handoff entry's formerly reserved field. The 64-byte entry and
+version-1 handoff layout remain unchanged. The kernel recomputes the checked
+range end and verifies the marker, BAR identity, width, resource type,
+translation, attributes, aperture, and controller BDF/device identity before
+mapping. The existing ACPI memory cacheability-bit support remains; reserved
+flags stay rejected.
 
 ## Hosted validation
 
-All requested hosted regressions passed after the final source changes:
-
 | Suite | Result |
 | --- | ---: |
-| C++ resource descriptor parser | PASS, 31 assertions |
-| Standalone UEFI probe | PASS, 18 cases / 84 assertions |
+| C++ resource descriptor parser | PASS, 39 assertions |
+| Standalone UEFI probe | PASS, 19 cases / 93 assertions |
 | C++ firmware/kernel handoff ABI | PASS, 149 assertions |
-| C# xHCI discovery and resource validation | PASS, 132 assertions |
-| **Total** | **PASS, 397 assertions** |
+| C# xHCI discovery and resource validation | PASS, 140 assertions |
+| **Total** | **PASS, 421 assertions** |
 
-Coverage includes valid 32- and 64-bit QWORD resources, all three nonzero
-cacheability encodings, correct zero and nonzero End Tag checksums, truncated
-and unterminated resources, wrong descriptor type/length, extra data, multiple
-QWORD ranges outside the single-range contract, malformed flags, overflow,
-base/width mismatch, short apertures, and descriptor cleanup. Existing BAR
-bounds and read-only behavior assertions pass.
+Tests include the exact SARAH_DT descriptor and controller identity, both
+maximum conventions, malformed/ambiguous masks, arithmetic overflow,
+translation/resource/width/termination checks, unsupported descriptor-list
+shapes, aperture bounds, and read-only behavior. Hosted capability reads use
+fake register blocks.
 
-## Isolated EFI diagnostic image
+## Isolated build
 
-The Release x64 standalone application was rebuilt outside release paths and
-passed `Tools/XhciProbe/verify_efi.py`:
-
-| Item | Value |
+| Item | Verified value |
 | --- | --- |
-| Path | `D:\dev\guideXOSUEFI_MODERN_INPUT\out\mi7-investigation\guideXOS-XhciProbe.efi` |
-| SHA-256 | `23388373FC0EAABFFBFDE319950F0F515AD683A0D306C292F6ABB28805104163` |
-| Image | AMD64 PE32+, EFI Application subsystem 10 |
-| Imports / COM descriptor | None |
-| Signed | No |
+| Checkout / branch | `D:\dev\guideXOSUEFI_MODERN_INPUT` / `MODERN_INPUT` |
+| EFI image | `out\mi7-r2\guideXOS-XhciProbe.efi` |
+| SHA-256 | `21828286BA483D2D03A8DF8A31A20281DE16F3F78D98287994A293D67577DF05` |
+| Structural result | AMD64 PE32+, EFI Application, entry in `.text`, no imports or COM descriptor |
+| Loader build | PASS, isolated under `out\mi7-r2-loader\` |
 
-The image remains read-only: no PCI configuration writes, BAR sizing writes,
-attribute changes, xHCI reset or initialization, DMA, or controller register
-writes were added. No QEMU, QAC, or physical test was run during this
-investigation. No push was performed.
+The diagnostic remains strictly read-only: no PCI configuration writes, BAR
+sizing writes, attribute changes, controller reset or initialization, DMA, or
+controller-register writes. No QEMU, QAC, or physical test of the revised
+image was run for this assignment. No push was performed.
 
-## Proposed second SARAH_DT test
+## Next hardware qualification step
 
-Run the rebuilt image once from the UEFI Shell on SARAH_DT using the existing
-safe one-time launch path and a dedicated test medium. Verify the file hash
-before and after copying it. Leave Secure Boot, boot order, and firmware
-settings unchanged. Record continuous video from launch through return to the
-Shell and capture these displayed fields verbatim:
-
-1. `GetBarAttributes EFI_STATUS`.
-2. First descriptor type and payload length.
-3. Resource type, general flags, specific flags, address granularity, raw
-   minimum/base, maximum, translation offset, and length, when available.
-4. The two bytes after the first descriptor and whether the parser accepted
-   it, rejected it, or classified the list as multiple ranges.
-5. Any validated BAR values, capability output if the BAR passes, and the
-   final failure stage/status.
-
-Do not proceed to capability or controller testing if BAR validation fails.
-Preserve the complete capture and stop after this one diagnostic run if the
-firmware reports an error or hangs. This second test will distinguish a valid
-cacheability flag previously rejected by software from a malformed header,
-unexpected list shape, invalid range, or other descriptor condition.
+Verify the image SHA-256 before and after copying it to dedicated test media.
+On SARAH_DT, use the existing one-time UEFI Shell launch procedure, leave
+Secure Boot and firmware settings unchanged, and record continuous video
+through return to the Shell. Confirm the output says the descriptor was
+accepted as an `EDK2 alignment mask`, gives checked end `0xE102FFFF`, and
+reports the bounded read-only capability values. Stop before capability
+access if any resource or identity validation fails. This retest is the next
+qualification step; no physical qualification of this revision is claimed.

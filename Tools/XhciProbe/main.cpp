@@ -167,6 +167,12 @@ static void PrintController(const guideXOS::xhci_probe::ProbeResult* result) {
             ConsoleWriteHex(result->Bar.Length, 16);
             ConsoleWrite(L"  max=");
             ConsoleWriteHex(result->Bar.Maximum, 16);
+            ConsoleWrite(L"  max interpretation=");
+            ConsoleWrite(result->Bar.MaximumEncoding ==
+                    guideXOS::pci_resource::ResourceMaximumEncoding::EDK2AlignmentMask ?
+                L"EDK2 alignment mask" : L"inclusive end");
+            ConsoleWrite(L"  checked range end=");
+            ConsoleWriteHex(result->Bar.Base + result->Bar.Length - 1, 16);
             ConsoleWrite(L"  translation=");
             ConsoleWriteHex(result->Bar.TranslationOffset, 16);
         }

@@ -44,9 +44,9 @@ int main(int argc, char** argv) {
     }
 
     Check(fixture.size() == 144, "shared fixture contains two active entries");
-    Check(ReadLittleEndian64(fixture.data() + 32) == 0xE0000000ULL &&
+    Check(ReadLittleEndian64(fixture.data() + 32) == 0xE1020000ULL &&
           ReadLittleEndian64(fixture.data() + 96) == 0x00000001FEC01000ULL,
-          "shared fixture stores distinct 32-bit and 64-bit BAR addresses");
+          "shared fixture stores SARAH_DT and 64-bit BAR addresses");
 
     PciResourceHandoff handoff = {};
     handoff.Magic = 0x52505847u;
@@ -59,14 +59,15 @@ int main(int argc, char** argv) {
     first.Bus = 0;
     first.Device = 20;
     first.AddressWidth = 32;
-    first.GeneralFlags = 0x0F;
-    first.SpecificFlags = 0x01;
+    first.GeneralFlags = 0;
+    first.SpecificFlags = 0;
     first.VendorId = 0x8086;
-    first.DeviceId = 0x1234;
-    first.BarConfigurationBase = 0xE0000000ULL;
-    first.MmioBase = 0xE0000000ULL;
+    first.DeviceId = 0x06ED;
+    first.MaximumEncoding = 1;
+    first.BarConfigurationBase = 0xE1020000ULL;
+    first.MmioBase = 0xE1020000ULL;
     first.ApertureLength = 0x10000ULL;
-    first.ResourceMaximum = 0xE000FFFFULL;
+    first.ResourceMaximum = 0xFFFFULL;
 
     PciMmioResourceEntry& second = handoff.Entries[1];
     second.Bus = 2;

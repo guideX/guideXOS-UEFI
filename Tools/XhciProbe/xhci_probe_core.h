@@ -35,6 +35,7 @@ struct BarResource {
     bool HasListTail;
     bool HasGetBarAttributesStatus;
     uint8_t AddressWidth;
+    guideXOS::pci_resource::ResourceMaximumEncoding MaximumEncoding;
     uint8_t GeneralFlags;
     uint8_t SpecificFlags;
     uint8_t DescriptorType;
@@ -129,6 +130,7 @@ inline uint64_t TryGetBarResource(void* context,
         result->SpecificFlags = parsed.SpecificFlags;
         result->Base = parsed.Base;
         result->Maximum = parsed.Maximum;
+        result->MaximumEncoding = parsed.MaximumEncoding;
         result->Length = parsed.Length;
         result->TranslationOffset = parsed.TranslationOffset;
     }
@@ -276,17 +278,21 @@ inline bool ParseBarConfiguration(uint32_t low, uint32_t high,
 
 inline bool ValidateBarResource(const ProbeResult& result) {
     const BarResource& bar = result.Bar;
+    guideXOS::pci_resource::ResourceMaximumEncoding maximumEncoding;
+    uint64_t rangeEnd = 0;
     if (!bar.DescriptorValid || !bar.IsMemory ||
         (bar.AddressWidth != 32 && bar.AddressWidth != 64) ||
         (bar.GeneralFlags & 0xF0U) != 0 ||
         (bar.SpecificFlags & 0xF8U) != 0 ||
         bar.AddressWidth != result.BarConfigurationWidth ||
         bar.Base == 0 || bar.Base != result.BarConfigurationBase ||
-        bar.Base < 0x100000ULL || bar.Length == 0 ||
-        bar.Length - 1 > UINT64_MAX - bar.Base ||
-        bar.Maximum != bar.Base + (bar.Length - 1) ||
+        bar.Base < 0x100000ULL ||
+        !guideXOS::pci_resource::TryInterpretResourceMaximum(
+            bar.Base, bar.Maximum, bar.Length, &maximumEncoding, &rangeEnd) ||
+        maximumEncoding != bar.MaximumEncoding ||
         bar.TranslationOffset != 0 ||
-        (bar.AddressWidth == 32 && bar.Maximum > 0xFFFFFFFFULL) ||
+        rangeEnd > 0x00007FFFFFFFFFFFULL ||
+        (bar.AddressWidth == 32 && rangeEnd > 0xFFFFFFFFULL) ||
         bar.Length < MINIMUM_CAPABILITY_APERTURE) return false;
     return true;
 }

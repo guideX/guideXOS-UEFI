@@ -113,7 +113,7 @@ namespace paging
         UINT8 SpecificFlags;
         UINT16 VendorId;
         UINT16 DeviceId;
-        UINT16 Reserved;
+        UINT16 MaximumEncoding;
         UINT64 BarConfigurationBase;
         UINT64 MmioBase;
         UINT64 ApertureLength;
@@ -155,7 +155,7 @@ namespace paging
         offsetof(PciMmioResourceEntry, SpecificFlags) == 9 &&
         offsetof(PciMmioResourceEntry, VendorId) == 10 &&
         offsetof(PciMmioResourceEntry, DeviceId) == 12 &&
-        offsetof(PciMmioResourceEntry, Reserved) == 14 &&
+        offsetof(PciMmioResourceEntry, MaximumEncoding) == 14 &&
         offsetof(PciMmioResourceEntry, BarConfigurationBase) == 16 &&
         offsetof(PciMmioResourceEntry, MmioBase) == 24 &&
         offsetof(PciMmioResourceEntry, ApertureLength) == 32 &&

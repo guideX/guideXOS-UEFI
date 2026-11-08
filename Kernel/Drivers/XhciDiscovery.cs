@@ -56,6 +56,11 @@ namespace guideXOS.Kernel.Drivers {
             DuplicateController
         }
 
+        public enum ResourceMaximumEncoding : ushort {
+            InclusiveEnd = 0,
+            EDK2AlignmentMask = 1
+        }
+
         public const uint ResourceContractMagic = 0x52505847U; // "GXPR"
         public const ushort ResourceContractVersion = 1;
         public const ushort FirmwareResourceEntrySize = 64;
@@ -98,7 +103,7 @@ namespace guideXOS.Kernel.Drivers {
             public byte SpecificFlags;
             public ushort VendorId;
             public ushort DeviceId;
-            public ushort Reserved;
+            public ResourceMaximumEncoding MaximumEncoding;
             public ulong BarConfigurationBase;
             public ulong MmioBase;
             public ulong ApertureLength;
@@ -231,6 +236,38 @@ namespace guideXOS.Kernel.Drivers {
             return length - 1 <= remaining;
         }
 
+        /// <summary>
+        /// Interpret the descriptor maximum as either an inclusive range end
+        /// or EDK II's PCI BAR alignment mask. The mask form is accepted only
+        /// for a contiguous low-bit mask, matching power-of-two length, and an
+        /// aperture-aligned base. Ambiguous or overflowing ranges fail closed.
+        /// </summary>
+        public static bool TryInterpretResourceMaximum(ulong baseAddress,
+                ulong maximum, ulong length,
+                out ResourceMaximumEncoding encoding, out ulong rangeEnd) {
+            encoding = ResourceMaximumEncoding.InclusiveEnd;
+            rangeEnd = 0;
+            if (length == 0 || baseAddress > ulong.MaxValue - (length - 1))
+                return false;
+
+            ulong computedEnd = baseAddress + length - 1;
+            bool inclusiveEnd = maximum == computedEnd;
+            bool alignmentMask = false;
+            if (maximum != ulong.MaxValue) {
+                ulong maskSize = maximum + 1;
+                bool powerOfTwo = maskSize != 0 &&
+                    (maskSize & (maskSize - 1)) == 0;
+                alignmentMask = powerOfTwo && length == maskSize &&
+                    baseAddress % maskSize == 0;
+            }
+
+            if (inclusiveEnd == alignmentMask) return false;
+            encoding = inclusiveEnd ? ResourceMaximumEncoding.InclusiveEnd :
+                ResourceMaximumEncoding.EDK2AlignmentMask;
+            rangeEnd = computedEnd;
+            return true;
+        }
+
         public static bool IsSubrangeWithinResource(ulong resourceLength,
                                                      ulong offset,
                                                      ulong accessLength) {
@@ -321,7 +358,7 @@ namespace guideXOS.Kernel.Drivers {
             // memory cacheability hint. Memory flags [2:1] are valid ACPI
             // cacheability values; [7:3] remain outside this BAR contract.
             if ((entry.SpecificFlags & 0xF8) != 0 ||
-                (entry.GeneralFlags & 0xF0) != 0 || entry.Reserved != 0) {
+                (entry.GeneralFlags & 0xF0) != 0) {
                 failure = ResourceFailure.InvalidMemoryAttributes;
                 return false;
             }
@@ -334,13 +371,16 @@ namespace guideXOS.Kernel.Drivers {
                 failure = ResourceFailure.RangeOverflow;
                 return false;
             }
-            ulong computedMaximum = entry.MmioBase + entry.ApertureLength - 1;
-            if (entry.ResourceMaximum != computedMaximum) {
+            if (!TryInterpretResourceMaximum(entry.MmioBase,
+                    entry.ResourceMaximum, entry.ApertureLength,
+                    out ResourceMaximumEncoding maximumEncoding,
+                    out ulong rangeEnd) ||
+                entry.MaximumEncoding != maximumEncoding) {
                 failure = ResourceFailure.MissingAperture;
                 return false;
             }
             if (entry.MmioBase < 0x100000UL ||
-                (entry.AddressWidth == 32 && entry.ResourceMaximum > 0xFFFFFFFFUL)) {
+                (entry.AddressWidth == 32 && rangeEnd > 0xFFFFFFFFUL)) {
                 failure = ResourceFailure.InvalidAddressWidth;
                 return false;
             }
