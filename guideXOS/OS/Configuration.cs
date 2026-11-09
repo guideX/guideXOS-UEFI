@@ -1,5 +1,6 @@
 using guideXOS.FS;
 using guideXOS.GUI;
+using guideXOS.Misc;
 using System;
 
 namespace guideXOS.OS {
@@ -12,6 +13,23 @@ namespace guideXOS.OS {
         private const string ConfigFile = "/etc/guidexos/config.ini";
         
         private static bool _initialized = false;
+        internal static SharedFontProviderKind FontProviderPreference {
+            get; private set;
+        } = SharedFontProviderKind.BitmapAtlas;
+        internal static int TrueTypeFontSizePreference {
+            get; private set;
+        } = SharedTextFontSelection.DefaultTrueTypeFontSize;
+
+        internal static bool SetFontPreferences(
+                SharedFontProviderKind provider, int trueTypeSize) {
+            if ((provider != SharedFontProviderKind.BitmapAtlas &&
+                    provider != SharedFontProviderKind.TrueType) ||
+                    !SharedTextFont.IsSupportedTrueTypeSize(trueTypeSize))
+                return false;
+            FontProviderPreference = provider;
+            TrueTypeFontSizePreference = trueTypeSize;
+            return true;
+        }
         
         /// <summary>
         /// Initialize configuration system
@@ -101,6 +119,8 @@ namespace guideXOS.OS {
                     UISettings.ShowWidgetsOnStartup = show;
                     widgetsStr.Dispose();
                 }
+
+                LoadFontSettings(content);
                 
                 content.Dispose();
                 BootConsole.WriteLine("[CONFIG] UI settings loaded");
@@ -121,6 +141,8 @@ namespace guideXOS.OS {
                 content += "enable_window_slide_animations=" + (UISettings.EnableWindowSlideAnimations ? "true" : "false") + "\n";
                 content += "enable_auto_background_rotation=" + (UISettings.EnableAutoBackgroundRotation ? "true" : "false") + "\n";
                 content += "background_rotation_interval_minutes=" + UISettings.BackgroundRotationIntervalMinutes.ToString() + "\n";
+                content = SharedFontPreferenceConfig.Append(content,
+                    FontProviderPreference, TrueTypeFontSizePreference);
                 
                 byte[] data = GetBytesFromString(content);
                 File.WriteAllBytes(ConfigFile, data);
@@ -130,6 +152,43 @@ namespace guideXOS.OS {
                 BootConsole.WriteLine("[CONFIG] UI settings saved");
             } catch {
                 BootConsole.WriteLine("[CONFIG] Error saving UI settings");
+            }
+        }
+
+        private static void LoadFontSettings(string content) {
+            SharedFontProviderKind provider;
+            int trueTypeSize;
+            bool hasFontSettings;
+            SharedFontPreferenceConfig.TryRead(content, out provider,
+                out trueTypeSize, out hasFontSettings);
+            if (!hasFontSettings) return;
+
+            // Invalid or partial values normalize to Bitmap and a supported
+            // size in the parser. Older files with neither key keep defaults.
+            if (!SetFontPreferences(provider, trueTypeSize)) {
+                provider = SharedFontProviderKind.BitmapAtlas;
+                trueTypeSize = SharedTextFontSelection.DefaultTrueTypeFontSize;
+                SetFontPreferences(provider, trueTypeSize);
+            }
+
+            ApplyLoadedFontPreferences();
+        }
+
+        /// <summary>
+        /// Apply the validated startup preference after the window manager has
+        /// initialized its bitmap font and provider selector.
+        /// </summary>
+        internal static void ApplyLoadedFontPreferences() {
+            if (SystemMode.IsLiveMode || WindowManager.font == null) return;
+
+            if (FontProviderPreference == SharedFontProviderKind.TrueType) {
+                if (!WindowManager.TrySelectShellTrueTypeFromResource(
+                        TrueTypeFontSizePreference)) {
+                    SetFontPreferences(SharedFontProviderKind.BitmapAtlas,
+                        TrueTypeFontSizePreference);
+                }
+            } else {
+                WindowManager.SelectBitmapShellTextFont();
             }
         }
         

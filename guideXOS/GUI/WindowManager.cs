@@ -74,6 +74,18 @@ namespace guideXOS.GUI {
             return success;
         }
 
+        internal static bool TrySelectShellTrueTypeFromResource(int fontSize) {
+            byte[] fontData = null;
+            try {
+                fontData = File.ReadAllBytes(SharedTrueTypeFontPath);
+                return TrySelectShellTrueType(fontData, fontSize);
+            } catch {
+                return TrySelectShellTrueType(null, fontSize);
+            } finally {
+                if (fontData != null) fontData.Dispose();
+            }
+        }
+
         internal static void SelectBitmapShellTextFont() {
             if (_shellTextFontSelection == null)
                 _shellTextFontSelection = new SharedTextFontSelection();
@@ -150,6 +162,8 @@ namespace guideXOS.GUI {
         // decode path changes to the post-EBS-safe PngLoader.
         internal const string FontResourcePath = "Fonts/roboto/roboto_12pt_regular.png";
         internal const string FontCharset = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+        internal const string SharedTrueTypeFontPath =
+            "Fonts/roboto/Roboto-Regular.ttf";
         internal static bool RealFontEnabled { get; private set; }
         internal static bool FontUsingFallback { get; private set; }
         internal static int FontResourceBytes { get; private set; }
@@ -229,6 +243,7 @@ namespace guideXOS.GUI {
             InitializeFont();
             _shellFontUsageReportedGeneration = -1;
             SelectBitmapShellTextFont();
+            Configuration.ApplyLoadedFontPreferences();
             MouseHandled = false;
             _pending = new List<PendingWindow>();
             _cpuEpochTick = 0;

@@ -333,8 +333,10 @@ namespace guideXOS.GUI {
 
             int iconSizeIdx = GetIconSizeItemIndex();
             DrawItem(iconSizeIdx, y, "Icon Size");
-            WindowManager.font.DrawString(X + Width - 20,
-                y + (ItemH / 2) - (WindowManager.font.FontSize / 2), ">");
+            int arrowX = X + Width - 20;
+            ShellTextSurfaceRenderer.DrawContextMenuText(
+                Framebuffer.Graphics, WindowManager.ShellTextFont,
+                WindowManager.font, ">", arrowX, y, arrowX, y, 12, ItemH);
 
             if (_showIconSizeSubmenu) {
                 int submenuX = GetSubmenuX();
@@ -351,12 +353,17 @@ namespace guideXOS.GUI {
                                                            SubmenuW - 2, ItemH,
                                                            0xFF313131);
                     }
-                    WindowManager.font.DrawString(submenuX + 8,
-                        itemY + (ItemH / 2) - (WindowManager.font.FontSize / 2),
-                        IconSizeLabels[i]);
+                    int labelX = submenuX + 8;
+                    ShellTextSurfaceRenderer.DrawContextMenuText(
+                        Framebuffer.Graphics, WindowManager.ShellTextFont,
+                        WindowManager.font, IconSizeLabels[i], labelX, itemY,
+                        labelX, itemY, SubmenuW - 40, ItemH);
                     if (IconSizes[i] == Desktop.IconSize) {
-                        WindowManager.font.DrawString(submenuX + SubmenuW - 20,
-                            itemY + (ItemH / 2) - (WindowManager.font.FontSize / 2), "*");
+                        int markerX = submenuX + SubmenuW - 20;
+                        ShellTextSurfaceRenderer.DrawContextMenuText(
+                            Framebuffer.Graphics, WindowManager.ShellTextFont,
+                            WindowManager.font, "*", markerX, itemY,
+                            markerX, itemY, 12, ItemH);
                     }
                 }
             }
@@ -369,8 +376,14 @@ namespace guideXOS.GUI {
                 Framebuffer.Graphics.FillRectangle(X + 1, y, Width - 2, ItemH,
                                                    0xFF313131);
             }
-            WindowManager.font.DrawString(X + 8,
-                y + (ItemH / 2) - (WindowManager.font.FontSize / 2), label);
+            int labelX = X + 8;
+            int labelWidth = Width - 16;
+            if (index == GetIconSizeItemIndex()) labelWidth -= 16;
+            if (labelWidth < 0) labelWidth = 0;
+            ShellTextSurfaceRenderer.DrawContextMenuText(
+                Framebuffer.Graphics, WindowManager.ShellTextFont,
+                WindowManager.font, label, labelX, y, labelX, y,
+                labelWidth, ItemH);
         }
     }
 }

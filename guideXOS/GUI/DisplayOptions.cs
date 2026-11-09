@@ -50,17 +50,10 @@ namespace guideXOS.GUI {
         private int _gradientScrollStartY, _gradientScrollStartScroll;
 
         // Font Settings
-        private List<string> _fontPaths;
-        private int _selectedFontIndex = -1;
-        private int _fontScroll = 0;
-        private bool _fontScrollDrag = false;
-        private int _fontScrollStartY, _fontScrollStartScroll;
-        private int _selectedFontSize = 18; // Default
-        private int[] _fontSizes = new[] { 12, 14, 16, 18, 20, 24, 28, 32 };
-        private bool _fontsLoaded = false;
-        private const string SharedTrueTypeFontPath =
-            "Fonts/roboto/Roboto-Regular.ttf";
-        private const int SharedTrueTypeFontSize = 20;
+        private int _selectedFontSize =
+            SharedTextFontSelection.DefaultTrueTypeFontSize;
+        private static readonly int[] TrueTypeFontSizes =
+            new[] { 12, 14, 16, 18, 20, 24 };
 
         public DisplayOptions(int X, int Y, int W = 800, int H = 600) : base(X, Y, W, H) {
             _serviceContext = null;
@@ -115,9 +108,7 @@ namespace guideXOS.GUI {
             // Load backgrounds immediately
             LoadBackgrounds();
 
-            // Initialize font lists
-            _fontPaths = new List<string>();
-            _selectedFontSize = WindowManager.font != null ? WindowManager.font.FontSize : 18;
+            _selectedFontSize = Configuration.TrueTypeFontSizePreference;
         }
 
         private void LoadBackgrounds() {
@@ -219,27 +210,6 @@ namespace guideXOS.GUI {
             }
         }
 
-        private void LoadFonts() {
-            if (_fontsLoaded) return;
-            _fontsLoaded = true;
-
-            _fontPaths.Clear();
-            var files = File.GetFiles(@"Fonts/");
-            if (files != null && files.Count > 0) {
-                for (int i = 0; i < files.Count; i++) {
-                    var fi = files[i];
-                    if (fi.Attribute != FileAttribute.Directory) {
-                        string name = fi.Name;
-                        if (name.EndsWith(".png") || name.EndsWith(".PNG")) {
-                            _fontPaths.Add("Fonts/" + name);
-                        }
-                    }
-                    fi.Dispose();
-                }
-                files.Dispose();
-            }
-        }
-
         public override void OnInput() {
             base.OnInput(); 
             if (!Visible) return;
@@ -283,7 +253,6 @@ namespace guideXOS.GUI {
                 }
                 if (mx >= tabX3 && mx <= tabX3 + tabW && my >= tabY && my <= tabY + _tabH) { 
                     _currentTab = 3;
-                    if (!_fontsLoaded) LoadFonts();
                     return; 
                 }
 
@@ -462,67 +431,16 @@ namespace guideXOS.GUI {
                 // Font Settings tab
                 if (_currentTab == 3) {
                     if (MouseEventDispatcher.WasPressedThisFrame(
-                            MouseButtons.Left) &&
-                            HandleFontProviderClick(cx, contentY, cw, mx, my)) {
-                        return;
-                    }
-
-                    int listY = contentY + WindowManager.font.FontSize + 16;
-                    int listH = contentH - WindowManager.font.FontSize - 16 - _btnH - 20;
-                    int listW = cw - 14;
-                    int itemH = 40;
-
-                    // Font list clicks
-                    for (int i = 0; i < _fontPaths.Count; i++) {
-                        int rowY = listY + i * itemH - _fontScroll;
-                        if (rowY + itemH < listY || rowY > listY + listH) continue;
-                        
-                        if (mx >= cx && mx <= cx + listW && my >= rowY && my <= rowY + itemH - 2) {
-                            _selectedFontIndex = i;
+                            MouseButtons.Left)) {
+                        if (HandleFontProviderClick(cx, contentY, cw, mx, my))
                             return;
-                        }
-                    }
-
-                    // Scrollbar for font list
-                    int sbW = 12;
-                    int sbX = cx + cw - sbW;
-                    if (mx >= sbX && mx <= sbX + sbW && my >= listY && my <= listY + listH) {
-                        _fontScrollDrag = true;
-                        _fontScrollStartY = my;
-                        _fontScrollStartScroll = _fontScroll;
-                        return;
-                    }
-
-                    // Font size buttons
-                    int sizeBtnY = listY + listH + 10;
-                    int sizeBtnW = 60;
-                    int sizeBtnH = 32;
-                    int sizeGap = 8;
-                    int sizeX = cx;
-
-                    for (int i = 0; i < _fontSizes.Length; i++) {
-                        if (mx >= sizeX && mx <= sizeX + sizeBtnW && my >= sizeBtnY && my <= sizeBtnY + sizeBtnH) {
-                            _selectedFontSize = _fontSizes[i];
+                        if (HandleFontSizeClick(cx, contentY, mx, my))
                             return;
-                        }
-                        sizeX += sizeBtnW + sizeGap;
-                    }
-
-                    // Apply button
-                    int applyBtnW = 120;
-                    int applyBtnH = 38;
-                    int applyBtnX = X + Width - _padding - applyBtnW;
-                    int applyBtnY = Y + Height - _padding - applyBtnH - 10;
-
-                    if (mx >= applyBtnX && mx <= applyBtnX + applyBtnW && my >= applyBtnY && my <= applyBtnY + applyBtnH) {
-                        ApplyFont();
-                        return;
                     }
                 }
             } else {
                 _bgScrollDrag = false;
                 _gradientScrollDrag = false;
-                _fontScrollDrag = false;
             }
 
             // Background gallery scrolling
@@ -562,20 +480,6 @@ namespace guideXOS.GUI {
                 if (_gradientScroll > maxScroll) _gradientScroll = maxScroll;
             }
 
-            // Font list scrolling
-            if (_fontScrollDrag && _currentTab == 3) {
-                int listY = contentY + WindowManager.font.FontSize + 16;
-                int listH = contentH - WindowManager.font.FontSize - 16 - _btnH - 20;
-                int itemH = 40;
-                int totalH = _fontPaths.Count * itemH;
-                int maxScroll = totalH > listH ? totalH - listH : 0;
-                
-                int dy = my - _fontScrollStartY;
-                _fontScroll = _fontScrollStartScroll + dy;
-                if (_fontScroll < 0) _fontScroll = 0;
-                if (_fontScroll > maxScroll) _fontScroll = maxScroll;
-            }
-            
             // Handle resolution confirmation countdown
             if (_confirmVisible && _currentTab == 1) {
                 ulong elapsed = Timer.Ticks - _lastCountdownTick;
@@ -755,46 +659,6 @@ namespace guideXOS.GUI {
             }
         }
 
-        private void ApplyFont() {
-            if (_selectedFontIndex < 0 || _selectedFontIndex >= _fontPaths.Count) {
-                NotifyApplication("Please select a font", true);
-                return;
-            }
-
-            try {
-                string fontPath = _fontPaths[_selectedFontIndex];
-                byte[] fontData = File.ReadAllBytes(fontPath);
-                if (fontData == null || fontData.Length == 0) {
-                    NotifyApplication("Failed to load font file", true);
-                    return;
-                }
-
-                var fontImg = new PNG(fontData);
-
-                // Create new font with selected size
-                // FIXED: Added leading space to charset to match WindowManager.cs and generate_font.py
-                var newFont = new IFont(
-                    fontImg,
-                    " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~",
-                    _selectedFontSize
-                );
-
-                // Dispose old font if needed
-                if (WindowManager.font != null) {
-                    // Note: We can't easily dispose the old font image without breaking references
-                    // Just replace the reference
-                }
-
-                WindowManager.font = newFont;
-                WindowManager.SelectBitmapShellTextFont();
-                
-                NotifyApplication("Font applied successfully", false);
-                this.Visible = false;
-            } catch {
-                NotifyApplication("Failed to apply font", true);
-            }
-        }
-
         private void DrawFontProviderControls(int cx, int contentY, int cw) {
             const int buttonWidth = 136;
             const int buttonHeight = 28;
@@ -836,8 +700,8 @@ namespace guideXOS.GUI {
 
             if (mx >= bitmapX && mx <= bitmapX + buttonWidth) {
                 WindowManager.SelectBitmapShellTextFont();
-                NotifyApplication(
-                    "Bitmap renderer enabled for this session", false);
+                Configuration.SetFontPreferences(
+                    SharedFontProviderKind.BitmapAtlas, _selectedFontSize);
                 return true;
             }
             if (mx >= trueTypeX && mx <= trueTypeX + buttonWidth) {
@@ -848,20 +712,49 @@ namespace guideXOS.GUI {
         }
 
         private void SelectTrueTypeProvider() {
-            byte[] fontData = null;
-            bool selected = false;
-            try {
-                fontData = File.ReadAllBytes(SharedTrueTypeFontPath);
-                selected = WindowManager.TrySelectShellTrueType(fontData,
-                    SharedTrueTypeFontSize);
-            } catch {
-                selected = WindowManager.TrySelectShellTrueType(null,
-                    SharedTrueTypeFontSize);
+            ActivateTrueTypeSize(_selectedFontSize);
+        }
+
+        private bool HandleFontSizeClick(int cx, int contentY, int mx, int my) {
+            const int buttonWidth = 64;
+            const int buttonHeight = 32;
+            const int buttonGap = 8;
+            int buttonY = GetFontSizeButtonY(contentY);
+            int buttonX = cx;
+            for (int i = 0; i < TrueTypeFontSizes.Length; i++) {
+                if (mx >= buttonX && mx <= buttonX + buttonWidth &&
+                        my >= buttonY && my <= buttonY + buttonHeight) {
+                    int size = TrueTypeFontSizes[i];
+                    _selectedFontSize = size;
+                    SharedTextFont active = WindowManager.ShellTextFont;
+                    if (active != null && active.Provider ==
+                            SharedFontProviderKind.TrueType) {
+                        ActivateTrueTypeSize(size);
+                    } else {
+                        Configuration.SetFontPreferences(
+                            SharedFontProviderKind.BitmapAtlas, size);
+                    }
+                    return true;
+                }
+                buttonX += buttonWidth + buttonGap;
             }
-            NotifyApplication(selected
-                    ? "TrueType renderer enabled for this session (Roboto 20 px)"
-                    : "TrueType could not initialize; Bitmap remains active",
-                !selected);
+            return false;
+        }
+
+        private static int GetFontSizeButtonY(int contentY) {
+            return contentY + WindowManager.font.FontSize + 76;
+        }
+
+        private void ActivateTrueTypeSize(int size) {
+            if (WindowManager.TrySelectShellTrueTypeFromResource(size)) {
+                Configuration.SetFontPreferences(
+                    SharedFontProviderKind.TrueType, size);
+                return;
+            }
+            Configuration.SetFontPreferences(
+                SharedFontProviderKind.BitmapAtlas, size);
+            NotifyApplication(
+                "TrueType could not initialize; Bitmap remains active", true);
         }
 
         private void NotifyApplication(string message, bool error) {
@@ -1217,98 +1110,52 @@ namespace guideXOS.GUI {
                 }
             } else if (_currentTab == 3) {
                 // Font Settings tab
-                WindowManager.font.DrawString(cx, contentY, "Select a font and size:");
+                WindowManager.font.DrawString(cx, contentY,
+                    "Choose provider:");
                 DrawFontProviderControls(cx, contentY, cw);
 
-                if (!_fontsLoaded) {
-                    WindowManager.font.DrawString(cx + 20, contentY + WindowManager.font.FontSize + 20, "Loading fonts...");
-                    return;
-                }
+                SharedTextFont active = WindowManager.ShellTextFont;
+                bool trueTypeActive = active != null && active.Provider ==
+                    SharedFontProviderKind.TrueType;
+                int activeSize = trueTypeActive ? active.TrueTypeFontSize :
+                    WindowManager.font.FontSize;
+                string activeLabel = "Active: " +
+                    (trueTypeActive ? "TrueType " : "Bitmap ") +
+                    activeSize.ToString() + " px";
+                int statusY = contentY + WindowManager.font.FontSize + 18;
+                WindowManager.font.DrawString(cx, statusY, activeLabel);
+                activeLabel.Dispose();
 
-                int listY = contentY + WindowManager.font.FontSize + 16;
-                int listH = contentH - WindowManager.font.FontSize - 16 - _btnH - 20;
-                int listW = cw - 14;
-                int itemH = 40;
-
-                Framebuffer.Graphics.FillRectangle(cx, listY, listW + 14, listH, 0xFF1A1A1A);
-
-                if (_fontPaths.Count == 0) {
-                    WindowManager.font.DrawString(cx + 20, listY + 20, "No fonts found in /Fonts directory");
-                } else {
-                    // Draw font list
-                    int mx = Control.MousePosition.X;
-                    int my = Control.MousePosition.Y;
-
-                    for (int i = 0; i < _fontPaths.Count; i++) {
-                        int rowY = listY + i * itemH - _fontScroll;
-                        if (rowY + itemH < listY || rowY > listY + listH) continue;
-
-                        bool selected = i == _selectedFontIndex;
-                        uint rowBg = selected ? 0xFF2E4A7F : 0xFF252525;
-
-                        Framebuffer.Graphics.FillRectangle(cx, rowY, listW, itemH - 2, rowBg);
-                        Framebuffer.Graphics.DrawRectangle(cx, rowY, listW, itemH - 2, 0xFF3F3F3F, 1);
-
-                        // Extract font name from path
-                        string fontPath = _fontPaths[i];
-                        string fontName = fontPath;
-                        int lastSlash = fontPath.LastIndexOf('/');
-                        if (lastSlash >= 0 && lastSlash < fontPath.Length - 1) {
-                            fontName = fontPath.Substring(lastSlash + 1);
-                        }
-
-                        WindowManager.font.DrawString(cx + 16, rowY + itemH / 2 - WindowManager.font.FontSize / 2, fontName, listW - 32, WindowManager.font.FontSize);
-                    }
-
-                    // Scrollbar
-                    int sbW = 12;
-                    int sbX = cx + cw - sbW;
-                    int totalH = _fontPaths.Count * itemH;
-                    int maxScroll = totalH > listH ? totalH - listH : 0;
-
-                    Framebuffer.Graphics.FillRectangle(sbX, listY, sbW, listH, 0xFF0F0F0F);
-                    if (maxScroll > 0 && totalH > 0) {
-                        int thumbH = listH * listH / totalH;
-                        if (thumbH < 24) thumbH = 24;
-                        if (thumbH > listH) thumbH = listH;
-                        int thumbY = listH * _fontScroll / totalH;
-                        if (thumbY + thumbH > listH) thumbY = listH - thumbH;
-                        Framebuffer.Graphics.FillRectangle(sbX + 1, listY + thumbY, sbW - 2, thumbH, 0xFF3F3F3F);
-                    }
-                }
-
-                // Font size buttons
-                int sizeBtnY = listY + listH + 10;
-                int sizeBtnW = 60;
-                int sizeBtnH = 32;
-                int sizeGap = 8;
+                int sizeLabelY = contentY + WindowManager.font.FontSize + 50;
+                WindowManager.font.DrawString(cx, sizeLabelY,
+                    "TrueType size (pixels):");
+                int sizeBtnY = GetFontSizeButtonY(contentY);
+                const int sizeBtnW = 64;
+                const int sizeBtnH = 32;
+                const int sizeGap = 8;
                 int sizeX = cx;
-
-                WindowManager.font.DrawString(cx, sizeBtnY - WindowManager.font.FontSize - 6, "Font Size:");
-
-                for (int i = 0; i < _fontSizes.Length; i++) {
-                    bool selected = _fontSizes[i] == _selectedFontSize;
+                for (int i = 0; i < TrueTypeFontSizes.Length; i++) {
+                    bool selected = TrueTypeFontSizes[i] == _selectedFontSize;
                     uint btnBg = selected ? 0xFF2E4A7F : 0xFF2A2A2A;
-
-                    Framebuffer.Graphics.FillRectangle(sizeX, sizeBtnY, sizeBtnW, sizeBtnH, btnBg);
-                    Framebuffer.Graphics.DrawRectangle(sizeX, sizeBtnY, sizeBtnW, sizeBtnH, 0xFF4F4F4F, 1);
-
-                    string sizeText = _fontSizes[i].ToString();
+                    Framebuffer.Graphics.FillRectangle(sizeX, sizeBtnY,
+                        sizeBtnW, sizeBtnH, btnBg);
+                    Framebuffer.Graphics.DrawRectangle(sizeX, sizeBtnY,
+                        sizeBtnW, sizeBtnH, 0xFF4F4F4F, 1);
+                    string sizeText = TrueTypeFontSizes[i].ToString();
                     int textW = WindowManager.font.MeasureString(sizeText);
-                    WindowManager.font.DrawString(sizeX + (sizeBtnW - textW) / 2, sizeBtnY + (sizeBtnH - WindowManager.font.FontSize) / 2, sizeText);
-
+                    WindowManager.font.DrawString(
+                        sizeX + (sizeBtnW - textW) / 2,
+                        sizeBtnY + (sizeBtnH - WindowManager.font.FontSize) / 2,
+                        sizeText);
                     sizeX += sizeBtnW + sizeGap;
                 }
 
-                // Apply button
-                int applyBtnW = 120;
-                int applyBtnH = 38;
-                int applyBtnX = X + Width - _padding - applyBtnW;
-                int applyBtnY = Y + Height - _padding - applyBtnH - 10;
-
-                Framebuffer.Graphics.FillRectangle(applyBtnX, applyBtnY, applyBtnW, applyBtnH, 0xFF2E7F3F);
-                Framebuffer.Graphics.DrawRectangle(applyBtnX, applyBtnY, applyBtnW, applyBtnH, 0xFF3F3F3F, 1);
-                WindowManager.font.DrawString(applyBtnX + 30, applyBtnY + (applyBtnH / 2 - WindowManager.font.FontSize / 2), "Apply");
+                int noteY = sizeBtnY + sizeBtnH + 20;
+                string persistenceNote = SystemMode.IsLiveMode
+                    ? "Applied immediately. LiveMode selections are session-only."
+                    : "Applied now. Use Save Settings on the desktop to keep it.";
+                WindowManager.font.DrawString(cx, noteY, persistenceNote);
+                persistenceNote.Dispose();
             }
         }
 
@@ -1328,11 +1175,6 @@ namespace guideXOS.GUI {
                 _backgroundPaths.Clear(); // Clear the list instead of calling Dispose on it
             }
 
-            // Clean up font paths list
-            if (_fontPaths != null) {
-                _fontPaths.Clear();
-            }
-            
             // Clean up resolution labels array
             if (_resLabels != null) {
                 for (int i = 0; i < _resLabels.Length; i++) {

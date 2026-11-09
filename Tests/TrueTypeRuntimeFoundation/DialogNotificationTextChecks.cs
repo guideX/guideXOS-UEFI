@@ -22,6 +22,7 @@ namespace guideXOS.FontTests {
             CheckBoundsAndUnicode(fontBytes, bitmapFont);
             CheckProvidersAndSizes(fontBytes, bitmap, bitmapFont);
             CheckNotificationAndDialogPixels(bitmap, bitmapFont, fontBytes);
+            CheckSizePropagationToShellSurfaces(fontBytes, bitmap);
 
             Console.WriteLine("FONTS4 hosted layout and UI checks: " +
                               _checks + ", failures: " + _failures);
@@ -192,7 +193,7 @@ namespace guideXOS.FontTests {
         private static void CheckProvidersAndSizes(byte[] fontBytes,
                                                     IFont bitmap,
                                                     SharedTextFont bitmapFont) {
-            int[] sizes = { 12, 16, 20, 24 };
+            int[] sizes = { 12, 14, 16, 18, 20, 24 };
             for (int i = 0; i < sizes.Length; i++) {
                 TrueTypeFont renderer;
                 SharedTextFont selected;
@@ -347,6 +348,134 @@ namespace guideXOS.FontTests {
                   HasInkOnlyInsideClip(trueTypeToast1, background,
                     12, 10, 96, 66),
                   "TrueType notifications redraw deterministically inside their bounds");
+        }
+
+        private static void CheckSizePropagationToShellSurfaces(
+                byte[] fontBytes, IFont bitmap) {
+            int[] sizes = { 14, 18, 24 };
+            ulong[] notificationHashes = new ulong[sizes.Length];
+            const uint background = 0xFF19232Du;
+            const string body =
+                "Unsaved changes will be shown at the selected text size.";
+            const string notificationText = "Changes are ready to save.";
+            const int messageX = 8;
+            const int messageScreenWidth = 330;
+            const int shutdownNoX = 150;
+            const int shutdownYesX = 240;
+            const int shutdownButtonY = 92;
+            const int shutdownButtonWidth = 80;
+            const int shutdownButtonHeight = 28;
+            const int saveButtonY = 92;
+            const int saveButtonWidth = 90;
+            const int saveButtonHeight = 28;
+            const int saveButtonGap = 8;
+
+            for (int i = 0; i < sizes.Length; i++) {
+                TrueTypeFont renderer;
+                SharedTextFont selected;
+                bool loaded = TrueTypeFont.TryCreate(fontBytes, sizes[i],
+                    out renderer);
+                bool optedIn = SharedTextFont.TrySelectTrueType(renderer,
+                    bitmap, out selected);
+                int lineHeight = 0;
+                bool haveLineHeight = selected != null &&
+                    selected.GetLineHeight(out lineHeight);
+                SharedTextMeasurement bodyMeasurement =
+                    new SharedTextMeasurement();
+                bool measuredBody = selected != null &&
+                    selected.MeasureText(body, out bodyMeasurement);
+                int messageBoxWidth;
+                bool measuredMessageBox = ShellTextSurfaceRenderer
+                    .MeasureMessageBoxWidth(selected, bitmap, body,
+                        messageScreenWidth, messageX, out messageBoxWidth);
+                int availableMessageBoxWidth = messageScreenWidth - messageX - 4;
+                int expectedMessageBoxWidth = bodyMeasurement.Width >
+                    availableMessageBoxWidth ? availableMessageBoxWidth :
+                    bodyMeasurement.Width;
+
+                Graphics notification = new Graphics(330, 100, background);
+                bool notificationDrawn = ShellTextSurfaceRenderer
+                    .DrawWrappedText(notification, selected, notificationText,
+                        10, 10, 240, 0, 0xFFFFFFFFu, 10, 10, 240, 72,
+                        SharedTextAlignment.Left);
+
+                Graphics messageBox = new Graphics(330, 100, background);
+                bool messageBoxDrawn = measuredMessageBox &&
+                    ShellTextSurfaceRenderer.DrawWrappedText(messageBox,
+                        selected, body, messageX, 8, messageBoxWidth, 0,
+                        0xFFFFFFFFu, messageX, 8, messageBoxWidth, 72,
+                        SharedTextAlignment.Left);
+
+                Graphics shutdown = new Graphics(330, 130, background);
+                bool shutdownBody = ShellTextSurfaceRenderer.DrawWrappedText(
+                    shutdown, selected, body, 10, 10, 240, 0,
+                    0xFFFFFFFFu, 10, 10, 240, 76,
+                    SharedTextAlignment.Left);
+                bool shutdownButtons = haveLineHeight &&
+                    ShellTextSurfaceRenderer.DrawFixedText(shutdown, selected,
+                        "No", shutdownNoX + 4,
+                        shutdownButtonY + (shutdownButtonHeight - lineHeight) / 2,
+                        shutdownButtonWidth - 8, shutdownNoX,
+                        shutdownButtonY, shutdownButtonWidth,
+                        shutdownButtonHeight, 0xFFFFFFFFu,
+                        SharedTextAlignment.Center) &&
+                    ShellTextSurfaceRenderer.DrawFixedText(shutdown, selected,
+                        "Yes", shutdownYesX + 4,
+                        shutdownButtonY + (shutdownButtonHeight - lineHeight) / 2,
+                        shutdownButtonWidth - 8, shutdownYesX,
+                        shutdownButtonY, shutdownButtonWidth,
+                        shutdownButtonHeight, 0xFFFFFFFFu,
+                        SharedTextAlignment.Center);
+
+                Graphics saveChanges = new Graphics(330, 130, background);
+                bool saveBody = ShellTextSurfaceRenderer.DrawWrappedText(
+                    saveChanges, selected, body, 10, 10, 300, 0,
+                    0xFFFFFFFFu, 10, 10, 300, 76,
+                    SharedTextAlignment.Left);
+                int centeredButtonY = saveButtonY +
+                    (saveButtonHeight - lineHeight) / 2;
+                bool saveButtons = haveLineHeight &&
+                    ShellTextSurfaceRenderer.DrawFixedText(saveChanges,
+                        selected, "Save", 14, centeredButtonY,
+                        saveButtonWidth - 8, 10, saveButtonY,
+                        saveButtonWidth, saveButtonHeight, 0xFFFFFFFFu,
+                        SharedTextAlignment.Center) &&
+                    ShellTextSurfaceRenderer.DrawFixedText(saveChanges,
+                        selected, "Don't Save",
+                        10 + saveButtonWidth + saveButtonGap + 4,
+                        centeredButtonY, saveButtonWidth - 8,
+                        10 + saveButtonWidth + saveButtonGap, saveButtonY,
+                        saveButtonWidth, saveButtonHeight, 0xFFFFFFFFu,
+                        SharedTextAlignment.Center) &&
+                    ShellTextSurfaceRenderer.DrawFixedText(saveChanges,
+                        selected, "Cancel",
+                        10 + (saveButtonWidth + saveButtonGap) * 2 + 4,
+                        centeredButtonY, saveButtonWidth - 8,
+                        10 + (saveButtonWidth + saveButtonGap) * 2,
+                        saveButtonY, saveButtonWidth, saveButtonHeight,
+                        0xFFFFFFFFu, SharedTextAlignment.Center);
+
+                notificationHashes[i] = notification.PixelHash();
+                Check(loaded && optedIn && selected.FontSize == sizes[i] &&
+                      selected.TrueTypeFontSize == sizes[i] &&
+                      haveLineHeight && measuredBody &&
+                      bodyMeasurement.Height == lineHeight *
+                          bodyMeasurement.LineCount && measuredMessageBox &&
+                      messageBoxWidth == expectedMessageBoxWidth &&
+                      notificationDrawn && messageBoxDrawn && shutdownBody &&
+                      shutdownButtons && saveBody && saveButtons &&
+                      HasInkOnlyInsideClip(notification, background,
+                          10, 10, 240, 72) &&
+                      shutdownNoX == 150 && shutdownYesX == 240 &&
+                      shutdownButtonWidth == 80 &&
+                      shutdownButtonHeight == 28 && saveButtonWidth == 90 &&
+                      saveButtonHeight == 28,
+                      "MessageBox, Shutdown, Save Changes, and notification use " +
+                      "the selected " + sizes[i] + " px font within fixed bounds");
+            }
+            Check(notificationHashes[0] != notificationHashes[1] &&
+                  notificationHashes[1] != notificationHashes[2],
+                  "notification output changes after repeated size selections");
         }
 
         private static IFont CreateBitmapFontForFallback() {

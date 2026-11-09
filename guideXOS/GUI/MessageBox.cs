@@ -25,11 +25,15 @@ namespace guideXOS.GUI {
         /// On Draw
         /// </summary>
         public override void OnDraw() {
-            if (this._message != null)
-                this.Width = WindowManager.font.MeasureString(_message);
+            SharedTextFont selected = WindowManager.ShellTextFont;
+            if (this._message != null) {
+                int measuredWidth;
+                if (ShellTextSurfaceRenderer.MeasureMessageBoxWidth(selected,
+                        WindowManager.font, _message, Framebuffer.Width, X,
+                        out measuredWidth)) Width = measuredWidth;
+            }
             base.OnDraw();
             if (this._message != null) {
-                SharedTextFont selected = WindowManager.ShellTextFont;
                 if (selected != null &&
                     selected.Provider == SharedFontProviderKind.TrueType) {
                     ShellTextSurfaceRenderer.DrawWrappedText(

@@ -82,6 +82,29 @@ namespace guideXOS.GUI {
                 alignmentWidth);
         }
 
+        internal static bool MeasureMessageBoxWidth(SharedTextFont selected,
+                                                     IFont bitmap,
+                                                     string text,
+                                                     int screenWidth,
+                                                     int originX,
+                                                     out int width) {
+            width = 0;
+            if (text == null) return false;
+            if (selected != null && selected.Provider ==
+                    SharedFontProviderKind.TrueType) {
+                SharedTextMeasurement measurement;
+                if (!selected.MeasureText(text, out measurement)) return false;
+                int availableWidth = screenWidth - originX - 4;
+                if (availableWidth < 0) availableWidth = 0;
+                width = measurement.Width > availableWidth
+                    ? availableWidth : measurement.Width;
+                return true;
+            }
+            if (bitmap == null) return false;
+            width = bitmap.MeasureString(text);
+            return true;
+        }
+
         public static bool DrawWindowTitle(Graphics graphics,
                                            SharedTextFont selected,
                                            IFont bitmap,
@@ -153,6 +176,40 @@ namespace guideXOS.GUI {
                 0xFFFFFFFFu, viewportX, viewportY, viewportWidth,
                 viewportHeight,
                 SharedTextAlignment.Left, width);
+        }
+
+        /// <summary>
+        /// Draw a context-menu label inside its existing fixed row. Bitmap
+        /// mode retains the legacy draw call; TrueType uses the shared
+        /// provider's metrics and clipped renderer without changing row or
+        /// hit-test geometry.
+        /// </summary>
+        internal static bool DrawContextMenuText(Graphics graphics,
+                                                 SharedTextFont selected,
+                                                 IFont bitmap,
+                                                 string text,
+                                                 int x, int rowY,
+                                                 int clipX, int clipY,
+                                                 int clipWidth,
+                                                 int clipHeight) {
+            if (graphics == null || text == null || clipWidth < 0 ||
+                    clipHeight < 0) return false;
+            if (selected == null ||
+                    selected.Provider == SharedFontProviderKind.BitmapAtlas) {
+                if (bitmap == null || bitmap.FontSize <= 0) return false;
+                int textY = rowY + (clipHeight / 2) -
+                            (bitmap.FontSize / 2);
+                bitmap.DrawString(x, textY, text);
+                if (selected != null) selected.RecordLegacyBitmapDrawCall();
+                return true;
+            }
+
+            int lineHeight;
+            if (!selected.GetLineHeight(out lineHeight)) return false;
+            int trueTypeY = rowY + (clipHeight - lineHeight) / 2;
+            return DrawFixedText(graphics, selected, text, x, trueTypeY,
+                clipWidth, clipX, clipY, clipWidth, clipHeight,
+                0xFFFFFFFFu, SharedTextAlignment.Left);
         }
 
         public static bool DrawTaskbarClock(Graphics graphics,

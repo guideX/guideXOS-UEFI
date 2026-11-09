@@ -133,7 +133,7 @@ namespace guideXOS.FontTests {
 
         private static void CheckTrueTypeMetricsAndSelection(byte[] fontBytes,
                                                               IFont bitmap) {
-            int[] sizes = { 12, 16, 20, 24, 32 };
+            int[] sizes = { 12, 14, 16, 18, 20, 24, 32 };
             for (int i = 0; i < sizes.Length; i++) {
                 TrueTypeFont renderer;
                 bool loaded = TrueTypeFont.TryCreate(fontBytes, sizes[i], out renderer);

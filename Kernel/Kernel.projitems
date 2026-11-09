@@ -95,6 +95,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Misc\IDT.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\IFont.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\SharedTextFont.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Misc\SharedFontPreferenceConfig.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\SharedTextLayout.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\Interrupts.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Misc\LodePNG.cs" />

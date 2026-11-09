@@ -151,11 +151,95 @@ namespace guideXOS.FontTests {
                   selection.FallbackReason == "unsupported-size",
                   "unsupported TrueType size falls back with a diagnostic reason");
 
+            CheckContextMenuProvider(fontBytes, bitmap);
+            CheckMessageBoxMeasurement(fontBytes, bitmap);
+            _failures += FontPreferenceConfigurationChecks.Run(fontBytes,
+                                                               bitmap);
             CheckDialogAndNotificationSelection(fontBytes, bitmap);
 
             Console.WriteLine("FONTS6 production provider checks: " +
                 _checks + ", failures: " + _failures);
             return _failures;
+        }
+
+        private static void CheckContextMenuProvider(byte[] fontBytes,
+                                                     IFont bitmap) {
+            const string label = "Display Options";
+            const int menuX = 8;
+            const int rowY = 8;
+            const int menuWidth = 200;
+            const int itemHeight = 28;
+            const int labelX = menuX + 8;
+            const int labelWidth = menuWidth - 16;
+            SharedTextFontSelection selection = new SharedTextFontSelection();
+            SharedTextFont selected = selection.Resolve(bitmap);
+            Graphics bitmapPixels = new Graphics(240, 48, 0xFF18212Au);
+            bool bitmapDrawn = ShellTextSurfaceRenderer.DrawContextMenuText(
+                bitmapPixels, selected, bitmap, label, labelX, rowY, labelX,
+                rowY, labelWidth, itemHeight);
+            int bitmapGeneration = selection.Generation;
+
+            bool selected14 = selection.TrySelectTrueType(fontBytes, 14,
+                bitmap, out selected);
+            Graphics trueType14Pixels = new Graphics(240, 48, 0xFF18212Au);
+            bool trueType14Drawn = selected14 &&
+                ShellTextSurfaceRenderer.DrawContextMenuText(
+                    trueType14Pixels, selected, bitmap, label, labelX, rowY,
+                    labelX, rowY, labelWidth, itemHeight);
+            int generation14 = selection.Generation;
+            bool selected18 = selection.TrySelectTrueType(fontBytes, 18,
+                bitmap, out selected);
+            Graphics trueType18Pixels = new Graphics(240, 48, 0xFF18212Au);
+            bool trueType18Drawn = selected18 &&
+                ShellTextSurfaceRenderer.DrawContextMenuText(
+                    trueType18Pixels, selected, bitmap, label, labelX, rowY,
+                    labelX, rowY, labelWidth, itemHeight);
+            bool inside = HasInkOnlyInsideClip(trueType14Pixels, labelX,
+                rowY, labelWidth, itemHeight) &&
+                HasInkOnlyInsideClip(trueType18Pixels, labelX, rowY,
+                    labelWidth, itemHeight);
+
+            selection.SelectBitmap(bitmap);
+            bool geometryStable = menuX == 8 && rowY == 8 &&
+                menuWidth == 200 && itemHeight == 28 &&
+                labelX == menuX + 8 && labelWidth == menuWidth - 16;
+            Check(bitmapDrawn && trueType14Drawn && trueType18Drawn && inside &&
+                  selected.TrueTypeFontSize == 18 &&
+                  generation14 > bitmapGeneration &&
+                  selection.Generation > generation14 && geometryStable &&
+                  bitmapPixels.PixelHash() != trueType14Pixels.PixelHash() &&
+                  trueType14Pixels.PixelHash() != trueType18Pixels.PixelHash() &&
+                  selection.Resolve(bitmap).Provider ==
+                      SharedFontProviderKind.BitmapAtlas,
+                  "desktop context menu uses selected provider and size within fixed rows");
+        }
+
+        private static void CheckMessageBoxMeasurement(byte[] fontBytes,
+                                                       IFont bitmap) {
+            const string message = "Save changes before closing?";
+            TrueTypeFont renderer;
+            bool loaded = TrueTypeFont.TryCreate(fontBytes, 14, out renderer);
+            SharedTextFont selected;
+            bool selectedTrueType = SharedTextFont.TrySelectTrueType(renderer,
+                bitmap, out selected);
+            int trueTypeWidth;
+            bool measuredTrueType = ShellTextSurfaceRenderer.MeasureMessageBoxWidth(
+                selected, bitmap, message, 240, 20, out trueTypeWidth);
+            SharedTextMeasurement trueTypeMetrics;
+            bool haveMetrics = selected.MeasureText(message,
+                out trueTypeMetrics);
+            int bitmapWidth;
+            SharedTextFont bitmapFont = SharedTextFont.CreateDefaultBitmap(bitmap);
+            bool measuredBitmap = ShellTextSurfaceRenderer.MeasureMessageBoxWidth(
+                bitmapFont, bitmap, message, 240, 20, out bitmapWidth);
+            int narrowWidth;
+            bool measuredNarrow = ShellTextSurfaceRenderer.MeasureMessageBoxWidth(
+                selected, bitmap, message, 100, 95, out narrowWidth);
+            Check(loaded && selectedTrueType && measuredTrueType &&
+                  haveMetrics && trueTypeWidth == trueTypeMetrics.Width &&
+                  measuredBitmap && bitmapWidth == bitmap.MeasureString(message) &&
+                  measuredNarrow && narrowWidth == 1,
+                  "MessageBox width measures with its selected provider and clips at narrow screens");
         }
 
         private static void CheckDialogAndNotificationSelection(

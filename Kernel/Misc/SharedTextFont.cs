@@ -113,11 +113,12 @@ namespace guideXOS.Misc {
             return false;
         }
 
-        private static bool IsUsableTrueType(TrueTypeFont font) {
-            if (font == null || !font.IsValid) return false;
-            switch (font.FontSize) {
+        internal static bool IsSupportedTrueTypeSize(int fontSize) {
+            switch (fontSize) {
                 case 12:
+                case 14:
                 case 16:
+                case 18:
                 case 20:
                 case 24:
                 case 32:
@@ -125,6 +126,11 @@ namespace guideXOS.Misc {
                 default:
                     return false;
             }
+        }
+
+        private static bool IsUsableTrueType(TrueTypeFont font) {
+            return font != null && font.IsValid &&
+                IsSupportedTrueTypeSize(font.FontSize);
         }
 
         public bool GetFontMetrics(out SharedFontMetrics metrics) {
@@ -327,6 +333,8 @@ namespace guideXOS.Misc {
     /// validated selector; this object stores only the resulting shared handle.
     /// </summary>
     internal sealed class SharedTextFontSelection {
+        internal const int DefaultTrueTypeFontSize = 20;
+
         private IFont _bitmapOwner;
         private SharedTextFont _selected;
         private bool _initialized;

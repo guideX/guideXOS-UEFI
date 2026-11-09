@@ -28,7 +28,7 @@ namespace guideXOS.FontTests {
         }
 
         private static void CheckValidSizeMatrix(byte[] fontBytes) {
-            int[] sizes = new int[] { 12, 16, 20, 24, 32 };
+            int[] sizes = new int[] { 12, 14, 16, 18, 20, 24, 32 };
             ulong[] hashes = new ulong[sizes.Length];
             for (int i = 0; i < sizes.Length; i++) {
                 TrueTypeFont font;
