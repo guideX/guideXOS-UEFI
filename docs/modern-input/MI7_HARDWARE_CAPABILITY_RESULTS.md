@@ -2,19 +2,18 @@
 
 ## Outcome
 
-**`SARAH_DT_DESCRIPTOR_CAPTURED; REVISED_READ_ONLY_PROBE_READY; PHYSICAL_QUALIFICATION_PENDING`**
+**`MI7_R3_GATE_DIAGNOSED; PCI_BAR_AGREEMENT_DETAIL_REQUIRED; READ_ONLY_DIAGNOSTIC_READY`**
 
-Two operator-reported SARAH_DT runs are now on record. The first established
+Three operator-reported SARAH_DT runs are now on record. The first established
 that the diagnostic launched and returned to the UEFI Shell. The second
-captured a successful `GetBarAttributes()` response and the exact BAR0
-descriptor below, but the then-current parser rejected it before capability
-access. Source review established that EDK II reports the PCI BAR alignment
-mask in `AddrRangeMax`. The bounded compatibility change passes hosted tests,
-and a new isolated EFI image is ready for a physical retest. The revised image
-has not been run on hardware, so physical capability-register qualification
-remains pending. See
+captured the descriptor, which MI7-R2 still rejected during parsing. The third
+used MI7-R2 after the parser correction: it accepted the descriptor, then
+failed the post-parser BAR0 resource gate before capability access. That
+capture omitted PCI BAR0 configuration base and width, so the remaining BAR
+agreement check cannot yet be identified as a base or width mismatch. MI7-R3
+prints both values and separates those failure stages. See
 [MI7_SARAH_DT_BAR0_INVESTIGATION.md](MI7_SARAH_DT_BAR0_INVESTIGATION.md) for
-the parser rule and test record.
+the parser rule, post-parser trace, and regression record.
 
 ## Image identity and source verification
 
@@ -54,6 +53,46 @@ no input wait or serial capture path. The physical procedure therefore
 instructs the operator to start continuous camera video before launching, so
 the output is captured even if it returns immediately.
 
+### MI7-R3 isolated diagnostic
+
+Build and hosted verification date: **2026-11-08 (America/Los_Angeles)**
+
+| Item | Verified value |
+| --- | --- |
+| EFI application | `out\mi7-r3\guideXOS-XhciProbe.efi` |
+| SHA-256 | `5FA36A84C4BE43DA9E3A6EA85A5DF64E20170D8D7FFA2203A6E35DFE1830A48C` |
+| Structural verification | PASS; AMD64 PE32+, EFI Application, no imports or COM descriptor |
+| Hosted regressions | PASS, 453 assertions across four suites (32 added to the 421-assertion baseline) |
+| Physical run of this revision | None |
+
+The source now reports a distinct stage for each post-parser BAR resource
+rejection and prints PCI BAR0 config base/width beside the parsed firmware
+range. The existing equality check for resource width and base remains in
+force. Hosted tests replay the exact SARAH_DT descriptor through the complete
+probe and verify it reaches eight read-only capability reads when the PCI BAR
+configuration agrees; negative width/base mismatch cases both stop before any
+MMIO read. Those negative fixtures are not claimed as the physical BAR
+configuration. The third SARAH_DT capture omitted the PCI BAR config values,
+so a correction is not justified yet.
+
+| Hosted suite | Result |
+| --- | ---: |
+| C++ resource descriptor parser | PASS, 39 assertions |
+| Standalone UEFI probe | PASS, 21 cases / 125 assertions |
+| C++ firmware/kernel handoff ABI | PASS, 149 assertions |
+| C# xHCI discovery and resource validation | PASS, 140 assertions |
+| **Total** | **PASS, 453 assertions** |
+
+## MI7-R3 next SARAH_DT test
+
+Verify the MI7-R3 SHA-256 above on the repository file and copied test media.
+Launch `guideXOS-XhciProbe.efi` through the existing one-time UEFI Shell
+procedure while recording continuously. Capture the PCI BAR0 configuration
+base and width printed beside the firmware resource. The image performs only
+PCI configuration reads, the firmware `GetBarAttributes` query, and bounded
+read-only `EFI_PCI_IO_PROTOCOL.Mem.Read` calls after every resource check
+passes. Do not continue to capability access if the BAR agreement stage fails.
+
 ## Owner-run launch checklist
 
 Use the full [MI6 physical test procedure](MI6_PHYSICAL_TEST_PROCEDURE.md)
@@ -71,10 +110,10 @@ For each machine:
 2. Verify the repository artifact before copying it to the dedicated medium:
 
    ```powershell
-   Get-FileHash -Algorithm SHA256 .\out\mi6\guideXOS-XhciProbe.efi
+   Get-FileHash -Algorithm SHA256 .\out\mi7-r3\guideXOS-XhciProbe.efi
    ```
 
-   It must match the MI6 SHA-256 above. After copying, hash the copy on the
+   For the SARAH_DT retest, it must match the MI7-R3 SHA-256 above. After copying, hash the copy on the
    dedicated blank FAT32 medium as well and confirm it is identical. Do not
    replace an OS loader or overwrite a `BOOTX64.EFI` on any existing medium.
 3. Start a continuous camera recording before using the firmware's one-time
@@ -126,16 +165,16 @@ available. ASUS VivoBook and AIDA_LPT remain pending owner evidence.
 | Resource type / flags / granularity | Memory (`0`); general `0`; specific `0`; `32` bits |
 | BAR0 base / maximum / length / translation | `0xE1020000` / `0xFFFF` / `0x10000` / `0` |
 | Descriptor terminator / EFI status | `0x79 0x00` / `EFI_SUCCESS` on the second capture |
-| BAR0 resource validation result and failure reason, if any | The captured image rejected it because it required inclusive maximum `base + length - 1` (`0xE102FFFF`). EDK II reports the BAR alignment mask here; `0xFFFF` is the mask for 64 KiB. Revised parser accepts this only with power-of-two mask/size agreement, aligned base, and checked aperture end. |
+| BAR0 resource validation result and failure reason, if any | The second image rejected the mask as malformed. The third image accepted the descriptor and checked `[0xE1020000, 0xE102FFFF]`, then failed the post-parser resource gate. Its output did not report PCI BAR0 config base/width; MI7-R3 adds both values and distinct stages for width versus base disagreement. |
 | Revised interpretation | EDK II alignment mask; checked aperture `[0xE1020000, 0xE102FFFF]` |
-| Revised image status | Hosted tests pass; physical retest pending. No capability registers were read in the reported second run. |
+| Revised image status | MI7-R3 hosted tests pass; physical retest pending. No capability registers were read in the third run. |
 | xHCI interface version / CAPLENGTH | Not read |
 | Maximum slots / root ports / interrupters | Not read |
 | Scratchpad-buffer requirement | Not read |
 | Context size / 64-bit addressing support | Not read |
 | DBOFF / RTSOFF and reported capability words | Not read |
 | HCCPARAMS2, if reported for this interface version | Not read |
-| First failed stage and exact EFI status, if any | Parser rejection; exact EFI status not displayed |
+| First failed stage and exact EFI status, if any | Third run: `invalid or undersized BAR0 resource`; exact EFI status not displayed |
 | Hang, firmware message, or recovery action | Returned to UEFI Shell; no hang reported |
 | Confirmation that no controller or PCI write was attempted | Probe is read-only; no write was reported |
 
@@ -201,11 +240,12 @@ C# kernel can map or read the same BAR after `ExitBootServices`.
 
 ## Limitations and MI8 objective
 
-This record does not qualify the revised image's physical execution, Secure
+This record does not qualify the MI7-R3 image's physical execution, Secure
 Boot acceptance, controller capability values, or post-`ExitBootServices`
-kernel MMIO. The second capture establishes a valid resource convention and
-the prior software rejection cause, but not physical capability access. No
-controller initialization is authorized by these observations.
+kernel MMIO. The captures establish the resource maximum convention and the
+post-parser gate that failed, but the PCI BAR configuration values needed to
+identify the exact agreement subcondition remain absent. No controller
+initialization is authorized by these observations.
 
 **Proposed MI8 objective:** review the actual MI7 captures and use their
 validated BAR and capability ranges to specify and test the C# kernel-side
@@ -215,12 +255,12 @@ that frontier until the evidence and a separate safety review support them.
 
 ## Run summary
 
-- Outcome: `SARAH_DT_DESCRIPTOR_CAPTURED; PHYSICAL_RETEST_PENDING`
-- Operator-reported physical evidence: SARAH_DT descriptor capture; no documented capability reads
-- Revised image physically tested in this assignment: no
-- Artifact: MI7-R2 `out\mi7-r2\guideXOS-XhciProbe.efi`, SHA-256 recorded above
-- Hosted regressions: PASS, 421 assertions
-- Loader build: PASS, isolated under `out\mi7-r2-loader\`
+- Outcome: `MI7_R3_GATE_DIAGNOSED; PCI_BAR_AGREEMENT_DETAIL_REQUIRED`
+- Operator-reported physical evidence: three SARAH_DT runs; the third accepted the descriptor but failed post-parser validation, with no documented capability reads
+- MI7-R3 image physically tested in this assignment: no
+- Artifact: `out\mi7-r3\guideXOS-XhciProbe.efi`, SHA-256 recorded above
+- Hosted regressions: PASS, 453 assertions
+- Loader build: not part of MI7-R3
 - QEMU: not used
 - QAC admission: not requested
 - Physical testing during this assignment: not performed

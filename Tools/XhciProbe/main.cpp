@@ -77,8 +77,22 @@ static const wchar_t* FailureStageName(guideXOS::xhci_probe::FailureStage stage)
     case FailureStage::GetBarAttributes: return L"GetBarAttributes";
     case FailureStage::MalformedBarDescriptor: return L"malformed BAR0 resource descriptor";
     case FailureStage::UnsupportedBarResourceList: return L"unsupported multi-range BAR0 resource list";
-    case FailureStage::InvalidBarResource: return L"invalid or undersized BAR0 resource";
+    case FailureStage::BarResourceNotMemory: return L"BAR0 resource is not memory";
+    case FailureStage::InvalidBarResourceWidth: return L"invalid BAR0 resource address width";
+    case FailureStage::ReservedBarGeneralFlags: return L"reserved BAR0 general flags";
+    case FailureStage::ReservedBarSpecificFlags: return L"reserved BAR0 specific flags";
+    case FailureStage::BarResourceWidthMismatch: return L"BAR0 resource width disagrees with PCI BAR0";
+    case FailureStage::MissingBarResourceBase: return L"BAR0 resource base is zero";
+    case FailureStage::BarResourceBaseMismatch: return L"BAR0 resource base disagrees with PCI BAR0";
+    case FailureStage::BarResourceBaseBelowMmio: return L"BAR0 resource base is below MMIO range";
+    case FailureStage::InvalidBarResourceRange: return L"invalid BAR0 maximum or aperture range";
+    case FailureStage::BarResourceMaximumEncodingMismatch: return L"BAR0 maximum encoding changed after parsing";
+    case FailureStage::BarResourceTranslationNonzero: return L"BAR0 resource translation is nonzero";
+    case FailureStage::BarResourceRangeNonCanonical: return L"BAR0 resource range is non-canonical";
+    case FailureStage::BarResourceRangeExceeds32Bit: return L"32-bit BAR0 resource range exceeds 4 GiB";
+    case FailureStage::UndersizedBarResource: return L"BAR0 resource is smaller than capability header";
     case FailureStage::ReadCapabilities: return L"EFI_PCI_IO_PROTOCOL.Mem.Read";
+    case FailureStage::CapabilityRegisterOutOfBounds: return L"capability register offset is outside BAR0";
     case FailureStage::MalformedCapabilityHeader: return L"malformed capability header";
     case FailureStage::InvalidCapabilities: return L"invalid capability values or offsets";
     default: return L"unknown";
@@ -154,7 +168,11 @@ static void PrintController(const guideXOS::xhci_probe::ProbeResult* result) {
         ConsoleWrite(L"\r\n");
     }
     if (result->HasBarInfo) {
-        ConsoleWrite(L"  Parser: ");
+        ConsoleWrite(L"  PCI BAR0 configuration base=");
+        ConsoleWriteHex(result->BarConfigurationBase, 16);
+        ConsoleWrite(L"  width=");
+        ConsoleWriteDecimal(result->BarConfigurationWidth);
+        ConsoleWrite(L"\r\n  Parser: ");
         ConsoleWrite(result->Bar.DescriptorValid ? L"accepted" : L"rejected");
         ConsoleWrite(L"  BAR0 supported attributes=");
         ConsoleWriteHex(result->Bar.SupportedAttributes, 16);

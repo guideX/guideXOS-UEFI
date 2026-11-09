@@ -175,6 +175,33 @@ static ProbeResult& OnlyResult(Fixture* fixture) {
     return fixture->Reporter.Results[0];
 }
 
+static ProbeResult RunResourceValidationFixture(const BarResource& resource,
+        uint32_t barLow, uint32_t barHigh, uint32_t* memReadCount) {
+    Fixture fixture = {};
+    fixture.Count = 1;
+    fixture.Devices[0] = MakeValidPci();
+    fixture.Devices[0].BarLow = barLow;
+    fixture.Devices[0].BarHigh = barHigh;
+    fixture.Devices[0].Resource = resource;
+    (void)RunFixture(&fixture);
+    if (memReadCount != nullptr)
+        *memReadCount = fixture.Devices[0].MemReadCount;
+    return OnlyResult(&fixture);
+}
+
+static void CheckResourceFailure(const BarResource& resource,
+        uint32_t barLow, uint32_t barHigh, FailureStage expected,
+        const char* name) {
+    uint32_t memReadCount = UINT32_MAX;
+    ProbeResult result = RunResourceValidationFixture(
+        resource, barLow, barHigh, &memReadCount);
+    Check(result.Stage == expected, name);
+    Check(expected == FailureStage::None ? memReadCount != 0 : memReadCount == 0,
+          expected == FailureStage::None ?
+              "valid BAR resource reaches read-only capability access" :
+              "BAR resource rejection blocks MMIO reads");
+}
+
 static void TestNoController() {
     Fixture fixture = {};
     fixture.Count = 2;
@@ -299,7 +326,7 @@ static void TestResourceArithmeticOverflow() {
     fixture.Devices[0].BarLow = 0xFFFFFFF4U;
     ProbeSummary summary = RunFixture(&fixture);
     Check(summary.ControllersFound == 1, "overflowing resource controller reported");
-    Check(OnlyResult(&fixture).Stage == FailureStage::InvalidBarResource,
+    Check(OnlyResult(&fixture).Stage == FailureStage::InvalidBarResourceRange,
           "overflowing base plus length rejected");
     Check(fixture.Devices[0].MemReadCount == 0, "overflow blocks MMIO");
 }
@@ -313,7 +340,7 @@ static void TestInsufficientAperture() {
         fixture.Devices[0].Resource.Base + 0x1E;
     ProbeSummary summary = RunFixture(&fixture);
     Check(summary.ControllersFound == 1, "small aperture controller reported");
-    Check(OnlyResult(&fixture).Stage == FailureStage::InvalidBarResource,
+    Check(OnlyResult(&fixture).Stage == FailureStage::UndersizedBarResource,
           "aperture smaller than capability block rejected");
     Check(fixture.Devices[0].MemReadCount == 0, "small aperture causes no reads");
 }
@@ -513,6 +540,109 @@ static void TestSarahDtDescriptorReadOnlyProbe() {
           "accepted descriptor uses only bounded identity/config/MMIO reads");
 }
 
+static void TestSarahDtBarConfigurationMismatchStages() {
+    FakeDescriptorLease lease = {};
+    FillDescriptor(&lease, 0xE1020000ULL, 0x10000ULL, 32);
+    WriteLe64(lease.Bytes + 22, 0xFFFFULL);
+    BarResource bar = {};
+    uint64_t status = TryGetBarResource(&lease, AcquireDescriptor,
+                                        MockReleaseDescriptor, &bar);
+    Check(!IsErrorStatus(status) && bar.DescriptorValid,
+          "SARAH_DT descriptor parses before BAR agreement checks");
+
+    uint32_t memReadCount = UINT32_MAX;
+    ProbeResult widthMismatch = RunResourceValidationFixture(
+        bar, 0xE1020004U, 0, &memReadCount);
+    Check(widthMismatch.Stage == FailureStage::BarResourceWidthMismatch,
+          "same SARAH_DT base with a 64-bit PCI BAR reports width disagreement");
+    Check(widthMismatch.BarConfigurationBase == 0xE1020000ULL &&
+          widthMismatch.BarConfigurationWidth == 64 && memReadCount == 0,
+          "width disagreement retains both values and blocks MMIO");
+
+    ProbeResult baseMismatch = RunResourceValidationFixture(
+        bar, 0xE1000000U, 0, &memReadCount);
+    Check(baseMismatch.Stage == FailureStage::BarResourceBaseMismatch,
+          "SARAH_DT resource base differing from PCI BAR reports base disagreement");
+    Check(baseMismatch.BarConfigurationBase == 0xE1000000ULL &&
+          baseMismatch.BarConfigurationWidth == 32 && memReadCount == 0,
+          "base disagreement retains both values and blocks MMIO");
+}
+
+static void TestDistinctBarResourceValidationStages() {
+    BarResource base = MakeValidPci().Resource;
+    CheckResourceFailure(base, 0x80000000U, 0,
+        FailureStage::None, "valid resource control case reaches capabilities");
+
+    BarResource invalid = base;
+    invalid.IsMemory = false;
+    CheckResourceFailure(invalid, 0x80000000U, 0,
+        FailureStage::BarResourceNotMemory, "non-memory resource stage is distinct");
+
+    invalid = base;
+    invalid.AddressWidth = 48;
+    CheckResourceFailure(invalid, 0x80000000U, 0,
+        FailureStage::InvalidBarResourceWidth, "invalid address width stage is distinct");
+
+    invalid = base;
+    invalid.GeneralFlags = 0x10;
+    CheckResourceFailure(invalid, 0x80000000U, 0,
+        FailureStage::ReservedBarGeneralFlags, "reserved general flags stage is distinct");
+
+    invalid = base;
+    invalid.SpecificFlags = 0x08;
+    CheckResourceFailure(invalid, 0x80000000U, 0,
+        FailureStage::ReservedBarSpecificFlags, "reserved specific flags stage is distinct");
+
+    invalid = base;
+    invalid.Base = 0;
+    CheckResourceFailure(invalid, 0x80000000U, 0,
+        FailureStage::MissingBarResourceBase, "zero resource base stage is distinct");
+
+    invalid = base;
+    invalid.Base = 0x80000;
+    invalid.Maximum = invalid.Base + invalid.Length - 1;
+    CheckResourceFailure(invalid, 0x00080000U, 0,
+        FailureStage::BarResourceBaseBelowMmio, "below-MMIO base stage is distinct");
+
+    invalid = base;
+    invalid.Length = 0;
+    invalid.Maximum = invalid.Base;
+    CheckResourceFailure(invalid, 0x80000000U, 0,
+        FailureStage::InvalidBarResourceRange, "invalid range stage is distinct");
+
+    invalid = base;
+    invalid.MaximumEncoding =
+        guideXOS::pci_resource::ResourceMaximumEncoding::EDK2AlignmentMask;
+    CheckResourceFailure(invalid, 0x80000000U, 0,
+        FailureStage::BarResourceMaximumEncodingMismatch,
+        "maximum encoding marker disagreement stage is distinct");
+
+    invalid = base;
+    invalid.TranslationOffset = 1;
+    CheckResourceFailure(invalid, 0x80000000U, 0,
+        FailureStage::BarResourceTranslationNonzero, "nonzero translation stage is distinct");
+
+    invalid = base;
+    invalid.Base = 0x00007FFFFFFFFFF0ULL;
+    invalid.Maximum = invalid.Base + invalid.Length - 1;
+    invalid.AddressWidth = 64;
+    CheckResourceFailure(invalid, 0xFFFFFFF4U, 0x00007FFFU,
+        FailureStage::BarResourceRangeNonCanonical, "non-canonical range stage is distinct");
+
+    invalid = base;
+    invalid.Base = 0xFFFFF000ULL;
+    invalid.Length = 0x2000ULL;
+    invalid.Maximum = invalid.Base + invalid.Length - 1;
+    CheckResourceFailure(invalid, 0xFFFFF000U, 0,
+        FailureStage::BarResourceRangeExceeds32Bit, "32-bit range overflow stage is distinct");
+
+    invalid = base;
+    invalid.Length = 0x1FULL;
+    invalid.Maximum = invalid.Base + invalid.Length - 1;
+    CheckResourceFailure(invalid, 0x80000000U, 0,
+        FailureStage::UndersizedBarResource, "undersized aperture stage is distinct");
+}
+
 static void TestDescriptorCleanup() {
     FakeDescriptorLease lease = {};
     FillDescriptor(&lease, 0x80000000ULL, 0x1000, 32);
@@ -638,6 +768,8 @@ int main() {
     RunCase("unsupported capability offset", TestUnsupportedCapabilityOffset);
     RunCase("read-only enforcement", TestReadOnlyEnforcement);
     RunCase("SARAH_DT EDK II alignment-mask descriptor", TestSarahDtDescriptorReadOnlyProbe);
+    RunCase("SARAH_DT post-parser PCI BAR agreement diagnostics", TestSarahDtBarConfigurationMismatchStages);
+    RunCase("distinct post-parser resource validation stages", TestDistinctBarResourceValidationStages);
     RunCase("descriptor cleanup", TestDescriptorCleanup);
     RunCase("safe continuation after failure", TestContinueAfterControllerFailure);
     RunCase("bounded iteration and output", TestBoundedIterationAndOutput);

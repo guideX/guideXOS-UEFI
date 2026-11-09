@@ -171,8 +171,22 @@ enum class FailureStage : uint8_t {
     GetBarAttributes,
     MalformedBarDescriptor,
     UnsupportedBarResourceList,
-    InvalidBarResource,
+    BarResourceNotMemory,
+    InvalidBarResourceWidth,
+    ReservedBarGeneralFlags,
+    ReservedBarSpecificFlags,
+    BarResourceWidthMismatch,
+    MissingBarResourceBase,
+    BarResourceBaseMismatch,
+    BarResourceBaseBelowMmio,
+    InvalidBarResourceRange,
+    BarResourceMaximumEncodingMismatch,
+    BarResourceTranslationNonzero,
+    BarResourceRangeNonCanonical,
+    BarResourceRangeExceeds32Bit,
+    UndersizedBarResource,
     ReadCapabilities,
+    CapabilityRegisterOutOfBounds,
     MalformedCapabilityHeader,
     InvalidCapabilities
 };
@@ -276,25 +290,38 @@ inline bool ParseBarConfiguration(uint32_t low, uint32_t high,
     return *base != 0;
 }
 
-inline bool ValidateBarResource(const ProbeResult& result) {
+inline FailureStage ValidateBarResource(const ProbeResult& result) {
     const BarResource& bar = result.Bar;
     guideXOS::pci_resource::ResourceMaximumEncoding maximumEncoding;
     uint64_t rangeEnd = 0;
-    if (!bar.DescriptorValid || !bar.IsMemory ||
-        (bar.AddressWidth != 32 && bar.AddressWidth != 64) ||
-        (bar.GeneralFlags & 0xF0U) != 0 ||
-        (bar.SpecificFlags & 0xF8U) != 0 ||
-        bar.AddressWidth != result.BarConfigurationWidth ||
-        bar.Base == 0 || bar.Base != result.BarConfigurationBase ||
-        bar.Base < 0x100000ULL ||
-        !guideXOS::pci_resource::TryInterpretResourceMaximum(
-            bar.Base, bar.Maximum, bar.Length, &maximumEncoding, &rangeEnd) ||
-        maximumEncoding != bar.MaximumEncoding ||
-        bar.TranslationOffset != 0 ||
-        rangeEnd > 0x00007FFFFFFFFFFFULL ||
-        (bar.AddressWidth == 32 && rangeEnd > 0xFFFFFFFFULL) ||
-        bar.Length < MINIMUM_CAPABILITY_APERTURE) return false;
-    return true;
+    if (!bar.DescriptorValid) return FailureStage::MalformedBarDescriptor;
+    if (!bar.IsMemory) return FailureStage::BarResourceNotMemory;
+    if (bar.AddressWidth != 32 && bar.AddressWidth != 64)
+        return FailureStage::InvalidBarResourceWidth;
+    if ((bar.GeneralFlags & 0xF0U) != 0)
+        return FailureStage::ReservedBarGeneralFlags;
+    if ((bar.SpecificFlags & 0xF8U) != 0)
+        return FailureStage::ReservedBarSpecificFlags;
+    if (bar.AddressWidth != result.BarConfigurationWidth)
+        return FailureStage::BarResourceWidthMismatch;
+    if (bar.Base == 0) return FailureStage::MissingBarResourceBase;
+    if (bar.Base != result.BarConfigurationBase)
+        return FailureStage::BarResourceBaseMismatch;
+    if (bar.Base < 0x100000ULL) return FailureStage::BarResourceBaseBelowMmio;
+    if (!guideXOS::pci_resource::TryInterpretResourceMaximum(
+            bar.Base, bar.Maximum, bar.Length, &maximumEncoding, &rangeEnd))
+        return FailureStage::InvalidBarResourceRange;
+    if (maximumEncoding != bar.MaximumEncoding)
+        return FailureStage::BarResourceMaximumEncodingMismatch;
+    if (bar.TranslationOffset != 0)
+        return FailureStage::BarResourceTranslationNonzero;
+    if (rangeEnd > 0x00007FFFFFFFFFFFULL)
+        return FailureStage::BarResourceRangeNonCanonical;
+    if (bar.AddressWidth == 32 && rangeEnd > 0xFFFFFFFFULL)
+        return FailureStage::BarResourceRangeExceeds32Bit;
+    if (bar.Length < MINIMUM_CAPABILITY_APERTURE)
+        return FailureStage::UndersizedBarResource;
+    return FailureStage::None;
 }
 
 inline bool ReadCapabilityRegister(const ControllerOps& controller,
@@ -313,7 +340,7 @@ inline bool ReadCapabilityRegister(const ControllerOps& controller,
 inline bool ReadAndDecodeCapabilities(const ControllerOps& controller,
         ProbeResult* result) {
     if (result->Bar.Length < MINIMUM_CAPABILITY_APERTURE) {
-        SetFailure(result, FailureStage::InvalidBarResource);
+        SetFailure(result, FailureStage::UndersizedBarResource);
         return false;
     }
     if (controller.ReadMem32 == nullptr) {
@@ -325,7 +352,7 @@ inline bool ReadAndDecodeCapabilities(const ControllerOps& controller,
     uint32_t registers[8] = {};
     uint64_t status = 0;
     if (!ReadCapabilityRegister(controller, *result, 0, &registers[0], &status)) {
-        SetFailure(result, status == 0 ? FailureStage::MalformedCapabilityHeader :
+        SetFailure(result, status == 0 ? FailureStage::CapabilityRegisterOutOfBounds :
                                         FailureStage::ReadCapabilities, status);
         return false;
     }
@@ -343,7 +370,7 @@ inline bool ReadAndDecodeCapabilities(const ControllerOps& controller,
         status = 0;
         if (!ReadCapabilityRegister(controller, *result, offset,
                                     &registers[index], &status)) {
-            SetFailure(result, status == 0 ? FailureStage::MalformedCapabilityHeader :
+            SetFailure(result, status == 0 ? FailureStage::CapabilityRegisterOutOfBounds :
                                             FailureStage::ReadCapabilities,
                        status);
             return false;
@@ -355,7 +382,7 @@ inline bool ReadAndDecodeCapabilities(const ControllerOps& controller,
         status = 0;
         if (!ReadCapabilityRegister(controller, *result, HCCPARAMS2_OFFSET,
                                     &registers[7], &status)) {
-            SetFailure(result, status == 0 ? FailureStage::MalformedCapabilityHeader :
+            SetFailure(result, status == 0 ? FailureStage::CapabilityRegisterOutOfBounds :
                                             FailureStage::ReadCapabilities,
                        status);
             return false;
@@ -454,8 +481,9 @@ inline bool ProbeXhciController(const ControllerOps& controller,
                 FailureStage::MalformedBarDescriptor);
         return false;
     }
-    if (!ValidateBarResource(*result)) {
-        SetFailure(result, FailureStage::InvalidBarResource);
+    FailureStage resourceFailure = ValidateBarResource(*result);
+    if (resourceFailure != FailureStage::None) {
+        SetFailure(result, resourceFailure);
         return false;
     }
     result->BarUsable = true;
