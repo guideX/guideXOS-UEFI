@@ -464,6 +464,8 @@ namespace System.Drawing {
 namespace guideXOS.Kernel.Drivers {
     public static class Framebuffer {
         public static guideXOS.Graph.Graphics Graphics;
+        public static int Width { get { return Graphics == null ? 0 : Graphics.Width; } }
+        public static int Height { get { return Graphics == null ? 0 : Graphics.Height; } }
     }
 }
 
@@ -517,6 +519,41 @@ namespace guideXOS.Graph {
             }
             if (result != _pixels[index]) _changedPixels++;
             _pixels[index] = result;
+        }
+
+        public void FillRectangle(int x, int y, int width, int height,
+                                  uint color) {
+            long right = (long)x + width;
+            long bottom = (long)y + height;
+            int left = x < 0 ? 0 : x;
+            int top = y < 0 ? 0 : y;
+            if (right > Width) right = Width;
+            if (bottom > Height) bottom = Height;
+            for (int py = top; py < bottom; py++)
+                for (int px = left; px < right; px++) DrawPoint(px, py, color);
+        }
+
+        public void DrawRectangle(int x, int y, int width, int height,
+                                  uint color, int thickness = 1) {
+            if (width <= 0 || height <= 0 || thickness <= 0) return;
+            for (int inset = 0; inset < thickness; inset++) {
+                int left = x + inset;
+                int top = y + inset;
+                int right = x + width - 1 - inset;
+                int bottom = y + height - 1 - inset;
+                for (int px = left; px <= right; px++) {
+                    if (px < 0 || px >= Width) continue;
+                    if (top >= 0 && top < Height) DrawPoint(px, top, color);
+                    if (bottom >= 0 && bottom < Height)
+                        DrawPoint(px, bottom, color);
+                }
+                for (int py = top; py <= bottom; py++) {
+                    if (py < 0 || py >= Height) continue;
+                    if (left >= 0 && left < Width) DrawPoint(left, py, color);
+                    if (right >= 0 && right < Width)
+                        DrawPoint(right, py, color);
+                }
+            }
         }
 
         public ulong PixelHash() {

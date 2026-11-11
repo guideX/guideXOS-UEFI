@@ -57,16 +57,24 @@ namespace guideXOS.GUI {
 
         private void DrawButtonLabel(SharedTextFont selected, string text,
                                      int x, int y, int legacyInset) {
-            if (selected == null ||
-                selected.Provider == SharedFontProviderKind.BitmapAtlas) {
-                WindowManager.font.DrawString(x + legacyInset,
-                    y + (_btnH / 2 - WindowManager.font.FontSize / 2), text);
+            if (selected == null) {
+                if (WindowManager.font != null)
+                    WindowManager.font.DrawString(x + legacyInset,
+                        y + (_btnH / 2 - WindowManager.font.FontSize / 2), text);
                 return;
             }
 
             int lineHeight;
             if (!selected.GetLineHeight(out lineHeight)) return;
-            ShellTextSurfaceRenderer.DrawFixedText(Framebuffer.Graphics,
+            if (selected.Provider == SharedFontProviderKind.BitmapAtlas &&
+                WindowManager.font != null &&
+                WindowManager.font.MeasureString(text) <= _btnW - 8) {
+                WindowManager.font.DrawString(x + legacyInset,
+                    y + (_btnH / 2 - WindowManager.font.FontSize / 2), text);
+                return;
+            }
+
+            ShellTextSurfaceRenderer.DrawFittedText(Framebuffer.Graphics,
                 selected, text, x + 4,
                 y + (_btnH - lineHeight) / 2, _btnW - 8,
                 x, y, _btnW, _btnH, 0xFFFFFFFFu,

@@ -1787,6 +1787,7 @@ unsafe class Program {
                 try {
                     if (Desktop.Taskbar != null) Desktop.Taskbar.Draw();
                 } catch { }
+                try { NotificationManager.Update(); } catch { }
 
                 DrawUefiCursor();
 
@@ -1915,6 +1916,7 @@ unsafe class Program {
             } finally { r3TaskbarScope.Dispose(); }
 #endif
         }
+        NotificationManager.Update();
 #if UEFI_TASKMANAGER_MEMORY_R3_PROBE
         TaskManagerMemoryR3Probe.TraceAfterTaskbarDraw();
 #endif

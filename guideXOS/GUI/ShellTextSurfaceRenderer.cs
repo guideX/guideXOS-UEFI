@@ -128,6 +128,31 @@ namespace guideXOS.GUI {
                 alignmentWidth);
         }
 
+        /// <summary>
+        /// Draw one fixed-control label with a provider-measured ellipsis when
+        /// it exceeds the control's text region. The control clip and hit
+        /// geometry remain owned by the caller.
+        /// </summary>
+        internal static bool DrawFittedText(Graphics graphics,
+                                            SharedTextFont selected,
+                                            string text, int x, int y,
+                                            int alignmentWidth,
+                                            int clipX, int clipY,
+                                            int clipWidth, int clipHeight,
+                                            uint color,
+                                            SharedTextAlignment alignment) {
+            if (graphics == null || selected == null || text == null ||
+                clipWidth < 0 || clipHeight < 0) return false;
+            int viewportX, viewportY, viewportWidth, viewportHeight;
+            if (!TryIntersectViewport(graphics, clipX, clipY, clipWidth,
+                    clipHeight, out viewportX, out viewportY, out viewportWidth,
+                    out viewportHeight)) return true;
+            return selected.DrawTextFitted(graphics, x, y, text, color,
+                viewportX, viewportY, viewportWidth, viewportHeight,
+                alignmentWidth, alignment,
+                SharedTextOverflowBehavior.Ellipsis);
+        }
+
         internal static bool MeasureMessageBoxWidth(SharedTextFont selected,
                                                      IFont bitmap,
                                                      string text,
@@ -206,8 +231,12 @@ namespace guideXOS.GUI {
                     selected.Provider == SharedFontProviderKind.BitmapAtlas) {
                 if (bitmap == null || bitmap.FontSize <= 0) return false;
                 int textY = y + (height - bitmap.FontSize) / 2;
+                if (selected != null) {
+                    return DrawFittedText(graphics, selected, text, x, textY,
+                        width, x, y, width, height, 0xFFFFFFFFu,
+                        SharedTextAlignment.Left);
+                }
                 bitmap.DrawString(x, textY, text, width, bitmap.FontSize);
-                if (selected != null) selected.RecordLegacyBitmapDrawCall();
                 return true;
             }
 
@@ -218,10 +247,10 @@ namespace guideXOS.GUI {
             if (!TryIntersectViewport(graphics, x, y, width, height,
                     out viewportX, out viewportY, out viewportWidth,
                     out viewportHeight)) return true;
-            return selected.DrawText(graphics, x, trueTypeY, text,
+            return selected.DrawTextFitted(graphics, x, trueTypeY, text,
                 0xFFFFFFFFu, viewportX, viewportY, viewportWidth,
-                viewportHeight,
-                SharedTextAlignment.Left, width);
+                viewportHeight, width, SharedTextAlignment.Left,
+                SharedTextOverflowBehavior.Ellipsis);
         }
 
         /// <summary>
@@ -245,15 +274,20 @@ namespace guideXOS.GUI {
                 if (bitmap == null || bitmap.FontSize <= 0) return false;
                 int textY = rowY + (clipHeight / 2) -
                             (bitmap.FontSize / 2);
+                if (selected != null) {
+                    return DrawFittedText(graphics, selected, text, x,
+                        textY, clipWidth, clipX, clipY, clipWidth,
+                        clipHeight, 0xFFFFFFFFu,
+                        SharedTextAlignment.Left);
+                }
                 bitmap.DrawString(x, textY, text);
-                if (selected != null) selected.RecordLegacyBitmapDrawCall();
                 return true;
             }
 
             int lineHeight;
             if (!selected.GetLineHeight(out lineHeight)) return false;
             int trueTypeY = rowY + (clipHeight - lineHeight) / 2;
-            return DrawFixedText(graphics, selected, text, x, trueTypeY,
+            return DrawFittedText(graphics, selected, text, x, trueTypeY,
                 clipWidth, clipX, clipY, clipWidth, clipHeight,
                 0xFFFFFFFFu, SharedTextAlignment.Left);
         }
@@ -354,34 +388,28 @@ namespace guideXOS.GUI {
             if (selected == null ||
                     selected.Provider == SharedFontProviderKind.BitmapAtlas) {
                 if (bitmap == null) return false;
-                string drawText = bounded && selected != null
-                    ? TruncateToWidth(selected, text, clipWidth) : text;
-                try {
-                    if (bounded) {
-                        int bitmapViewportX, bitmapViewportY,
-                            bitmapViewportWidth, bitmapViewportHeight;
-                        if (TryIntersectViewport(graphics, clipX, clipY,
-                                clipWidth, clipHeight,
-                                out bitmapViewportX, out bitmapViewportY,
-                                out bitmapViewportWidth,
-                                out bitmapViewportHeight)) {
-                            bitmap.DrawStringClipped(x, y, drawText, graphics,
-                                bitmapViewportX, bitmapViewportY,
-                                bitmapViewportWidth, bitmapViewportHeight);
-                        }
-                    } else {
-                        bitmap.DrawString(x, y, drawText);
-                    }
-                    if (selected != null)
-                        selected.RecordLegacyBitmapDrawCall();
-                    return true;
-                } finally {
-#if Kernel
-                    if (drawText != null &&
-                            !object.ReferenceEquals(drawText, text))
-                        drawText.Dispose();
-#endif
+                if (bounded && selected != null) {
+                    return DrawFittedText(graphics, selected, text, x, y,
+                        clipWidth, clipX, clipY, clipWidth, clipHeight,
+                        0xFFFFFFFFu, SharedTextAlignment.Left);
                 }
+                if (bounded) {
+                    int bitmapViewportX, bitmapViewportY,
+                        bitmapViewportWidth, bitmapViewportHeight;
+                    if (TryIntersectViewport(graphics, clipX, clipY,
+                            clipWidth, clipHeight,
+                            out bitmapViewportX, out bitmapViewportY,
+                            out bitmapViewportWidth,
+                            out bitmapViewportHeight)) {
+                        bitmap.DrawStringClipped(x, y, text, graphics,
+                            bitmapViewportX, bitmapViewportY,
+                            bitmapViewportWidth, bitmapViewportHeight);
+                    }
+                } else {
+                    bitmap.DrawString(x, y, text);
+                }
+                if (selected != null) selected.RecordLegacyBitmapDrawCall();
+                return true;
             }
 
             int lineHeight;
@@ -397,6 +425,12 @@ namespace guideXOS.GUI {
                     drawClipWidth, drawClipHeight, out viewportX,
                     out viewportY, out viewportWidth,
                     out viewportHeight)) return true;
+            if (bounded) {
+                return selected.DrawTextFitted(graphics, x, textY, text,
+                    0xFFFFFFFFu, viewportX, viewportY, viewportWidth,
+                    viewportHeight, clipWidth, SharedTextAlignment.Left,
+                    SharedTextOverflowBehavior.Ellipsis);
+            }
             return selected.DrawText(graphics, x, textY, text,
                 0xFFFFFFFFu, viewportX, viewportY, viewportWidth,
                 viewportHeight);

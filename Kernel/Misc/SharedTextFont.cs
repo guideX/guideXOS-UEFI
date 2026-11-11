@@ -12,6 +12,11 @@ namespace guideXOS.Misc {
         Right
     }
 
+    public enum SharedTextOverflowBehavior {
+        Clip,
+        Ellipsis
+    }
+
     /// <summary>
     /// Vertical metrics use a top-left text-box coordinate system. Ascent is
     /// positive above the baseline, descent is signed (normally negative),
@@ -292,6 +297,157 @@ namespace guideXOS.Misc {
                              int clipWidth, int clipHeight) {
             return DrawText(graphics, x, y, text, color, clipX, clipY,
                 clipWidth, clipHeight, SharedTextAlignment.Left, 0);
+        }
+
+        /// <summary>
+        /// Draw one line with provider-aware fitting. Ellipsis is added only
+        /// when text exceeds the available width or contains a line break.
+        /// Prefix ranges stay on Unicode scalar boundaries and no temporary
+        /// strings or layout buffers are allocated.
+        /// </summary>
+        public bool DrawTextFitted(Graphics graphics, int x, int y,
+                                   string text, uint color,
+                                   int clipX, int clipY,
+                                   int clipWidth, int clipHeight,
+                                   int alignmentWidth,
+                                   SharedTextAlignment alignment,
+                                   SharedTextOverflowBehavior overflow) {
+            if (overflow == SharedTextOverflowBehavior.Clip)
+                return DrawText(graphics, x, y, text, color, clipX, clipY,
+                    clipWidth, clipHeight, alignment, alignmentWidth);
+            if (!IsAvailable || graphics == null || text == null ||
+                clipWidth < 0 || clipHeight < 0 || alignmentWidth < 0)
+                return false;
+
+            int availableWidth = alignmentWidth > 0
+                ? alignmentWidth : clipWidth;
+            if (availableWidth > clipWidth) availableWidth = clipWidth;
+            if (availableWidth <= 0 || clipHeight == 0 || text.Length == 0)
+                return true;
+            int effectiveAlignmentWidth = alignmentWidth > 0
+                ? alignmentWidth : availableWidth;
+
+            SharedTextMeasurement ellipsisMeasurement;
+            if (!MeasureText("...", out ellipsisMeasurement)) return false;
+            if (ellipsisMeasurement.Width > availableWidth) return true;
+
+            int sourceEnd = 0;
+            int scalarCount = 0;
+            long pen = 0;
+            long maxInkRight = 0;
+            bool hasOverflow = false;
+            const int maximumScalars = 4096;
+            while (sourceEnd < text.Length && scalarCount < maximumScalars) {
+                char first = text[sourceEnd];
+                if (first == '\r' || first == '\n') {
+                    hasOverflow = true;
+                    break;
+                }
+
+                int codePoint = first;
+                int next = sourceEnd + 1;
+                if (TrueTypeFont.IsHighSurrogate(first) &&
+                    next < text.Length &&
+                    TrueTypeFont.IsLowSurrogate(text[next])) {
+                    codePoint = 0x10000 + ((first - 0xD800) << 10) +
+                                (text[next] - 0xDC00);
+                    next++;
+                }
+
+                int advance;
+                int inkWidth;
+                if (!GetGlyphLayoutMetrics(codePoint, out advance,
+                                            out inkWidth)) return false;
+                long nextPen = pen + advance;
+                long nextInkRight = pen + inkWidth;
+                long nextMaxInkRight = nextInkRight > maxInkRight
+                    ? nextInkRight : maxInkRight;
+                long candidateWidth = nextPen > nextMaxInkRight
+                    ? nextPen : nextMaxInkRight;
+                if (candidateWidth > availableWidth) {
+                    hasOverflow = true;
+                    break;
+                }
+
+                sourceEnd = next;
+                scalarCount++;
+                pen = nextPen;
+                maxInkRight = nextMaxInkRight;
+            }
+
+            if (sourceEnd == text.Length && !hasOverflow &&
+                scalarCount < maximumScalars) {
+                return DrawText(graphics, x, y, text, color, clipX, clipY,
+                    clipWidth, clipHeight, alignment, alignmentWidth);
+            }
+
+            if (sourceEnd < text.Length) hasOverflow = true;
+            if (!hasOverflow) {
+                return DrawText(graphics, x, y, text, color, clipX, clipY,
+                    clipWidth, clipHeight, alignment, alignmentWidth);
+            }
+
+            int prefixEnd = 0;
+            int fittedScalars = 0;
+            long fittedPen = 0;
+            long fittedInkRight = 0;
+            while (prefixEnd < sourceEnd &&
+                   fittedScalars < maximumScalars) {
+                char first = text[prefixEnd];
+                int codePoint = first;
+                int next = prefixEnd + 1;
+                if (TrueTypeFont.IsHighSurrogate(first) &&
+                    next < sourceEnd &&
+                    TrueTypeFont.IsLowSurrogate(text[next])) {
+                    codePoint = 0x10000 + ((first - 0xD800) << 10) +
+                                (text[next] - 0xDC00);
+                    next++;
+                }
+
+                int advance;
+                int inkWidth;
+                if (!GetGlyphLayoutMetrics(codePoint, out advance,
+                                            out inkWidth)) return false;
+                long nextPen = fittedPen + advance;
+                long nextInkRight = fittedPen + inkWidth;
+                long nextMaxInkRight = nextInkRight > fittedInkRight
+                    ? nextInkRight : fittedInkRight;
+                long candidateWithEllipsis = nextPen +
+                    ellipsisMeasurement.Width;
+                if (candidateWithEllipsis < nextMaxInkRight)
+                    candidateWithEllipsis = nextMaxInkRight;
+                if (candidateWithEllipsis > availableWidth) break;
+
+                prefixEnd = next;
+                fittedScalars++;
+                fittedPen = nextPen;
+                fittedInkRight = nextMaxInkRight;
+            }
+
+            long fittedWidth = fittedPen + ellipsisMeasurement.Width;
+            if (fittedInkRight > fittedWidth) fittedWidth = fittedInkRight;
+            if (fittedWidth > availableWidth) return true;
+
+            long offset = 0;
+            if (alignment == SharedTextAlignment.Center)
+                offset = ((long)effectiveAlignmentWidth - fittedWidth) / 2;
+            else if (alignment == SharedTextAlignment.Right)
+                offset = (long)effectiveAlignmentWidth - fittedWidth;
+            long originValue = (long)x + offset;
+            if (originValue < int.MinValue) originValue = int.MinValue;
+            if (originValue > int.MaxValue) originValue = int.MaxValue;
+            int origin = (int)originValue;
+
+            if (prefixEnd > 0)
+                DrawTextRange(graphics, origin, y, text, 0, prefixEnd,
+                    color, clipX, clipY, clipWidth, clipHeight);
+
+            long ellipsisX = (long)origin + fittedPen;
+            if (ellipsisX < int.MinValue) ellipsisX = int.MinValue;
+            if (ellipsisX > int.MaxValue) ellipsisX = int.MaxValue;
+            return DrawText(graphics, (int)ellipsisX, y, "...", color,
+                clipX, clipY, clipWidth, clipHeight,
+                SharedTextAlignment.Left, 0);
         }
 
         /// <summary>

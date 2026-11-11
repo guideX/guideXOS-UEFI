@@ -23,6 +23,9 @@ namespace guideXOS.FontTests {
             CheckProvidersAndSizes(fontBytes, bitmap, bitmapFont);
             CheckNotificationAndDialogPixels(bitmap, bitmapFont, fontBytes);
             CheckSizePropagationToShellSurfaces(fontBytes, bitmap);
+            CheckFittedControlLabels(bitmapFont, fontBytes);
+            CheckProductionMessageBox(bitmapFont, fontBytes);
+            CheckProductionNotificationLifecycle(bitmapFont, fontBytes);
 
             Console.WriteLine("FONTS4 hosted layout and UI checks: " +
                               _checks + ", failures: " + _failures);
@@ -30,14 +33,19 @@ namespace guideXOS.FontTests {
         }
 
         private static IFont CreateProportionalBitmap() {
-            const int size = 8;
+            return CreateProportionalBitmap(8);
+        }
+
+        private static IFont CreateProportionalBitmap(int size) {
             string charset = "";
             for (int code = 32; code <= 126; code++) charset += (char)code;
             Image atlas = new Image(charset.Length * size, size);
             for (int i = 0; i < charset.Length; i++) {
                 char ch = charset[i];
                 int inkWidth = ch == ' ' ? 0 :
-                    ch == 'i' || ch == 'l' ? 2 : ch == 'W' ? 7 : 4;
+                    ch == 'i' || ch == 'l' ? size / 4 :
+                    ch == 'W' ? size - 1 : size / 2;
+                if (ch != ' ' && inkWidth < 1) inkWidth = 1;
                 for (int y = 1; y < size - 1; y++) {
                     for (int x = 0; x < inkWidth; x++) {
                         atlas.RawData[y * atlas.Width + i * size + x] =
@@ -352,7 +360,7 @@ namespace guideXOS.FontTests {
 
         private static void CheckSizePropagationToShellSurfaces(
                 byte[] fontBytes, IFont bitmap) {
-            int[] sizes = { 14, 18, 24 };
+            int[] sizes = { 12, 14, 16, 18, 20, 24 };
             ulong[] notificationHashes = new ulong[sizes.Length];
             const uint background = 0xFF19232Du;
             const string body =
@@ -476,6 +484,419 @@ namespace guideXOS.FontTests {
             Check(notificationHashes[0] != notificationHashes[1] &&
                   notificationHashes[1] != notificationHashes[2],
                   "notification output changes after repeated size selections");
+        }
+
+        private static void CheckFittedControlLabels(SharedTextFont unused,
+                                                     byte[] fontBytes) {
+            IFont bitmapOwner = CreateProportionalBitmap(20);
+            SharedTextFont bitmap = SharedTextFont.CreateDefaultBitmap(
+                bitmapOwner);
+            Check(bitmap != null && bitmap.IsAvailable &&
+                  bitmap.FontSize == 20,
+                  "fixed-control fitting starts from the production bitmap size");
+            CheckFittedControlLabel(bitmap, bitmapOwner, "Bitmap 20 px");
+
+            int[] sizes = { 12, 14, 16, 18, 20, 24 };
+            for (int i = 0; i < sizes.Length; i++) {
+                TrueTypeFont renderer;
+                SharedTextFont selected;
+                bool loaded = TrueTypeFont.TryCreate(fontBytes, sizes[i],
+                    out renderer);
+                bool optedIn = SharedTextFont.TrySelectTrueType(renderer,
+                    bitmapOwner, out selected);
+                Check(loaded && optedIn && selected != null,
+                      "fitted labels load TrueType " + sizes[i] + " px");
+                if (loaded && optedIn && selected != null)
+                    CheckFittedControlLabel(selected, bitmapOwner,
+                        "TrueType " + sizes[i] + " px");
+            }
+
+            TrueTypeFont unicodeRenderer;
+            SharedTextFont unicodeFont = null;
+            bool unicodeLoaded = TrueTypeFont.TryCreate(fontBytes, 24,
+                out unicodeRenderer) && SharedTextFont.TrySelectTrueType(
+                    unicodeRenderer, bitmapOwner, out unicodeFont);
+            if (unicodeLoaded) {
+                SharedTextMeasurement prefix;
+                bool measured = unicodeFont.MeasureText("A...", out prefix);
+                string scalarFit = ShellTextSurfaceRenderer.TruncateToWidth(
+                    unicodeFont, "A\U0001F600B", prefix.Width);
+                Graphics scalarActual = new Graphics(100, 48, 0xFF101820u);
+                Graphics scalarExpected = new Graphics(100, 48, 0xFF101820u);
+                bool actualDrawn = ShellTextSurfaceRenderer.DrawFittedText(
+                    scalarActual, unicodeFont, "A\U0001F600B", 8, 8,
+                    prefix.Width, 8, 8, prefix.Width, 32, 0xFFFFFFFFu,
+                    SharedTextAlignment.Left);
+                bool expectedDrawn = unicodeFont.DrawText(scalarExpected, 8,
+                    8, scalarFit, 0xFFFFFFFFu, 8, 8, prefix.Width, 32,
+                    SharedTextAlignment.Left, prefix.Width);
+                Check(measured && scalarFit == "A..." && actualDrawn &&
+                      expectedDrawn && scalarActual.PixelHash() ==
+                      scalarExpected.PixelHash() &&
+                      !char.IsHighSurrogate(scalarFit[scalarFit.Length - 1]),
+                      "fitted truncation keeps supplementary scalars intact");
+            }
+        }
+
+        private static void CheckFittedControlLabel(SharedTextFont selected,
+                                                    IFont bitmapOwner,
+                                                    string description) {
+            const string label = "Display Options";
+            const int x = 12;
+            const int y = 8;
+            const int width = 60;
+            const int height = 34;
+            const uint background = 0xFF102030u;
+            int lineHeight;
+            bool hasLineHeight = selected.GetLineHeight(out lineHeight);
+            int textY = selected.Provider == SharedFontProviderKind.BitmapAtlas
+                ? y + (height - bitmapOwner.FontSize) / 2
+                : y + (height - lineHeight) / 2;
+            Graphics actual = new Graphics(140, 56, background);
+            Graphics expected = new Graphics(140, 56, background);
+            string fitted = ShellTextSurfaceRenderer.TruncateToWidth(
+                selected, label, width);
+            bool actualDrawn = ShellTextSurfaceRenderer.DrawTaskbarLabel(
+                actual, selected, bitmapOwner, x, y, width, height, label);
+            bool expectedDrawn = selected.DrawText(expected, x, textY, fitted,
+                0xFFFFFFFFu, x, y, width, height, SharedTextAlignment.Left,
+                width);
+            Check(hasLineHeight && actualDrawn && expectedDrawn &&
+                  fitted != label && fitted.EndsWith("...",
+                      StringComparison.Ordinal) &&
+                  actual.PixelHash() == expected.PixelHash() &&
+                  HasInkOnlyInsideClip(actual, background, x, y, width,
+                      height) && actual.InvalidDrawAttempts == 0,
+                  description + " taskbar labels show a measured ellipsis in bounds");
+
+            int startMenuY = selected.Provider ==
+                    SharedFontProviderKind.BitmapAtlas
+                ? y : y + (bitmapOwner.FontSize - lineHeight) / 2;
+            Graphics actualStartMenu = new Graphics(140, 56, background);
+            Graphics expectedStartMenu = new Graphics(140, 56, background);
+            bool startMenuDrawn = ShellTextSurfaceRenderer.DrawStartMenuText(
+                actualStartMenu, selected, bitmapOwner, x, y, label, x, y,
+                width, height, true);
+            bool expectedStartMenuDrawn = selected.DrawTextFitted(
+                expectedStartMenu, x, startMenuY, label, 0xFFFFFFFFu,
+                x, y, width, height, width, SharedTextAlignment.Left,
+                SharedTextOverflowBehavior.Ellipsis);
+            Check(startMenuDrawn && expectedStartMenuDrawn &&
+                  actualStartMenu.PixelHash() ==
+                      expectedStartMenu.PixelHash() &&
+                  HasInkOnlyInsideClip(actualStartMenu, background, x, y,
+                      width, height),
+                  description + " Start Menu labels ellipsize inside their existing row");
+
+            const int buttonWidth = 90;
+            const int buttonHeight = 28;
+            const int buttonX = 12;
+            const int buttonY = 18;
+            int buttonYText = buttonY + (buttonHeight - lineHeight) / 2;
+            string buttonFit = ShellTextSurfaceRenderer.TruncateToWidth(
+                selected, "Don't Save", buttonWidth - 8);
+            SharedTextMeasurement buttonMeasure;
+            bool buttonMeasured = selected.MeasureText("Don't Save",
+                out buttonMeasure);
+            bool buttonOverflow = buttonMeasured &&
+                buttonMeasure.Width > buttonWidth - 8;
+            Graphics actualButton = new Graphics(140, 56, background);
+            Graphics expectedButton = new Graphics(140, 56, background);
+            bool buttonDrawn = ShellTextSurfaceRenderer.DrawFittedText(
+                actualButton, selected, "Don't Save", buttonX + 4,
+                buttonYText, buttonWidth - 8, buttonX, buttonY,
+                buttonWidth, buttonHeight, 0xFFFFFFFFu,
+                SharedTextAlignment.Center);
+            bool expectedButtonDrawn = selected.DrawText(expectedButton,
+                buttonX + 4, buttonYText, buttonFit, 0xFFFFFFFFu,
+                buttonX, buttonY, buttonWidth, buttonHeight,
+                SharedTextAlignment.Center, buttonWidth - 8);
+            Check(buttonDrawn && expectedButtonDrawn &&
+                  (!buttonOverflow || buttonFit.EndsWith("...",
+                      StringComparison.Ordinal)) &&
+                  (buttonOverflow || buttonFit == "Don't Save") &&
+                  actualButton.PixelHash() == expectedButton.PixelHash() &&
+                  HasInkOnlyInsideClip(actualButton, background, buttonX,
+                      buttonY, buttonWidth, buttonHeight),
+                  description + " Save Changes labels ellipsize without resizing button hit regions");
+
+            const int shutdownButtonWidth = 80;
+            const int shutdownButtonHeight = 28;
+            const int shutdownButtonY = 18;
+            Graphics actualShutdown = new Graphics(190, 56, background);
+            Graphics expectedShutdown = new Graphics(190, 56, background);
+            bool shutdownLabelsDrawn = true;
+            bool shutdownExpectedDrawn = true;
+            string[] shutdownLabels = { "No", "Yes" };
+            for (int i = 0; i < shutdownLabels.Length; i++) {
+                int shutdownX = 12 + i * (shutdownButtonWidth + 8);
+                int shutdownTextY = shutdownButtonY +
+                    (shutdownButtonHeight - lineHeight) / 2;
+                shutdownLabelsDrawn &=
+                    ShellTextSurfaceRenderer.DrawFittedText(actualShutdown,
+                        selected, shutdownLabels[i], shutdownX + 4,
+                        shutdownTextY, shutdownButtonWidth - 8,
+                        shutdownX, shutdownButtonY, shutdownButtonWidth,
+                        shutdownButtonHeight, 0xFFFFFFFFu,
+                        SharedTextAlignment.Center);
+                shutdownExpectedDrawn &= selected.DrawText(expectedShutdown,
+                    shutdownX + 4, shutdownTextY, shutdownLabels[i],
+                    0xFFFFFFFFu, shutdownX, shutdownButtonY,
+                    shutdownButtonWidth, shutdownButtonHeight,
+                    SharedTextAlignment.Center, shutdownButtonWidth - 8);
+            }
+            Check(shutdownLabelsDrawn && shutdownExpectedDrawn &&
+                  actualShutdown.PixelHash() == expectedShutdown.PixelHash() &&
+                  HasInkOnlyInsideClip(actualShutdown, background, 12,
+                      shutdownButtonY, shutdownButtonWidth * 2 + 8,
+                      shutdownButtonHeight),
+                  description + " Shutdown labels stay centered within their existing buttons");
+
+            Graphics actualRight = new Graphics(140, 56, background);
+            Graphics expectedRight = new Graphics(140, 56, background);
+            bool rightDrawn = ShellTextSurfaceRenderer.DrawFittedText(
+                actualRight, selected, label, x, textY, width, x, y, width,
+                height, 0xFFFFFFFFu, SharedTextAlignment.Right);
+            bool expectedRightDrawn = selected.DrawText(expectedRight, x,
+                textY, fitted, 0xFFFFFFFFu, x, y, width, height,
+                SharedTextAlignment.Right, width);
+            Check(rightDrawn && expectedRightDrawn &&
+                  actualRight.PixelHash() == expectedRight.PixelHash(),
+                  description + " right-aligned fitting uses the same width metrics");
+        }
+
+        private static void CheckProductionMessageBox(SharedTextFont unused,
+                                                       byte[] fontBytes) {
+            IFont bitmapOwner = CreateProportionalBitmap(20);
+            SharedTextFont bitmap = SharedTextFont.CreateDefaultBitmap(
+                bitmapOwner);
+            const string message =
+                "A long message body should wrap to readable lines inside the " +
+                "MessageBox window while keeping the visible text within the " +
+                "window's content bounds. This hosted case exercises the " +
+                "production MessageBox.Show and OnDraw implementation.";
+            int[] sizes = { 12, 14, 16, 18, 20, 24 };
+
+            CheckMessageBoxProvider(bitmap, bitmapOwner, message, 320, 240,
+                "Bitmap 20 px");
+            for (int i = 0; i < sizes.Length; i++) {
+                TrueTypeFont renderer;
+                SharedTextFont selected;
+                bool loaded = TrueTypeFont.TryCreate(fontBytes, sizes[i],
+                    out renderer);
+                bool optedIn = SharedTextFont.TrySelectTrueType(renderer,
+                    bitmapOwner, out selected);
+                if (loaded && optedIn)
+                    CheckMessageBoxProvider(selected, bitmapOwner, message,
+                        sizes[i] == 24 ? 240 : 320,
+                        sizes[i] == 24 ? 200 : 240,
+                        "TrueType " + sizes[i] + " px");
+                else
+                    Check(false, "production MessageBox loads " + sizes[i] + " px");
+            }
+
+            Framebuffer.Graphics = new Graphics(320, 240, 0xFF102030u);
+            WindowManager.font = bitmapOwner;
+            WindowManager.ShellTextFont = null;
+            WindowManager.ShellTextFontGeneration++;
+            WindowManager.Windows.Clear();
+            Window owner = new Window(20, 40, 120, 90);
+            WindowManager.Windows.Add(owner);
+            Desktop.msgbox = null;
+            System.Windows.Forms.MessageBox.Show(message);
+            Desktop.msgbox.OnDraw();
+            Check(Desktop.msgbox.Visible &&
+                  WindowManager.Windows[WindowManager.Windows.Count - 1] ==
+                      Desktop.msgbox &&
+                  Desktop.msgbox.Height > bitmapOwner.FontSize + 24 &&
+                  HasInkOnlyInsideClip(Framebuffer.Graphics, 0xFF102030u,
+                      Desktop.msgbox.X + 12, Desktop.msgbox.Y + 12,
+                      Desktop.msgbox.Width - 24,
+                      Desktop.msgbox.Height - 24) &&
+                  Framebuffer.Graphics.InvalidDrawAttempts == 0,
+                  "production MessageBox wraps long text through the bitmap fallback when no provider is selected");
+            Desktop.msgbox.Visible = false;
+            Check(!Desktop.msgbox.Visible,
+                  "production MessageBox can be dismissed through its window visibility path");
+        }
+
+        private static void CheckMessageBoxProvider(SharedTextFont selected,
+                                                     IFont bitmapOwner,
+                                                     string message,
+                                                     int screenWidth,
+                                                     int screenHeight,
+                                                     string description) {
+            const uint background = 0xFF102030u;
+            Framebuffer.Graphics = new Graphics(screenWidth, screenHeight,
+                background);
+            WindowManager.font = bitmapOwner;
+            WindowManager.ShellTextFont = selected;
+            WindowManager.ShellTextFontGeneration++;
+            WindowManager.Windows.Clear();
+            Window owner = new Window(18, 44, 110, 80);
+            WindowManager.Windows.Add(owner);
+            Desktop.msgbox = null;
+
+            System.Windows.Forms.MessageBox.Show(message);
+            Desktop.msgbox.OnDraw();
+
+            int clipX = Desktop.msgbox.X + 12;
+            int clipY = Desktop.msgbox.Y + 12;
+            int clipWidth = Desktop.msgbox.Width - 24;
+            int clipHeight = Desktop.msgbox.Height - 24;
+            int lineHeight;
+            bool metrics = selected.GetLineHeight(out lineHeight);
+            Check(metrics && Desktop.msgbox.Visible &&
+                  WindowManager.Windows[WindowManager.Windows.Count - 1] ==
+                      Desktop.msgbox && Desktop.msgbox.BaseDrawCount == 1 &&
+                  Desktop.msgbox.Width >= 200 &&
+                  Desktop.msgbox.Width <= screenWidth - 24 &&
+                  Desktop.msgbox.Height > lineHeight + 24 &&
+                  Desktop.msgbox.X >= 0 &&
+                  Desktop.msgbox.X + Desktop.msgbox.Width <= screenWidth &&
+                  Desktop.msgbox.Y >= Desktop.msgbox.BarHeight &&
+                  Desktop.msgbox.Y + Desktop.msgbox.Height <=
+                      screenHeight - 40 && clipWidth > 0 && clipHeight > 0 &&
+                  HasInkOnlyInsideClip(Framebuffer.Graphics, background,
+                      clipX, clipY, clipWidth, clipHeight) &&
+                  Framebuffer.Graphics.InvalidDrawAttempts == 0,
+                  description + " production MessageBox wraps, fits, clips, and receives topmost focus");
+            Desktop.msgbox.Visible = false;
+            Check(!Desktop.msgbox.Visible,
+                  description + " production MessageBox dismisses without changing its content bounds");
+        }
+
+        private static void CheckProductionNotificationLifecycle(
+                SharedTextFont unused, byte[] fontBytes) {
+            const uint background = 0xFF101820u;
+            const string longMessage =
+                "Repeated production notifications need provider-aware widths " +
+                "and wrapping while moving into the desktop corner, and their " +
+                "text must stay clipped inside each allocated toast.";
+            IFont bitmapOwner = CreateProportionalBitmap(20);
+            SharedTextFont bitmap = SharedTextFont.CreateDefaultBitmap(
+                bitmapOwner);
+            Framebuffer.Graphics = new Graphics(320, 240, background);
+            WindowManager.font = bitmapOwner;
+            WindowManager.ShellTextFont = bitmap;
+            WindowManager.ShellTextFontGeneration = 1;
+            Timer.Ticks = 100;
+            NotificationManager.ResetForKernelBoot();
+            Notify first = new Notify(longMessage);
+            Notify second = new Notify(longMessage + " Second instance.");
+            NotificationManager.Add(first);
+            NotificationManager.Add(second);
+            NotificationManager.Update();
+
+            int maximumTextWidth = Framebuffer.Width -
+                NotificationManager.Threshold;
+            bool bitmapBounds = first.SWidth > 0 && first.SWidth <=
+                maximumTextWidth && first.AnimationWidth == first.SWidth &&
+                first.ani.MaximumValue == NotificationManager.Threshold +
+                    first.AnimationWidth && NotificationManager.NotificationCount == 2;
+            first.ani.Value = first.ani.MaximumValue / 2;
+            Framebuffer.Graphics = new Graphics(320, 240, background);
+            NotificationManager.Update();
+            bool bitmapMovement = first.X == first.ani.Value;
+
+            TrueTypeFont renderer24;
+            SharedTextFont trueType24 = null;
+            bool loaded24 = TrueTypeFont.TryCreate(fontBytes, 24,
+                out renderer24) && SharedTextFont.TrySelectTrueType(renderer24,
+                    bitmapOwner, out trueType24);
+            if (!loaded24) {
+                Check(false, "production notifications load TrueType 24 px");
+                return;
+            }
+
+            WindowManager.ShellTextFont = trueType24;
+            WindowManager.ShellTextFontGeneration++;
+            first.DisposeUntil = 0;
+            second.DisposeUntil = 0;
+            first.ani.Value = first.ani.MaximumValue / 2;
+            first.X = first.ani.Value;
+            second.ani.Value = second.ani.MaximumValue / 2;
+            second.X = second.ani.Value;
+            Framebuffer.Graphics = new Graphics(320, 240, background);
+            NotificationManager.Update();
+            bool switchedBounds = first.SWidth <= maximumTextWidth &&
+                first.AnimationWidth == first.SWidth &&
+                first.SHeight >= trueType24.FontSize &&
+                first.ani.MaximumValue == NotificationManager.Threshold +
+                    first.AnimationWidth && first.X == first.ani.Value;
+            first.ani.Value = first.ani.MaximumValue;
+            first.X = first.ani.Value;
+            second.ani.Value = second.ani.MaximumValue;
+            second.X = second.ani.Value;
+            Timer.Ticks = 200;
+            Framebuffer.Graphics = new Graphics(320, 240, background);
+            NotificationManager.Update();
+            ulong trueType24Hash = Framebuffer.Graphics.PixelHash();
+
+            Notify third = new Notify(longMessage + " Third instance.");
+            NotificationManager.Add(third);
+            Framebuffer.Graphics = new Graphics(320, 240, background);
+            NotificationManager.Update();
+            bool repeated = NotificationManager.NotificationCount == 3 &&
+                third.AnimationWidth == third.SWidth &&
+                third.ani.MaximumValue == NotificationManager.Threshold +
+                    third.AnimationWidth;
+
+            int[] sizes = { 12, 14, 16, 18, 20 };
+            ulong previousHash = trueType24Hash;
+            bool sizeSwitches = true;
+            for (int i = 0; i < sizes.Length; i++) {
+                TrueTypeFont renderer;
+                SharedTextFont selected;
+                if (!TrueTypeFont.TryCreate(fontBytes, sizes[i], out renderer) ||
+                    !SharedTextFont.TrySelectTrueType(renderer, bitmapOwner,
+                        out selected)) {
+                    sizeSwitches = false;
+                    continue;
+                }
+
+                WindowManager.ShellTextFont = selected;
+                WindowManager.ShellTextFontGeneration++;
+                Notify[] active = { first, second, third };
+                for (int n = 0; n < active.Length; n++) {
+                    active[n].DisposeUntil = 0;
+                    active[n].ani.Value = active[n].ani.MaximumValue / 3;
+                    active[n].X = active[n].ani.Value;
+                }
+                Framebuffer.Graphics = new Graphics(320, 240, background);
+                NotificationManager.Update();
+                for (int n = 0; n < active.Length; n++) {
+                    if (active[n].AnimationWidth != active[n].SWidth ||
+                        active[n].ani.MaximumValue !=
+                            NotificationManager.Threshold +
+                                active[n].AnimationWidth ||
+                        active[n].SHeight < selected.FontSize)
+                        sizeSwitches = false;
+                    active[n].ani.Value = active[n].ani.MaximumValue;
+                    active[n].X = active[n].ani.Value;
+                }
+                Timer.Ticks += 100;
+                Framebuffer.Graphics = new Graphics(320, 240, background);
+                NotificationManager.Update();
+                ulong currentHash = Framebuffer.Graphics.PixelHash();
+                if (currentHash == previousHash ||
+                    Framebuffer.Graphics.InvalidDrawAttempts != 0)
+                    sizeSwitches = false;
+                previousHash = currentHash;
+            }
+
+            Check(bitmapBounds && bitmapMovement && switchedBounds && repeated &&
+                  sizeSwitches,
+                  "production notifications reflow, move, repeat, clip, and redraw after provider and size changes");
+
+            first.X = first.ani.MaximumValue;
+            first.DisposeUntil = Timer.Ticks;
+            int beforeDismiss = NotificationManager.NotificationCount;
+            Timer.Ticks++;
+            Framebuffer.Graphics = new Graphics(320, 240, background);
+            NotificationManager.Update();
+            Check(beforeDismiss == 3 && NotificationManager.NotificationCount == 2,
+                  "production notification timed dismissal removes an expired toast");
         }
 
         private static IFont CreateBitmapFontForFallback() {

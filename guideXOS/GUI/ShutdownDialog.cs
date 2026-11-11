@@ -108,7 +108,7 @@ namespace guideXOS.GUI {
                 selected.Provider == SharedFontProviderKind.TrueType) {
                 int lineHeight;
                 if (selected.GetLineHeight(out lineHeight)) {
-                    ShellTextSurfaceRenderer.DrawFixedText(
+                    ShellTextSurfaceRenderer.DrawFittedText(
                         Framebuffer.Graphics, selected, "No", noX + 4,
                         btnY + (BtnH - lineHeight) / 2, BtnW - 8, noX, btnY,
                         BtnW, BtnH, 0xFFFFFFFFu, SharedTextAlignment.Center);
@@ -125,7 +125,7 @@ namespace guideXOS.GUI {
                 selected.Provider == SharedFontProviderKind.TrueType) {
                 int lineHeight;
                 if (selected.GetLineHeight(out lineHeight)) {
-                    ShellTextSurfaceRenderer.DrawFixedText(
+                    ShellTextSurfaceRenderer.DrawFittedText(
                         Framebuffer.Graphics, selected, "Yes", yesX + 4,
                         btnY + (BtnH - lineHeight) / 2, BtnW - 8, yesX, btnY,
                         BtnW, BtnH, 0xFFFFFFFFu, SharedTextAlignment.Center);

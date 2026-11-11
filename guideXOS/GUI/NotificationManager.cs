@@ -1,4 +1,5 @@
-﻿using guideXOS.Kernel.Drivers;
+using guideXOS.Kernel.Drivers;
+using System;
 using System.Collections.Generic;
 using guideXOS.Misc;
 
@@ -54,15 +55,24 @@ namespace guideXOS.GUI {
             Animator.AddAnimation(ani);
         }
 
+#if Kernel
         public override void Dispose() {
+#else
+        public void Dispose() {
+#endif
             Message.Dispose();
             Animator.DisposeAnimation(ani);
+#if Kernel
             base.Dispose();
+#endif
         }
     }
 
     public static class NotificationManager {
         static List<Notify> Notifications;
+        internal static int NotificationCount {
+            get { return Notifications == null ? 0 : Notifications.Count; }
+        }
 
         public static unsafe void Initialize() {
             Notifications = new();
@@ -133,30 +143,22 @@ namespace guideXOS.GUI {
                     fontGeneration, maximumTextWidth);
             }
 
-            for (int i = 0; i < Notifications.Count; i++) {
-                var v = Notifications[i];
+            if (Notifications.Count > 0) {
+                var v = Notifications[0];
                 if (v.X < (Threshold + v.AnimationWidth)) {
                     v.ani.Stopped = false;
                     v.X = v.ani.Value;
-                    break;
                 }
             }
 
-            for (int i = 0; i < Notifications.Count; i++) {
-                var v = Notifications[i];
-
-                if (v.X < (Threshold + v.AnimationWidth)) {
-                    break;
-                } else {
-                    if (v.DisposeUntil == 0) {
+            if (Notifications.Count > 0) {
+                var v = Notifications[0];
+                if (v.X >= (Threshold + v.AnimationWidth)) {
+                    if (v.DisposeUntil == 0)
                         v.DisposeUntil = Timer.Ticks + DisposeUntil;
-                    }
                     if (Timer.Ticks > v.DisposeUntil) {
                         Notifications.Remove(v);
                         v.Dispose();
-                        break;
-                    } else {
-                        break;
                     }
                 }
             }
@@ -211,6 +213,33 @@ namespace guideXOS.GUI {
 
             notification.SWidth = measurement.Width;
             notification.SHeight = measurement.Height;
+            int oldAnimationWidth = notification.AnimationWidth;
+            int oldMaximum = Threshold + oldAnimationWidth;
+            int newAnimationWidth = measurement.Width;
+            if (newAnimationWidth > int.MaxValue - Threshold)
+                newAnimationWidth = int.MaxValue - Threshold;
+            if (newAnimationWidth < 0) newAnimationWidth = 0;
+            int newMaximum = Threshold + newAnimationWidth;
+            if (notification.DisposeUntil == 0) {
+                int oldValue = notification.ani == null ? 0 :
+                    notification.ani.Value;
+                if (oldValue < 0) oldValue = 0;
+                if (oldValue > oldMaximum) oldValue = oldMaximum;
+                int newValue = oldMaximum <= 0 ? 0 :
+                    (int)((long)oldValue * newMaximum / oldMaximum);
+                notification.X = newValue;
+                if (notification.ani != null) {
+                    notification.ani.Value = newValue;
+                    notification.ani.MaximumValue = newMaximum;
+                }
+            } else {
+                notification.X = newMaximum;
+                if (notification.ani != null) {
+                    notification.ani.Value = newMaximum;
+                    notification.ani.MaximumValue = newMaximum;
+                }
+            }
+            notification.AnimationWidth = newAnimationWidth;
             notification.LayoutFontGeneration = fontGeneration;
             notification.LayoutMaximumWidth = maximumTextWidth;
             notification.LayoutMessage = notification.Message;
