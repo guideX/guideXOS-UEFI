@@ -157,6 +157,9 @@ namespace guideXOS.GUI {
         }
 
         private static SharedTextFont GetUefiTileLayoutFont() {
+            SharedTextFont selected = GetUefiTileTextFont();
+            if (selected != null) return selected;
+
             IFont bitmap = WindowManager.font;
             if (bitmap == null) return null;
             if (_uefiTileLayoutFont == null ||
@@ -696,9 +699,8 @@ namespace guideXOS.GUI {
             int screenW = Framebuffer.Width;
             int workAreaBottom = Framebuffer.Height - BarHeight;
             if (workAreaBottom < 0) workAreaBottom = 0;
-            // Tile hit bounds remain tied to the established bitmap metrics.
-            // Switching the renderer therefore changes text pixels without
-            // moving desktop icons or changing their interaction geometry.
+            // Measure the label with the selected provider so its draw clip
+            // and selectable tile bounds contain the same glyphs.
             SharedTextFont textFont = GetUefiTileLayoutFont();
             int maxLabelWidth = 0;
             for (int i = 0; i < UefiDesktopIconCount; i++) {

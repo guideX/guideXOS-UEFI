@@ -1,6 +1,7 @@
 using guideXOS.Kernel.Drivers;
 using guideXOS.Kernel.Drivers.Input;
 using System.Windows.Forms;
+using guideXOS.Misc;
 
 namespace guideXOS.GUI {
     /// <summary>
@@ -236,17 +237,23 @@ namespace guideXOS.GUI {
             int width = MinimumMenuW;
             if (WindowManager.font == null) return width;
 
-            int measured = WindowManager.font.MeasureString("Display Options");
-            int candidate = WindowManager.font.MeasureString("Performance Widget");
+            SharedTextFont selected = WindowManager.ShellTextFont;
+            int measured = ShellTextSurfaceRenderer.MeasureTextWidth(selected,
+                WindowManager.font, "Display Options");
+            int candidate = ShellTextSurfaceRenderer.MeasureTextWidth(selected,
+                WindowManager.font, "Performance Widget");
             if (candidate > measured) measured = candidate;
-            candidate = WindowManager.font.MeasureString("Icon Size");
+            candidate = ShellTextSurfaceRenderer.MeasureTextWidth(selected,
+                WindowManager.font, "Icon Size");
             if (candidate > measured) measured = candidate;
             if (!guideXOS.OS.SystemMode.IsLiveMode) {
-                candidate = WindowManager.font.MeasureString("Save Settings");
+                candidate = ShellTextSurfaceRenderer.MeasureTextWidth(
+                    selected, WindowManager.font, "Save Settings");
                 if (candidate > measured) measured = candidate;
             }
             if (Desktop.Dir != null && Desktop.Dir.Length > 0) {
-                candidate = WindowManager.font.MeasureString("Up one level");
+                candidate = ShellTextSurfaceRenderer.MeasureTextWidth(
+                    selected, WindowManager.font, "Up one level");
                 if (candidate > measured) measured = candidate;
             }
             return measured + 32 > width ? measured + 32 : width;

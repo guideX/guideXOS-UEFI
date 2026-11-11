@@ -304,9 +304,20 @@ namespace guideXOS.FontTests {
                           "TrueType Start Menu label respects its fixed row bounds on " +
                           width + " px display at " + sizes[sizeIndex] + " px");
 
-                    int clockWidth = bitmap.MeasureString("12:34");
-                    clockWidth = Math.Max(clockWidth,
-                        bitmap.MeasureString("11/02/2026"));
+                    int clockWidth, clockTimeWidth, clockDateWidth,
+                        clockLineHeight;
+                    bool clockSingleLine;
+                    bool clockMeasured =
+                        ShellTextSurfaceRenderer.TryMeasureTrueTypeTaskbarClock(
+                            selected, "12:34", "11/02/2026", 40,
+                            out clockWidth, out clockTimeWidth,
+                            out clockDateWidth, out clockLineHeight,
+                            out clockSingleLine);
+                    if (!clockMeasured) {
+                        clockWidth = bitmap.MeasureString("12:34");
+                        clockWidth = Math.Max(clockWidth,
+                            bitmap.MeasureString("11/02/2026"));
+                    }
                     Graphics clockGraphics = new Graphics(width, height,
                                                            background);
                     bool clockDrawn =
@@ -319,6 +330,30 @@ namespace guideXOS.FontTests {
                           clockGraphics.InvalidDrawAttempts == 0,
                           "TrueType taskbar clock preserves reserved layout on " +
                           width + " px display at " + sizes[sizeIndex] + " px");
+                    if (sizes[sizeIndex] == 24 && width >= 320) {
+                        int expectedGroupWidth = clockTimeWidth + 6 +
+                            clockDateWidth;
+                        int clockY = height - 40 + (40 - clockLineHeight) / 2;
+                        Graphics expectedClock = new Graphics(width, height,
+                                                               background);
+                        ShellTextSurfaceRenderer.DrawFixedText(expectedClock,
+                            selected, "12:34", clockX, clockY,
+                            clockTimeWidth, clockX, height - 40,
+                            clockWidth, 40, 0xFFFFFFFFu,
+                            SharedTextAlignment.Left);
+                        ShellTextSurfaceRenderer.DrawFixedText(expectedClock,
+                            selected, "11/02/2026", clockX +
+                            clockTimeWidth + 6, clockY, clockDateWidth,
+                            clockX, height - 40, clockWidth, 40,
+                            0xFFFFFFFFu, SharedTextAlignment.Left);
+                        Check(clockMeasured && clockSingleLine &&
+                              clockWidth == expectedGroupWidth &&
+                              clockGraphics.PixelHash() ==
+                                  expectedClock.PixelHash() &&
+                              HasInkOnlyInsideClip(clockGraphics, background,
+                                  clockX, height - 40, clockWidth, 40),
+                              "24 px taskbar clock shows full time and date on one line");
+                    }
                     Check(taskbarGraphics.IntermediateBlendPixelCount > 0,
                           "TrueType taskbar text alpha blends at " +
                           sizes[sizeIndex] + " px");

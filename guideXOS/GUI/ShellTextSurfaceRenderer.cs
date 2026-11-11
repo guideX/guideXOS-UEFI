@@ -11,6 +11,52 @@ namespace guideXOS.GUI {
     internal static class ShellTextSurfaceRenderer {
         private static SharedTextLayout _wrappedLayout;
 
+        internal static int MeasureTextWidth(SharedTextFont selected,
+                                             IFont bitmap, string text) {
+            if (text == null) return 0;
+            if (selected != null && selected.Provider ==
+                    SharedFontProviderKind.TrueType) {
+                SharedTextMeasurement measurement;
+                return selected.MeasureText(text, out measurement)
+                    ? measurement.Width : 0;
+            }
+            return bitmap == null ? 0 : bitmap.MeasureString(text);
+        }
+
+        internal static bool TryMeasureTrueTypeTaskbarClock(
+                SharedTextFont selected, string time, string date,
+                int barHeight, out int reservedWidth, out int timeWidth,
+                out int dateWidth, out int lineHeight, out bool singleLine) {
+            reservedWidth = timeWidth = dateWidth = lineHeight = 0;
+            singleLine = false;
+            if (selected == null || selected.Provider !=
+                    SharedFontProviderKind.TrueType || time == null ||
+                    barHeight <= 0 || !selected.GetLineHeight(out lineHeight))
+                return false;
+
+            SharedTextMeasurement timeMeasurement;
+            if (!selected.MeasureText(time, out timeMeasurement)) return false;
+            timeWidth = timeMeasurement.Width;
+            if (date == null) {
+                reservedWidth = timeWidth;
+                return true;
+            }
+
+            SharedTextMeasurement dateMeasurement;
+            if (!selected.MeasureText(date, out dateMeasurement)) return false;
+            dateWidth = dateMeasurement.Width;
+            singleLine = (long)lineHeight * 2 > barHeight;
+            if (singleLine) {
+                const int gap = 6;
+                long combinedWidth = (long)timeWidth + gap + dateWidth;
+                reservedWidth = combinedWidth > int.MaxValue
+                    ? int.MaxValue : (int)combinedWidth;
+            } else {
+                reservedWidth = timeWidth > dateWidth ? timeWidth : dateWidth;
+            }
+            return true;
+        }
+
         /// <summary>
         /// Measure a provider-aware wrapped block with bounded, reusable line
         /// storage. The caller owns the returned scalar values, not the scratch
@@ -242,20 +288,41 @@ namespace guideXOS.GUI {
                 return true;
             }
 
+            int measuredWidth, trueTypeTimeWidth, trueTypeDateWidth,
+                lineHeight;
+            bool singleLine;
+            if (!TryMeasureTrueTypeTaskbarClock(selected, time, date,
+                    barHeight, out measuredWidth, out trueTypeTimeWidth,
+                    out trueTypeDateWidth, out lineHeight,
+                    out singleLine)) return false;
+            if (reservedWidth < measuredWidth) reservedWidth = measuredWidth;
             if (reservedWidth <= 0) return false;
-            int lineHeight;
-            if (!selected.GetLineHeight(out lineHeight)) return false;
             int textX = graphics.Width - rightPadding - reservedWidth;
-            int textY = yTop + (barHeight - (lineHeight *
-                (date == null ? 1 : 2))) / 2;
             int clipHeight = barHeight;
             int viewportX, viewportY, viewportWidth, viewportHeight;
             if (!TryIntersectViewport(graphics, textX, yTop, reservedWidth,
                     clipHeight, out viewportX, out viewportY,
                     out viewportWidth, out viewportHeight)) return true;
-            SharedTextMeasurement timeMeasurement;
-            if (!selected.MeasureText(time, out timeMeasurement)) return false;
-            SharedTextAlignment timeAlignment = timeMeasurement.Width > reservedWidth
+            if (singleLine) {
+                int groupWidth = trueTypeTimeWidth + 6 + trueTypeDateWidth;
+                int groupX = textX + reservedWidth - groupWidth;
+                int singleLineY = yTop + (barHeight - lineHeight) / 2;
+                bool singleTimeDrawn = DrawFixedText(graphics, selected, time,
+                    groupX, singleLineY, trueTypeTimeWidth, textX, yTop,
+                    reservedWidth, clipHeight, 0xFFFFFFFFu,
+                    SharedTextAlignment.Left);
+                bool singleDateDrawn = DrawFixedText(graphics, selected, date,
+                    groupX + trueTypeTimeWidth + 6, singleLineY,
+                    trueTypeDateWidth, textX,
+                    yTop, reservedWidth, clipHeight, 0xFFFFFFFFu,
+                    SharedTextAlignment.Left);
+                return singleTimeDrawn && singleDateDrawn;
+            }
+
+            int textY = yTop + (barHeight - (lineHeight *
+                (date == null ? 1 : 2))) / 2;
+            SharedTextAlignment timeAlignment =
+                trueTypeTimeWidth > reservedWidth
                 ? SharedTextAlignment.Left : SharedTextAlignment.Right;
             bool timeDrawn = selected.DrawText(graphics, textX, textY, time,
                 0xFFFFFFFFu, viewportX, viewportY, viewportWidth,

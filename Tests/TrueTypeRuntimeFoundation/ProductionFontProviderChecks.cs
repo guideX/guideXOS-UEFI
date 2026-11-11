@@ -57,6 +57,40 @@ namespace guideXOS.FontTests {
                   selection.Generation > bitmapGeneration,
                   "production selector initializes requested TrueType");
 
+            bool selectedTwentyFour = selection.TrySelectTrueType(fontBytes,
+                24, bitmap, out selected);
+            int trueTypeLabelWidth, trueTypeLabelHeight;
+            bool trueTypeLabelMeasured = UefiDesktopLabelRenderer.TryMeasure(
+                selected, "FILES", out trueTypeLabelWidth,
+                out trueTypeLabelHeight);
+            UefiDesktopIconGeometry trueTypeGeometry =
+                UefiDesktopIconGeometry.Create(0, 20, 20, 48,
+                    trueTypeLabelWidth, trueTypeLabelHeight, 8);
+            Graphics trueTypeTwentyFourPixels =
+                new Graphics(180, 112, 0xFF18212Au);
+            bool trueTypeTwentyFourDrawn = UefiDesktopLabelRenderer.Draw(
+                trueTypeTwentyFourPixels, selected, trueTypeGeometry, "FILES");
+            int selectedMenuWidth = ShellTextSurfaceRenderer.MeasureTextWidth(
+                selected, bitmap, "Performance Widget");
+            SharedTextMeasurement selectedMenuMeasurement;
+            bool selectedMenuMeasured = selected.MeasureText(
+                "Performance Widget", out selectedMenuMeasurement);
+            Check(selectedTwentyFour && trueTypeLabelMeasured &&
+                  trueTypeTwentyFourDrawn &&
+                  trueTypeGeometry.LabelWidth == trueTypeLabelWidth &&
+                  trueTypeGeometry.LabelHeight == trueTypeLabelHeight &&
+                  trueTypeGeometry.HitWidth >= trueTypeLabelWidth &&
+                  trueTypeTwentyFourPixels.InvalidDrawAttempts == 0 &&
+                  HasInkOnlyInsideClip(trueTypeTwentyFourPixels,
+                      trueTypeGeometry.LabelX, trueTypeGeometry.LabelY,
+                      trueTypeGeometry.LabelWidth,
+                      trueTypeGeometry.LabelHeight),
+                  "24 px desktop tile bounds use selected TrueType label metrics");
+            Check(selectedMenuMeasured && selectedMenuWidth ==
+                  selectedMenuMeasurement.Width && selectedMenuWidth > 0,
+                  "24 px context menu width measurement uses selected TrueType metrics");
+            selection.TrySelectTrueType(fontBytes, 20, bitmap, out selected);
+
             int bitmapLabelWidth = bitmap.MeasureString("FILES");
             UefiDesktopIconGeometry geometry =
                 UefiDesktopIconGeometry.Create(0, 20, 20, 48,

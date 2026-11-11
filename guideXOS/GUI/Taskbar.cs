@@ -371,12 +371,25 @@ namespace guideXOS.GUI {
         }
 
         private int GetUefiTaskbarClockTextWidth() {
+            SharedTextFont selected = WindowManager.ShellTextFont;
+            int measuredWidth, timeWidth, dateWidth, lineHeight;
+            bool singleLine;
+            if (_cachedTime != null &&
+                    ShellTextSurfaceRenderer.TryMeasureTrueTypeTaskbarClock(
+                        selected, _cachedTime, _cachedDate, _barHeight,
+                        out measuredWidth, out timeWidth, out dateWidth,
+                        out lineHeight, out singleLine)) {
+                return measuredWidth;
+            }
+
             int clockTextWidth = 0;
             if (WindowManager.font != null && _cachedTime != null) {
                 clockTextWidth = WindowManager.font.MeasureString(_cachedTime);
                 if (_cachedDate != null) {
-                    int dateWidth = WindowManager.font.MeasureString(_cachedDate);
-                    if (dateWidth > clockTextWidth) clockTextWidth = dateWidth;
+                    int bitmapDateWidth =
+                        WindowManager.font.MeasureString(_cachedDate);
+                    if (bitmapDateWidth > clockTextWidth)
+                        clockTextWidth = bitmapDateWidth;
                 }
             }
             return clockTextWidth;
